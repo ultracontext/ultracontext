@@ -1,0 +1,56 @@
+{
+    "name": "ultracontext",
+    "description": "Node.js library for the UltraContext API",
+    "type": "module",
+    "engines": {
+        "node": ">=18"
+    },
+    "scripts": {
+        "build": "tsc",
+        "dev": "tsc --watch",
+        "prepare": "npm run build"
+    },
+    "version": "1.0.0",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/ultracontext/ultracontext-node.git"
+    },
+    "author": "Ultracontext",
+    "license": "MIT",
+    "bugs": {
+        "url": "https://github.com/ultracontext/ultracontext-node/issues"
+    },
+    "homepage": "https://ultracontext.ai",
+    "keywords": [
+        "ai",
+        "llm",
+        "context",
+        "agents",
+        "ai-agents",
+        "context-engineering",
+        "context-management",
+        "context-window",
+        "versioning",
+        "time-travel",
+        "rollback",
+        "chat",
+        "conversation",
+        "typescript"
+    ],
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js",
+            "default": "./dist/index.js"
+        }
+    },
+    "files": [
+        "dist"
+    ],
+    "devDependencies": {
+        "typescript": "^5.9.3"
+    },
+    "packageManager": "pnpm@10.25.0"
+}
