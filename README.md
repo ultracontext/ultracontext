@@ -19,7 +19,7 @@
     <img src="https://img.shields.io/npm/v/ultracontext" alt="npm version" />
   </a>
   <a href="https://github.com/ultracontext/ultracontext-node/blob/main/LICENSE">
-    <img src="https://img.shields.io/npm/l/ultracontext" alt="license" />
+    <img src="https://img.shields.io/npm/l/ultracontext?v=1" alt="license" />
   </a>
 </p>
 
