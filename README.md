@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://ultracontext.ai">
-    <img src="https://github.com/user-attachments/assets/874841ae-374d-46df-bc2a-388aff7cd024" alt="UltraContext" />
+    <img src="https://ultracontext.ai/og-node.png" alt="UltraContext" />
   </a>
 </p>
 
