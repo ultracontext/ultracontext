@@ -52,8 +52,6 @@ Right now, we're reinventing the wheel for every car we build. Instead of tackli
 
 **It's time to simplify.**
 
-<br />
-
 ## Why UltraContext
 
 - **Simple API** — Five methods. That's it.
@@ -65,21 +63,15 @@ Right now, we're reinventing the wheel for every car we build. Instead of tackli
 
 Just plug & play.
 
-<br />
-
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=ultracontext/ultracontext-node&type=date&legend=top-left)](https://www.star-history.com/#ultracontext/ultracontext-node&type=date&legend=top-left)
-
-<br />
 
 ## Install
 
 ```bash
 npm install ultracontext
 ```
-
-<br />
 
 ## 🚀 Quick Start
 
@@ -96,8 +88,6 @@ const response = await generateText({ model, messages: ctx.data });
 ```
 
 Get an API key from the [UltraContext Dashboard](https://ultracontext.ai/dashboard).
-
-<br />
 
 ## API
 
@@ -125,15 +115,11 @@ await uc.delete(ctx.id, 'msg_xyz');
 await uc.delete(ctx.id, -1);
 ```
 
-<br />
-
 ## Documentation
 
 - [Quickstart](https://ultracontext.ai/docs/quickstart/nodejs) — Get running in 2 minutes
 - [Guides](https://ultracontext.ai/docs/guides/store-retrieve-contexts) — Practical patterns for common use cases
 - [API Reference](https://ultracontext.ai/docs/api-reference/introduction) — Full endpoint documentation
-
-<br />
 
 ## License
 
