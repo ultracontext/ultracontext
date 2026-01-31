@@ -42,12 +42,6 @@ UltraContext is the simplest way to control what your agents see.
 
 Replace messages, compact/offload context, replay decisions and roll back mistakes — with a single API call. Versioned context out of the box. Full history. Zero complexity.
 
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=ultracontext/ultracontext-node&type=date&legend=top-left)](https://www.star-history.com/#ultracontext/ultracontext-node&type=date&legend=top-left)
-
-<br />
-
 ## Why Context Matters
 
 Context is the RAM of LLMs — everything they can see.
@@ -70,6 +64,12 @@ Right now, we're reinventing the wheel for every car we build. Instead of tackli
 - **Fast** — Globally distributed. Low latency.
 
 Just plug & play.
+
+<br />
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=ultracontext/ultracontext-node&type=date&legend=top-left)](https://www.star-history.com/#ultracontext/ultracontext-node&type=date&legend=top-left)
 
 <br />
 
