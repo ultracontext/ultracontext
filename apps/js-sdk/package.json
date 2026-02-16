@@ -1,6 +1,6 @@
 {
     "name": "ultracontext",
-    "description": "Node.js library for the UltraContext API",
+    "description": "JavaScript/TypeScript SDK for the UltraContext API",
     "type": "module",
     "engines": {
         "node": ">=18"
@@ -10,17 +10,18 @@
         "dev": "tsc --watch",
         "prepare": "npm run build"
     },
-    "version": "1.0.1",
+    "version": "1.0.2",
     "main": "./dist/index.js",
     "types": "./dist/index.d.ts",
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/ultracontext/ultracontext-node.git"
+        "url": "git+https://github.com/ultracontext/ultracontext.git",
+        "directory": "apps/js-sdk"
     },
     "author": "Ultracontext",
     "license": "MIT",
     "bugs": {
-        "url": "https://github.com/ultracontext/ultracontext-node/issues"
+        "url": "https://github.com/ultracontext/ultracontext/issues"
     },
     "homepage": "https://ultracontext.ai",
     "keywords": [

@@ -1,45 +1,48 @@
 <p align="center">
   <a href="https://ultracontext.ai">
-    <img src="https://ultracontext.ai/og-node.png" alt="UltraContext" />
+    <img src="https://ultracontext.ai/og-python.png" alt="UltraContext" />
   </a>
 </p>
 
 <h3 align="center">The context API for AI agents.</h3>
 
 <p align="center">
+  <a href="https://ultracontext.ai/docs/quickstart/python">Quickstart</a>
+  ·
   <a href="https://ultracontext.ai/docs">Documentation</a>
   ·
   <a href="https://ultracontext.ai/docs/api-reference/introduction">API Reference</a>
-  ·
-  <a href="https://ultracontext.ai/docs/changelog">Changelog</a>
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/ultracontext">
-    <img src="https://img.shields.io/npm/v/ultracontext" alt="npm version" />
-  </a>
   <a href="https://pypi.org/project/ultracontext/">
     <img src="https://img.shields.io/pypi/v/ultracontext" alt="PyPI version" />
   </a>
   <a href="https://github.com/ultracontext/ultracontext/blob/main/LICENSE">
     <img src="https://img.shields.io/github/license/ultracontext/ultracontext" alt="license" />
   </a>
-  <a href="https://github.com/ultracontext/ultracontext">
-    <img src="https://img.shields.io/github/stars/ultracontext/ultracontext.svg?style=social&label=Star" alt="GitHub stars" />
-  </a>
 </p>
 
-<div align="center">
-  <a href="https://twitter.com/ultracontext">
-    <img src="https://img.shields.io/badge/Follow%20on%20X-000000?style=for-the-badge&logo=x&logoColor=white" alt="Follow on X" />
-  </a>
-</div>
+<br />
 
----
+<p align="center">Guides</p>
+<p align="center">
+  <a href="https://ultracontext.ai/docs/guides/store-retrieve-contexts">Store & Retrieve</a>
+  ·
+  <a href="https://ultracontext.ai/docs/guides/edit-contexts">Edit Contexts</a>
+  ·
+  <a href="https://ultracontext.ai/docs/guides/fork-clone-contexts">Fork & Clone</a>
+  ·
+  <a href="https://ultracontext.ai/docs/guides/view-context-history">View History</a>
+</p>
+
+<br />
 
 UltraContext is the simplest way to control what your agents see.
 
 Replace messages, compact/offload context, replay decisions and roll back mistakes — with a single API call. Versioned context out of the box. Full history. Zero complexity.
+
+<br />
 
 ## Why Context Matters
 
@@ -51,6 +54,8 @@ Right now, we're reinventing the wheel for every car we build. Instead of tackli
 
 **It's time to simplify.**
 
+<br />
+
 ## Why UltraContext
 
 - **Simple API** — Five methods. That's it.
@@ -60,39 +65,19 @@ Right now, we're reinventing the wheel for every car we build. Instead of tackli
 - **Framework-agnostic** — Works with any LLM framework.
 - **Fast** — Globally distributed. Low latency.
 
----
+Just plug & play.
 
-## Star History
+<br />
 
-[![Star History Chart](https://api.star-history.com/svg?repos=ultracontext/ultracontext&type=date&legend=top-left)](https://www.star-history.com/#ultracontext/ultracontext&type=date&legend=top-left)
-
----
-
-## Quick Start
-
-### JavaScript/TypeScript
-
-```bash
-npm install ultracontext
-```
-
-```js
-import { UltraContext } from 'ultracontext';
-
-const uc = new UltraContext({ apiKey: 'uc_live_...' });
-
-const ctx = await uc.create();
-await uc.append(ctx.id, { role: 'user', content: 'Hello!' });
-
-// use with any LLM framework
-const response = await generateText({ model, messages: ctx.data });
-```
-
-### Python
+## Install
 
 ```bash
 pip install ultracontext
 ```
+
+<br />
+
+## Quick Start
 
 ```python
 from ultracontext import UltraContext
@@ -106,22 +91,68 @@ uc.append(ctx["id"], {"role": "user", "content": "Hello!"})
 response = generate_text(model=model, messages=uc.get(ctx["id"])["data"])
 ```
 
+### Async
+
+```python
+import asyncio
+from ultracontext import AsyncUltraContext
+
+async def main():
+    uc = AsyncUltraContext(api_key="uc_live_...")
+    ctx = await uc.create()
+    await uc.append(ctx["id"], {"role": "user", "content": "Hello!"})
+
+asyncio.run(main())
+```
+
 Get an API key from the [UltraContext Dashboard](https://ultracontext.ai/dashboard).
 
----
+<br />
 
-## SDKs
+## API
 
-| SDK | Install | Source |
-|-----|---------|--------|
-| JavaScript/TypeScript | `npm install ultracontext` | [apps/js-sdk](./apps/js-sdk) |
-| Python | `pip install ultracontext` | [apps/python-sdk](./apps/python-sdk) |
+```python
+# create - new context or fork
+ctx = uc.create()
+ctx = uc.create(from_="ctx_abc123")
+ctx = uc.create(from_="ctx_abc123", version=2)
+ctx = uc.create(from_="ctx_abc123", at=5)
+ctx = uc.create(metadata={"user_id": "123"})
 
----
+# get - retrieve context (or list all)
+ctxs = uc.get()
+ctxs = uc.get(limit=10)
+data = uc.get("ctx_abc123")
+data = uc.get("ctx_abc123", version=2)
+data = uc.get("ctx_abc123", at=5)
+data = uc.get("ctx_abc123", history=True)
+
+# append - add messages (schema-free)
+uc.append(ctx["id"], {"role": "user", "content": "Hi"})
+uc.append(ctx["id"], [{"role": "user", "content": "Hi"}, {"foo": "bar"}])
+
+# update - modify by id or index (auto-versions)
+uc.update(ctx["id"], id="msg_xyz", content="Fixed!")
+uc.update(ctx["id"], index=-1, content="Fix last message")
+uc.update(ctx["id"], id="msg_xyz", content="Fixed!", metadata={"reason": "typo"})
+
+# delete - remove by id or index (auto-versions)
+uc.delete(ctx["id"], "msg_xyz")
+uc.delete(ctx["id"], -1)
+uc.delete(ctx["id"], ["msg_a", "msg_b", -1], metadata={"reason": "cleanup"})
+```
+
+<br />
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=ultracontext/ultracontext&type=date&legend=top-left)](https://www.star-history.com/#ultracontext/ultracontext&type=date&legend=top-left)
+
+<br />
 
 ## Documentation
 
-- [Quickstart](https://ultracontext.ai/docs/quickstart/nodejs) — Get running in 2 minutes
+- [Quickstart](https://ultracontext.ai/docs/quickstart/python) — Get running in 2 minutes
 - [Guides](https://ultracontext.ai/docs/guides/store-retrieve-contexts) — Practical patterns for common use cases
 - [API Reference](https://ultracontext.ai/docs/api-reference/introduction) — Full endpoint documentation
 
