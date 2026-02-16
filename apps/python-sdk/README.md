@@ -23,11 +23,38 @@
   </a>
 </p>
 
----
+<br />
+
+<p align="center">Guides</p>
+<p align="center">
+  <a href="https://ultracontext.ai/docs/guides/store-retrieve-contexts">Store & Retrieve</a>
+  ·
+  <a href="https://ultracontext.ai/docs/guides/edit-contexts">Edit Contexts</a>
+  ·
+  <a href="https://ultracontext.ai/docs/guides/fork-clone-contexts">Fork & Clone</a>
+  ·
+  <a href="https://ultracontext.ai/docs/guides/view-context-history">View History</a>
+</p>
+
+<br />
 
 UltraContext is the simplest way to control what your agents see.
 
 Replace messages, compact/offload context, replay decisions and roll back mistakes — with a single API call. Versioned context out of the box. Full history. Zero complexity.
+
+<br />
+
+## Why Context Matters
+
+Context is the RAM of LLMs — everything they can see.
+
+As context grows, model attention spreads thin — this is known as **context rot**. We should aim to provide the smallest set of high-signal tokens that get the job done.
+
+Right now, we're reinventing the wheel for every car we build. Instead of tackling interesting problems, we catch ourselves spending most of our time gluing context together.
+
+**It's time to simplify.**
+
+<br />
 
 ## Why UltraContext
 
@@ -38,13 +65,17 @@ Replace messages, compact/offload context, replay decisions and roll back mistak
 - **Framework-agnostic** — Works with any LLM framework.
 - **Fast** — Globally distributed. Low latency.
 
----
+Just plug & play.
+
+<br />
 
 ## Install
 
 ```bash
 pip install ultracontext
 ```
+
+<br />
 
 ## Quick Start
 
@@ -76,7 +107,7 @@ asyncio.run(main())
 
 Get an API key from the [UltraContext Dashboard](https://ultracontext.ai/dashboard).
 
----
+<br />
 
 ## API
 
@@ -111,13 +142,13 @@ uc.delete(ctx["id"], -1)
 uc.delete(ctx["id"], ["msg_a", "msg_b", -1], metadata={"reason": "cleanup"})
 ```
 
----
+<br />
 
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=ultracontext/ultracontext&type=date&legend=top-left)](https://www.star-history.com/#ultracontext/ultracontext&type=date&legend=top-left)
 
----
+<br />
 
 ## Documentation
 
