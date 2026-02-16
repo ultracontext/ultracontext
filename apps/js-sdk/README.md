@@ -7,41 +7,54 @@
 <h3 align="center">The context API for AI agents.</h3>
 
 <p align="center">
+  <a href="https://ultracontext.ai/docs/quickstart/nodejs">Quickstart</a>
+  ·
   <a href="https://ultracontext.ai/docs">Documentation</a>
   ·
   <a href="https://ultracontext.ai/docs/api-reference/introduction">API Reference</a>
-  ·
-  <a href="https://ultracontext.ai/docs/changelog">Changelog</a>
 </p>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/ultracontext">
     <img src="https://img.shields.io/npm/v/ultracontext" alt="npm version" />
   </a>
-  <a href="https://pypi.org/project/ultracontext/">
-    <img src="https://img.shields.io/pypi/v/ultracontext" alt="PyPI version" />
-  </a>
   <a href="https://github.com/ultracontext/ultracontext/blob/main/LICENSE">
-    <img src="https://img.shields.io/github/license/ultracontext/ultracontext" alt="license" />
-  </a>
-  <a href="https://github.com/ultracontext/ultracontext">
-    <img src="https://img.shields.io/github/stars/ultracontext/ultracontext.svg?style=social&label=Star" alt="GitHub stars" />
+    <img src="https://img.shields.io/npm/l/ultracontext?v=1" alt="license" />
   </a>
 </p>
 
-<div align="center">
-  <a href="https://twitter.com/ultracontext">
-    <img src="https://img.shields.io/badge/Follow%20on%20X-000000?style=for-the-badge&logo=x&logoColor=white" alt="Follow on X" />
-  </a>
-</div>
+<br />
 
----
+<p align="center">📚 Guides</p>
+<p align="center">
+  <a href="https://ultracontext.ai/docs/guides/store-retrieve-contexts">Store & Retrieve</a>
+  ·
+  <a href="https://ultracontext.ai/docs/guides/edit-contexts">Edit Contexts</a>
+  ·
+  <a href="https://ultracontext.ai/docs/guides/fork-clone-contexts">Fork & Clone</a>
+  ·
+  <a href="https://ultracontext.ai/docs/guides/view-context-history">View History</a>
+</p>
+
+<br />
 
 UltraContext is the simplest way to control what your agents see.
 
 Replace messages, compact/offload context, replay decisions and roll back mistakes — with a single API call. Versioned context out of the box. Full history. Zero complexity.
 
----
+<br />
+
+## Why Context Matters
+
+Context is the RAM of LLMs — everything they can see.
+
+As context grows, model attention spreads thin — this is known as **context rot**. We should aim to provide the smallest set of high-signal tokens that get the job done.
+
+Right now, we're reinventing the wheel for every car we build. Instead of tackling interesting problems, we catch ourselves spending most of our time gluing context together.
+
+**It's time to simplify.**
+
+<br />
 
 ## Why UltraContext
 
@@ -52,15 +65,19 @@ Replace messages, compact/offload context, replay decisions and roll back mistak
 - **Framework-agnostic** — Works with any LLM framework.
 - **Fast** — Globally distributed. Low latency.
 
----
+Just plug & play.
 
-## Quick Start
+<br />
 
-### JavaScript/TypeScript
+## Install
 
 ```bash
 npm install ultracontext
 ```
+
+<br />
+
+## 🚀 Quick Start
 
 ```js
 import { UltraContext } from 'ultracontext';
@@ -74,36 +91,37 @@ await uc.append(ctx.id, { role: 'user', content: 'Hello!' });
 const response = await generateText({ model, messages: ctx.data });
 ```
 
-### Python
-
-```bash
-pip install ultracontext
-```
-
-```python
-from ultracontext import UltraContext
-
-uc = UltraContext(api_key="uc_live_...")
-
-ctx = uc.create()
-uc.append(ctx["id"], {"role": "user", "content": "Hello!"})
-
-# use with any LLM framework
-response = generate_text(model=model, messages=uc.get(ctx["id"])["data"])
-```
-
 Get an API key from the [UltraContext Dashboard](https://ultracontext.ai/dashboard).
 
----
+<br />
 
-## SDKs
+## API
 
-| SDK | Install | Source |
-|-----|---------|--------|
-| JavaScript/TypeScript | `npm install ultracontext` | [apps/js-sdk](./apps/js-sdk) |
-| Python | `pip install ultracontext` | [apps/python-sdk](./apps/python-sdk) |
+```js
+// create - new context or fork from existing
+const ctx = await uc.create();
+const fork = await uc.create({ from: 'ctx_abc123' });
 
----
+// get - retrieve context (supports version, index, timestamp)
+const { data } = await uc.get('ctx_abc123');
+const { data } = await uc.get('ctx_abc123', { version: 2 });
+const { data } = await uc.get('ctx_abc123', { at: 5 });
+const { data, versions } = await uc.get('ctx_abc123', { history: true });
+
+// append - add messages (schema-free)
+await uc.append(ctx.id, { role: 'user', content: 'Hi' });
+await uc.append(ctx.id, [{ role: 'user', content: 'Hi' }, { foo: 'bar' }]);
+
+// update - modify by id or index (auto-versions)
+await uc.update(ctx.id, { id: 'msg_xyz', content: 'Fixed!' });
+await uc.update(ctx.id, { index: -1, content: 'Fix last message' });
+
+// delete - remove by id or index (auto-versions)
+await uc.delete(ctx.id, 'msg_xyz');
+await uc.delete(ctx.id, -1);
+```
+
+<br />
 
 ## Documentation
 
@@ -111,7 +129,7 @@ Get an API key from the [UltraContext Dashboard](https://ultracontext.ai/dashboa
 - [Guides](https://ultracontext.ai/docs/guides/store-retrieve-contexts) — Practical patterns for common use cases
 - [API Reference](https://ultracontext.ai/docs/api-reference/introduction) — Full endpoint documentation
 
----
+<br />
 
 ## License
 
