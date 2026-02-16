@@ -113,17 +113,17 @@ uc.delete(ctx["id"], ["msg_a", "msg_b", -1], metadata={"reason": "cleanup"})
 
 ---
 
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=ultracontext/ultracontext&type=date&legend=top-left)](https://www.star-history.com/#ultracontext/ultracontext&type=date&legend=top-left)
+
+---
+
 ## Documentation
 
 - [Quickstart](https://ultracontext.ai/docs/quickstart/python) — Get running in 2 minutes
 - [Guides](https://ultracontext.ai/docs/guides/store-retrieve-contexts) — Practical patterns for common use cases
 - [API Reference](https://ultracontext.ai/docs/api-reference/introduction) — Full endpoint documentation
-
----
-
-## License
-
-MIT
 
 ---
 
