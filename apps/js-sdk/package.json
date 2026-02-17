@@ -19,7 +19,7 @@
         "directory": "apps/js-sdk"
     },
     "author": "Ultracontext",
-    "license": "MIT",
+    "license": "Apache-2.0",
     "bugs": {
         "url": "https://github.com/ultracontext/ultracontext/issues"
     },
