@@ -33,7 +33,7 @@ const LOG_LEVELS = { error: 0, warn: 1, info: 2, debug: 3 };
 const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_STARTUP_SOUND_FILE = path.join(APP_ROOT, "assets", "sounds", "hello_mf.mp3");
 const DEFAULT_CONTEXT_SOUND_FILE = path.join(APP_ROOT, "assets", "sounds", "quack.mp3");
-const DEFAULT_RUNTIME_CONFIG_FILE = "~/.ultracontext/ingestor.config.json";
+const DEFAULT_RUNTIME_CONFIG_FILE = "~/.ultracontext/daemon.config.json";
 const BOOTSTRAP_OPTIONS = [
   { id: "new_only", label: "New only (recommended)", description: "Starts from the current tail and ignores older history." },
   { id: "last_24h", label: "Last 24h", description: "Ingests only recent messages (24 hours)." },
@@ -84,29 +84,29 @@ const cfg = {
   apiKey: normalizeApiKey(process.env.ULTRACONTEXT_API_KEY),
   baseUrl: (process.env.ULTRACONTEXT_BASE_URL ?? "https://api.ultracontext.ai").trim(),
   cacheUrl: resolveCacheUrl(process.env),
-  engineerId: process.env.INGESTOR_ENGINEER_ID ?? process.env.USER ?? "unknown-engineer",
-  host: (process.env.INGESTOR_HOST || os.hostname() || "unknown-host").trim(),
-  pollMs: toInt(process.env.INGESTOR_POLL_MS, 1500),
-  logLevel: process.env.INGESTOR_LOG_LEVEL ?? "info",
-  logAppends: boolFromEnv(process.env.INGESTOR_LOG_APPENDS, true),
-  uiMode: (process.env.INGESTOR_UI_MODE ?? "auto").trim().toLowerCase(),
-  uiRefreshMs: toInt(process.env.INGESTOR_UI_REFRESH_MS, 1200),
+  engineerId: process.env.DAEMON_ENGINEER_ID ?? process.env.USER ?? "unknown-engineer",
+  host: (process.env.DAEMON_HOST || os.hostname() || "unknown-host").trim(),
+  pollMs: toInt(process.env.DAEMON_POLL_MS, 1500),
+  logLevel: process.env.DAEMON_LOG_LEVEL ?? "info",
+  logAppends: boolFromEnv(process.env.DAEMON_LOG_APPENDS, true),
+  uiMode: (process.env.TUI_MODE ?? "auto").trim().toLowerCase(),
+  uiRefreshMs: toInt(process.env.TUI_REFRESH_MS, 1200),
   uiRecentLimit: toInt(
-    process.env.INGESTOR_UI_RECENT_LIMIT,
+    process.env.TUI_RECENT_LIMIT,
     Math.max((process.stdout.rows ?? 40) * 6, 180)
   ),
-  soundEnabled: boolFromEnv(process.env.INGESTOR_SOUND_ENABLED, true),
-  startupSoundEnabled: boolFromEnv(process.env.INGESTOR_STARTUP_SOUND_ENABLED, true),
-  contextSoundEnabled: boolFromEnv(process.env.INGESTOR_CONTEXT_SOUND_ENABLED, true),
-  startupGreetingFile: expandHome(process.env.INGESTOR_STARTUP_GREETING_FILE ?? DEFAULT_STARTUP_SOUND_FILE),
-  contextCreatedSoundFile: expandHome(process.env.INGESTOR_CONTEXT_SOUND_FILE ?? DEFAULT_CONTEXT_SOUND_FILE),
-  configFile: expandHome(process.env.INGESTOR_CONFIG_FILE ?? DEFAULT_RUNTIME_CONFIG_FILE),
-  dedupeTtlSec: toInt(process.env.INGESTOR_DEDUPE_TTL_SEC, 60 * 60 * 24 * 30),
-  instanceLockTtlSec: toInt(process.env.INGESTOR_INSTANCE_LOCK_TTL_SEC, 45),
-  maxReadBytes: toInt(process.env.INGESTOR_MAX_READ_BYTES, 512 * 1024),
-  enableDailyContext: boolFromEnv(process.env.INGESTOR_ENABLE_DAILY_CONTEXT, false),
-  bootstrapMode: (process.env.INGESTOR_BOOTSTRAP_MODE ?? "prompt").trim().toLowerCase(),
-  bootstrapReset: boolFromEnv(process.env.INGESTOR_BOOTSTRAP_RESET, false),
+  soundEnabled: boolFromEnv(process.env.DAEMON_SOUND_ENABLED, true),
+  startupSoundEnabled: boolFromEnv(process.env.DAEMON_STARTUP_SOUND_ENABLED, true),
+  contextSoundEnabled: boolFromEnv(process.env.DAEMON_CONTEXT_SOUND_ENABLED, true),
+  startupGreetingFile: expandHome(process.env.DAEMON_STARTUP_GREETING_FILE ?? DEFAULT_STARTUP_SOUND_FILE),
+  contextCreatedSoundFile: expandHome(process.env.DAEMON_CONTEXT_SOUND_FILE ?? DEFAULT_CONTEXT_SOUND_FILE),
+  configFile: expandHome(process.env.DAEMON_CONFIG_FILE ?? DEFAULT_RUNTIME_CONFIG_FILE),
+  dedupeTtlSec: toInt(process.env.DAEMON_DEDUPE_TTL_SEC, 60 * 60 * 24 * 30),
+  instanceLockTtlSec: toInt(process.env.DAEMON_INSTANCE_LOCK_TTL_SEC, 45),
+  maxReadBytes: toInt(process.env.DAEMON_MAX_READ_BYTES, 512 * 1024),
+  enableDailyContext: boolFromEnv(process.env.DAEMON_ENABLE_DAILY_CONTEXT, false),
+  bootstrapMode: (process.env.DAEMON_BOOTSTRAP_MODE ?? "prompt").trim().toLowerCase(),
+  bootstrapReset: boolFromEnv(process.env.DAEMON_BOOTSTRAP_RESET, false),
   claudeIncludeSubagents: boolFromEnv(process.env.CLAUDE_INCLUDE_SUBAGENTS, false),
   resumeTerminal: normalizeResumeTerminal(process.env.RESUME_TERMINAL),
   resumeContextLimit: toInt(process.env.RESUME_CONTEXT_LIMIT, 1000),
@@ -217,11 +217,11 @@ const runtime = {
 const sound = { startupFile: "", contextFile: "", warnedNonDarwin: false };
 
 function runtimeStateRedisKey() {
-  return `uc:ingestor:runtime:v1:${cfg.host}:${cfg.engineerId}`;
+  return `uc:daemon:runtime:v1:${cfg.host}:${cfg.engineerId}`;
 }
 
 function runtimeLogsRedisKey() {
-  return `uc:ingestor:logs:v1:${cfg.host}:${cfg.engineerId}`;
+  return `uc:daemon:logs:v1:${cfg.host}:${cfg.engineerId}`;
 }
 
 function runtimeLogsKeep() {
@@ -1090,7 +1090,7 @@ function resumeTerminalConfigLabel(mode) {
 }
 
 function configPrefsRedisKey() {
-  return `uc:ingestor:config:v1:${cfg.host}:${cfg.engineerId}`;
+  return `uc:daemon:config:v1:${cfg.host}:${cfg.engineerId}`;
 }
 
 function serializeConfigPrefs() {
@@ -1811,7 +1811,7 @@ function normalizeBootstrapMode(raw) {
 
 function bootstrapRedisKey(sources) {
   const names = sources.map((source) => source.name).sort().join(",");
-  return `uc:ingestor:bootstrap:v1:${cfg.host}:${cfg.engineerId}:${names}`;
+  return `uc:daemon:bootstrap:v1:${cfg.host}:${cfg.engineerId}:${names}`;
 }
 
 function bootstrapModeLabel(mode) {
@@ -1924,7 +1924,7 @@ function validateConfig() {
 }
 
 function buildInstanceLockKey() {
-  return `uc:ingestor:lock:${cfg.host}:${cfg.engineerId}`;
+  return `uc:daemon:lock:${cfg.host}:${cfg.engineerId}`;
 }
 
 function isPidAlive(pid) {
@@ -1956,7 +1956,7 @@ function spawnDetachedDaemonProcess() {
     stdio: "ignore",
     env: {
       ...process.env,
-      INGESTOR_UI_MODE: "plain",
+      TUI_MODE: "plain",
     },
   });
   child.unref();
@@ -2076,15 +2076,15 @@ async function releaseInstanceLock(redis) {
 
 function makeRedisKeys(sourceName, fileId, sessionId, dayKey) {
   return {
-    offset: `uc:ingestor:offset:${sourceName}:${fileId}`,
-    dedupePrefix: `uc:ingestor:seen:${sourceName}:`,
-    sessionContext: `uc:ingestor:ctx:session:${sourceName}:${cfg.host}:${cfg.engineerId}:${sessionId}`,
-    dailyContext: `uc:ingestor:ctx:daily:${sourceName}:${cfg.host}:${cfg.engineerId}:${dayKey}`,
+    offset: `uc:daemon:offset:${sourceName}:${fileId}`,
+    dedupePrefix: `uc:daemon:seen:${sourceName}:`,
+    sessionContext: `uc:daemon:ctx:session:${sourceName}:${cfg.host}:${cfg.engineerId}:${sessionId}`,
+    dailyContext: `uc:daemon:ctx:daily:${sourceName}:${cfg.host}:${cfg.engineerId}:${dayKey}`,
   };
 }
 
 async function markEventSeen(redis, sourceName, eventId) {
-  const key = `uc:ingestor:seen:${sourceName}:${eventId}`;
+  const key = `uc:daemon:seen:${sourceName}:${eventId}`;
   const result = await redis.set(key, "1", "EX", cfg.dedupeTtlSec, "NX");
   return result === "OK";
 }

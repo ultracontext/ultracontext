@@ -130,7 +130,7 @@ export async function materializeCodexSession({ sessionId, cwd, messages }) {
           id,
           timestamp: firstTs,
           cwd: cwd || process.cwd(),
-          originator: "ultracontext_ingestor",
+          originator: "ultracontext_daemon",
           cli_version: "restored",
           source: "cli",
           model_provider: "openai",

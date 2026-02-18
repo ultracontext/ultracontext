@@ -493,7 +493,7 @@ function HeaderPanel({ snapshot, stdoutColumns }) {
   );
 }
 
-function IngestorUi({ snapshot, actions }) {
+function DaemonTui({ snapshot, actions }) {
   const stdoutColumns = process.stdout.columns ?? 120;
   const stdoutRows = process.stdout.rows ?? 40;
   const containerWidth = Math.max(stdoutColumns - 2, 80);
@@ -736,7 +736,7 @@ function IngestorUi({ snapshot, actions }) {
 
 export function createInkUiController({ getSnapshot, actions }) {
   let app = null;
-  const view = () => React.createElement(IngestorUi, { snapshot: getSnapshot(), actions });
+  const view = () => React.createElement(DaemonTui, { snapshot: getSnapshot(), actions });
 
   return {
     start() {
