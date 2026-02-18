@@ -10,9 +10,9 @@ import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import fg from "fast-glob";
-import Redis from "ioredis";
 import { UltraContext } from "ultracontext";
 
+import { createRedisClient, resolveRedisUrl } from "./redis.mjs";
 import {
   hasLocalClaudeSession,
   hasLocalCodexSession,
@@ -83,7 +83,7 @@ function normalizeResumeTerminal(raw) {
 const cfg = {
   apiKey: normalizeApiKey(process.env.ULTRACONTEXT_API_KEY),
   baseUrl: (process.env.ULTRACONTEXT_BASE_URL ?? "https://api.ultracontext.ai").trim(),
-  redisUrl: process.env.REDIS_URL ?? "redis://127.0.0.1:6379",
+  redisUrl: resolveRedisUrl(process.env),
   engineerId: process.env.DAEMON_ENGINEER_ID ?? process.env.USER ?? "unknown-engineer",
   host: (process.env.DAEMON_HOST || os.hostname() || "unknown-host").trim(),
   pollMs: toInt(process.env.DAEMON_POLL_MS, 1500),
@@ -1213,7 +1213,7 @@ async function refreshDaemonConfigFromRedis(redis) {
   if (before.claudeIncludeSubagents !== after.claudeIncludeSubagents) {
     applyRuntimeSources(buildSources());
   }
-  log("info", "Reloaded config prefs from Redis", {
+  log("info", "Reloaded config prefs from redis", {
     claude_subagents: after.claudeIncludeSubagents ? "on" : "off",
     sound_enabled: after.soundEnabled ? "on" : "off",
     startup_sound: after.startupSoundEnabled ? "on" : "off",
@@ -1315,10 +1315,10 @@ function configToggleItems() {
       blockedByMaster: false,
     },
     {
-      key: "bootstrapResetCache",
+      key: "bootstrapResetState",
       kind: "action",
-      label: "Reset bootstrap cache",
-      description: "Clears cache and asks bootstrap mode now.",
+      label: "Reset bootstrap state",
+      description: "Clears Redis bootstrap state and asks bootstrap mode now.",
       value: "run",
       valueLabel: "RUN",
       blockedByMaster: false,
@@ -1352,7 +1352,7 @@ async function toggleSelectedConfig() {
   const daemonBound = IS_DAEMON_MODE;
 
   try {
-    if (item.kind === "action" && item.key === "bootstrapResetCache") {
+    if (item.kind === "action" && item.key === "bootstrapResetState") {
       const persisted = await resetBootstrapPreference();
       cfg.bootstrapReset = true;
       let bootstrap = { applied: false, mode: "prompt", ingestMode: runtime.ingestMode };
@@ -1367,7 +1367,7 @@ async function toggleSelectedConfig() {
       const note = bootstrap.applied
         ? `Bootstrap reset applied now (${bootstrapModeLabel(bootstrap.mode)}).`
         : persisted
-        ? "Bootstrap cache reset. It will apply on next daemon cycle/start."
+        ? "Bootstrap state reset in Redis. It will apply on next daemon cycle/start."
         : "Bootstrap reset requested.";
       ui.resume.notice = note;
       log("info", "Config action executed", {
@@ -1984,7 +1984,7 @@ async function ensureDaemonRunning(redis) {
       return { started: true, pid: check.pid };
     }
   }
-  throw new Error("Daemon did not start in time. Check Redis/API credentials and run `node src/index.mjs --daemon`.");
+  throw new Error("Daemon did not start in time. Check state-store/API credentials and run `node src/index.mjs --daemon`.");
 }
 
 async function acquireInstanceLock(redis) {
@@ -2376,7 +2376,7 @@ async function processSource({ redis, uc, source, shouldStop = () => false, inge
 
 async function daemonMain() {
   validateConfig();
-  const redis = new Redis(cfg.redisUrl);
+  const redis = createRedisClient(cfg.redisUrl);
   runtime.redis = redis;
   const uc = new UltraContext({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl });
   runtime.uc = uc;
@@ -2393,7 +2393,7 @@ async function daemonMain() {
     }
     if (loadedFromRedis && !loadedFromFile) {
       const saved = await persistConfigPrefs();
-      log("info", "Materialized redis config prefs into file", {
+      log("info", "Materialized Redis config prefs into file", {
         file_saved: saved.fileSaved ? "yes" : "no",
       });
     }
@@ -2592,7 +2592,7 @@ async function tuiMain() {
     throw new Error("TUI mode requires a TTY. Run with `--daemon` for headless mode.");
   }
 
-  const redis = new Redis(cfg.redisUrl);
+  const redis = createRedisClient(cfg.redisUrl);
   runtime.redis = redis;
   const uc = new UltraContext({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl });
   runtime.uc = uc;

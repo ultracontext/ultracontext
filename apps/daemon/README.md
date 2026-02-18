@@ -20,12 +20,14 @@ npm run dev
 
 - This package runs the daemon process only.
 - TUI client lives in `apps/tui`.
-- Both daemon and TUI share the same Redis-compatible backend and UltraContext credentials via env vars.
+- Both daemon and TUI share the same Redis backend and UltraContext credentials via env vars.
 
 ## Main Env Vars
 
 - `ULTRACONTEXT_API_KEY`
 - `ULTRACONTEXT_BASE_URL`
-- `REDIS_URL`
+- `REDIS_URL` (primary)
+- `STATE_STORE_URL` (legacy fallback)
+- `CACHE_URL` (legacy fallback)
 - `DAEMON_ENGINEER_ID`
 - `DAEMON_HOST`
