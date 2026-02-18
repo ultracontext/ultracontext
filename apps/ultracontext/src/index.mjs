@@ -1213,7 +1213,7 @@ async function refreshDaemonConfigFromRedis(redis) {
   if (before.claudeIncludeSubagents !== after.claudeIncludeSubagents) {
     applyRuntimeSources(buildSources());
   }
-  log("info", "Reloaded config prefs from cache service", {
+  log("info", "Reloaded config prefs from state store", {
     claude_subagents: after.claudeIncludeSubagents ? "on" : "off",
     sound_enabled: after.soundEnabled ? "on" : "off",
     startup_sound: after.startupSoundEnabled ? "on" : "off",
@@ -1984,7 +1984,7 @@ async function ensureDaemonRunning(redis) {
       return { started: true, pid: check.pid };
     }
   }
-  throw new Error("Daemon did not start in time. Check cache/API credentials and run `node src/index.mjs --daemon`.");
+  throw new Error("Daemon did not start in time. Check state-store/API credentials and run `node src/index.mjs --daemon`.");
 }
 
 async function acquireInstanceLock(redis) {
