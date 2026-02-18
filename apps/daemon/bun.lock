@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "session-ingestor",
+      "name": "ultracontext-daemon",
       "dependencies": {
         "@mishieck/ink-titled-box": "^0.4.2",
         "dotenv": "^17.2.3",
