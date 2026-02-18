@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import fg from "fast-glob";
 import { UltraContext } from "ultracontext";
 
-import { createCacheClient, resolveCacheUrl } from "./cache.mjs";
+import { createRedisClient, resolveRedisUrl } from "./redis.mjs";
 import {
   hasLocalClaudeSession,
   hasLocalCodexSession,
@@ -83,7 +83,7 @@ function normalizeResumeTerminal(raw) {
 const cfg = {
   apiKey: normalizeApiKey(process.env.ULTRACONTEXT_API_KEY),
   baseUrl: (process.env.ULTRACONTEXT_BASE_URL ?? "https://api.ultracontext.ai").trim(),
-  cacheUrl: resolveCacheUrl(process.env),
+  redisUrl: resolveRedisUrl(process.env),
   engineerId: process.env.DAEMON_ENGINEER_ID ?? process.env.USER ?? "unknown-engineer",
   host: (process.env.DAEMON_HOST || os.hostname() || "unknown-host").trim(),
   pollMs: toInt(process.env.DAEMON_POLL_MS, 1500),
@@ -1159,7 +1159,7 @@ function applyConfigPrefs(prefs) {
 
 async function persistConfigPrefs() {
   let fileSaved = false;
-  let cacheSaved = false;
+  let redisSaved = false;
 
   try {
     fileSaved = await persistConfigPrefsToFile();
@@ -1174,13 +1174,13 @@ async function persistConfigPrefs() {
     try {
       const key = configPrefsRedisKey();
       await runtime.redis.set(key, JSON.stringify(serializeConfigPrefs()));
-      cacheSaved = true;
+      redisSaved = true;
     } catch (error) {
-      log("warn", "Failed to persist config prefs to cache", errorDetails(error));
+      log("warn", "Failed to persist config prefs to redis", errorDetails(error));
     }
   }
 
-  return { fileSaved, cacheSaved };
+  return { fileSaved, redisSaved };
 }
 
 async function loadConfigPrefs(redis) {
@@ -1213,7 +1213,7 @@ async function refreshDaemonConfigFromRedis(redis) {
   if (before.claudeIncludeSubagents !== after.claudeIncludeSubagents) {
     applyRuntimeSources(buildSources());
   }
-  log("info", "Reloaded config prefs from state store", {
+  log("info", "Reloaded config prefs from redis", {
     claude_subagents: after.claudeIncludeSubagents ? "on" : "off",
     sound_enabled: after.soundEnabled ? "on" : "off",
     startup_sound: after.startupSoundEnabled ? "on" : "off",
@@ -1315,10 +1315,10 @@ function configToggleItems() {
       blockedByMaster: false,
     },
     {
-      key: "bootstrapResetCache",
+      key: "bootstrapResetState",
       kind: "action",
-      label: "Reset bootstrap cache",
-      description: "Clears cache and asks bootstrap mode now.",
+      label: "Reset bootstrap state",
+      description: "Clears Redis bootstrap state and asks bootstrap mode now.",
       value: "run",
       valueLabel: "RUN",
       blockedByMaster: false,
@@ -1352,7 +1352,7 @@ async function toggleSelectedConfig() {
   const daemonBound = IS_DAEMON_MODE;
 
   try {
-    if (item.kind === "action" && item.key === "bootstrapResetCache") {
+    if (item.kind === "action" && item.key === "bootstrapResetState") {
       const persisted = await resetBootstrapPreference();
       cfg.bootstrapReset = true;
       let bootstrap = { applied: false, mode: "prompt", ingestMode: runtime.ingestMode };
@@ -1360,14 +1360,14 @@ async function toggleSelectedConfig() {
         bootstrap = await applyBootstrapModeNow("prompt", { shouldPrompt: true });
       } else {
         const saved = await persistConfigPrefs();
-        if (!saved.fileSaved && !saved.cacheSaved) {
+        if (!saved.fileSaved && !saved.redisSaved) {
           ui.resume.notice = "Bootstrap reset requested but config persistence failed.";
         }
       }
       const note = bootstrap.applied
         ? `Bootstrap reset applied now (${bootstrapModeLabel(bootstrap.mode)}).`
         : persisted
-        ? "Bootstrap cache reset. It will apply on next daemon cycle/start."
+        ? "Bootstrap state reset in Redis. It will apply on next daemon cycle/start."
         : "Bootstrap reset requested.";
       ui.resume.notice = note;
       log("info", "Config action executed", {
@@ -1404,7 +1404,7 @@ async function toggleSelectedConfig() {
         value: next.id,
         persisted: persisted ? "yes" : "no",
         file_saved: prefsSaved.fileSaved ? "yes" : "no",
-        cache_saved: prefsSaved.cacheSaved ? "yes" : "no",
+        redis_saved: prefsSaved.redisSaved ? "yes" : "no",
         applied_now: bootstrap.applied ? "yes" : "no",
         ingest_mode: bootstrap.ingestMode,
       });
@@ -1425,7 +1425,7 @@ async function toggleSelectedConfig() {
         key: item.key,
         value: next.id,
         file_saved: saved.fileSaved ? "yes" : "no",
-        cache_saved: saved.cacheSaved ? "yes" : "no",
+        redis_saved: saved.redisSaved ? "yes" : "no",
       });
       return;
     }
@@ -1505,7 +1505,7 @@ function buildUiSnapshot() {
     cfg: {
       engineerId: cfg.engineerId,
       host: cfg.host,
-      cacheUrl: cfg.cacheUrl,
+      redisUrl: cfg.redisUrl,
       pollMs: cfg.pollMs,
       uiRefreshMs: cfg.uiRefreshMs,
       logLevel: cfg.logLevel,
@@ -2376,7 +2376,7 @@ async function processSource({ redis, uc, source, shouldStop = () => false, inge
 
 async function daemonMain() {
   validateConfig();
-  const redis = createCacheClient(cfg.cacheUrl);
+  const redis = createRedisClient(cfg.redisUrl);
   runtime.redis = redis;
   const uc = new UltraContext({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl });
   runtime.uc = uc;
@@ -2388,12 +2388,12 @@ async function daemonMain() {
     if (loadedFromFile || loadedFromRedis) {
       log("info", "Loaded persisted config preferences", {
         file: loadedFromFile ? "yes" : "no",
-        cache: loadedFromRedis ? "yes" : "no",
+        redis: loadedFromRedis ? "yes" : "no",
       });
     }
     if (loadedFromRedis && !loadedFromFile) {
       const saved = await persistConfigPrefs();
-      log("info", "Materialized cache config prefs into file", {
+      log("info", "Materialized Redis config prefs into file", {
         file_saved: saved.fileSaved ? "yes" : "no",
       });
     }
@@ -2592,7 +2592,7 @@ async function tuiMain() {
     throw new Error("TUI mode requires a TTY. Run with `--daemon` for headless mode.");
   }
 
-  const redis = createCacheClient(cfg.cacheUrl);
+  const redis = createRedisClient(cfg.redisUrl);
   runtime.redis = redis;
   const uc = new UltraContext({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl });
   runtime.uc = uc;
@@ -2733,7 +2733,7 @@ runApp().catch(async (error) => {
     try {
       await runtime.redis.quit();
     } catch (redisError) {
-      log("warn", "Failed to close cache during shutdown", errorDetails(redisError));
+      log("warn", "Failed to close Redis during shutdown", errorDetails(redisError));
     }
     runtime.redis = null;
   }
