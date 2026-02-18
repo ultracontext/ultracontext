@@ -2,14 +2,14 @@
 
 Team observability app for ingesting local agent sessions into UltraContext, with:
 
-- `Redis` for dedupe (`SETNX`) and per-file offset checkpoints
+- `Cache service (Redis-compatible)` for dedupe (`SETNX`) and per-file offset checkpoints
 - `UltraContext` for per-session persistence and optional daily context
 - `codex`, `claude`, and `openclaw` ingestion
 - Decoupled `daemon` + `ink` TUI client (TUI auto-starts daemon when needed)
 
 ## Run
 
-1. Start Redis locally:
+1. Start cache service locally (Redis-compatible):
 
 ```bash
 docker run --rm -p 6379:6379 redis:7
@@ -49,7 +49,7 @@ Adapter behavior:
 
 If a local session file is missing, the app materializes it from UltraContext messages before resuming.
 
-## Redis Keys
+## Cache Keys
 
 - `uc:ingestor:offset:{source}:{fileId}` -> last processed offset
 - `uc:ingestor:seen:{source}:{eventId}` -> event dedupe (TTL)
@@ -92,7 +92,7 @@ You can force mode via env:
 Settings changed in `Configs` are persisted in both:
 
 - local file (default `~/.ultracontext/ingestor.config.json`)
-- Redis key scoped by host/engineer (`uc:ingestor:config:v1:{host}:{engineer}`)
+- cache key scoped by host/engineer (`uc:ingestor:config:v1:{host}:{engineer}`)
 
 The local JSON file is auto-created on first startup.
 
@@ -109,6 +109,8 @@ Configure file location with:
 
 ## Terminal UI (Client)
 
+- `CACHE_URL=redis://127.0.0.1:6379` (primary cache endpoint)
+- `REDIS_URL=...` (legacy fallback; use `CACHE_URL` going forward)
 - `INGESTOR_UI_MODE=auto|pretty|plain`
 - `INGESTOR_UI_REFRESH_MS=1200` (TUI refresh interval)
 - `INGESTOR_UI_RECENT_LIMIT` (activity feed size; default scales with terminal height)
