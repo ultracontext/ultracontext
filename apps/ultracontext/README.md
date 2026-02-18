@@ -1,4 +1,4 @@
-# UltraContext App
+# UltraContext Daemon + TUI
 
 Team observability app for ingesting local agent sessions into UltraContext, with:
 
