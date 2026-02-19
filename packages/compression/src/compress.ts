@@ -182,6 +182,7 @@ export function compressMessages(
         messages_compressed: 0,
         messages_preserved: 0,
       },
+      verbatim: {},
     };
   }
 
@@ -249,6 +250,7 @@ export function compressMessages(
 
   // Step 2: compress non-preserved messages (respecting role boundaries)
   const result: Message[] = [];
+  const verbatim: Record<string, Message> = {};
   let messagesCompressed = 0;
   let messagesPreserved = 0;
   let i = 0;
@@ -285,6 +287,7 @@ export function compressMessages(
       const csIds = [msg.id];
       const csSummaryId = makeSummaryId(csIds);
       const csParents = collectParentIds([msg]);
+      verbatim[msg.id] = msg;
       result.push({
         ...msg,
         content: compressed,
@@ -331,6 +334,7 @@ export function compressMessages(
         const mergeIds = group.map(g => g.msg.id);
         const mergeSummaryId = makeSummaryId(mergeIds);
         const mergeParents = collectParentIds(group.map(g => g.msg));
+        for (const g of group) { verbatim[g.msg.id] = g.msg; }
         const mergedMsg: Message = {
           id: group[0].msg.id,
           index: group[0].msg.index,
@@ -362,6 +366,7 @@ export function compressMessages(
         const singleIds = [single.id];
         const singleSummaryId = makeSummaryId(singleIds);
         const singleParents = collectParentIds([single]);
+        verbatim[single.id] = single;
         result.push({
           ...single,
           content: summary,
@@ -391,5 +396,6 @@ export function compressMessages(
       messages_compressed: messagesCompressed,
       messages_preserved: messagesPreserved,
     },
+    verbatim,
   };
 }

@@ -93,6 +93,7 @@ export type CompressResponse = {
         messages_compressed: number;
         messages_preserved: number;
     };
+    verbatim: Record<string, { id: string; index: number; metadata: Record<string, unknown>; [key: string]: unknown }>;
 };
 
 export type UncompressOptions = {

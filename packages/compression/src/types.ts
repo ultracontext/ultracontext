@@ -6,6 +6,21 @@ export type CompressOptions = {
   sourceVersion?: number;
 };
 
+export type VerbatimMap = Record<string, Message>;
+
+export type ExpandOptions = {
+  /** Recursively expand messages whose originals are also compressed. Default: false. */
+  recursive?: boolean;
+};
+
+export type ExpandResult = {
+  messages: Message[];
+  messages_expanded: number;
+  messages_passthrough: number;
+  /** IDs looked up but not found. Non-empty = data loss in the verbatim store. */
+  missing_ids: string[];
+};
+
 export type CompressResult = {
   messages: Message[];
   compression: {
@@ -14,6 +29,8 @@ export type CompressResult = {
     messages_compressed: number;
     messages_preserved: number;
   };
+  /** Original verbatim messages keyed by ID. Every compressed message's source appears here. */
+  verbatim: VerbatimMap;
 };
 
 export type ClassifyResult = {

@@ -816,6 +816,50 @@ describe('compressMessages', () => {
     });
   });
 
+  describe('verbatim', () => {
+    it('contains all and only compressed originals across paths (single, merge, code-split)', () => {
+      const prose = 'This is a long message about general topics that could be compressed. '.repeat(5);
+      const codeProse = 'This is a detailed explanation of how the authentication system works and integrates with the session manager. '.repeat(3);
+      const codeContent = `${codeProse}\n\n\`\`\`ts\nconst x = 1;\n\`\`\``;
+      const messages: Message[] = [
+        msg({ id: 'sys', index: 0, role: 'system', content: 'System prompt.' }),
+        msg({ id: 'u1', index: 1, role: 'user', content: prose }),
+        msg({ id: 'u2', index: 2, role: 'user', content: prose }),
+        msg({ id: 'a1', index: 3, role: 'assistant', content: codeContent }),
+        msg({ id: 'a2', index: 4, role: 'assistant', content: prose }),
+        msg({ id: 'short', index: 5, role: 'user', content: 'Short.' }),
+      ];
+      const result = compressMessages(messages, { recencyWindow: 0 });
+      // sys preserved by role, short by length — the rest compressed
+      expect(Object.keys(result.verbatim).sort()).toEqual(['a1', 'a2', 'u1', 'u2']);
+      expect(result.verbatim['u1'].content).toBe(prose);
+      expect(result.verbatim['a1'].content).toBe(codeContent);
+    });
+
+    it('empty when nothing compressed (including empty input)', () => {
+      expect(compressMessages([]).verbatim).toEqual({});
+      const preserved: Message[] = [
+        msg({ id: '1', index: 0, role: 'system', content: 'System.' }),
+        msg({ id: '2', index: 1, role: 'user', content: 'Short.' }),
+      ];
+      expect(compressMessages(preserved).verbatim).toEqual({});
+    });
+
+    it('Object.keys(verbatim).length === messages_compressed invariant', () => {
+      const prose = 'This is a long message about general topics that could be compressed. '.repeat(5);
+      const cases: Message[][] = [
+        [],
+        [msg({ id: '1', index: 0, role: 'user', content: prose })],
+        [msg({ id: 'a', index: 0, role: 'user', content: prose }), msg({ id: 'b', index: 1, role: 'user', content: prose })],
+        [msg({ id: '1', index: 0, role: 'user', content: prose }), msg({ id: '2', index: 1, role: 'assistant', content: prose })],
+      ];
+      for (const messages of cases) {
+        const result = compressMessages(messages, { recencyWindow: 0 });
+        expect(Object.keys(result.verbatim).length).toBe(result.compression.messages_compressed);
+      }
+    });
+  });
+
   describe('provenance metadata', () => {
     it('sourceVersion flows into _uc_original.version and compression.original_version', () => {
       const prose = 'This is a long message about general topics that could be compressed. '.repeat(5);

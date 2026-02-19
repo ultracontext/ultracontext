@@ -97,6 +97,7 @@ class CompressResponse(TypedDict):
     data: List[Message]
     version: int
     compression: CompressionInfo
+    verbatim: Dict[str, Message]
 
 
 class UncompressOptions(TypedDict, total=False):
