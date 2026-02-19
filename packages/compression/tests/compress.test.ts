@@ -497,6 +497,18 @@ describe('compressMessages', () => {
       expect(content).toContain('PostgreSQL');
     });
 
+    it('falls back to first sentence when all sentences are filler', () => {
+      const text = 'Sure thing. OK then. Thanks for that. Got it. No problem. Will do. Right. Absolutely. '.repeat(3);
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'user', content: text }),
+      ];
+      const result = compressMessages(messages, { recencyWindow: 0 });
+      const content = result.messages[0].content!;
+      expect(content).toMatch(/^\[summary:/);
+      // Falls back to first sentence since all are filler
+      expect(content).toContain('Sure thing');
+    });
+
     it('hard caps overall summary at 200 chars', () => {
       // Use non-hex chars to avoid triggering hash_or_sha T0 detection
       const longSentence = 'Wor '.repeat(50) + 'is the architecture we chose for this particular deployment. ';
@@ -653,17 +665,21 @@ describe('compressMessages', () => {
     });
 
     it('code-split skipped when output would be larger', () => {
-      // ~210 chars of prose — just above threshold but summary + entities + bracket overhead exceeds original
-      const prose = 'The authentication middleware validates each incoming request token. '.repeat(3);
-      const fence = '```ts\nconst ok = validate(token);\n```';
+      // Entity-heavy prose >= 200 chars enters the code-split path (not filtered by threshold).
+      // Many identifiers inflate the [summary: ... | entities: ...] bracket past the original,
+      // so the size guard must be what preserves it.
+      const prose = 'We call getUserProfile fetchUserData handleAuthToken validateSession refreshCache parseConfig buildQuery formatResponse and logMetrics in TypeScript WebSocket Express middleware. Also uses auth_token user_session cache_key. ';
+      const fence = '```ts\nx()\n```';
       const content = `${prose}\n\n${fence}`;
+      expect(prose.trim().length).toBeGreaterThanOrEqual(200);
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'assistant', content }),
       ];
       const result = compressMessages(messages, { recencyWindow: 0 });
-      const output = result.messages[0].content!;
-      // Output must never exceed the original length
-      expect(output.length).toBeLessThanOrEqual(content.length);
+      // Guard fired: message preserved verbatim, not compressed
+      expect(result.compression.messages_preserved).toBe(1);
+      expect(result.compression.messages_compressed).toBe(0);
+      expect(result.messages[0].content).toBe(content);
     });
 
     it('code-split with substantial prose achieves positive savings', () => {
@@ -708,6 +724,23 @@ describe('compressMessages', () => {
       expect(output).toContain(fence2);
       expect(output).toMatch(/^\[summary:/);
       expect(result.compression.messages_compressed).toBe(1);
+    });
+  });
+
+  describe('no negative savings', () => {
+    it('prose-only compression never exceeds original length', () => {
+      // Medium (120-800) and large (>800) prose paths must both shrink
+      const medium = 'This talks about general topics without any special formatting or patterns that would trigger preservation rules. '.repeat(3);
+      const large = 'This talks about general topics without any special formatting or patterns that would trigger preservation rules. '.repeat(10);
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'user', content: medium }),
+        msg({ id: '2', index: 1, role: 'assistant', content: large }),
+      ];
+      const result = compressMessages(messages, { preserve: [], recencyWindow: 0 });
+      for (const m of result.messages) {
+        const orig = messages.find(o => o.id === m.id)!;
+        expect(m.content!.length).toBeLessThanOrEqual(orig.content!.length);
+      }
     });
   });
 
