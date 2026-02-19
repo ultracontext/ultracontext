@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node src/index.mjs --daemon",
     "dev": "node --watch src/index.mjs --daemon",
+    "tui": "node src/index.mjs",
     "check": "node --check src/index.mjs && node --check src/ui.mjs && node --check src/codex-local-resume.mjs && node --check src/sources.mjs && node --check src/redact.mjs && node --check src/utils.mjs && node --check src/redis.mjs"
   },
   "dependencies": {
