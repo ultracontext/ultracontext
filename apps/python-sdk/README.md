@@ -58,7 +58,8 @@ Right now, we're reinventing the wheel for every car we build. Instead of tackli
 
 ## Why UltraContext
 
-- **Simple API** — Five methods. That's it.
+- **Simple API** — Seven methods. That's it.
+- **Context compression** — Shrink conversations losslessly. Code and structure stay verbatim; prose gets summarized.
 - **Automatic versioning** — Updates/deletes create versions. Nothing is lost.
 - **Time-travel** — Jump to any point by version, index, or timestamp.
 - **Schema-free** — Store any JSON. Own your data structure.
@@ -140,6 +141,13 @@ uc.update(ctx["id"], id="msg_xyz", content="Fixed!", metadata={"reason": "typo"}
 uc.delete(ctx["id"], "msg_xyz")
 uc.delete(ctx["id"], -1)
 uc.delete(ctx["id"], ["msg_a", "msg_b", -1], metadata={"reason": "cleanup"})
+
+# compress - shrink context losslessly (auto-versions)
+uc.compress(ctx["id"])
+uc.compress(ctx["id"], preserve=["system"], recency_window=4)
+
+# uncompress - restore original messages
+uc.uncompress(ctx["id"])
 ```
 
 <br />
