@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { Box, Text } from "ink";
 
 const WIDTH = 28;
-const HEIGHT = 12;
+const HEIGHT = 10;
 const SCALE = 40.0;
 const CAMERA_Z = 20.0;
 const CHARS = "··..,,--::;;==!!**##$$@@";

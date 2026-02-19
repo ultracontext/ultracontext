@@ -10,16 +10,16 @@ export function computeTuiLayout(stdoutColumns, stdoutRows) {
 
   const compactLayoutBreakpoint = 114;
   const isCompactLayout = contentWidth < compactLayoutBreakpoint;
-  const sidebarWidth = contentWidth >= 140 ? 40 : contentWidth >= 112 ? 34 : 28;
-  const fullBottomPanelHeight = Math.max(safeRows - 17, 6);
-  const targetBottomPanelHeight = Math.max(Math.floor(fullBottomPanelHeight * 0.67), 6);
-  const maxBottomPanelHeight = Math.max(safeRows - 10, 4);
+  const sidebarWidth = contentWidth >= 140 ? 34 : contentWidth >= 112 ? 30 : 24;
+  const fullBottomPanelHeight = Math.max(safeRows - 12, 6);
+  const targetBottomPanelHeight = Math.max(Math.floor(fullBottomPanelHeight * 0.75), 6);
+  const maxBottomPanelHeight = Math.max(safeRows - 7, 4);
   const bottomPanelHeight = Math.min(targetBottomPanelHeight, maxBottomPanelHeight);
 
   // Wide layout (left sidebar + right panel)
   const minMenuPanelHeight = Math.min(5, Math.max(bottomPanelHeight, 1));
   const minAgentsPanelHeight = 0;
-  let menuPanelHeight = Math.max(Math.floor(bottomPanelHeight * 0.62), minMenuPanelHeight);
+  let menuPanelHeight = Math.max(Math.floor(bottomPanelHeight * 0.52), minMenuPanelHeight);
   if (menuPanelHeight > bottomPanelHeight - minAgentsPanelHeight) {
     menuPanelHeight = Math.max(bottomPanelHeight - minAgentsPanelHeight, minMenuPanelHeight);
   }
@@ -31,9 +31,9 @@ export function computeTuiLayout(stdoutColumns, stdoutRows) {
 
   // Compact layout (stacked panels)
   // In compact mode, prioritize readability of the main view.
-  let compactMenuPanelHeight = Math.min(Math.max(Math.floor(bottomPanelHeight * 0.35), 3), Math.max(bottomPanelHeight - 3, 1));
+  let compactMenuPanelHeight = Math.min(Math.max(Math.floor(bottomPanelHeight * 0.28), 3), Math.max(bottomPanelHeight - 3, 1));
   let compactRemaining = Math.max(bottomPanelHeight - compactMenuPanelHeight, 1);
-  let compactAgentsPanelHeight = compactRemaining >= 9 ? 4 : 0;
+  let compactAgentsPanelHeight = compactRemaining >= 10 ? 5 : 0;
   let compactViewPanelHeight = Math.max(compactRemaining - compactAgentsPanelHeight, 1);
   if (compactMenuPanelHeight + compactAgentsPanelHeight + compactViewPanelHeight > bottomPanelHeight) {
     compactViewPanelHeight = Math.max(bottomPanelHeight - compactMenuPanelHeight - compactAgentsPanelHeight, 1);

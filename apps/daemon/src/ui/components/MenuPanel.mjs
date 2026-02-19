@@ -37,7 +37,7 @@ export function MenuPanel({ focusMode, menuIndex, selectedTab, height, width }) 
       title: "Menu",
       width,
       height,
-      borderColor: "white",
+      borderColor: "gray",
       titleColor: "white",
       paddingX: MENU_PADDING_X,
       paddingY: MENU_PADDING_Y,
@@ -60,7 +60,7 @@ export function MenuPanel({ focusMode, menuIndex, selectedTab, height, width }) 
         { key: `menu-${tab.id}-${start}-${listCapacity}`, wrap: "truncate-end" },
         React.createElement(Text, { color: markerColor }, marker),
         " ",
-        React.createElement(Text, { color: labelColor }, label),
+        React.createElement(Text, { color: labelColor, dim: !isHighlighted }, label),
         tailPad
       );
     })
