@@ -283,7 +283,7 @@ describe('compressMessages', () => {
       const result = compressMessages(messages, { recencyWindow: 0 });
       expect(result.messages.length).toBe(3);
       const compressed = result.messages[1];
-      expect(compressed.content).toMatch(/\[summary:.*\(1 message merged\)/);
+      expect(compressed.content).toMatch(/^\[summary:/);
       const meta = compressed.metadata?._uc_original as { ids: string[]; version: number };
       expect(meta.ids).toEqual(['2']);
       expect(meta.version).toBe(0);
@@ -741,6 +741,58 @@ describe('compressMessages', () => {
         const orig = messages.find(o => o.id === m.id)!;
         expect(m.content!.length).toBeLessThanOrEqual(orig.content!.length);
       }
+    });
+  });
+
+  describe('idempotency', () => {
+    it('compress is idempotent — re-compressing output produces identical result', () => {
+      const prose = 'The authentication system validates incoming request tokens against the session store and checks expiration timestamps before allowing access to protected resources. '.repeat(4);
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'system', content: 'System prompt.' }),
+        msg({ id: '2', index: 1, role: 'user', content: prose }),
+        msg({ id: '3', index: 2, role: 'assistant', content: prose }),
+      ];
+      const first = compressMessages(messages, { recencyWindow: 0 });
+      expect(first.compression.messages_compressed).toBeGreaterThan(0);
+
+      const second = compressMessages(first.messages, { recencyWindow: 0 });
+      expect(second.compression.messages_compressed).toBe(0);
+      expect(second.messages).toEqual(first.messages);
+    });
+  });
+
+  describe('prose-only size guard', () => {
+    it('preserves entity-dense short messages where summary would grow', () => {
+      // ~135 chars packed with identifiers — bracket overhead will exceed original
+      const content = 'Call getUserProfile fetchUserData handleAuthToken validateSession refreshCache parseConfig buildQuery formatResponse logMetrics in the TypeScript codebase.';
+      expect(content.length).toBeGreaterThanOrEqual(120);
+      expect(content.length).toBeLessThan(300);
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'user', content }),
+      ];
+      const result = compressMessages(messages, { preserve: [], recencyWindow: 0 });
+      expect(result.compression.messages_preserved).toBe(1);
+      expect(result.compression.messages_compressed).toBe(0);
+      expect(result.messages[0].content).toBe(content);
+    });
+
+    it('multi-message merge preserves when summary exceeds combined length', () => {
+      // Two short-ish messages whose combined content is shorter than the merge summary
+      const content1 = 'Call getUserProfile fetchUserData handleAuthToken validateSession refreshCache parseConfig buildQuery formatResponse logMetrics in the codebase.';
+      const content2 = 'Also call parseConfig buildQuery formatResponse logMetrics getUserProfile fetchUserData handleAuthToken validateSession refreshCache here.';
+      expect(content1.length).toBeGreaterThanOrEqual(120);
+      expect(content2.length).toBeGreaterThanOrEqual(120);
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'user', content: content1 }),
+        msg({ id: '2', index: 1, role: 'user', content: content2 }),
+      ];
+      const result = compressMessages(messages, { preserve: [], recencyWindow: 0 });
+      // Both messages preserved individually — no merge
+      expect(result.messages.length).toBe(2);
+      expect(result.messages[0].content).toBe(content1);
+      expect(result.messages[1].content).toBe(content2);
+      expect(result.compression.messages_preserved).toBe(2);
+      expect(result.compression.messages_compressed).toBe(0);
     });
   });
 

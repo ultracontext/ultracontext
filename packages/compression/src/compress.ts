@@ -98,7 +98,7 @@ function extractEntities(text: string): string[] {
 
 function splitCodeAndProse(text: string): Array<{ type: 'prose' | 'code'; content: string }> {
   const segments: Array<{ type: 'prose' | 'code'; content: string }> = [];
-  const fenceRe = /```[\s\S]*?```/g;
+  const fenceRe = /^```[^\n]*\n[\s\S]*?\n```/gm;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
@@ -183,7 +183,12 @@ export function compressMessages(
       return { msg, preserved: true };
     }
 
-    // Rule 5: code fence splitting — extract fences verbatim, summarize prose
+    // Rule 5: already-compressed content — don't double-compress
+    if (content.startsWith('[summary:')) {
+      return { msg, preserved: true };
+    }
+
+    // Rule 6: code fence splitting — extract fences verbatim, summarize prose
     if (content.includes('```')) {
       const segments = splitCodeAndProse(content);
       const totalProse = segments
@@ -198,12 +203,12 @@ export function compressMessages(
       return { msg, preserved: true };
     }
 
-    // Rule 6: VBC classifies as T0
+    // Rule 7: VBC classifies as T0
     if (content && classifyMessage(content).decision === 'T0') {
       return { msg, preserved: true };
     }
 
-    // Rule 7: valid JSON
+    // Rule 8: valid JSON
     if (content && isValidJson(content)) {
       return { msg, preserved: true };
     }
@@ -279,45 +284,41 @@ export function compressMessages(
     if (group.length > 1) {
       // Consecutive same-role merging
       const summary = `[summary: ${summaryText} (${group.length} messages merged)${entitySuffix}]`;
-      const mergedMsg: Message = {
-        id: group[0].msg.id,
-        index: group[0].msg.index,
-        role: group[0].msg.role,
-        content: summary,
-        metadata: {
-          ...(group[0].msg.metadata ?? {}),
-          _uc_original: {
-            ids: group.map(g => g.msg.id),
-            version: 0,
+      const combinedLength = group.reduce((sum, g) => sum + contentLength(g.msg), 0);
+
+      if (summary.length >= combinedLength) {
+        for (const g of group) {
+          result.push(g.msg);
+          messagesPreserved++;
+        }
+      } else {
+        const mergedMsg: Message = {
+          id: group[0].msg.id,
+          index: group[0].msg.index,
+          role: group[0].msg.role,
+          content: summary,
+          metadata: {
+            ...(group[0].msg.metadata ?? {}),
+            _uc_original: {
+              ids: group.map(g => g.msg.id),
+              version: 0,
+            },
           },
-        },
-      };
-      result.push(mergedMsg);
-      messagesCompressed += group.length;
+        };
+        result.push(mergedMsg);
+        messagesCompressed += group.length;
+      }
     } else {
       // Single non-preserved message
       const single = group[0].msg;
       const content = typeof single.content === 'string' ? single.content : '';
-      if (content.length > 800) {
-        // Large prose compression
-        const summary = `[summary: ${summaryText}${entitySuffix}]`;
-        const compressedMsg: Message = {
-          ...single,
-          content: summary,
-          metadata: {
-            ...(single.metadata ?? {}),
-            _uc_original: {
-              ids: [single.id],
-              version: 0,
-            },
-          },
-        };
-        result.push(compressedMsg);
-        messagesCompressed++;
+      const summary = `[summary: ${summaryText}${entitySuffix}]`;
+
+      if (summary.length >= content.length) {
+        result.push(single);
+        messagesPreserved++;
       } else {
-        // Not large enough for prose compression — still compress as single
-        const summary = `[summary: ${summaryText} (1 message merged)${entitySuffix}]`;
-        const compressedMsg: Message = {
+        result.push({
           ...single,
           content: summary,
           metadata: {
@@ -327,8 +328,7 @@ export function compressMessages(
               version: 0,
             },
           },
-        };
-        result.push(compressedMsg);
+        });
         messagesCompressed++;
       }
     }
