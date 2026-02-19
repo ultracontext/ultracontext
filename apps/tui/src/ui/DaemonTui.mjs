@@ -1,8 +1,7 @@
 import React from "react";
 import { Box, Text, useInput, useStdout } from "ink";
-import { TitledBox } from "@mishieck/ink-titled-box";
 
-import { UC_BRAND_BLUE } from "./constants.mjs";
+import { UC_BLUE_LIGHT, UC_BRAND_BLUE } from "./constants.mjs";
 import { computeTuiLayout } from "./layout.mjs";
 import { buildMoveMenuIndex, createInputHandler } from "./input.mjs";
 import { fitToWidth } from "./format.mjs";
@@ -35,6 +34,23 @@ function renderFooterQuip(quip) {
     before ? React.createElement(Text, { key: "quip-before", color: "gray", bold: true }, before) : null,
     React.createElement(Text, { key: "quip-strike", color: "gray", bold: true, strikethrough: true }, match),
     after ? React.createElement(Text, { key: "quip-after", color: "gray", bold: true }, after) : null
+  );
+}
+
+function renderMainFrameTop(width, title) {
+  const safeWidth = Math.max(Number(width) || 0, 4);
+  const innerWidth = Math.max(safeWidth - 2, 1);
+  const paddedTitle = ` ${title} `;
+  const shownTitle = fitToWidth(paddedTitle, innerWidth);
+  const fillWidth = Math.max(innerWidth - shownTitle.length, 0);
+
+  return React.createElement(
+    Text,
+    { color: UC_BRAND_BLUE, wrap: "truncate-end" },
+    "┌",
+    React.createElement(Text, { color: UC_BLUE_LIGHT, bold: true }, shownTitle),
+    "─".repeat(fillWidth),
+    "┐"
   );
 }
 
@@ -135,16 +151,17 @@ export function DaemonTui({ snapshot, actions }) {
   const leftMax = Math.max(footerWidth - quip.length - 2, 12);
   const left = fitToWidth(footerLeft, leftMax);
   const gap = " ".repeat(Math.max(footerWidth - left.length - quip.length, 1));
+  const footerRule = "─".repeat(Math.max(footerWidth, 1));
 
   return React.createElement(
     Box,
     { flexDirection: "column" },
+    React.createElement(Box, { width: layout.containerWidth }, renderMainFrameTop(layout.containerWidth, "UltraContext v1.1")),
     React.createElement(
-      TitledBox,
+      Box,
       {
         borderStyle: "single",
-        titles: ["UltraContext v1.1"],
-        titleJustify: "flex-start",
+        borderTop: false,
         borderColor: UC_BRAND_BLUE,
         flexDirection: "column",
         paddingX: 0,
@@ -156,13 +173,18 @@ export function DaemonTui({ snapshot, actions }) {
     ),
     React.createElement(
       Box,
-      { width: footerWidth, flexDirection: "row" },
+      { width: footerWidth, flexDirection: "column" },
+      React.createElement(Text, { color: "gray", dim: true, wrap: "truncate-end" }, footerRule),
       React.createElement(
-        Text,
-        { color: "gray", wrap: "truncate-end" },
-        `${left}${gap}`
-      ),
-      renderFooterQuip(quip)
+        Box,
+        { width: footerWidth, flexDirection: "row" },
+        React.createElement(
+          Text,
+          { color: "gray", wrap: "truncate-end" },
+          `${left}${gap}`
+        ),
+        renderFooterQuip(quip)
+      )
     )
   );
 }

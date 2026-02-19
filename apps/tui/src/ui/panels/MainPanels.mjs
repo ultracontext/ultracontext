@@ -1,24 +1,76 @@
 import React from "react";
-import { Box } from "ink";
+import { Box, Text } from "ink";
 
+import { UC_BLUE_LIGHT, UC_BRAND_BLUE } from "../constants.mjs";
+import { fitToWidth } from "../format.mjs";
 import { selectedTabTitle } from "../state.mjs";
 import { ClientsPanel, MenuPanel, Section } from "../components/index.mjs";
 import { RightPanel } from "./RightPanel.mjs";
 
+function renderFocusedViewTop(width, title) {
+  const safeWidth = Math.max(Number(width) || 0, 4);
+  const innerWidth = Math.max(safeWidth - 2, 1);
+  const paddedTitle = ` ${title} `;
+  const shownTitle = fitToWidth(paddedTitle, innerWidth);
+  const fillWidth = Math.max(innerWidth - shownTitle.length, 0);
+
+  return React.createElement(
+    Text,
+    { color: UC_BRAND_BLUE, wrap: "truncate-end" },
+    "╔",
+    React.createElement(Text, { color: UC_BLUE_LIGHT, bold: true }, shownTitle),
+    "═".repeat(fillWidth),
+    "╗"
+  );
+}
+
 function ViewSection({ snapshot, focusMode, width, grow, height, maxRows, maxCols }) {
+  const viewFocused = focusMode === "view";
+  const title = selectedTabTitle(snapshot.selectedTab);
+
+  if (viewFocused) {
+    return React.createElement(
+      Box,
+      { flexDirection: "column", width, flexGrow: grow ? 1 : 0, flexShrink: 0 },
+      renderFocusedViewTop(width, title),
+      React.createElement(
+        Box,
+        {
+          borderStyle: "double",
+          borderTop: false,
+          borderColor: UC_BRAND_BLUE,
+          flexDirection: "column",
+          paddingX: 2,
+          paddingY: 1,
+          width,
+          height,
+          flexGrow: grow ? 1 : 0,
+          flexShrink: 0,
+        },
+        React.createElement(RightPanel, {
+          snapshot,
+          viewFocused,
+          maxRows,
+          maxCols,
+        })
+      )
+    );
+  }
+
   return React.createElement(
     Section,
     {
-      title: selectedTabTitle(snapshot.selectedTab),
+      title,
       width,
       height,
       grow,
-      borderColor: "white",
+      borderColor: "cyan",
       titleColor: "white",
+      borderStyle: "double",
     },
     React.createElement(RightPanel, {
       snapshot,
-      viewFocused: focusMode === "view",
+      viewFocused,
       maxRows,
       maxCols,
     })
@@ -30,6 +82,7 @@ export function MainPanels({ snapshot, layout, focusMode, menuIndex, clients }) 
     const clientsSection = layout.compactShowClientsPanel
       ? React.createElement(ClientsPanel, {
           clients,
+          now: snapshot.now,
           height: layout.compactAgentsPanelHeight,
           width: layout.contentWidth,
         })
@@ -60,6 +113,7 @@ export function MainPanels({ snapshot, layout, focusMode, menuIndex, clients }) 
   const clientsSection = layout.showClientsPanel
     ? React.createElement(ClientsPanel, {
         clients,
+        now: snapshot.now,
         height: layout.agentsPanelHeight,
         width: layout.sidebarWidth,
       })
