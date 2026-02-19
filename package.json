@@ -1,0 +1,10 @@
+{
+  "name": "ultracontext-monorepo",
+  "private": true,
+  "packageManager": "pnpm@10.28.1",
+  "scripts": {
+    "check": "pnpm -r --if-present run check",
+    "dev:daemon": "pnpm --filter ultracontext-daemon run dev",
+    "dev:tui": "pnpm --filter ultracontext-tui run dev"
+  }
+}

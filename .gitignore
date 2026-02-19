@@ -35,6 +35,7 @@ __pycache__/
 
 # package managers
 .pnp.*
+.pnpm-store/
 .yarn/*
 !.yarn/patches
 !.yarn/plugins

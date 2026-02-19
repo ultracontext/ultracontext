@@ -119,6 +119,16 @@ Get an API key from the [UltraContext Dashboard](https://ultracontext.ai/dashboa
 
 ---
 
+## Monorepo Development
+
+```bash
+pnpm install
+pnpm --filter ultracontext-daemon run dev
+pnpm --filter ultracontext-tui run dev
+```
+
+---
+
 ## Documentation
 
 - [Quickstart](https://ultracontext.ai/docs/quickstart/nodejs) — Get running in 2 minutes
