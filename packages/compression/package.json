@@ -8,7 +8,8 @@
     },
     "scripts": {
         "build": "tsc",
-        "test": "vitest run"
+        "test": "vitest run",
+        "bench": "npx tsx bench/run.ts"
     },
     "main": "./dist/index.js",
     "types": "./dist/index.d.ts",
