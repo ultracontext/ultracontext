@@ -54,6 +54,7 @@ describe('classifyMessage', () => {
     it('detects version numbers', () => {
       const r = classifyMessage('Requires version 3.14.1 or higher');
       expect(r.decision).toBe('T0');
+      expect(r.reasons).toContain('version_number');
     });
 
     it('detects email addresses', () => {
@@ -89,11 +90,13 @@ describe('classifyMessage', () => {
     it('detects JSON content', () => {
       const r = classifyMessage('{"key": "value", "count": 42}');
       expect(r.decision).toBe('T0');
+      expect(r.reasons).toContain('json_structure');
     });
 
     it('detects YAML content', () => {
       const r = classifyMessage('name: my-service\nversion: 1.0\nport: 8080');
       expect(r.decision).toBe('T0');
+      expect(r.reasons).toContain('yaml_structure');
     });
 
     it('has high confidence for clear T0 content', () => {
@@ -105,6 +108,32 @@ describe('classifyMessage', () => {
       // Code fence + file path + url = multiple reasons
       const r = classifyMessage('```bash\ncurl https://example.com/api/v2/data\n```');
       expect(r.confidence).toBeGreaterThan(0.75);
+    });
+
+    it('detects unicode math symbols', () => {
+      const r = classifyMessage('The set is defined as A ∪ B ∩ C where ∀x ∈ A');
+      expect(r.decision).toBe('T0');
+      expect(r.reasons).toContain('unicode_math');
+    });
+
+    it('detects verse / poetry patterns', () => {
+      const r = classifyMessage('Here is a poem\nRoses are red\nViolets are blue\nSugar is sweet');
+      expect(r.decision).toBe('T0');
+      expect(r.reasons).toContain('verse_pattern');
+    });
+
+    it('detects high line-length variance', () => {
+      const r = classifyMessage(
+        'x\nThis is a much longer line that creates significant variance compared to the short ones around it\ny\nz'
+      );
+      expect(r.decision).toBe('T0');
+      expect(r.reasons).toContain('high_line_length_variance');
+    });
+
+    it('detects quoted keys', () => {
+      const r = classifyMessage('The config has "timeout": 30 and "retries": 5');
+      expect(r.decision).toBe('T0');
+      expect(r.reasons).toContain('quoted_key');
     });
 
     it('caps confidence at 0.95', () => {
@@ -125,6 +154,20 @@ describe('classifyMessage', () => {
     it('classifies very short text as T2', () => {
       const r = classifyMessage('OK, done.');
       expect(r.decision).toBe('T2');
+    });
+
+    it('classifies 19-word prose as T2 (boundary)', () => {
+      // Exactly 19 words — below the 20-word T3 threshold
+      const r = classifyMessage(
+        'The quick brown fox jumps over the lazy dog near the old oak tree by the river bank today'
+      );
+      expect(r.decision).toBe('T2');
+    });
+
+    it('classifies empty string as T2', () => {
+      const r = classifyMessage('');
+      expect(r.decision).toBe('T2');
+      expect(r.reasons).toEqual([]);
     });
   });
 
@@ -152,6 +195,14 @@ describe('classifyMessage', () => {
       );
       expect(r.decision).toBe('T3');
     });
+
+    it('classifies 20-word prose as T3 (boundary)', () => {
+      // Exactly 20 words — at the T3 threshold
+      const r = classifyMessage(
+        'The quick brown fox jumps over the lazy dog near the old oak tree by the river bank today again'
+      );
+      expect(r.decision).toBe('T3');
+    });
   });
 
   describe('performance', () => {
@@ -160,6 +211,14 @@ describe('classifyMessage', () => {
       classifyMessage('A reasonably sized paragraph of text content here. It talks about various things.');
       const elapsed = performance.now() - start;
       expect(elapsed).toBeLessThan(5);
+    });
+
+    it('handles 1000 calls under 500ms', () => {
+      const input = 'A reasonably sized paragraph of text content here. It talks about various things and keeps going for a while.';
+      const start = performance.now();
+      for (let i = 0; i < 1000; i++) classifyMessage(input);
+      const elapsed = performance.now() - start;
+      expect(elapsed).toBeLessThan(500);
     });
   });
 });

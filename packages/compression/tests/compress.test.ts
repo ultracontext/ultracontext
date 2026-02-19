@@ -220,4 +220,132 @@ describe('compressMessages', () => {
       ).toThrow('501');
     });
   });
+
+  describe('interleaving and grouping', () => {
+    it('splits compressed groups around a preserved message', () => {
+      const longProse = 'This talks about general topics without any special formatting or code. '.repeat(15);
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'user', content: longProse }),
+        msg({ id: '2', index: 1, role: 'tool', content: 'Tool result' }),
+        msg({ id: '3', index: 2, role: 'user', content: longProse }),
+      ];
+      const result = compressMessages(messages);
+      expect(result.messages.length).toBe(3);
+      expect(result.messages[0].content).toMatch(/^\[summary:/);
+      expect(result.messages[1].role).toBe('tool');
+      expect(result.messages[1].content).toBe('Tool result');
+      expect(result.messages[2].content).toMatch(/^\[summary:/);
+      expect(result.compression.messages_compressed).toBe(2);
+      expect(result.compression.messages_preserved).toBe(1);
+    });
+
+    it('merges consecutive compressible but splits at each preserved boundary', () => {
+      const longProse = 'This talks about general topics without any special formatting or code. '.repeat(15);
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'user', content: longProse }),
+        msg({ id: '2', index: 1, role: 'assistant', content: longProse }),
+        msg({ id: '3', index: 2, role: 'tool', content: 'Result' }),
+        msg({ id: '4', index: 3, role: 'user', content: longProse }),
+        msg({ id: '5', index: 4, role: 'assistant', content: longProse }),
+      ];
+      const result = compressMessages(messages);
+      // [merged 1+2] [preserved 3] [merged 4+5]
+      expect(result.messages.length).toBe(3);
+      const meta0 = result.messages[0].metadata?._uc_original as { ids: string[] };
+      expect(meta0.ids).toEqual(['1', '2']);
+      const meta2 = result.messages[2].metadata?._uc_original as { ids: string[] };
+      expect(meta2.ids).toEqual(['4', '5']);
+    });
+  });
+
+  describe('medium prose (120-800 chars)', () => {
+    it('compresses a single isolated message in the 120-800 range', () => {
+      // ~320 chars of pure prose, no T0 triggers
+      const mediumProse = 'This talks about general topics without any special formatting or patterns that would trigger preservation rules. '.repeat(3);
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'system', content: 'System prompt.' }),
+        msg({ id: '2', index: 1, role: 'user', content: mediumProse }),
+        msg({ id: '3', index: 2, role: 'user', content: 'Thanks.' }),
+      ];
+      const result = compressMessages(messages);
+      expect(result.messages.length).toBe(3);
+      const compressed = result.messages[1];
+      expect(compressed.content).toMatch(/\[summary:.*\(1 messages merged\)\]/);
+      const meta = compressed.metadata?._uc_original as { ids: string[]; version: number };
+      expect(meta.ids).toEqual(['2']);
+      expect(meta.version).toBe(0);
+    });
+
+    it('uses {ids} shape (not {id}) for single-message merge path', () => {
+      const mediumProse = 'This talks about general topics without any special formatting or patterns that would trigger preservation rules. '.repeat(3);
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'system', content: 'System.' }),
+        msg({ id: '2', index: 1, role: 'user', content: mediumProse }),
+      ];
+      const result = compressMessages(messages);
+      const meta = result.messages[1].metadata?._uc_original as Record<string, unknown>;
+      // Medium prose path uses { ids: [...] }, large prose uses { id: ... }
+      expect(meta).toHaveProperty('ids');
+      expect(meta).not.toHaveProperty('id');
+    });
+  });
+
+  describe('edge cases', () => {
+    it('compresses system role when preserve is empty array', () => {
+      const longSystem = 'You are a helpful assistant who provides detailed and comprehensive responses to all queries. '.repeat(12);
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'system', content: longSystem }),
+      ];
+      const result = compressMessages(messages, { preserve: [] });
+      expect(result.compression.messages_compressed).toBe(1);
+      expect(result.messages[0].content).toMatch(/^\[summary:/);
+    });
+
+    it('preserves messages with undefined content (treated as short)', () => {
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, content: undefined as unknown as string }),
+      ];
+      const result = compressMessages(messages);
+      expect(result.compression.messages_preserved).toBe(1);
+    });
+
+    it('preserves existing metadata alongside _uc_original', () => {
+      const largeProse = 'First sentence about some topic. ' + 'More text follows here. '.repeat(50);
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'system', content: 'System.' }),
+        msg({ id: '2', index: 1, role: 'user', content: largeProse, metadata: { custom: 'value', priority: 1 } }),
+      ];
+      const result = compressMessages(messages);
+      const compressed = result.messages[1];
+      expect(compressed.metadata?.custom).toBe('value');
+      expect(compressed.metadata?.priority).toBe(1);
+      expect(compressed.metadata?._uc_original).toBeDefined();
+    });
+
+    it('maintains message order after compression', () => {
+      const longProse = 'General discussion about various topics without special patterns. '.repeat(15);
+      const messages: Message[] = [
+        msg({ id: 'a', index: 0, role: 'system', content: 'System.' }),
+        msg({ id: 'b', index: 1, role: 'user', content: longProse }),
+        msg({ id: 'c', index: 2, role: 'tool', content: 'Result' }),
+        msg({ id: 'd', index: 3, role: 'user', content: longProse }),
+        msg({ id: 'e', index: 4, role: 'user', content: 'Thanks' }),
+      ];
+      const result = compressMessages(messages);
+      const ids = result.messages.map(m => m.id);
+      expect(ids).toEqual(['a', 'b', 'c', 'd', 'e']);
+    });
+
+    it('preserves original id and role on compressed messages', () => {
+      const longProse = 'General discussion about various topics without special patterns. '.repeat(15);
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'system', content: 'System.' }),
+        msg({ id: '2', index: 1, role: 'assistant', content: longProse }),
+      ];
+      const result = compressMessages(messages);
+      const compressed = result.messages[1];
+      expect(compressed.id).toBe('2');
+      expect(compressed.role).toBe('assistant');
+    });
+  });
 });
