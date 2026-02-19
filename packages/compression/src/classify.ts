@@ -20,6 +20,8 @@ function detectStructuralPatterns(text: string): {
   if (INDENT_CODE_RE.test(text))  reasons.push('indented_code');
   if (LATEX_RE.test(text))        reasons.push('latex_math');
   if (UNICODE_MATH_RE.test(text)) reasons.push('unicode_math');
+  if (JSON_RE.test(text))         reasons.push('json_structure');
+  if (YAML_RE.test(text))         reasons.push('yaml_structure');
   if (POETRY_RE.test(text))       reasons.push('verse_pattern');
 
   // Line-length variance — high variation signals structured content

@@ -119,17 +119,19 @@ export function compressMessages(
       result.push(mergedMsg);
       messagesCompressed += group.length;
     } else {
-      // Single non-preserved message: large prose compression
-      const content = typeof msg.content === 'string' ? msg.content : '';
+      // Single non-preserved message
+      const single = group[0].msg;
+      const content = typeof single.content === 'string' ? single.content : '';
       if (content.length > 800) {
+        // Large prose compression
         const summary = `[summary: ${firstSentence(content)}]`;
         const compressedMsg: Message = {
-          ...msg,
+          ...single,
           content: summary,
           metadata: {
-            ...(msg.metadata ?? {}),
+            ...(single.metadata ?? {}),
             _uc_original: {
-              id: msg.id,
+              id: single.id,
               version: 0,
             },
           },
@@ -140,12 +142,12 @@ export function compressMessages(
         // Not large enough for prose compression — still merge as single
         const summary = `[summary: ${firstSentence(content)}... (1 messages merged)]`;
         const compressedMsg: Message = {
-          ...msg,
+          ...single,
           content: summary,
           metadata: {
-            ...(msg.metadata ?? {}),
+            ...(single.metadata ?? {}),
             _uc_original: {
-              ids: [msg.id],
+              ids: [single.id],
               version: 0,
             },
           },
