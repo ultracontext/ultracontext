@@ -1,25 +1,28 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-This repository is a small monorepo organized under `apps/`:
-- `apps/daemon`: Node.js daemon that ingests local agent activity (`src/*.mjs`, assets in `assets/`).
-- `apps/tui`: terminal UI client for daemon state (`src/index.mjs`).
+This repository is a small monorepo organized under `apps/` and `packages/`:
+- `apps/daemon`: Node.js daemon that ingests local agent activity (`src/*.mjs`), stores local runtime state in SQLite, and exposes local WS state for TUI.
+- `apps/tui`: terminal UI client for daemon state (`src/index.mjs`), connects to daemon via local WebSocket.
 - `apps/js-sdk`: TypeScript SDK (`src/index.ts`, build output in `dist/`).
 - `apps/python-sdk`: Python SDK package (`ultracontext/`).
-- `apps/redis`: local Redis service (`docker-compose.yml`) for daemon/TUI state.
+- `packages/protocol`: shared daemon/TUI protocol helpers and message contracts.
 
 Keep changes scoped to the relevant app and update that app’s README when behavior changes.
 
 ## Build, Test, and Development Commands
-- `cd apps/daemon && npm run start`: run daemon once.
-- `cd apps/daemon && npm run dev`: run daemon in watch mode.
-- `cd apps/daemon && npm run check`: syntax-check daemon modules.
-- `cd apps/tui && npm run start`: launch TUI client.
-- `cd apps/tui && npm run check`: syntax-check TUI entrypoint.
-- `cd apps/js-sdk && npm run build`: compile TypeScript to `dist/`.
+- `pnpm ultracontext:start`: start daemon in background (default flow).
+- `pnpm ultracontext:start:verbose`: run daemon in foreground with verbose logs.
+- `pnpm ultracontext:status`: daemon status.
+- `pnpm ultracontext:stop`: stop daemon.
+- `pnpm ultracontext:tui`: launch TUI client.
+- `cd apps/daemon && pnpm run dev`: run daemon in watch mode.
+- `cd apps/daemon && pnpm run check`: syntax-check daemon modules.
+- `cd apps/tui && pnpm run check`: syntax-check TUI entrypoint.
+- `cd apps/js-sdk && pnpm run build`: compile TypeScript to `dist/`.
 - `cd apps/python-sdk && python -m pip install -e '.[dev]'`: install SDK with dev tools.
 - `cd apps/python-sdk && mypy ultracontext`: run strict Python type checks.
-- `cd apps/redis && docker compose up -d`: start local Redis.
+- `pnpm run check`: run monorepo checks.
 
 ## Coding Style & Naming Conventions
 Follow existing style per package:
@@ -31,7 +34,7 @@ Name commits and symbols clearly by domain (`daemon`, `tui`, `js-sdk`, `python-s
 
 ## Testing Guidelines
 There is no committed first-party test suite yet. Minimum validation before PR:
-- Run package checks (`npm run check`, `npm run build`, `mypy ultracontext`).
+- Run package checks (`pnpm run check`, `pnpm --filter ultracontext-daemon run check`, `pnpm --filter ultracontext-tui run check`, `pnpm --filter ultracontext run build`, `mypy ultracontext`).
 - Manually verify affected runtime flow (daemon ingestion, TUI rendering, SDK request path).
 
 When adding tests, keep them package-local and use explicit names like `test_<feature>.py` or `<feature>.test.ts`.
@@ -45,7 +48,7 @@ Use Conventional Commit style seen in history, for example:
 For PRs, include:
 - concise summary and touched app(s),
 - linked issue (if applicable),
-- env/config changes (for example `ULTRACONTEXT_API_KEY`, `REDIS_URL`),
+- env/config changes (for example `ULTRACONTEXT_API_KEY`, `ULTRACONTEXT_DB_FILE`, `ULTRACONTEXT_DAEMON_INFO_FILE`),
 - terminal screenshots or short recordings for TUI-visible changes,
 - commands you ran to verify behavior.
 

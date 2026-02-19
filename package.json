@@ -5,6 +5,11 @@
   "scripts": {
     "check": "pnpm -r --if-present run check",
     "dev:daemon": "pnpm --filter ultracontext-daemon run dev",
-    "dev:tui": "pnpm --filter ultracontext-tui run dev"
+    "dev:tui": "pnpm --filter ultracontext-tui run dev",
+    "ultracontext:start": "pnpm --filter ultracontext-daemon run start",
+    "ultracontext:start:verbose": "pnpm --filter ultracontext-daemon run start:verbose",
+    "ultracontext:tui": "pnpm --filter ultracontext-tui run start",
+    "ultracontext:status": "pnpm --filter ultracontext-daemon run status",
+    "ultracontext:stop": "pnpm --filter ultracontext-daemon run stop"
   }
 }

@@ -6,6 +6,17 @@
   "scripts": {
     "start": "node src/index.mjs",
     "dev": "node --watch src/index.mjs",
-    "check": "node --check src/index.mjs"
+    "check": "node --check src/index.mjs && node --check src/ui.mjs && node --check src/Spinner.mjs && node --check src/codex-local-resume.mjs && node --check src/utils.mjs && node --check src/ws-client.mjs"
+  },
+  "dependencies": {
+    "@mishieck/ink-titled-box": "^0.4.2",
+    "@ultracontext/protocol": "workspace:*",
+    "dotenv": "^17.2.3",
+    "fast-glob": "^3.3.3",
+    "figlet": "^1.10.0",
+    "ink": "^6.7.0",
+    "react": "^19.2.4",
+    "ultracontext": "^1.0.1",
+    "ws": "^8.18.3"
   }
 }
