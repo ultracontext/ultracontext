@@ -550,6 +550,19 @@ describe('compressMessages', () => {
       expect(content).not.toMatch(/entities:.*\bThe\b/);
     });
 
+    it('extracts PascalCase identifiers (TypeScript, WebSocket)', () => {
+      const text = 'We need TypeScript support and WebSocket connections for the JavaScript project. '.repeat(8);
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'user', content: text }),
+      ];
+      const result = compressMessages(messages, { recencyWindow: 0 });
+      const content = result.messages[0].content!;
+      expect(content).toContain('entities:');
+      expect(content).toContain('TypeScript');
+      expect(content).toContain('WebSocket');
+      expect(content).toContain('JavaScript');
+    });
+
     it('extracts numbers with context', () => {
       const text = 'The system handles 5000 requests per batch and allows 3 retries per operation. '.repeat(8);
       const messages: Message[] = [
@@ -559,6 +572,19 @@ describe('compressMessages', () => {
       const content = result.messages[0].content!;
       expect(content).toContain('entities:');
       expect(content).toMatch(/3 retries/);
+    });
+
+    it('extracts vowelless abbreviations (pnpm, npm, ssh)', () => {
+      const text = 'We use pnpm workspaces and connect via ssh to deploy the grpc service. '.repeat(8);
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'user', content: text }),
+      ];
+      const result = compressMessages(messages, { recencyWindow: 0 });
+      const content = result.messages[0].content!;
+      expect(content).toContain('entities:');
+      expect(content).toContain('pnpm');
+      expect(content).toContain('ssh');
+      expect(content).toContain('grpc');
     });
 
     it('caps entities at 10', () => {

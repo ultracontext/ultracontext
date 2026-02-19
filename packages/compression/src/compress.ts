@@ -62,6 +62,12 @@ function extractEntities(text: string): string[] {
     }
   }
 
+  // PascalCase identifiers (TypeScript, WebSocket, JavaScript, etc.)
+  const pascalCase = text.match(/\b[A-Z][a-z]+(?:[A-Z][a-z]+)+\b/g);
+  if (pascalCase) {
+    for (const id of pascalCase) entities.add(id);
+  }
+
   // camelCase identifiers
   const camelCase = text.match(/\b[a-z]+(?:[A-Z][a-z]+)+\b/g);
   if (camelCase) {
@@ -72,6 +78,12 @@ function extractEntities(text: string): string[] {
   const snakeCase = text.match(/\b[a-z]+(?:_[a-z]+)+\b/g);
   if (snakeCase) {
     for (const id of snakeCase) entities.add(id);
+  }
+
+  // Vowelless words (3+ consonants, no aeiou/y) — abbreviations/tool names: pnpm, npm, ssh, grpc
+  const vowelless = text.match(/\b[bcdfghjklmnpqrstvwxz]{3,}\b/gi);
+  if (vowelless) {
+    for (const w of vowelless) entities.add(w.toLowerCase());
   }
 
   // Numbers with context
