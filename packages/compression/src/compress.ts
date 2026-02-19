@@ -189,6 +189,9 @@ export function compressMessages(
       const totalProse = segments
         .filter(s => s.type === 'prose')
         .reduce((sum, s) => sum + s.content.length, 0);
+      // 200, not 120: the [summary: ... | entities: ...] bracket + \n\n separators
+      // add ~80-100 chars of overhead; prose under 200 chars yields negligible or
+      // negative savings after that overhead is applied.
       if (totalProse >= 200) {
         return { msg, preserved: false, codeSplit: true };
       }
@@ -313,7 +316,7 @@ export function compressMessages(
         messagesCompressed++;
       } else {
         // Not large enough for prose compression — still compress as single
-        const summary = `[summary: ${summaryText} (1 messages merged)${entitySuffix}]`;
+        const summary = `[summary: ${summaryText} (1 message merged)${entitySuffix}]`;
         const compressedMsg: Message = {
           ...single,
           content: summary,

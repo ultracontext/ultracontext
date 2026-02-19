@@ -283,7 +283,7 @@ describe('compressMessages', () => {
       const result = compressMessages(messages, { recencyWindow: 0 });
       expect(result.messages.length).toBe(3);
       const compressed = result.messages[1];
-      expect(compressed.content).toMatch(/\[summary:.*\(1 messages merged\)/);
+      expect(compressed.content).toMatch(/\[summary:.*\(1 message merged\)/);
       const meta = compressed.metadata?._uc_original as { ids: string[]; version: number };
       expect(meta.ids).toEqual(['2']);
       expect(meta.version).toBe(0);
