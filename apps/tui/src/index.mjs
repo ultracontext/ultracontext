@@ -2,13 +2,12 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const tuiEntry = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "../../daemon/src/index.mjs"
-);
+const daemonRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../daemon");
+const tuiEntry = path.join(daemonRoot, "src", "index.mjs");
 
 const child = spawn(process.execPath, [tuiEntry], {
   stdio: "inherit",
+  cwd: daemonRoot,
   env: process.env,
 });
 
