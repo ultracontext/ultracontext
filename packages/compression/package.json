@@ -1,0 +1,30 @@
+{
+    "name": "@ultracontext/compression",
+    "version": "0.1.0",
+    "description": "Lossless context compression for UltraContext",
+    "type": "module",
+    "engines": {
+        "node": ">=18"
+    },
+    "scripts": {
+        "build": "tsc",
+        "test": "vitest run"
+    },
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js",
+            "default": "./dist/index.js"
+        }
+    },
+    "files": [
+        "dist"
+    ],
+    "license": "Apache-2.0",
+    "devDependencies": {
+        "typescript": "^5.9.3",
+        "vitest": "^3.0.0"
+    }
+}

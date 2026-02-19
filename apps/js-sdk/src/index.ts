@@ -78,6 +78,31 @@ export type DeleteResponse<T = unknown> = {
     version: number;
 };
 
+export type CompressOptions = {
+    preserve?: string[];
+    mode?: 'lossless' | 'lossy';
+};
+
+export type CompressResponse = {
+    data: Array<{ id: string; index: number; metadata: Record<string, unknown>; [key: string]: unknown }>;
+    version: number;
+    compression: {
+        original_version: number;
+        ratio: number;
+        messages_compressed: number;
+        messages_preserved: number;
+    };
+};
+
+export type UncompressOptions = {
+    version?: number;
+};
+
+export type UncompressResponse = {
+    data: Array<{ id: string; index: number; metadata: Record<string, unknown>; [key: string]: unknown }>;
+    version: number;
+};
+
 export class UltraContextHttpError extends Error {
     readonly status: number;
     readonly url: string;
@@ -158,6 +183,20 @@ export class UltraContext {
         return this.request<DeleteResponse<T>>(`/contexts/${encodeURIComponent(contextId)}`, {
             method: 'DELETE',
             body: { ids, metadata: options?.metadata },
+        });
+    }
+
+    async compress(contextId: string, options?: CompressOptions): Promise<CompressResponse> {
+        return this.request<CompressResponse>(`/contexts/${encodeURIComponent(contextId)}/compress`, {
+            method: 'POST',
+            body: options ?? {},
+        });
+    }
+
+    async uncompress(contextId: string, options?: UncompressOptions): Promise<UncompressResponse> {
+        return this.request<UncompressResponse>(`/contexts/${encodeURIComponent(contextId)}/uncompress`, {
+            method: 'POST',
+            body: options ?? {},
         });
     }
 

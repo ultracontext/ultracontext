@@ -72,3 +72,40 @@ class DeleteResponse(TypedDict):
 
     data: List[Message]
     version: int
+
+
+class CompressOptions(TypedDict, total=False):
+    """Options for compress()."""
+
+    preserve: List[str]
+    mode: str  # 'lossless' | 'lossy'
+
+
+class CompressionInfo(TypedDict):
+    """Compression statistics."""
+
+    original_version: int
+    ratio: float
+    messages_compressed: int
+    messages_preserved: int
+
+
+class CompressResponse(TypedDict):
+    """Response from compress()."""
+
+    data: List[Message]
+    version: int
+    compression: CompressionInfo
+
+
+class UncompressOptions(TypedDict, total=False):
+    """Options for uncompress()."""
+
+    version: int
+
+
+class UncompressResponse(TypedDict):
+    """Response from uncompress()."""
+
+    data: List[Message]
+    version: int
