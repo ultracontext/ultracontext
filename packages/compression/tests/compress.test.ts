@@ -642,7 +642,7 @@ describe('compressMessages', () => {
       expect(output).toContain('getUserProfile');
     });
 
-    it('code + short prose (< 120 chars) → fully preserved', () => {
+    it('code + short prose (< 200 chars) → fully preserved', () => {
       const content = 'Here is the code:\n\n```ts\nconst x = 1;\n```\n\nDone.';
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'assistant', content }),
@@ -650,6 +650,35 @@ describe('compressMessages', () => {
       const result = compressMessages(messages, { recencyWindow: 0 });
       expect(result.compression.messages_preserved).toBe(1);
       expect(result.messages[0].content).toBe(content);
+    });
+
+    it('code-split skipped when output would be larger', () => {
+      // ~210 chars of prose — just above threshold but summary + entities + bracket overhead exceeds original
+      const prose = 'The authentication middleware validates each incoming request token. '.repeat(3);
+      const fence = '```ts\nconst ok = validate(token);\n```';
+      const content = `${prose}\n\n${fence}`;
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'assistant', content }),
+      ];
+      const result = compressMessages(messages, { recencyWindow: 0 });
+      const output = result.messages[0].content!;
+      // Output must never exceed the original length
+      expect(output.length).toBeLessThanOrEqual(content.length);
+    });
+
+    it('code-split with substantial prose achieves positive savings', () => {
+      const prose = 'The authentication system validates incoming request tokens against the session store and checks expiration timestamps before allowing access to protected resources. '.repeat(4);
+      const fence = '```ts\nconst session = await store.get(token);\nif (!session || session.expired) throw new AuthError();\n```';
+      const content = `${prose}\n\n${fence}`;
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'assistant', content }),
+      ];
+      const result = compressMessages(messages, { recencyWindow: 0 });
+      const output = result.messages[0].content!;
+      expect(output.length).toBeLessThan(content.length);
+      expect(output).toContain('```ts');
+      expect(output).toMatch(/^\[summary:/);
+      expect(result.compression.messages_compressed).toBe(1);
     });
 
     it('_uc_original metadata present on code-split messages', () => {

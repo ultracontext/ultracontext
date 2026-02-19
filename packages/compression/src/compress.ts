@@ -189,7 +189,7 @@ export function compressMessages(
       const totalProse = segments
         .filter(s => s.type === 'prose')
         .reduce((sum, s) => sum + s.content.length, 0);
-      if (totalProse >= 120) {
+      if (totalProse >= 200) {
         return { msg, preserved: false, codeSplit: true };
       }
       return { msg, preserved: true };
@@ -234,6 +234,14 @@ export function compressMessages(
       const entities = extractEntities(proseText);
       const entitySuffix = entities.length > 0 ? ` | entities: ${entities.join(', ')}` : '';
       const compressed = `[summary: ${summaryText}${entitySuffix}]\n\n${codeFences.join('\n\n')}`;
+
+      // Guard: skip compression if output >= original
+      if (compressed.length >= content.length) {
+        result.push(msg);
+        messagesPreserved++;
+        i++;
+        continue;
+      }
 
       result.push({
         ...msg,
