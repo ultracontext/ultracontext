@@ -601,6 +601,87 @@ describe('compressMessages', () => {
     });
   });
 
+  describe('code-aware splitting', () => {
+    it('code + long prose → code-split compressed', () => {
+      const longProse = 'This is a detailed explanation of how the authentication system works and integrates with the session manager. '.repeat(3);
+      const content = `${longProse}\n\n\`\`\`typescript\nconst token = await auth.getToken();\nconst session = createSession(token);\n\`\`\`\n\nAfter running this code the session is established and ready to use.`;
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'assistant', content }),
+      ];
+      const result = compressMessages(messages, { recencyWindow: 0 });
+      expect(result.compression.messages_compressed).toBe(1);
+      const output = result.messages[0].content!;
+      // Code preserved, prose summarized
+      expect(output).toContain('```typescript');
+      expect(output).toContain('auth.getToken()');
+      expect(output).toMatch(/^\[summary:/);
+    });
+
+    it('code fences preserved verbatim', () => {
+      const fence = '```js\nfunction add(a, b) {\n  return a + b;\n}\n```';
+      const prose = 'Here is an explanation of the addition function that takes two parameters and returns their sum. '.repeat(3);
+      const content = `${prose}\n\n${fence}`;
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'assistant', content }),
+      ];
+      const result = compressMessages(messages, { recencyWindow: 0 });
+      const output = result.messages[0].content!;
+      expect(output).toContain(fence);
+    });
+
+    it('prose around code is summarized with entities', () => {
+      const prose = 'The getUserProfile function in the Express middleware needs refactoring to support WebSocket connections. '.repeat(3);
+      const fence = '```ts\nconst profile = getUserProfile(req);\n```';
+      const content = `${prose}\n\n${fence}`;
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'assistant', content }),
+      ];
+      const result = compressMessages(messages, { recencyWindow: 0 });
+      const output = result.messages[0].content!;
+      expect(output).toMatch(/\[summary:.*\|.*entities:/);
+      expect(output).toContain('getUserProfile');
+    });
+
+    it('code + short prose (< 120 chars) → fully preserved', () => {
+      const content = 'Here is the code:\n\n```ts\nconst x = 1;\n```\n\nDone.';
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'assistant', content }),
+      ];
+      const result = compressMessages(messages, { recencyWindow: 0 });
+      expect(result.compression.messages_preserved).toBe(1);
+      expect(result.messages[0].content).toBe(content);
+    });
+
+    it('_uc_original metadata present on code-split messages', () => {
+      const prose = 'This is a detailed explanation of how the system handles authentication tokens and session management. '.repeat(3);
+      const content = `${prose}\n\n\`\`\`ts\nconst x = 1;\n\`\`\``;
+      const messages: Message[] = [
+        msg({ id: 'cs1', index: 0, role: 'assistant', content }),
+      ];
+      const result = compressMessages(messages, { recencyWindow: 0 });
+      const meta = result.messages[0].metadata?._uc_original as { ids: string[]; version: number };
+      expect(meta).toBeDefined();
+      expect(meta.ids).toEqual(['cs1']);
+      expect(meta.version).toBe(0);
+    });
+
+    it('multiple fences in one message — all preserved', () => {
+      const fence1 = '```python\ndef hello():\n    print("hi")\n```';
+      const fence2 = '```bash\nnpm install express\n```';
+      const prose = 'First we define the Python function for our greeting handler, then install the Express dependency for the server. '.repeat(2);
+      const content = `${prose}\n\n${fence1}\n\nThen run the install:\n\n${fence2}`;
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'assistant', content }),
+      ];
+      const result = compressMessages(messages, { recencyWindow: 0 });
+      const output = result.messages[0].content!;
+      expect(output).toContain(fence1);
+      expect(output).toContain(fence2);
+      expect(output).toMatch(/^\[summary:/);
+      expect(result.compression.messages_compressed).toBe(1);
+    });
+  });
+
   describe('_uc_original normalization', () => {
     it('all compression paths use ids array shape', () => {
       const largeProse = 'First sentence here. ' + 'More text follows here. '.repeat(50);

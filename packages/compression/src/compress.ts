@@ -96,6 +96,29 @@ function extractEntities(text: string): string[] {
   return Array.from(entities).slice(0, 10);
 }
 
+function splitCodeAndProse(text: string): Array<{ type: 'prose' | 'code'; content: string }> {
+  const segments: Array<{ type: 'prose' | 'code'; content: string }> = [];
+  const fenceRe = /```[\s\S]*?```/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = fenceRe.exec(text)) !== null) {
+    const prose = text.slice(lastIndex, match.index).trim();
+    if (prose) {
+      segments.push({ type: 'prose', content: prose });
+    }
+    segments.push({ type: 'code', content: match[0] });
+    lastIndex = match.index + match[0].length;
+  }
+
+  const trailing = text.slice(lastIndex).trim();
+  if (trailing) {
+    segments.push({ type: 'prose', content: trailing });
+  }
+
+  return segments;
+}
+
 function isValidJson(text: string): boolean {
   const trimmed = text.trim();
   if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return false;
@@ -137,7 +160,7 @@ export function compressMessages(
   const recencyStart = Math.max(0, messages.length - recencyWindow);
 
   // Step 1: classify each message as preserved or compressible
-  const classified: Array<{ msg: Message; preserved: boolean }> = messages.map((msg, idx) => {
+  const classified: Array<{ msg: Message; preserved: boolean; codeSplit?: boolean }> = messages.map((msg, idx) => {
     const content = typeof msg.content === 'string' ? msg.content : '';
 
     // Rule 1: role in preserve list
@@ -160,12 +183,24 @@ export function compressMessages(
       return { msg, preserved: true };
     }
 
-    // Rule 5: VBC classifies as T0
+    // Rule 5: code fence splitting — extract fences verbatim, summarize prose
+    if (content.includes('```')) {
+      const segments = splitCodeAndProse(content);
+      const totalProse = segments
+        .filter(s => s.type === 'prose')
+        .reduce((sum, s) => sum + s.content.length, 0);
+      if (totalProse >= 120) {
+        return { msg, preserved: false, codeSplit: true };
+      }
+      return { msg, preserved: true };
+    }
+
+    // Rule 6: VBC classifies as T0
     if (content && classifyMessage(content).decision === 'T0') {
       return { msg, preserved: true };
     }
 
-    // Rule 6: valid JSON
+    // Rule 7: valid JSON
     if (content && isValidJson(content)) {
       return { msg, preserved: true };
     }
@@ -189,10 +224,37 @@ export function compressMessages(
       continue;
     }
 
+    // Code-split: extract fences verbatim, summarize surrounding prose
+    if (classified[i].codeSplit) {
+      const content = typeof msg.content === 'string' ? msg.content : '';
+      const segments = splitCodeAndProse(content);
+      const proseText = segments.filter(s => s.type === 'prose').map(s => s.content).join(' ');
+      const codeFences = segments.filter(s => s.type === 'code').map(s => s.content);
+      const summaryText = summarize(proseText);
+      const entities = extractEntities(proseText);
+      const entitySuffix = entities.length > 0 ? ` | entities: ${entities.join(', ')}` : '';
+      const compressed = `[summary: ${summaryText}${entitySuffix}]\n\n${codeFences.join('\n\n')}`;
+
+      result.push({
+        ...msg,
+        content: compressed,
+        metadata: {
+          ...(msg.metadata ?? {}),
+          _uc_original: {
+            ids: [msg.id],
+            version: 0,
+          },
+        },
+      });
+      messagesCompressed++;
+      i++;
+      continue;
+    }
+
     // Collect consecutive non-preserved messages with the SAME role
     const group: Array<{ msg: Message; preserved: boolean }> = [];
     const groupRole = classified[i].msg.role;
-    while (i < classified.length && !classified[i].preserved && classified[i].msg.role === groupRole) {
+    while (i < classified.length && !classified[i].preserved && !classified[i].codeSplit && classified[i].msg.role === groupRole) {
       group.push(classified[i]);
       i++;
     }
