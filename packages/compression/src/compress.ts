@@ -1,6 +1,35 @@
 import { classifyMessage } from './classify.js';
 import type { CompressOptions, CompressResult, Message } from './types.js';
 
+/**
+ * Deterministic summary ID from sorted source message IDs.
+ * Uses djb2 to avoid a crypto dependency; collisions are acceptable
+ * because the ID is advisory provenance, not a security primitive.
+ */
+function makeSummaryId(ids: string[]): string {
+  const key = ids.slice().sort().join('\0');
+  let h = 5381;
+  for (let i = 0; i < key.length; i++) {
+    h = ((h << 5) + h + key.charCodeAt(i)) >>> 0;
+  }
+  return `uc_sum_${h.toString(36)}`;
+}
+
+/**
+ * Collect summary_ids from source messages that were themselves compressed,
+ * forming a provenance chain.
+ */
+function collectParentIds(msgs: Message[]): string[] {
+  const parents: string[] = [];
+  for (const m of msgs) {
+    const orig = m.metadata?._uc_original as Record<string, unknown> | undefined;
+    if (orig?.summary_id && typeof orig.summary_id === 'string') {
+      parents.push(orig.summary_id);
+    }
+  }
+  return parents;
+}
+
 const FILLER_RE = /^(?:great|sure|ok|okay|thanks|thank you|got it|right|yes|no|alright|absolutely|exactly|indeed|cool|nice|perfect|wonderful|awesome|fantastic|sounds good|makes sense|i see|i understand|understood|noted|certainly|of course|no problem|no worries|will do|let me|i'll|i can|i would|well|so|now)[,.!?\s]/i;
 
 function summarize(text: string): string {
@@ -142,11 +171,13 @@ export function compressMessages(
     throw new Error('Lossy compression is not yet implemented (501)');
   }
 
+  const sourceVersion = options.sourceVersion ?? 0;
+
   if (messages.length === 0) {
     return {
       messages: [],
       compression: {
-        original_version: 0,
+        original_version: sourceVersion,
         ratio: 1,
         messages_compressed: 0,
         messages_preserved: 0,
@@ -251,14 +282,19 @@ export function compressMessages(
         continue;
       }
 
+      const csIds = [msg.id];
+      const csSummaryId = makeSummaryId(csIds);
+      const csParents = collectParentIds([msg]);
       result.push({
         ...msg,
         content: compressed,
         metadata: {
           ...(msg.metadata ?? {}),
           _uc_original: {
-            ids: [msg.id],
-            version: 0,
+            ids: csIds,
+            summary_id: csSummaryId,
+            ...(csParents.length > 0 ? { parent_ids: csParents } : {}),
+            version: sourceVersion,
           },
         },
       });
@@ -292,6 +328,9 @@ export function compressMessages(
           messagesPreserved++;
         }
       } else {
+        const mergeIds = group.map(g => g.msg.id);
+        const mergeSummaryId = makeSummaryId(mergeIds);
+        const mergeParents = collectParentIds(group.map(g => g.msg));
         const mergedMsg: Message = {
           id: group[0].msg.id,
           index: group[0].msg.index,
@@ -300,8 +339,10 @@ export function compressMessages(
           metadata: {
             ...(group[0].msg.metadata ?? {}),
             _uc_original: {
-              ids: group.map(g => g.msg.id),
-              version: 0,
+              ids: mergeIds,
+              summary_id: mergeSummaryId,
+              ...(mergeParents.length > 0 ? { parent_ids: mergeParents } : {}),
+              version: sourceVersion,
             },
           },
         };
@@ -318,14 +359,19 @@ export function compressMessages(
         result.push(single);
         messagesPreserved++;
       } else {
+        const singleIds = [single.id];
+        const singleSummaryId = makeSummaryId(singleIds);
+        const singleParents = collectParentIds([single]);
         result.push({
           ...single,
           content: summary,
           metadata: {
             ...(single.metadata ?? {}),
             _uc_original: {
-              ids: [single.id],
-              version: 0,
+              ids: singleIds,
+              summary_id: singleSummaryId,
+              ...(singleParents.length > 0 ? { parent_ids: singleParents } : {}),
+              version: sourceVersion,
             },
           },
         });
@@ -340,7 +386,7 @@ export function compressMessages(
   return {
     messages: result,
     compression: {
-      original_version: 0,
+      original_version: sourceVersion,
       ratio: messagesCompressed === 0 ? 1 : ratio,
       messages_compressed: messagesCompressed,
       messages_preserved: messagesPreserved,

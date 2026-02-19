@@ -815,4 +815,76 @@ describe('compressMessages', () => {
       }
     });
   });
+
+  describe('provenance metadata', () => {
+    it('sourceVersion flows into _uc_original.version and compression.original_version', () => {
+      const prose = 'This is a long message about general topics that could be compressed. '.repeat(5);
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'user', content: prose }),
+      ];
+      const result = compressMessages(messages, { recencyWindow: 0, sourceVersion: 42 });
+      const meta = result.messages[0].metadata?._uc_original as { version: number };
+      expect(meta.version).toBe(42);
+      expect(result.compression.original_version).toBe(42);
+    });
+
+    it('sourceVersion defaults to 0 when omitted', () => {
+      const prose = 'This is a long message about general topics that could be compressed. '.repeat(5);
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'user', content: prose }),
+      ];
+      const result = compressMessages(messages, { recencyWindow: 0 });
+      const meta = result.messages[0].metadata?._uc_original as { version: number };
+      expect(meta.version).toBe(0);
+      expect(result.compression.original_version).toBe(0);
+    });
+
+    it('generates deterministic summary_id from input ids', () => {
+      const prose = 'This is a long message about general topics that could be compressed. '.repeat(5);
+      const r1 = compressMessages([msg({ id: 'a', index: 0, role: 'user', content: prose })], { recencyWindow: 0 });
+      const r2 = compressMessages([msg({ id: 'a', index: 0, role: 'user', content: prose })], { recencyWindow: 0 });
+      const r3 = compressMessages([msg({ id: 'b', index: 0, role: 'user', content: prose })], { recencyWindow: 0 });
+      const m1 = r1.messages[0].metadata?._uc_original as { summary_id: string };
+      const m2 = r2.messages[0].metadata?._uc_original as { summary_id: string };
+      const m3 = r3.messages[0].metadata?._uc_original as { summary_id: string };
+      expect(m1.summary_id).toMatch(/^uc_sum_/);
+      expect(m1.summary_id).toBe(m2.summary_id);
+      expect(m1.summary_id).not.toBe(m3.summary_id);
+    });
+
+    it('omits parent_ids when source has no prior _uc_original', () => {
+      const prose = 'This is a long message about general topics that could be compressed. '.repeat(5);
+      const result = compressMessages(
+        [msg({ id: '1', index: 0, role: 'user', content: prose })],
+        { recencyWindow: 0 },
+      );
+      const meta = result.messages[0].metadata?._uc_original as Record<string, unknown>;
+      expect(meta.summary_id).toMatch(/^uc_sum_/);
+      expect(meta.parent_ids).toBeUndefined();
+    });
+
+    it('collects parent_ids from previously-compressed source messages', () => {
+      const prose = 'This is a long message about general topics that could be compressed. '.repeat(5);
+      const priorSummaryId = 'uc_sum_abc123';
+      const messages: Message[] = [
+        msg({
+          id: 'x',
+          index: 0,
+          role: 'user',
+          content: prose,
+          metadata: {
+            _uc_original: { ids: ['old1'], summary_id: priorSummaryId, version: 3 },
+          },
+        }),
+        msg({ id: 'y', index: 1, role: 'user', content: prose }),
+      ];
+      const result = compressMessages(messages, { preserve: [], recencyWindow: 0 });
+      const meta = result.messages[0].metadata?._uc_original as {
+        ids: string[];
+        summary_id: string;
+        parent_ids?: string[];
+      };
+      expect(meta.parent_ids).toEqual([priorSummaryId]);
+    });
+  });
 });
