@@ -1,9 +1,87 @@
 import { classifyMessage } from './classify.js';
 import type { CompressOptions, CompressResult, Message } from './types.js';
 
-function firstSentence(text: string): string {
-  const match = text.match(/^[^.!?\n]+[.!?]?/);
-  return match ? match[0].trim() : text.slice(0, 80).trim();
+const FILLER_RE = /^(?:great|sure|ok|okay|thanks|thank you|got it|right|yes|no|alright|absolutely|exactly|indeed|cool|nice|perfect|wonderful|awesome|fantastic|sounds good|makes sense|i see|i understand|understood|noted|certainly|of course|no problem|no worries|will do|let me|i'll|i can|i would|well|so|now)[,.!?\s]/i;
+
+function summarize(text: string): string {
+  const sentences = text.match(/[^.!?\n]+[.!?]+/g);
+
+  if (!sentences || sentences.length === 0) {
+    return text.slice(0, 200).trim();
+  }
+
+  // Skip leading filler sentences
+  let firstIdx = 0;
+  while (firstIdx < sentences.length && FILLER_RE.test(sentences[firstIdx].trim())) {
+    firstIdx++;
+  }
+  // If all sentences are filler, fall back to the first one
+  if (firstIdx >= sentences.length) firstIdx = 0;
+
+  const first = sentences[firstIdx].trim();
+  const last = sentences[sentences.length - 1].trim();
+
+  let result: string;
+  if (firstIdx === sentences.length - 1 || first === last) {
+    result = first;
+  } else {
+    result = `${first} ... ${last}`;
+  }
+
+  if (result.length > 200) {
+    return result.slice(0, 197) + '...';
+  }
+  return result;
+}
+
+const COMMON_STARTERS = new Set([
+  'The', 'This', 'That', 'These', 'Those', 'When', 'Where', 'What',
+  'Which', 'Who', 'How', 'Why', 'Here', 'There', 'Now', 'Then',
+  'But', 'And', 'Or', 'So', 'If', 'It', 'Its', 'My', 'Your',
+  'His', 'Her', 'Our', 'They', 'We', 'You', 'He', 'She', 'In',
+  'On', 'At', 'To', 'For', 'With', 'From', 'As', 'By', 'An',
+  'Each', 'Every', 'Some', 'All', 'Most', 'Many', 'Much', 'Any',
+  'No', 'Not', 'Also', 'Just', 'Only', 'Even', 'Still', 'Yet',
+  'Let', 'See', 'Note', 'Yes', 'Sure', 'Great', 'Thanks', 'Well',
+  'First', 'Second', 'Third', 'Next', 'Last', 'Finally', 'However',
+  'After', 'Before', 'Since', 'Once', 'While', 'Although', 'Because',
+  'Unless', 'Until', 'About', 'Over', 'Under', 'Between', 'Into',
+]);
+
+function extractEntities(text: string): string[] {
+  const entities = new Set<string>();
+
+  // Proper nouns: capitalized words not at common sentence starters
+  const properNouns = text.match(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b/g);
+  if (properNouns) {
+    for (const noun of properNouns) {
+      const first = noun.split(/\s+/)[0];
+      if (!COMMON_STARTERS.has(first)) {
+        entities.add(noun);
+      }
+    }
+  }
+
+  // camelCase identifiers
+  const camelCase = text.match(/\b[a-z]+(?:[A-Z][a-z]+)+\b/g);
+  if (camelCase) {
+    for (const id of camelCase) entities.add(id);
+  }
+
+  // snake_case identifiers
+  const snakeCase = text.match(/\b[a-z]+(?:_[a-z]+)+\b/g);
+  if (snakeCase) {
+    for (const id of snakeCase) entities.add(id);
+  }
+
+  // Numbers with context
+  const numbersCtx = text.match(/\b\d+(?:\.\d+)?\s*(?:seconds?|retries?|attempts?|MB|GB|TB|KB|ms|minutes?|hours?|days?|bytes?|workers?|threads?|nodes?|replicas?|instances?|users?|requests?|errors?|percent|%)\b/gi);
+  if (numbersCtx) {
+    for (const n of numbersCtx) entities.add(n.trim());
+  }
+
+  // Cap at 10
+  return Array.from(entities).slice(0, 10);
 }
 
 function isValidJson(text: string): boolean {
@@ -43,9 +121,11 @@ export function compressMessages(
 
   const preserveRoles = new Set(options.preserve ?? ['system']);
   const originalTotalChars = messages.reduce((sum, m) => sum + contentLength(m), 0);
+  const recencyWindow = options.recencyWindow ?? 4;
+  const recencyStart = Math.max(0, messages.length - recencyWindow);
 
   // Step 1: classify each message as preserved or compressible
-  const classified: Array<{ msg: Message; preserved: boolean }> = messages.map(msg => {
+  const classified: Array<{ msg: Message; preserved: boolean }> = messages.map((msg, idx) => {
     const content = typeof msg.content === 'string' ? msg.content : '';
 
     // Rule 1: role in preserve list
@@ -53,22 +133,27 @@ export function compressMessages(
       return { msg, preserved: true };
     }
 
-    // Rule 2: tool/function messages or messages with tool_calls
+    // Rule 2: recency protection
+    if (recencyWindow > 0 && idx >= recencyStart) {
+      return { msg, preserved: true };
+    }
+
+    // Rule 3: tool/function messages or messages with tool_calls
     if (msg.role === 'tool' || msg.role === 'function' || (msg.tool_calls && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0)) {
       return { msg, preserved: true };
     }
 
-    // Rule 3: short content
+    // Rule 4: short content
     if (content.length < 120) {
       return { msg, preserved: true };
     }
 
-    // Rule 4: VBC classifies as T0
+    // Rule 5: VBC classifies as T0
     if (content && classifyMessage(content).decision === 'T0') {
       return { msg, preserved: true };
     }
 
-    // Rule 5: valid JSON
+    // Rule 6: valid JSON
     if (content && isValidJson(content)) {
       return { msg, preserved: true };
     }
@@ -76,7 +161,7 @@ export function compressMessages(
     return { msg, preserved: false };
   });
 
-  // Step 2: compress non-preserved messages
+  // Step 2: compress non-preserved messages (respecting role boundaries)
   const result: Message[] = [];
   let messagesCompressed = 0;
   let messagesPreserved = 0;
@@ -92,17 +177,23 @@ export function compressMessages(
       continue;
     }
 
-    // Collect consecutive non-preserved messages for merging
+    // Collect consecutive non-preserved messages with the SAME role
     const group: Array<{ msg: Message; preserved: boolean }> = [];
-    while (i < classified.length && !classified[i].preserved) {
+    const groupRole = classified[i].msg.role;
+    while (i < classified.length && !classified[i].preserved && classified[i].msg.role === groupRole) {
       group.push(classified[i]);
       i++;
     }
 
+    // Build summary from group content
+    const allContent = group.map(g => typeof g.msg.content === 'string' ? g.msg.content : '').join(' ');
+    const summaryText = summarize(allContent);
+    const entities = extractEntities(allContent);
+    const entitySuffix = entities.length > 0 ? ` | entities: ${entities.join(', ')}` : '';
+
     if (group.length > 1) {
-      // Consecutive turn merging
-      const firstContent = typeof group[0].msg.content === 'string' ? group[0].msg.content : '';
-      const summary = `[summary: ${firstSentence(firstContent)}... (${group.length} messages merged)]`;
+      // Consecutive same-role merging
+      const summary = `[summary: ${summaryText} (${group.length} messages merged)${entitySuffix}]`;
       const mergedMsg: Message = {
         id: group[0].msg.id,
         index: group[0].msg.index,
@@ -124,14 +215,14 @@ export function compressMessages(
       const content = typeof single.content === 'string' ? single.content : '';
       if (content.length > 800) {
         // Large prose compression
-        const summary = `[summary: ${firstSentence(content)}]`;
+        const summary = `[summary: ${summaryText}${entitySuffix}]`;
         const compressedMsg: Message = {
           ...single,
           content: summary,
           metadata: {
             ...(single.metadata ?? {}),
             _uc_original: {
-              id: single.id,
+              ids: [single.id],
               version: 0,
             },
           },
@@ -139,8 +230,8 @@ export function compressMessages(
         result.push(compressedMsg);
         messagesCompressed++;
       } else {
-        // Not large enough for prose compression — still merge as single
-        const summary = `[summary: ${firstSentence(content)}... (1 messages merged)]`;
+        // Not large enough for prose compression — still compress as single
+        const summary = `[summary: ${summaryText} (1 messages merged)${entitySuffix}]`;
         const compressedMsg: Message = {
           ...single,
           content: summary,

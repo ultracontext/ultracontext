@@ -79,6 +79,7 @@ class CompressOptions(TypedDict, total=False):
 
     preserve: List[str]
     mode: str  # 'lossless' | 'lossy'
+    recency_window: int
 
 
 class CompressionInfo(TypedDict):

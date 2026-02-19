@@ -81,6 +81,7 @@ export type DeleteResponse<T = unknown> = {
 export type CompressOptions = {
     preserve?: string[];
     mode?: 'lossless' | 'lossy';
+    recencyWindow?: number;
 };
 
 export type CompressResponse = {

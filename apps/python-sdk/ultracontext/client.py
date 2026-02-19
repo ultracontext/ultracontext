@@ -258,6 +258,7 @@ class UltraContext(_BaseClient):
         *,
         preserve: Optional[List[str]] = None,
         mode: Optional[str] = None,
+        recency_window: Optional[int] = None,
     ) -> CompressResponse:
         """
         Compress a context's messages.
@@ -266,12 +267,15 @@ class UltraContext(_BaseClient):
             context_id: Context ID
             preserve: Roles to preserve verbatim (default: ['system'])
             mode: 'lossless' or 'lossy'
+            recency_window: Number of recent messages to preserve (default: 4)
         """
         body: Dict[str, Any] = {}
         if preserve is not None:
             body["preserve"] = preserve
         if mode is not None:
             body["mode"] = mode
+        if recency_window is not None:
+            body["recencyWindow"] = recency_window
         return self._request("POST", f"/contexts/{context_id}/compress", json=body or None)
 
     def uncompress(
@@ -466,6 +470,7 @@ class AsyncUltraContext(_BaseClient):
         *,
         preserve: Optional[List[str]] = None,
         mode: Optional[str] = None,
+        recency_window: Optional[int] = None,
     ) -> CompressResponse:
         """Compress a context's messages."""
         body: Dict[str, Any] = {}
@@ -473,6 +478,8 @@ class AsyncUltraContext(_BaseClient):
             body["preserve"] = preserve
         if mode is not None:
             body["mode"] = mode
+        if recency_window is not None:
+            body["recencyWindow"] = recency_window
         return await self._request("POST", f"/contexts/{context_id}/compress", json=body or None)
 
     async def uncompress(
