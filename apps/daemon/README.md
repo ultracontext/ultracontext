@@ -5,15 +5,20 @@ Background ingestion service that syncs local agent sessions into UltraContext.
 ## Run
 
 ```bash
-cd apps/daemon
-npm install
-npm run start
+pnpm install
+pnpm --filter ultracontext-daemon run start
 ```
 
 Development mode:
 
 ```bash
-npm run dev
+pnpm --filter ultracontext-daemon run dev
+```
+
+TUI mode:
+
+```bash
+pnpm --filter ultracontext-daemon run tui
 ```
 
 ## Notes
@@ -26,8 +31,7 @@ npm run dev
 
 - `ULTRACONTEXT_API_KEY`
 - `ULTRACONTEXT_BASE_URL`
-- `REDIS_URL` (primary)
-- `STATE_STORE_URL` (legacy fallback)
-- `CACHE_URL` (legacy fallback)
+- `ULTRACONTEXT_CONFIG_FILE` (default: `~/.ultracontext/config.json`)
+- `REDIS_URL`
 - `DAEMON_ENGINEER_ID`
 - `DAEMON_HOST`

@@ -8,7 +8,7 @@
     "scripts": {
         "build": "tsc",
         "dev": "tsc --watch",
-        "prepare": "npm run build"
+        "prepare": "pnpm run build"
     },
     "version": "1.0.2",
     "main": "./dist/index.js",
@@ -53,5 +53,5 @@
     "devDependencies": {
         "typescript": "^5.9.3"
     },
-    "packageManager": "pnpm@10.25.0"
+    "packageManager": "pnpm@10.28.1"
 }

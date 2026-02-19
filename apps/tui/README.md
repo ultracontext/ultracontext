@@ -5,8 +5,8 @@ Terminal client for the UltraContext daemon.
 ## Run
 
 ```bash
-cd apps/tui
-npm run start
+pnpm install
+pnpm --filter ultracontext-tui run start
 ```
 
 ## Notes

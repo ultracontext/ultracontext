@@ -33,7 +33,7 @@ const LOG_LEVELS = { error: 0, warn: 1, info: 2, debug: 3 };
 const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_STARTUP_SOUND_FILE = path.join(APP_ROOT, "assets", "sounds", "hello_mf.mp3");
 const DEFAULT_CONTEXT_SOUND_FILE = path.join(APP_ROOT, "assets", "sounds", "quack.mp3");
-const DEFAULT_RUNTIME_CONFIG_FILE = "~/.ultracontext/daemon.config.json";
+const DEFAULT_RUNTIME_CONFIG_FILE = "~/.ultracontext/config.json";
 const BOOTSTRAP_OPTIONS = [
   { id: "new_only", label: "New only (recommended)", description: "Starts from the current tail and ignores older history." },
   { id: "last_24h", label: "Last 24h", description: "Ingests only recent messages (24 hours)." },
@@ -80,6 +80,10 @@ function normalizeResumeTerminal(raw) {
   return "terminal";
 }
 
+function resolveRuntimeConfigPath() {
+  return expandHome(process.env.ULTRACONTEXT_CONFIG_FILE ?? DEFAULT_RUNTIME_CONFIG_FILE);
+}
+
 const cfg = {
   apiKey: normalizeApiKey(process.env.ULTRACONTEXT_API_KEY),
   baseUrl: (process.env.ULTRACONTEXT_BASE_URL ?? "https://api.ultracontext.ai").trim(),
@@ -100,7 +104,7 @@ const cfg = {
   contextSoundEnabled: boolFromEnv(process.env.DAEMON_CONTEXT_SOUND_ENABLED, true),
   startupGreetingFile: expandHome(process.env.DAEMON_STARTUP_GREETING_FILE ?? DEFAULT_STARTUP_SOUND_FILE),
   contextCreatedSoundFile: expandHome(process.env.DAEMON_CONTEXT_SOUND_FILE ?? DEFAULT_CONTEXT_SOUND_FILE),
-  configFile: expandHome(process.env.DAEMON_CONFIG_FILE ?? DEFAULT_RUNTIME_CONFIG_FILE),
+  configFile: resolveRuntimeConfigPath(),
   dedupeTtlSec: toInt(process.env.DAEMON_DEDUPE_TTL_SEC, 60 * 60 * 24 * 30),
   instanceLockTtlSec: toInt(process.env.DAEMON_INSTANCE_LOCK_TTL_SEC, 45),
   maxReadBytes: toInt(process.env.DAEMON_MAX_READ_BYTES, 512 * 1024),
@@ -164,6 +168,7 @@ const CONFIG_TOGGLES = [
 
 const ui = {
   recentLogs: [],
+  onlineClients: [],
   sourceStats: new Map(),
   sourceOrder: [],
   selectedTab: "logs",
@@ -215,6 +220,45 @@ const runtime = {
   daemonRunning: false,
 };
 const sound = { startupFile: "", contextFile: "", warnedNonDarwin: false };
+let stdioErrorHandled = false;
+
+function isBenignStdioError(error) {
+  const code = String(error?.code ?? "");
+  return code === "EIO" || code === "EPIPE" || code === "ENXIO";
+}
+
+function handleStdioError(error, streamName) {
+  if (!isBenignStdioError(error)) return;
+  if (stdioErrorHandled) return;
+  stdioErrorHandled = true;
+
+  // TTY detach on Ctrl+C/watch shutdown can emit EIO on stdin; treat as graceful shutdown.
+  try {
+    runtime.stop?.("stdio");
+  } catch {
+    // ignore
+  }
+
+  if (prettyUi) {
+    try {
+      uiController?.stop();
+      uiController = null;
+    } catch {
+      // ignore
+    }
+  }
+
+  if (LOG_LEVELS[cfg.logLevel] >= LOG_LEVELS.debug) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error(`[debug] Ignored stdio ${streamName} error (${error?.code ?? "?"}): ${msg}`);
+  }
+}
+
+function installStdioErrorGuards() {
+  process.stdin?.on?.("error", (error) => handleStdioError(error, "stdin"));
+  process.stdout?.on?.("error", (error) => handleStdioError(error, "stdout"));
+  process.stderr?.on?.("error", (error) => handleStdioError(error, "stderr"));
+}
 
 function runtimeStateRedisKey() {
   return `uc:daemon:runtime:v1:${cfg.host}:${cfg.engineerId}`;
@@ -235,6 +279,59 @@ function parseRedisJson(raw, fallback) {
   } catch {
     return fallback;
   }
+}
+
+function parseRuntimeStateRedisKey(key) {
+  const prefix = "uc:daemon:runtime:v1:";
+  if (!String(key).startsWith(prefix)) return null;
+  const tail = String(key).slice(prefix.length);
+  const splitAt = tail.lastIndexOf(":");
+  if (splitAt <= 0 || splitAt >= tail.length - 1) return null;
+  return {
+    host: tail.slice(0, splitAt),
+    engineerId: tail.slice(splitAt + 1),
+  };
+}
+
+async function scanKeys(redis, { match, count = 100 }) {
+  const keys = [];
+  let cursor = "0";
+  do {
+    const result = await redis.scan(cursor, "MATCH", match, "COUNT", count);
+    cursor = String(result?.[0] ?? "0");
+    const batch = Array.isArray(result?.[1]) ? result[1] : [];
+    keys.push(...batch);
+  } while (cursor !== "0");
+  return keys;
+}
+
+async function refreshOnlineClients(redis) {
+  const keys = await scanKeys(redis, { match: "uc:daemon:runtime:v1:*", count: 200 });
+  if (keys.length === 0) {
+    ui.onlineClients = [];
+    return;
+  }
+  const values = await redis.mget(...keys);
+  const clients = [];
+  const seen = new Set();
+
+  for (let i = 0; i < keys.length; i += 1) {
+    const parsedKey = parseRuntimeStateRedisKey(keys[i]);
+    if (!parsedKey) continue;
+    const id = `${parsedKey.engineerId}@${parsedKey.host}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const snapshot = parseRedisJson(values[i], null);
+    if (!snapshot || snapshot.running !== true) continue;
+    clients.push({
+      host: parsedKey.host,
+      engineerId: parsedKey.engineerId,
+      ts: Number(snapshot.ts ?? 0),
+    });
+  }
+
+  clients.sort((a, b) => Number(b.ts ?? 0) - Number(a.ts ?? 0));
+  ui.onlineClients = clients;
 }
 
 function color(text, ansiCode) {
@@ -630,23 +727,52 @@ function resumeOpenTerminalTab(command) {
   return resumeOpenAppleTerminalTab(command);
 }
 
-function stopWatchParentProcess() {
-  const parentPid = Number(process.ppid);
-  if (!Number.isInteger(parentPid) || parentPid <= 1) return false;
+function readProcessInfo(pid) {
   try {
-    const out = spawnSync("ps", ["-o", "command=", "-p", String(parentPid)], {
+    const out = spawnSync("ps", ["-o", "ppid=,command=", "-p", String(pid)], {
       stdio: "pipe",
       encoding: "utf8",
     });
-    const command = String(out.stdout ?? "").trim();
-    if (!command) return false;
-    const looksLikeWatcher = command.includes("node --watch") || command.includes(" --watch ");
-    if (!looksLikeWatcher) return false;
-    process.kill(parentPid, "SIGTERM");
-    return true;
+    const raw = String(out.stdout ?? "").trim();
+    if (!raw) return null;
+    const match = raw.match(/^(\d+)\s+(.*)$/);
+    if (!match) return null;
+    return {
+      ppid: Number(match[1]),
+      command: match[2] ?? "",
+    };
   } catch {
-    return false;
+    return null;
   }
+}
+
+function isWatchCommand(command) {
+  const raw = String(command ?? "").trim();
+  if (!raw) return false;
+  return raw.includes("node --watch") || raw.includes(" --watch ");
+}
+
+function stopWatchParentProcess() {
+  let pid = Number(process.ppid);
+  const seen = new Set();
+  for (let depth = 0; depth < 10; depth += 1) {
+    if (!Number.isInteger(pid) || pid <= 1) return false;
+    if (seen.has(pid)) return false;
+    seen.add(pid);
+
+    const info = readProcessInfo(pid);
+    if (!info) return false;
+    if (isWatchCommand(info.command)) {
+      try {
+        process.kill(pid, "SIGTERM");
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    pid = Number(info.ppid);
+  }
+  return false;
 }
 
 function resumeDedupeById(contexts) {
@@ -1104,26 +1230,25 @@ function serializeConfigPrefs() {
   };
 }
 
-async function persistConfigPrefsToFile() {
-  const target = path.resolve(cfg.configFile);
+async function persistConfigPrefsToFile(targetFile = cfg.configFile) {
+  const target = path.resolve(targetFile);
   const payload = JSON.stringify(serializeConfigPrefs(), null, 2);
   await fs.mkdir(path.dirname(target), { recursive: true });
   await fs.writeFile(target, `${payload}\n`, "utf8");
-  return true;
+  return { saved: true, file: target };
 }
 
-async function loadConfigPrefsFromFile() {
-  const target = path.resolve(cfg.configFile);
+async function loadConfigPrefsFromPath(target) {
   let raw = "";
   try {
     raw = await fs.readFile(target, "utf8");
   } catch (error) {
-    if (error?.code === "ENOENT") return false;
+    if (error?.code === "ENOENT") return { loaded: false, missing: true };
     log("warn", "Failed to read config prefs file", {
       file: target,
       ...errorDetails(error),
     });
-    return false;
+    return { loaded: false, missing: false };
   }
 
   let parsed = null;
@@ -1134,11 +1259,21 @@ async function loadConfigPrefsFromFile() {
       file: target,
       ...errorDetails(error),
     });
-    return false;
+    return { loaded: false, missing: false };
   }
 
   applyConfigPrefs(parsed);
-  return true;
+  return { loaded: true, missing: false };
+}
+
+async function loadConfigPrefsFromFile() {
+  const primary = path.resolve(cfg.configFile);
+  const loaded = await loadConfigPrefsFromPath(primary);
+  return {
+    loaded: loaded.loaded,
+    source: loaded.loaded ? "primary" : "none",
+    file: loaded.loaded ? primary : "",
+  };
 }
 
 function applyConfigPrefs(prefs) {
@@ -1538,6 +1673,7 @@ function buildUiSnapshot() {
       options: ui.resumeTargetPicker.options,
       recommendedTarget: ui.resumeTargetPicker.recommendedTarget,
     },
+    onlineClients: ui.onlineClients,
     bootstrap: {
       active: ui.bootstrap.active,
       selectedIndex: ui.bootstrap.selectedIndex,
@@ -1635,6 +1771,7 @@ async function syncRemoteDaemonState() {
     const snapshot = parseRedisJson(stateRaw, null);
     applyRemoteRuntimeSnapshot(snapshot);
     applyRemoteLogs(Array.isArray(logsRaw) ? logsRaw : []);
+    await refreshOnlineClients(runtime.redis);
   } catch (error) {
     log("warn", "Failed to sync daemon state", errorDetails(error));
   }
@@ -2383,11 +2520,14 @@ async function daemonMain() {
 
   await redis.ping();
   try {
-    const loadedFromFile = await loadConfigPrefsFromFile();
+    const fileLoad = await loadConfigPrefsFromFile();
+    const loadedFromFile = fileLoad.loaded;
     const loadedFromRedis = await loadConfigPrefs(redis);
     if (loadedFromFile || loadedFromRedis) {
       log("info", "Loaded persisted config preferences", {
         file: loadedFromFile ? "yes" : "no",
+        file_source: loadedFromFile ? fileLoad.source : "none",
+        file_path: loadedFromFile ? fileLoad.file : "",
         redis: loadedFromRedis ? "yes" : "no",
       });
     }
@@ -2601,7 +2741,8 @@ async function tuiMain() {
   await uc.get({ limit: 1 });
 
   try {
-    const loadedFromFile = await loadConfigPrefsFromFile();
+    const fileLoad = await loadConfigPrefsFromFile();
+    const loadedFromFile = fileLoad.loaded;
     const loadedFromRedis = await loadConfigPrefs(redis);
     if (loadedFromRedis && !loadedFromFile) {
       await persistConfigPrefsToFile();
@@ -2708,6 +2849,8 @@ async function runApp() {
   }
   await tuiMain();
 }
+
+installStdioErrorGuards();
 
 runApp().catch(async (error) => {
   if (statusTimer) clearInterval(statusTimer);
