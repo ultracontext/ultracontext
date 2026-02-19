@@ -4,19 +4,20 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node src/index.mjs --daemon",
+    "start": "node src/launcher.mjs",
+    "start:bg": "node src/launcher.mjs",
+    "start:verbose": "node src/index.mjs --daemon --verbose",
+    "status": "node src/ctl.mjs status",
+    "stop": "node src/ctl.mjs stop",
     "dev": "node --watch src/index.mjs --daemon",
-    "tui": "node src/index.mjs",
-    "check": "node --check src/index.mjs && node --check src/ui.mjs && node --check src/codex-local-resume.mjs && node --check src/sources.mjs && node --check src/redact.mjs && node --check src/utils.mjs && node --check src/redis.mjs"
+    "check": "node --check src/index.mjs && node --check src/sources.mjs && node --check src/redact.mjs && node --check src/utils.mjs && node --check src/store.mjs && node --check src/lock.mjs && node --check src/ws-server.mjs && node --check src/launcher.mjs && node --check src/ctl.mjs"
   },
   "dependencies": {
-    "@mishieck/ink-titled-box": "^0.4.2",
+    "@ultracontext/protocol": "workspace:*",
+    "better-sqlite3": "^11.10.0",
     "dotenv": "^17.2.3",
     "fast-glob": "^3.3.3",
-    "figlet": "^1.10.0",
-    "ink": "^6.7.0",
-    "ioredis": "^5.8.1",
-    "react": "^19.2.4",
-    "ultracontext": "^1.0.1"
+    "ultracontext": "^1.0.1",
+    "ws": "^8.18.3"
   }
 }

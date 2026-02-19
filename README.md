@@ -121,6 +121,8 @@ Get an API key from the [UltraContext Dashboard](https://ultracontext.ai/dashboa
 
 ## Monorepo Development
 
+Workspace apps live in `apps/*` and shared internal modules live in `packages/*`.
+
 ```bash
 pnpm install
 pnpm --filter ultracontext-daemon run dev
