@@ -29,7 +29,15 @@ export type CompressResult = {
     messages_compressed: number;
     messages_preserved: number;
   };
-  /** Original verbatim messages keyed by ID. Every compressed message's source appears here. */
+  /**
+   * Original verbatim messages keyed by ID — every compressed message's
+   * source appears here.
+   *
+   * ATOMICITY: `messages` and `verbatim` must be persisted together in a
+   * single transaction. Writing `messages` without `verbatim` causes
+   * irrecoverable data loss. Use `expandMessages()` after loading to
+   * verify integrity — non-empty `missing_ids` indicates a partial write.
+   */
   verbatim: VerbatimMap;
 };
 

@@ -59,6 +59,13 @@ function expandOnce(messages: Message[], store: StoreLookup): ExpandResult {
   };
 }
 
+/**
+ * Restore original messages from compressed output using a verbatim store.
+ *
+ * Non-empty `missing_ids` in the result indicates data loss — typically
+ * from a non-atomic write where compressed messages were persisted but
+ * their verbatim originals were not.
+ */
 export function expandMessages(
   messages: Message[],
   store: StoreLookup,

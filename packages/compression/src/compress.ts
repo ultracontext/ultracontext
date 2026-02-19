@@ -163,6 +163,15 @@ function contentLength(msg: Message): number {
   return typeof msg.content === 'string' ? msg.content.length : 0;
 }
 
+/**
+ * Compress a message array, returning compressed messages, stats, and
+ * a verbatim map of every original that was replaced.
+ *
+ * The caller MUST persist `messages` and `verbatim` atomically.
+ * Partial writes (e.g. storing compressed messages without their
+ * verbatim originals) will cause data loss that `expandMessages()`
+ * surfaces via `missing_ids`.
+ */
 export function compressMessages(
   messages: Message[],
   options: CompressOptions = {},
