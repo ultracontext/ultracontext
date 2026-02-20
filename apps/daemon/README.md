@@ -9,6 +9,12 @@ pnpm install
 pnpm --filter ultracontext-daemon run start
 ```
 
+Env setup (monorepo root):
+
+```bash
+cp .env.example .env
+```
+
 `start` now launches in the background and returns control to the terminal.
 
 Verbose mode (foreground with formatted logs):
@@ -34,6 +40,8 @@ pnpm --filter ultracontext-daemon run dev
 
 - This package runs the daemon process only (headless).
 - TUI client lives in `apps/tui`.
+- Environment variables are loaded from monorepo root `.env` by default, with fallback to `apps/daemon/.env`.
+- Use `DOTENV_CONFIG_PATH=/custom/path/.env` to override the env file location.
 - Daemon uses local SQLite for offsets/dedupe/config cache (`~/.ultracontext/daemon.db` by default).
 - Daemon exposes local WebSocket runtime state for TUI (`~/.ultracontext/daemon.info` by default).
 - Sound effects and resume UX now live in the TUI client.

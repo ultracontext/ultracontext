@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node src/index.mjs",
     "dev": "node --watch src/index.mjs",
-    "check": "node --check src/index.mjs && node --check src/ui.mjs && node --check src/Spinner.mjs && node --check src/codex-local-resume.mjs && node --check src/utils.mjs && node --check src/ws-client.mjs"
+    "check": "node --check src/index.mjs && node --check src/env.mjs && node --check src/ui.mjs && node --check src/Spinner.mjs && node --check src/codex-local-resume.mjs && node --check src/utils.mjs && node --check src/ws-client.mjs"
   },
   "dependencies": {
     "@mishieck/ink-titled-box": "^0.4.2",

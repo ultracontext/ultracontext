@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "./env.mjs";
 
 import fs from "node:fs/promises";
 import fsSync from "node:fs";

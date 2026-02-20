@@ -10,7 +10,7 @@
     "status": "node src/ctl.mjs status",
     "stop": "node src/ctl.mjs stop",
     "dev": "node --watch src/index.mjs --daemon",
-    "check": "node --check src/index.mjs && node --check src/sources.mjs && node --check src/redact.mjs && node --check src/utils.mjs && node --check src/store.mjs && node --check src/lock.mjs && node --check src/ws-server.mjs && node --check src/launcher.mjs && node --check src/ctl.mjs"
+    "check": "node --check src/index.mjs && node --check src/env.mjs && node --check src/sources.mjs && node --check src/redact.mjs && node --check src/utils.mjs && node --check src/store.mjs && node --check src/lock.mjs && node --check src/ws-server.mjs && node --check src/launcher.mjs && node --check src/ctl.mjs"
   },
   "dependencies": {
     "@ultracontext/protocol": "workspace:*",
