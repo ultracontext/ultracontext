@@ -79,8 +79,9 @@ const API_KEY_PATTERNS: RegExp[] = [
   /\bglpat-[a-zA-Z0-9_-]{20,}\b/,                                    // GitLab
   /\bnpm_[a-zA-Z0-9]{36,}\b/,                                        // npm
   /\bAIza[a-zA-Z0-9_-]{35}\b/,                                       // Google API
-  // Generic fallback: prefix + separator + 20+ mixed alphanumeric body
-  /\b[a-zA-Z][a-zA-Z0-9]{1,14}[-_](?=[a-zA-Z0-9_-]*[0-9])(?=[a-zA-Z0-9_-]*[a-zA-Z])[a-zA-Z0-9_-]{20,}\b/,
+  // Generic fallback: prefix (with non-hex letter) + separator + 20+ mixed body
+  // Prefix must contain [g-zG-Z] to exclude UUID hex segments (0-9a-f only)
+  /\b[a-zA-Z](?=[a-zA-Z0-9]{0,13}[g-zG-Z])[a-zA-Z0-9]{1,14}[-_](?=[a-zA-Z0-9_-]*[0-9])(?=[a-zA-Z0-9_-]*[a-zA-Z])[a-zA-Z0-9_-]{20,}\b/,
 ];
 
 const FORCE_T0_PATTERNS: Array<{ re: RegExp; label: string }> = [
