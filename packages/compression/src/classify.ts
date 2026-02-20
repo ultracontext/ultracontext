@@ -42,28 +42,39 @@ function detectStructuralPatterns(text: string): {
 
 // -- Head 5: Content-Type Detector (CTD) --
 
-// SQL keyword density: 2+ distinct SQL keywords with at least one anchor → T0
-// "Anchor" keywords are unambiguously SQL — words like SELECT, FROM, UPDATE, DELETE
-// are too common in English to count alone.
-const SQL_ALL_RE = /\b(?:SELECT|FROM|WHERE|JOIN|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE|MERGE|GRANT|REVOKE|HAVING|UNION|GROUP\s+BY|ORDER\s+BY|DISTINCT|LIMIT|OFFSET|VALUES|PRIMARY\s+KEY|FOREIGN\s+KEY|NOT\s+NULL|VARCHAR|INTEGER|BOOLEAN|CONSTRAINT|CASCADE|FETCH|CURSOR|DECLARE|PROCEDURE|TRIGGER|SCHEMA|VIEW|RETURNING|ON\s+CONFLICT|UPSERT|WITH\s+RECURSIVE|INNER\s+JOIN|LEFT\s+JOIN|RIGHT\s+JOIN|CROSS\s+JOIN|FULL\s+JOIN|NATURAL\s+JOIN)\b/gi;
-const SQL_ANCHORS = new Set([
+// SQL keyword density — tiered anchor system to avoid false-positives on English prose.
+// Strong anchors (compound keywords / near-zero English usage) → 1 alone is enough.
+// Weak anchors (single words that *can* appear in English) → need 3+ total keywords.
+const SQL_ALL_RE = /\b(?:SELECT|FROM|WHERE|JOIN|INSERT|INTO|UPDATE|SET|DELETE|CREATE|ALTER|DROP|TRUNCATE|MERGE|GRANT|REVOKE|HAVING|UNION|GROUP\s+BY|ORDER\s+BY|DISTINCT|LIMIT|OFFSET|VALUES|PRIMARY\s+KEY|FOREIGN\s+KEY|NOT\s+NULL|VARCHAR|INTEGER|BOOLEAN|CONSTRAINT|CASCADE|FETCH|CURSOR|DECLARE|PROCEDURE|TRIGGER|SCHEMA|VIEW|RETURNING|ON\s+CONFLICT|UPSERT|WITH\s+RECURSIVE|INNER\s+JOIN|LEFT\s+JOIN|RIGHT\s+JOIN|CROSS\s+JOIN|FULL\s+JOIN|NATURAL\s+JOIN)\b/gi;
+const SQL_STRONG_ANCHORS = new Set([
+  'GROUP BY', 'ORDER BY', 'PRIMARY KEY', 'FOREIGN KEY', 'NOT NULL',
+  'VARCHAR', 'INTEGER', 'BOOLEAN', 'CONSTRAINT', 'CASCADE', 'RETURNING',
+  'ON CONFLICT', 'WITH RECURSIVE', 'UPSERT', 'INNER JOIN', 'LEFT JOIN',
+  'RIGHT JOIN', 'CROSS JOIN', 'FULL JOIN', 'NATURAL JOIN', 'TRUNCATE',
+]);
+const SQL_WEAK_ANCHORS = new Set([
   'WHERE', 'JOIN', 'HAVING', 'UNION', 'DISTINCT', 'OFFSET', 'VALUES',
-  'TRUNCATE', 'MERGE', 'GRANT', 'REVOKE', 'CURSOR', 'DECLARE',
-  'PROCEDURE', 'TRIGGER', 'SCHEMA', 'GROUP BY', 'ORDER BY',
-  'PRIMARY KEY', 'FOREIGN KEY', 'NOT NULL', 'VARCHAR', 'INTEGER',
-  'BOOLEAN', 'CONSTRAINT', 'CASCADE', 'RETURNING', 'ON CONFLICT',
-  'WITH RECURSIVE', 'UPSERT', 'INNER JOIN', 'LEFT JOIN', 'RIGHT JOIN',
-  'CROSS JOIN', 'FULL JOIN', 'NATURAL JOIN',
+  'MERGE', 'GRANT', 'REVOKE', 'CURSOR', 'DECLARE', 'PROCEDURE',
+  'TRIGGER', 'SCHEMA', 'VIEW', 'FETCH',
 ]);
 
 function detectSqlContent(text: string): boolean {
   const matches = text.match(SQL_ALL_RE);
   if (!matches) return false;
   const distinct = new Set(matches.map(m => m.toUpperCase().replace(/\s+/g, ' ')));
-  if (distinct.size < 2) return false;
+
+  // 1+ strong anchor → unambiguous SQL
   for (const kw of distinct) {
-    if (SQL_ANCHORS.has(kw)) return true;
+    if (SQL_STRONG_ANCHORS.has(kw)) return true;
   }
+
+  // 3+ distinct keywords AND 1+ weak anchor → likely SQL
+  if (distinct.size >= 3) {
+    for (const kw of distinct) {
+      if (SQL_WEAK_ANCHORS.has(kw)) return true;
+    }
+  }
+
   return false;
 }
 
@@ -79,10 +90,10 @@ const API_KEY_PATTERNS: RegExp[] = [
   /\bglpat-[a-zA-Z0-9_-]{20,}\b/,                                    // GitLab
   /\bnpm_[a-zA-Z0-9]{36,}\b/,                                        // npm
   /\bAIza[a-zA-Z0-9_-]{35}\b/,                                       // Google API
-  // Generic fallback: prefix (with non-hex letter) + separator + 20+ mixed body
-  // Prefix must contain [g-zG-Z] to exclude UUID hex segments (0-9a-f only)
-  /\b[a-zA-Z](?=[a-zA-Z0-9]{0,13}[g-zG-Z])[a-zA-Z0-9]{1,14}[-_](?=[a-zA-Z0-9_-]*[0-9])(?=[a-zA-Z0-9_-]*[a-zA-Z])[a-zA-Z0-9_-]{20,}\b/,
 ];
+// Generic fallback: prefix (with non-hex letter) + separator + 20+ mixed body
+// Prefix must contain [g-zG-Z] to exclude UUID hex segments (0-9a-f only)
+const GENERIC_TOKEN_RE = /\b[a-zA-Z](?=[a-zA-Z0-9]{0,13}[g-zG-Z])[a-zA-Z0-9]{1,14}[-_](?=[a-zA-Z0-9_-]*[0-9])(?=[a-zA-Z0-9_-]*[a-zA-Z])[a-zA-Z0-9_-]{20,}\b/;
 
 const FORCE_T0_PATTERNS: Array<{ re: RegExp; label: string }> = [
   { re: /https?:\/\/[^\s]+/,                                        label: 'url'                },
@@ -107,13 +118,26 @@ function detectContentTypes(text: string): {
   // SQL keyword density
   if (detectSqlContent(text)) reasons.push('sql_content');
 
-  // API key detection (known + generic)
+  // API key detection — known providers first, then generic with CSS/BEM rejection
+  let apiKeyFound = false;
   for (const re of API_KEY_PATTERNS) {
     if (re.test(text)) {
-      reasons.push('api_key');
-      break; // one hit is enough
+      apiKeyFound = true;
+      break;
     }
   }
+  if (!apiKeyFound) {
+    const genericMatch = text.match(GENERIC_TOKEN_RE);
+    if (genericMatch) {
+      const sepIdx = genericMatch[0].search(/[-_]/);
+      const body = sepIdx >= 0 ? genericMatch[0].slice(sepIdx + 1) : '';
+      // Reject if body looks like hyphenated words (3+ segments of 2+ lowercase letters)
+      if (!/(?:[a-z]{2,}-){2,}/.test(body)) {
+        apiKeyFound = true;
+      }
+    }
+  }
+  if (apiKeyFound) reasons.push('api_key');
 
   // Other content-type patterns
   for (const { re, label } of FORCE_T0_PATTERNS) {

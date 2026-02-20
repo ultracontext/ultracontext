@@ -72,7 +72,7 @@ describe('classifyMessage', () => {
     });
 
     it('detects GRANT/REVOKE', () => {
-      const r = classifyMessage('GRANT SELECT ON users TO readonly_role');
+      const r = classifyMessage('GRANT SELECT, INSERT ON users TO readonly_role; REVOKE DELETE ON users FROM guest_role');
       expect(r.decision).toBe('T0');
       expect(r.reasons).toContain('sql_content');
     });
@@ -314,6 +314,20 @@ describe('classifyMessage', () => {
       expect(r.reasons).not.toContain('sql_content');
     });
 
+    it('prose with "where" and "values" in English does not trigger sql_content', () => {
+      const r = classifyMessage(
+        'The system processes entries where defaults are established. Users should adjust these values to match their specific requirements.'
+      );
+      expect(r.reasons).not.toContain('sql_content');
+    });
+
+    it('prose with "schema" in tech context does not trigger sql_content', () => {
+      const r = classifyMessage(
+        'When moving from the old schema to the new architecture, teams should carefully plan the migration path.'
+      );
+      expect(r.reasons).not.toContain('sql_content');
+    });
+
     it('CSS hex color does not trigger hash_or_sha', () => {
       // #ff00ff is only 6 hex chars, well below the 40-char minimum
       const r = classifyMessage('Set the background to #ff00ff and the text to #333333 for the header component.');
@@ -332,6 +346,16 @@ describe('classifyMessage', () => {
 
     it('kebab-case CSS class does not trigger api_key', () => {
       const r = classifyMessage('Add the class btn-primary-large-disabled-outline to the button.');
+      expect(r.reasons).not.toContain('api_key');
+    });
+
+    it('verbose CSS BEM class does not trigger api_key', () => {
+      const r = classifyMessage('Apply the class billing-dashboard-wrapper-outer-container-v2 to the root element.');
+      expect(r.reasons).not.toContain('api_key');
+    });
+
+    it('npm scope-like name does not trigger api_key', () => {
+      const r = classifyMessage('Install the package my-org-internal-service-name-production from the registry.');
       expect(r.reasons).not.toContain('api_key');
     });
 
