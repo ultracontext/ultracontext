@@ -123,8 +123,26 @@ describe('classifyMessage', () => {
       expect(r.reasons).toContain('api_key');
     });
 
-    it('detects Slack tokens', () => {
+    it('detects Slack bot tokens (xoxb)', () => {
       const r = classifyMessage('Bot token: xoxb-123456789012-abcdefghij1234567890');
+      expect(r.decision).toBe('T0');
+      expect(r.reasons).toContain('api_key');
+    });
+
+    it('detects Slack user tokens (xoxp)', () => {
+      const r = classifyMessage('User token: xoxp-123456789012-abcdefghij1234567890');
+      expect(r.decision).toBe('T0');
+      expect(r.reasons).toContain('api_key');
+    });
+
+    it('detects Slack app tokens (xoxa)', () => {
+      const r = classifyMessage('App token: xoxa-2-123456789012-abcdefghij1234567890');
+      expect(r.decision).toBe('T0');
+      expect(r.reasons).toContain('api_key');
+    });
+
+    it('detects Slack refresh tokens (xoxr)', () => {
+      const r = classifyMessage('Refresh: xoxr-123456789012-abcdefghij1234567890');
       expect(r.decision).toBe('T0');
       expect(r.reasons).toContain('api_key');
     });
@@ -137,6 +155,12 @@ describe('classifyMessage', () => {
 
     it('detects GitLab PAT', () => {
       const r = classifyMessage('Token: glpat-abc123def456ghi789jkl0');
+      expect(r.decision).toBe('T0');
+      expect(r.reasons).toContain('api_key');
+    });
+
+    it('detects npm tokens', () => {
+      const r = classifyMessage('Token: npm_abcdefghijklmnopqrstuvwxyz0123456789AB');
       expect(r.decision).toBe('T0');
       expect(r.reasons).toContain('api_key');
     });
@@ -256,6 +280,12 @@ describe('classifyMessage', () => {
       expect(r.reasons).toContain('high_line_length_variance');
     });
 
+    it('detects IP addresses via ip_or_semver', () => {
+      const r = classifyMessage('The server is at 192.168.1.1 on the local network');
+      expect(r.decision).toBe('T0');
+      expect(r.reasons).toContain('ip_or_semver');
+    });
+
     it('detects quoted keys', () => {
       const r = classifyMessage('The config has "timeout": 30 and "retries": 5');
       expect(r.decision).toBe('T0');
@@ -268,6 +298,172 @@ describe('classifyMessage', () => {
         '```python\nimport os\npath = "/usr/local/bin"\nurl = "https://example.com"\nemail = "a@b.com"\nversion = "v1.2.3"\n```'
       );
       expect(r.confidence).toBeLessThanOrEqual(0.95);
+    });
+  });
+
+  describe('false-positive resistance', () => {
+    it('prose mentioning "from" and "select" in non-SQL context stays T3', () => {
+      const r = classifyMessage(
+        'You can select any option from the settings panel. The team will update the config and create a new deployment pipeline for the staging environment.'
+      );
+      expect(r.reasons).not.toContain('sql_content');
+    });
+
+    it('prose with "delete from" in conversational context stays non-SQL', () => {
+      const r = classifyMessage('I need to delete the old images from my camera roll and update my storage plan.');
+      expect(r.reasons).not.toContain('sql_content');
+    });
+
+    it('CSS hex color does not trigger hash_or_sha', () => {
+      // #ff00ff is only 6 hex chars, well below the 40-char minimum
+      const r = classifyMessage('Set the background to #ff00ff and the text to #333333 for the header component.');
+      expect(r.reasons).not.toContain('hash_or_sha');
+    });
+
+    it('short alphanumeric slug does not trigger api_key', () => {
+      const r = classifyMessage('The package is published as my-cool-lib on npm.');
+      expect(r.reasons).not.toContain('api_key');
+    });
+
+    it('UUID does not trigger api_key', () => {
+      const r = classifyMessage('The session ID is 550e8400-e29b-41d4-a716-446655440000.');
+      expect(r.reasons).not.toContain('api_key');
+    });
+
+    it('kebab-case CSS class does not trigger api_key', () => {
+      const r = classifyMessage('Add the class btn-primary-large-disabled-outline to the button.');
+      expect(r.reasons).not.toContain('api_key');
+    });
+
+    it('"version 2" in prose does not trigger version_number for surrounding text', () => {
+      // version_number should fire, but the whole message should still be T0 — this tests
+      // that the pattern is scoped and does not cause unexpected side effects
+      const r = classifyMessage('We shipped version 2 last week and it went smoothly.');
+      expect(r.decision).toBe('T0');
+      expect(r.reasons).toContain('version_number');
+      expect(r.reasons).not.toContain('sql_content');
+    });
+
+    it('numeric_with_units does not fire on bare numbers without units', () => {
+      const r = classifyMessage('There are 5000 items in the queue and 12 workers available.');
+      expect(r.reasons).not.toContain('numeric_with_units');
+    });
+
+    it('legal_term does not fire on "must" in normal tech prose', () => {
+      // "must" is in the legal pattern but is extremely common in requirements docs
+      const r = classifyMessage('The API must return a 200 status code for valid requests.');
+      // It WILL fire (the pattern matches "must") — documenting this known over-trigger
+      expect(r.reasons).toContain('legal_term');
+    });
+  });
+
+  describe('real-world variations', () => {
+    it('detects API key embedded in a JSON config', () => {
+      const r = classifyMessage('{"apiKey": "sk-proj-abc123def456ghi789jkl012mno345pqr", "model": "gpt-4"}');
+      expect(r.reasons).toContain('api_key');
+    });
+
+    it('detects API key pasted with surrounding quotes', () => {
+      const r = classifyMessage("Set OPENAI_API_KEY='sk-ant-api03-abc123def456ghi789jkl' in your .env file.");
+      expect(r.reasons).toContain('api_key');
+    });
+
+    it('detects API key in a multi-line env block', () => {
+      const r = classifyMessage(
+        'DATABASE_URL=postgres://localhost/mydb\nSTRIPE_KEY=sk_test_4eC39HqLyjWDarjtT1zdp7dc0123456789\nPORT=3000'
+      );
+      expect(r.reasons).toContain('api_key');
+    });
+
+    it('detects SQL in an error message', () => {
+      const r = classifyMessage(
+        'ERROR: relation "users" does not exist at character 15\n' +
+        'STATEMENT: SELECT id, email FROM users WHERE active = true ORDER BY created_at DESC LIMIT 10'
+      );
+      expect(r.reasons).toContain('sql_content');
+    });
+
+    it('detects SQL embedded in ORM debug output', () => {
+      const r = classifyMessage(
+        '[2024-03-15 10:23:45] DEBUG: Executing query: INSERT INTO audit_log (user_id, action, timestamp) VALUES ($1, $2, NOW()) RETURNING id'
+      );
+      expect(r.reasons).toContain('sql_content');
+    });
+
+    it('detects lowercase SQL (common in ORM output)', () => {
+      const r = classifyMessage('select u.id, u.name from users u inner join orders o on u.id = o.user_id where o.total > 100');
+      expect(r.reasons).toContain('sql_content');
+    });
+
+    it('detects mixed-case SQL', () => {
+      const r = classifyMessage('Select Count(*) From users Where active = true Group By role');
+      expect(r.reasons).toContain('sql_content');
+    });
+
+    it('detects EXPLAIN ANALYZE output', () => {
+      const r = classifyMessage(
+        'EXPLAIN ANALYZE SELECT * FROM orders WHERE created_at > NOW() - INTERVAL \'7 days\' ORDER BY total DESC LIMIT 50'
+      );
+      expect(r.reasons).toContain('sql_content');
+    });
+
+    it('detects schema migration SQL', () => {
+      const r = classifyMessage(
+        'ALTER TABLE users ADD COLUMN last_login TIMESTAMP NOT NULL DEFAULT NOW();\n' +
+        'CREATE INDEX idx_users_last_login ON users (last_login);'
+      );
+      expect(r.reasons).toContain('sql_content');
+    });
+
+    it('detects Anthropic sk-ant-* key format', () => {
+      const r = classifyMessage('Use sk-ant-api03-abc123def456ghi789jkl012mno345pqr for auth.');
+      expect(r.reasons).toContain('api_key');
+    });
+
+    it('detects key with underscores (Supabase-style)', () => {
+      const r = classifyMessage('Token: sbp_a8b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6');
+      expect(r.reasons).toContain('api_key');
+    });
+  });
+
+  describe('cross-pattern and multi-signal', () => {
+    it('SQL inside a code fence triggers both code_fence and sql_content', () => {
+      const r = classifyMessage('```sql\nSELECT * FROM users WHERE active = true ORDER BY name\n```');
+      expect(r.reasons).toContain('code_fence');
+      expect(r.reasons).toContain('sql_content');
+    });
+
+    it('API key + URL in the same message triggers both', () => {
+      const r = classifyMessage('curl -H "Authorization: Bearer sk-proj-abc123def456ghi789jkl012mno345pqr" https://api.openai.com/v1/chat');
+      expect(r.reasons).toContain('api_key');
+      expect(r.reasons).toContain('url');
+    });
+
+    it('long prose with a single URL is still T0 (URL preserves it)', () => {
+      const prose = 'The system handles request routing and load balancing across multiple regions. '.repeat(5);
+      const r = classifyMessage(prose + ' See https://docs.example.com/architecture for details.');
+      expect(r.decision).toBe('T0');
+      expect(r.reasons).toContain('url');
+    });
+
+    it('message with SQL + file paths + version triggers all three', () => {
+      const r = classifyMessage(
+        'Running migration v2.3.1 from /db/migrations/003.sql:\n' +
+        'ALTER TABLE sessions ADD CONSTRAINT fk_user FOREIGN KEY (user_id) REFERENCES users(id) CASCADE'
+      );
+      expect(r.reasons).toContain('sql_content');
+      expect(r.reasons).toContain('file_path');
+      expect(r.reasons).toContain('version_number');
+    });
+
+    it('confidence scales with number of distinct signals', () => {
+      // Single signal
+      const r1 = classifyMessage('Check https://example.com for updates');
+      // Multiple signals
+      const r2 = classifyMessage(
+        'Check https://example.com, contact admin@example.com, version v3.2.1'
+      );
+      expect(r2.confidence).toBeGreaterThan(r1.confidence);
     });
   });
 

@@ -53,6 +53,44 @@ describe('expandMessages', () => {
     expect(expanded.messages_expanded).toBe(1);
   });
 
+  it('empty input returns empty output', () => {
+    const result = expandMessages([], {});
+    expect(result.messages).toEqual([]);
+    expect(result.messages_expanded).toBe(0);
+    expect(result.messages_passthrough).toBe(0);
+    expect(result.missing_ids).toEqual([]);
+  });
+
+  it('non-recursive stops after one expansion layer', () => {
+    // Manually construct a two-layer nesting:
+    // outer message points to "mid" which itself has _uc_original pointing to "deep"
+    const deepOriginal: Message = msg({ id: 'deep', index: 0, role: 'user', content: 'Original deep content.' });
+    const midMessage: Message = {
+      ...msg({ id: 'mid', index: 0, role: 'user', content: '[summary: mid-level]' }),
+      metadata: { _uc_original: { ids: ['deep'], summary_id: 'uc_sum_test1', version: 0 } },
+    };
+    const outerMessage: Message = {
+      ...msg({ id: 'outer', index: 0, role: 'user', content: '[summary: outer-level]' }),
+      metadata: { _uc_original: { ids: ['mid'], summary_id: 'uc_sum_test2', version: 0 } },
+    };
+
+    const store = { mid: midMessage, deep: deepOriginal };
+
+    // Non-recursive: outer → mid, but mid still has _uc_original
+    const shallow = expandMessages([outerMessage], store);
+    expect(shallow.messages_expanded).toBe(1);
+    expect(shallow.messages[0].id).toBe('mid');
+    expect(shallow.messages[0].content).toBe('[summary: mid-level]');
+    const hasMeta = !!(shallow.messages[0].metadata?._uc_original as { ids: string[] })?.ids?.length;
+    expect(hasMeta).toBe(true);
+
+    // Recursive: outer → mid → deep
+    const deep = expandMessages([outerMessage], store, { recursive: true });
+    expect(deep.messages[0].id).toBe('deep');
+    expect(deep.messages[0].content).toBe('Original deep content.');
+    expect(deep.messages_expanded).toBe(2);
+  });
+
   it('missing and partial IDs: reports missing, keeps summary as fallback', () => {
     const input: Message[] = [
       msg({ id: 'a', index: 0, role: 'user', content: PROSE }),

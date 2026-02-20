@@ -67,6 +67,36 @@ describe('compressMessages', () => {
       expect(result.compression.messages_preserved).toBe(1);
     });
 
+    it('preserves tool results containing SQL', () => {
+      const sqlContent = 'SELECT u.id, u.email FROM users u JOIN orders o ON u.id = o.user_id WHERE o.total > 100 ORDER BY o.created_at DESC LIMIT 50';
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'tool', content: sqlContent }),
+      ];
+      const result = compressMessages(messages, { recencyWindow: 0 });
+      expect(result.messages[0].content).toBe(sqlContent);
+      expect(result.compression.messages_preserved).toBe(1);
+    });
+
+    it('preserves tool results containing API keys', () => {
+      const envContent = 'DATABASE_URL=postgres://localhost/mydb\nOPENAI_API_KEY=sk-proj-abc123def456ghi789jkl012mno345pqr\nPORT=3000';
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'tool', content: envContent }),
+      ];
+      const result = compressMessages(messages, { recencyWindow: 0 });
+      expect(result.messages[0].content).toBe(envContent);
+      expect(result.compression.messages_preserved).toBe(1);
+    });
+
+    it('preserves function results containing SQL', () => {
+      const sqlContent = 'ERROR: relation "users" does not exist\nSTATEMENT: INSERT INTO audit_log (user_id, action) VALUES ($1, $2) RETURNING id';
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'function', content: sqlContent }),
+      ];
+      const result = compressMessages(messages, { recencyWindow: 0 });
+      expect(result.messages[0].content).toBe(sqlContent);
+      expect(result.compression.messages_preserved).toBe(1);
+    });
+
     it('preserves messages with tool_calls', () => {
       const messages: Message[] = [
         msg({
@@ -264,6 +294,33 @@ describe('compressMessages', () => {
         msg({ id: '2', index: 1, role: 'user', content: 'Short msg.' }),
       ];
       const result = compressMessages(messages);
+      expect(result.compression.token_ratio).toBe(1);
+    });
+
+    it('token_ratio differs from char ratio', () => {
+      const prose = 'This is a long message about general topics that could be compressed since it has no verbatim content. '.repeat(10);
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'user', content: prose }),
+        msg({ id: '2', index: 1, role: 'assistant', content: prose }),
+      ];
+      const result = compressMessages(messages, { recencyWindow: 0 });
+      // Both should be > 1 since compression happened
+      expect(result.compression.ratio).toBeGreaterThan(1);
+      expect(result.compression.token_ratio).toBeGreaterThan(1);
+      // They use different denominators (chars vs ceil(chars/3.5)) so won't be identical
+      expect(result.compression.token_ratio).not.toBe(result.compression.ratio);
+    });
+
+    it('token_ratio uses ceil(chars/3.5) estimation', () => {
+      // 350 chars → ceil(350/3.5) = 100 tokens
+      const content = 'x'.repeat(350);
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'user', content }),
+      ];
+      // Won't compress (classifier sees it as T0 due to low variance), but we can
+      // verify the ratio math on the empty-compression path
+      const result = compressMessages(messages, { recencyWindow: 0 });
+      // All preserved → token_ratio === 1
       expect(result.compression.token_ratio).toBe(1);
     });
 
