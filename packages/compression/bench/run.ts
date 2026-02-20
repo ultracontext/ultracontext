@@ -38,6 +38,7 @@ function buildScenarios(): Scenario[] {
     toolHeavy(),
     shortConversation(),
     deepConversation(),
+    structuredContent(),
   ];
 }
 
@@ -101,44 +102,74 @@ function longQA(): Scenario {
 }
 
 function toolHeavy(): Scenario {
+  // Long prose tool result: pure T3 prose, >120 chars, no code fences / SQL / API keys / URLs / JSON
+  const longProse =
+    'The authentication service handles all user identity verification across the platform. ' +
+    'When a request arrives, the service first checks the session store for an active session, ' +
+    'then validates the token signature against the current signing key. If the token has expired ' +
+    'but falls within the renewal window, the service automatically issues a fresh token pair. ' +
+    'The service maintains a blocklist of revoked tokens in memory, synchronized across instances ' +
+    'through a pub-sub channel. Failed authentication attempts are tracked per account to enable ' +
+    'progressive lockout after repeated failures. The service also provides hooks for downstream ' +
+    'middleware to attach additional claims or enforce fine-grained access policies based on ' +
+    'resource ownership.';
+
   return {
     name: 'Tool-heavy',
     messages: [
       msg('system', 'You are a coding assistant with tool access.'),
       msg('user', 'Find all TypeScript files with auth in the name'),
+      // Tool call 1: glob → JSON array (preserved: short JSON)
+      msg('assistant', 'I will search for those files now.', {
+        tool_calls: [{ id: 'tc1', function: { name: 'glob', arguments: '{"pattern":"**/*auth*.ts"}' } }],
+      }),
+      msg('tool', '["src/auth.ts","src/middleware/auth.ts","tests/auth.test.ts","docs/auth-guide.md"]'),
+      // Tool call 2: read docs → long prose (compressed: T3)
+      msg('assistant', 'Found 4 files. Let me read the documentation first.', {
+        tool_calls: [{ id: 'tc2', function: { name: 'read', arguments: '{"path":"docs/auth-guide.md"}' } }],
+      }),
+      msg('tool', longProse),
+      // Tool call 3: read SQL → SQL query (preserved: T0 sql_content)
+      msg('assistant', 'Now let me check the database schema.', {
+        tool_calls: [{ id: 'tc3', function: { name: 'read', arguments: '{"path":"schema.sql"}' } }],
+      }),
       msg(
-        'assistant',
-        'I will search for those files now.',
-        { tool_calls: [{ id: 'tc1', function: { name: 'glob', arguments: '{"pattern":"**/*auth*.ts"}' } }] },
+        'tool',
+        'SELECT u.id, u.email, u.created_at, r.name AS role_name\n' +
+          'FROM users u\n' +
+          'INNER JOIN user_roles ur ON ur.user_id = u.id\n' +
+          'INNER JOIN roles r ON r.id = ur.role_id\n' +
+          'WHERE u.active = true AND u.email_verified = true\n' +
+          'ORDER BY u.created_at DESC',
       ),
-      msg('tool', '["src/auth.ts","src/middleware/auth.ts","tests/auth.test.ts"]'),
-      msg('assistant', 'Found 3 files. Let me read the main auth module.', {
-        tool_calls: [{ id: 'tc2', function: { name: 'read', arguments: '{"path":"src/auth.ts"}' } }],
+      // Tool call 4: read env → API keys in plaintext config (preserved: T0 api_key + url)
+      msg('assistant', 'Let me check the configuration.', {
+        tool_calls: [{ id: 'tc4', function: { name: 'read', arguments: '{"path":".env.example"}' } }],
+      }),
+      msg(
+        'tool',
+        'STRIPE_SECRET_KEY=sk_live_abc123def456ghi789jkl012\n' +
+          'GITHUB_TOKEN=ghp_abc123def456ghi789jkl012mno345pqr678\n' +
+          'DATABASE_URL=postgresql://admin:secret@db.example.com:5432/myapp\n' +
+          'REDIS_URL=redis://cache.example.com:6379',
+      ),
+      // Tool call 5: read code → code snippet (preserved: T0 structural)
+      msg('assistant', 'Let me read the main auth module.', {
+        tool_calls: [{ id: 'tc5', function: { name: 'read', arguments: '{"path":"src/auth.ts"}' } }],
       }),
       msg(
         'tool',
         'import jwt from "jsonwebtoken";\n\nexport function verify(token: string) {\n  return jwt.verify(token, process.env.SECRET!);\n}\n\nexport function sign(payload: object) {\n  return jwt.sign(payload, process.env.SECRET!, { expiresIn: "1h" });\n}',
       ),
-      msg('assistant', 'The auth module exports verify and sign functions. Let me check the middleware.', {
-        tool_calls: [{ id: 'tc3', function: { name: 'read', arguments: '{"path":"src/middleware/auth.ts"}' } }],
-      }),
-      msg(
-        'tool',
-        'import { verify } from "../auth";\n\nexport function requireAuth(req, res, next) {\n  try {\n    req.user = verify(req.headers.authorization);\n    next();\n  } catch {\n    res.status(401).end();\n  }\n}',
-      ),
-      msg('assistant', 'The middleware calls verify from the auth module. Now checking the test.', {
-        tool_calls: [{ id: 'tc4', function: { name: 'read', arguments: '{"path":"tests/auth.test.ts"}' } }],
-      }),
-      msg(
-        'tool',
-        'import { describe, it, expect } from "vitest";\nimport { verify, sign } from "../src/auth";\n\ndescribe("auth", () => {\n  it("round-trips", () => {\n    const token = sign({ sub: "user1" });\n    expect(verify(token).sub).toBe("user1");\n  });\n});',
-      ),
+      // Tool call 6: edit → short status (preserved: short)
       msg('user', 'Can you add a test for expired tokens?'),
       msg('assistant', 'I will add an expiration test.', {
-        tool_calls: [{ id: 'tc5', function: { name: 'edit', arguments: '{"path":"tests/auth.test.ts"}' } }],
+        tool_calls: [{ id: 'tc6', function: { name: 'edit', arguments: '{"path":"tests/auth.test.ts"}' } }],
       }),
       msg('tool', 'File updated successfully.'),
+      msg('assistant', 'Done. The test file now includes an expiration test case.'),
       msg('user', 'Great, looks good.'),
+      msg('assistant', 'Happy to help! Let me know if you need anything else.'),
     ],
   };
 }
@@ -199,6 +230,109 @@ function deepConversation(): Scenario {
   return { name: 'Deep conversation', messages };
 }
 
+function structuredContent(): Scenario {
+  // Pure prose about auth (~1500 chars): no code, URLs, SQL, API keys, JSON, paths, etc.
+  const authProse =
+    'Setting up authentication for a production environment requires careful planning across ' +
+    'several layers of the system. The first step is establishing a strong identity provider ' +
+    'that supports modern protocols. You will want to implement token-based authentication ' +
+    'with short-lived access tokens and longer-lived refresh tokens stored securely on the ' +
+    'client side. The server should validate tokens on every request through middleware that ' +
+    'sits early in the request pipeline.\n\n' +
+    'Password hashing should use a modern algorithm with appropriate cost factors that balance ' +
+    'security against response time. Each user account should have a unique salt generated at ' +
+    'registration time. The system should enforce minimum password complexity requirements ' +
+    'without being overly restrictive, as research shows that overly strict rules often lead ' +
+    'to weaker passwords in practice.\n\n' +
+    'Session management needs to handle concurrent logins gracefully. You should decide whether ' +
+    'to allow multiple active sessions per user or enforce single-session access. Each session ' +
+    'should track the originating device and location to help users audit their account activity. ' +
+    'Inactive sessions should expire automatically after a configurable timeout period.\n\n' +
+    'Rate limiting on authentication endpoints is essential to prevent brute force attacks. ' +
+    'Implement progressive delays after failed attempts, starting with short pauses and increasing ' +
+    'exponentially. After a threshold of failures, temporarily lock the account and notify the ' +
+    'user through an out-of-band channel. Keep detailed logs of all authentication events for ' +
+    'security auditing and incident response.';
+
+  // Pure prose about monitoring (~1200 chars): same constraints as above
+  const monitoringProse =
+    'Monitoring a production environment effectively means collecting metrics at every layer of ' +
+    'the stack and correlating them to build a complete picture of system health. Start with ' +
+    'infrastructure metrics like memory utilization, disk throughput, and network latency across ' +
+    'all nodes in the cluster. These baseline metrics help you understand normal operating ' +
+    'patterns so you can detect anomalies quickly.\n\n' +
+    'Application-level metrics should track request rates, error rates, and response time ' +
+    'distributions. Percentile-based measurements give a much more accurate picture than simple ' +
+    'averages, which can mask problems affecting a subset of users. Track these metrics per ' +
+    'endpoint to identify which parts of the system are under strain.\n\n' +
+    'Log aggregation brings all service output into a single searchable store that lets you ' +
+    'trace requests across service boundaries. Each log entry should carry a correlation ' +
+    'identifier that follows the request starting at ingress through to the final response. ' +
+    'This makes debugging distributed failures dramatically easier than searching individual ' +
+    'service logs.\n\n' +
+    'Alerting rules should be tuned to minimize noise while catching real incidents. Start with ' +
+    'broad thresholds and tighten them as you learn what normal looks like for your system. Every ' +
+    'alert should have a clear runbook that describes what the responder should check first and ' +
+    'what remediation steps to take.';
+
+  return {
+    name: 'Structured content',
+    messages: [
+      msg('system', 'You are a DevOps consultant helping set up a production environment.'),
+      msg('user', 'Set up our production environment with all the credentials.'),
+      // Env block with API keys in plaintext config (preserved: T0 api_key)
+      msg(
+        'assistant',
+        'Here are the environment variables you need to configure:\n\n' +
+          'STRIPE_SECRET_KEY=sk_live_Rz4x8Kp2Qm7Yn3Wv9Bt6Jh0L\n' +
+          'GITHUB_TOKEN=ghp_Mn3Kx8Rz4Qp7Yv2Wt9Bj6Lh0Ds5Fa1Gc8Eu4Iw\n' +
+          'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n' +
+          'SENDGRID_API_KEY=SG.xY7kZmN2pQ9rS4tU6vW8aB.cD3eF5gH7jK9mN1pQ3rS5tU7vW9xY1zA3bC5dE7f',
+      ),
+      msg('user', 'What about the database schema?'),
+      // SQL DDL (preserved: T0 sql_content)
+      msg(
+        'assistant',
+        'Here is the initial schema for the audit log:\n\n' +
+          'CREATE TABLE audit_logs (\n' +
+          '  id SERIAL PRIMARY KEY,\n' +
+          '  user_id INTEGER NOT NULL,\n' +
+          '  action VARCHAR(100) NOT NULL,\n' +
+          '  resource_type VARCHAR(50),\n' +
+          '  resource_id INTEGER,\n' +
+          '  details TEXT,\n' +
+          '  created_at TIMESTAMP DEFAULT NOW(),\n' +
+          '  CONSTRAINT fk_audit_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE\n' +
+          ');',
+      ),
+      msg('user', 'How should we handle authentication?'),
+      // Long prose about auth (compressed: T3)
+      msg('assistant', authProse),
+      msg('user', 'What about monitoring?'),
+      // Long prose about monitoring (compressed: T3)
+      msg('assistant', monitoringProse),
+      msg('user', 'Show me a dashboard configuration.'),
+      // JSON in code fence (preserved: T0 code_fence)
+      msg(
+        'assistant',
+        'Here is a starter dashboard configuration:\n\n' +
+          '```json\n' +
+          '{\n' +
+          '  "dashboard": "production-overview",\n' +
+          '  "refresh_interval": 30,\n' +
+          '  "panels": [\n' +
+          '    { "title": "Request Rate", "type": "graph", "metric": "http_requests_total" },\n' +
+          '    { "title": "Error Rate", "type": "graph", "metric": "http_errors_total" },\n' +
+          '    { "title": "P99 Latency", "type": "gauge", "metric": "http_duration_p99" }\n' +
+          '  ]\n' +
+          '}\n' +
+          '```',
+      ),
+      msg('user', 'Thanks, this is exactly what I needed.'),
+    ],
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
@@ -209,6 +343,7 @@ interface Result {
   originalChars: number;
   compressedChars: number;
   ratio: string;
+  tokenRatio: string;
   compressed: number;
   preserved: number;
   roundTrip: 'PASS' | 'FAIL';
@@ -242,6 +377,7 @@ function run(): void {
       originalChars: chars(scenario.messages),
       compressedChars: chars(cr.messages),
       ratio: cr.compression.ratio.toFixed(2),
+      tokenRatio: cr.compression.token_ratio.toFixed(2),
       compressed: cr.compression.messages_compressed,
       preserved: cr.compression.messages_preserved,
       roundTrip,
@@ -251,11 +387,12 @@ function run(): void {
 
   // Print table
   const cols = {
-    name: 20,
+    name: 24,
     msgs: 5,
     original: 9,
     compressed: 11,
-    ratio: 6,
+    charRatio: 6,
+    tokRatio: 6,
     comp: 5,
     pres: 5,
     rt: 5,
@@ -267,7 +404,8 @@ function run(): void {
     'Msgs'.padStart(cols.msgs),
     'Orig'.padStart(cols.original),
     'Compressed'.padStart(cols.compressed),
-    'Ratio'.padStart(cols.ratio),
+    'ChR'.padStart(cols.charRatio),
+    'TkR'.padStart(cols.tokRatio),
     'Comp'.padStart(cols.comp),
     'Pres'.padStart(cols.pres),
     'R/T'.padStart(cols.rt),
@@ -289,7 +427,8 @@ function run(): void {
         String(r.msgCount).padStart(cols.msgs),
         String(r.originalChars).padStart(cols.original),
         String(r.compressedChars).padStart(cols.compressed),
-        r.ratio.padStart(cols.ratio),
+        r.ratio.padStart(cols.charRatio),
+        r.tokenRatio.padStart(cols.tokRatio),
         String(r.compressed).padStart(cols.comp),
         String(r.preserved).padStart(cols.pres),
         r.roundTrip.padStart(cols.rt),
