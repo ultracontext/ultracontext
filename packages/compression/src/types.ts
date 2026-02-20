@@ -26,6 +26,7 @@ export type CompressResult = {
   compression: {
     original_version: number;
     ratio: number;
+    token_ratio: number;
     messages_compressed: number;
     messages_preserved: number;
   };

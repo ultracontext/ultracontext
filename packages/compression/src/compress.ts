@@ -163,6 +163,10 @@ function contentLength(msg: Message): number {
   return typeof msg.content === 'string' ? msg.content.length : 0;
 }
 
+function estimateTokens(msg: Message): number {
+  return Math.ceil(contentLength(msg) / 3.5);
+}
+
 /**
  * Compress a message array, returning compressed messages, stats, and
  * a verbatim map of every original that was replaced.
@@ -188,6 +192,7 @@ export function compressMessages(
       compression: {
         original_version: sourceVersion,
         ratio: 1,
+        token_ratio: 1,
         messages_compressed: 0,
         messages_preserved: 0,
       },
@@ -397,11 +402,16 @@ export function compressMessages(
   const compressedTotalChars = result.reduce((sum, m) => sum + contentLength(m), 0);
   const ratio = compressedTotalChars > 0 ? originalTotalChars / compressedTotalChars : 1;
 
+  const originalTotalTokens = messages.reduce((sum, m) => sum + estimateTokens(m), 0);
+  const compressedTotalTokens = result.reduce((sum, m) => sum + estimateTokens(m), 0);
+  const tokenRatio = compressedTotalTokens > 0 ? originalTotalTokens / compressedTotalTokens : 1;
+
   return {
     messages: result,
     compression: {
       original_version: sourceVersion,
       ratio: messagesCompressed === 0 ? 1 : ratio,
+      token_ratio: messagesCompressed === 0 ? 1 : tokenRatio,
       messages_compressed: messagesCompressed,
       messages_preserved: messagesPreserved,
     },

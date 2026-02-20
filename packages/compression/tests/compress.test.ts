@@ -214,8 +214,28 @@ describe('compressMessages', () => {
       const result = compressMessages([]);
       expect(result.messages).toEqual([]);
       expect(result.compression.ratio).toBe(1);
+      expect(result.compression.token_ratio).toBe(1);
       expect(result.compression.messages_compressed).toBe(0);
       expect(result.compression.messages_preserved).toBe(0);
+    });
+
+    it('token_ratio > 1 when compressing', () => {
+      const prose = 'This is a long message about general topics that could be compressed since it has no verbatim content. '.repeat(10);
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'user', content: prose }),
+        msg({ id: '2', index: 1, role: 'assistant', content: prose }),
+      ];
+      const result = compressMessages(messages, { recencyWindow: 0 });
+      expect(result.compression.token_ratio).toBeGreaterThan(1);
+    });
+
+    it('token_ratio === 1 when all preserved', () => {
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'system', content: 'System prompt.' }),
+        msg({ id: '2', index: 1, role: 'user', content: 'Short msg.' }),
+      ];
+      const result = compressMessages(messages);
+      expect(result.compression.token_ratio).toBe(1);
     });
 
     it('throws on mode: lossy', () => {
