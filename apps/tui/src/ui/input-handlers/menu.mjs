@@ -1,6 +1,12 @@
 import { MENU_TABS } from "../constants.mjs";
 
-export function handleMenuInput({ key, actions, menuIndex, setFocusMode, moveMenuIndex }) {
+export function handleMenuInput({ input, key, actions, menuIndex, setFocusMode, moveMenuIndex }) {
+  const activeTab = MENU_TABS[Math.max(Number(menuIndex) || 0, 0)]?.id ?? "logs";
+  if ((input === "r" || input === "R") && activeTab === "contexts") {
+    actions.refreshResume?.();
+    return;
+  }
+
   if (key.upArrow) {
     moveMenuIndex(-1);
     return;

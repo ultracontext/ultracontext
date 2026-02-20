@@ -35,7 +35,7 @@ export function createInputHandler({
       return;
     }
     if (focusMode === "menu") {
-      handleMenuInput({ key, actions, menuIndex, setFocusMode, moveMenuIndex });
+      handleMenuInput({ input, key, actions, menuIndex, setFocusMode, moveMenuIndex });
       return;
     }
 
