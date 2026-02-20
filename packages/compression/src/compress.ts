@@ -219,8 +219,8 @@ export function compressMessages(
       return { msg, preserved: true };
     }
 
-    // Rule 3: tool/function messages or messages with tool_calls
-    if (msg.role === 'tool' || msg.role === 'function' || (msg.tool_calls && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0)) {
+    // Rule 3: messages with tool_calls (assistant's function call request)
+    if (msg.tool_calls && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
       return { msg, preserved: true };
     }
 

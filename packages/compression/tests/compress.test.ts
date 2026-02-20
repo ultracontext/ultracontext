@@ -19,22 +19,51 @@ describe('compressMessages', () => {
       expect(result.compression.messages_preserved).toBeGreaterThanOrEqual(1);
     });
 
-    it('preserves tool messages', () => {
+    it('compresses long prose tool messages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'tool', content: 'Tool output result that is fairly long and contains detailed information about the operation. '.repeat(5) }),
       ];
-      const result = compressMessages(messages);
+      const result = compressMessages(messages, { recencyWindow: 0 });
       expect(result.messages[0].role).toBe('tool');
-      expect(result.messages[0].content).toContain('Tool output result');
-      expect(result.compression.messages_preserved).toBe(1);
+      expect(result.messages[0].content).toMatch(/^\[summary:/);
+      expect(result.compression.messages_compressed).toBe(1);
     });
 
-    it('preserves function messages', () => {
+    it('compresses long prose function messages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'function', content: 'Function result with enough content to pass the length threshold easily here. '.repeat(5) }),
       ];
-      const result = compressMessages(messages);
+      const result = compressMessages(messages, { recencyWindow: 0 });
       expect(result.messages[0].role).toBe('function');
+      expect(result.messages[0].content).toMatch(/^\[summary:/);
+      expect(result.compression.messages_compressed).toBe(1);
+    });
+
+    it('preserves tool messages with JSON content', () => {
+      const jsonContent = JSON.stringify({ result: 'success', data: { items: [1, 2, 3], total: 3 } });
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'tool', content: jsonContent }),
+      ];
+      const result = compressMessages(messages, { recencyWindow: 0 });
+      expect(result.messages[0].content).toBe(jsonContent);
+      expect(result.compression.messages_preserved).toBe(1);
+    });
+
+    it('preserves tool messages with code content', () => {
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'tool', content: '```typescript\nconst x = 1;\nconst y = 2;\nreturn x + y;\n```\nHere is the code result from the tool execution.' }),
+      ];
+      const result = compressMessages(messages, { recencyWindow: 0 });
+      expect(result.messages[0].content).toContain('```');
+      expect(result.compression.messages_preserved).toBe(1);
+    });
+
+    it('preserves short tool messages', () => {
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'tool', content: 'OK' }),
+      ];
+      const result = compressMessages(messages, { recencyWindow: 0 });
+      expect(result.messages[0].content).toBe('OK');
       expect(result.compression.messages_preserved).toBe(1);
     });
 
