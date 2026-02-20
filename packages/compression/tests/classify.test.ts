@@ -373,11 +373,19 @@ describe('classifyMessage', () => {
       expect(r.reasons).not.toContain('numeric_with_units');
     });
 
-    it('legal_term does not fire on "must" in normal tech prose', () => {
-      // "must" is in the legal pattern but is extremely common in requirements docs
+    it('"must" in normal tech prose does not trigger legal_term', () => {
       const r = classifyMessage('The API must return a 200 status code for valid requests.');
-      // It WILL fire (the pattern matches "must") — documenting this known over-trigger
-      expect(r.reasons).toContain('legal_term');
+      expect(r.reasons).not.toContain('legal_term');
+    });
+
+    it('single "key: value" line does not trigger yaml_structure', () => {
+      const r = classifyMessage('Note: this is an important reminder about the upcoming deadline.');
+      expect(r.reasons).not.toContain('yaml_structure');
+    });
+
+    it('prose starting with "[" does not trigger json_structure', () => {
+      const r = classifyMessage('[Note: please review the attached document before the meeting tomorrow.]');
+      expect(r.reasons).not.toContain('json_structure');
     });
   });
 

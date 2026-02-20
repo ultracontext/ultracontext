@@ -87,6 +87,7 @@ class CompressionInfo(TypedDict):
 
     original_version: int
     ratio: float
+    token_ratio: float
     messages_compressed: int
     messages_preserved: int
 

@@ -3,12 +3,12 @@ import type { ClassifyResult } from './types.js';
 // -- Head 1: Structural Pattern Detector (SPD) --
 
 const CODE_FENCE_RE   = /^```[\w]*\n[\s\S]*?\n```/m;
-const INDENT_CODE_RE  = /^( {4}|\t).+/m;
+const INDENT_CODE_RE  = /^( {4}|\t).+\n( {4}|\t).+/m;
 const LATEX_RE        = /\$\$[\s\S]+?\$\$|\$[^$\n]+?\$/;
 const UNICODE_MATH_RE = /[∀∃∈∉⊆⊇∪∩∧∨¬→↔∑∏∫√∞≈≠≤≥±×÷]/;
-const JSON_RE         = /^\s*[{[]/;
-const YAML_RE         = /^[\w-]+:\s+.+/m;
-const POETRY_RE       = /\n[A-Z][^.!?]*\n[A-Z][^.!?]*\n/;
+const JSON_RE         = /^\s*(?:\{\s*"|\[\s*[\[{"0-9-])/;
+const YAML_RE         = /^[\w-]+:\s+.+\n[\w-]+:\s+.+/m;
+const POETRY_RE       = /\n[A-Z][^.!?\n]*\n[A-Z][^.!?\n]*\n[A-Z][^.!?\n]*(?:\n|$)/;
 
 function detectStructuralPatterns(text: string): {
   isT0: boolean;
@@ -104,7 +104,7 @@ const FORCE_T0_PATTERNS: Array<{ re: RegExp; label: string }> = [
   { re: /(?:\/[\w.-]+){2,}/,                                         label: 'file_path'          },
   { re: /\b\d+(\.\d+){1,5}\b/,                                      label: 'ip_or_semver'       },
   { re: /"[^"]{3,}"(?:\s*[,:])/,                                    label: 'quoted_key'         },
-  { re: /\b(shall|must|may not|notwithstanding|whereas|hereby)\b/i, label: 'legal_term'         },
+  { re: /\b(shall|may not|notwithstanding|whereas|hereby)\b/i,     label: 'legal_term'         },
   { re: /["\u201c][^\u201d\u201c]{10,}["\u201d]|"[^"]{10,}"/,      label: 'direct_quote'       },
   { re: /\b\d+\.?\d*\s*(km|m|kg|s|°C|°F|Hz|MHz|GHz|ms|µs|ns|MB|GB|TB)\b/i, label: 'numeric_with_units' },
 ];
