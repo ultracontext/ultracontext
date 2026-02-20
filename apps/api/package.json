@@ -1,0 +1,22 @@
+{
+    "name": "ultracontext-api",
+    "type": "module",
+    "version": "0.7.2",
+    "scripts": {
+        "dev": "tsx watch src/server.ts",
+        "test": "node --test --env-file=.env.local",
+        "test:watch": "node --test --watch --env-file=.env.local"
+    },
+    "dependencies": {
+        "@hono/node-server": "^1.19.6",
+        "drizzle-orm": "^0.44.5",
+        "hono": "^4.10.7",
+        "postgres": "^3.4.7"
+    },
+    "devDependencies": {
+        "@commitlint/cli": "^20.2.0",
+        "@commitlint/config-conventional": "^20.2.0",
+        "@types/node": "^22.18.6",
+        "tsx": "^4.20.5"
+    }
+}
