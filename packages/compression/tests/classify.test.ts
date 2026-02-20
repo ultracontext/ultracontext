@@ -27,6 +27,43 @@ describe('classifyMessage', () => {
       expect(r.reasons).toContain('url');
     });
 
+    it('detects SQL SELECT...FROM', () => {
+      const r = classifyMessage('SELECT id, name FROM users WHERE active = 1');
+      expect(r.decision).toBe('T0');
+      expect(r.reasons).toContain('sql_query');
+    });
+
+    it('detects SQL CREATE TABLE', () => {
+      const r = classifyMessage('CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(255))');
+      expect(r.decision).toBe('T0');
+      expect(r.reasons).toContain('sql_query');
+    });
+
+    it('detects multiline SQL JOIN', () => {
+      const r = classifyMessage(
+        'SELECT u.id, o.total\nFROM users u\nJOIN orders o ON u.id = o.user_id\nWHERE o.total > 100'
+      );
+      expect(r.decision).toBe('T0');
+      expect(r.reasons).toContain('sql_query');
+    });
+
+    it('detects SQL INSERT INTO', () => {
+      const r = classifyMessage("INSERT INTO logs (level, message) VALUES ('error', 'timeout')");
+      expect(r.decision).toBe('T0');
+      expect(r.reasons).toContain('sql_query');
+    });
+
+    it('detects SQL UPDATE...SET', () => {
+      const r = classifyMessage("UPDATE users SET active = 0 WHERE last_login < '2024-01-01'");
+      expect(r.decision).toBe('T0');
+      expect(r.reasons).toContain('sql_query');
+    });
+
+    it('does not false-positive on prose "select...from"', () => {
+      const r = classifyMessage('Please select your option from the dropdown menu on the left side of the screen.');
+      expect(r.reasons).not.toContain('sql_query');
+    });
+
     it('detects API keys', () => {
       const r = classifyMessage('Token: sk-abc123def456ghi789jkl012mno345pqr');
       expect(r.decision).toBe('T0');

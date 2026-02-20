@@ -48,6 +48,7 @@ const FORCE_T0_PATTERNS: Array<{ re: RegExp; label: string }> = [
   { re: /\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b/,                       label: 'phone'              },
   { re: /\b(v\d+\.\d+(\.\d+)?|version\s+\d+)\b/i,                  label: 'version_number'     },
   { re: /[a-f0-9]{40,64}/i,                                         label: 'hash_or_sha'        },
+  { re: /\b(?:SELECT\s+(?!(?:your|my|the|a|an|this|that|one)\s).+?\s+FROM|INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM|CREATE\s+TABLE|ALTER\s+TABLE|DROP\s+TABLE)\b/is, label: 'sql_query' },
   { re: /sk-[a-zA-Z0-9]{20,}/,                                      label: 'api_key'            },
   { re: /(?:\/[\w.-]+){2,}/,                                         label: 'file_path'          },
   { re: /\b\d+(\.\d+){1,5}\b/,                                      label: 'ip_or_semver'       },
