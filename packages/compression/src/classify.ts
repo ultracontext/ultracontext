@@ -55,7 +55,10 @@ const SQL_STRONG_ANCHORS = new Set([
 const SQL_WEAK_ANCHORS = new Set([
   'WHERE', 'JOIN', 'HAVING', 'UNION', 'DISTINCT', 'OFFSET', 'VALUES',
   'MERGE', 'GRANT', 'REVOKE', 'CURSOR', 'DECLARE', 'PROCEDURE',
-  'TRIGGER', 'SCHEMA', 'VIEW', 'FETCH',
+  'TRIGGER',
+  // VIEW, SCHEMA, FETCH omitted — too common in non-SQL tech prose
+  // ("dashboard view", "JSON schema", "fetch API"). They stay in SQL_ALL_RE
+  // as non-anchor keywords contributing to the count.
 ]);
 
 function detectSqlContent(text: string): boolean {
