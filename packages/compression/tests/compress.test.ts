@@ -523,16 +523,16 @@ describe('compressMessages', () => {
       expect(content).toContain('Express');
     });
 
-    it('caps at 200 chars when no punctuation', () => {
-      const noPunct = 'word '.repeat(100); // 500 chars, no sentence-ending punctuation
+    it('caps at 400 chars when no punctuation', () => {
+      const noPunct = 'word '.repeat(200); // 1000 chars, no sentence-ending punctuation
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'user', content: noPunct }),
       ];
       const result = compressMessages(messages, { recencyWindow: 0 });
-      // The summary text (between [summary: and the suffix) should not exceed 200 chars
+      // The summary text (between [summary: and the suffix) should not exceed 400 chars
       const match = result.messages[0].content!.match(/\[summary: (.*?)(?:\s*\(|\s*\||\])/);
       expect(match).toBeTruthy();
-      expect(match![1].length).toBeLessThanOrEqual(200);
+      expect(match![1].length).toBeLessThanOrEqual(400);
     });
 
     it('includes first substantive + last sentence', () => {
@@ -558,7 +558,7 @@ describe('compressMessages', () => {
       expect(content).toContain('Sure thing');
     });
 
-    it('hard caps overall summary at 200 chars', () => {
+    it('hard caps overall summary at 400 chars', () => {
       // Use non-hex chars to avoid triggering hash_or_sha T0 detection
       const longSentence = 'Wor '.repeat(50) + 'is the architecture we chose for this particular deployment. ';
       const text = longSentence + 'The last sentence describes the final outcome of this deployment strategy.';
@@ -568,7 +568,44 @@ describe('compressMessages', () => {
       const result = compressMessages(messages, { recencyWindow: 0 });
       const match = result.messages[0].content!.match(/\[summary: (.*?)(?:\s*\(|\s*\||\])/);
       expect(match).toBeTruthy();
-      expect(match![1].length).toBeLessThanOrEqual(200);
+      expect(match![1].length).toBeLessThanOrEqual(400);
+    });
+
+    it('extracts content from multiple paragraphs', () => {
+      const text = 'The database uses PostgreSQL with three replicas for redundancy.\n\n' +
+        'However the caching layer is critically important for performance.\n\n' +
+        'The final deployment runs on Kubernetes with auto-scaling enabled.';
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'user', content: text.repeat(3) }),
+      ];
+      const result = compressMessages(messages, { recencyWindow: 0 });
+      const content = result.messages[0].content!;
+      // Should capture content from multiple paragraphs, not just first+last
+      expect(content).toContain('caching layer');
+    });
+
+    it('weights emphasis words higher', () => {
+      const text = 'The system starts up normally. However the authentication module requires special configuration. The logs show standard output.';
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'user', content: text.repeat(4) }),
+      ];
+      const result = compressMessages(messages, { recencyWindow: 0 });
+      const content = result.messages[0].content!;
+      // "However" sentence should be selected due to emphasis scoring
+      expect(content).toContain('authentication module');
+    });
+
+    it('budget ceiling at 400 chars', () => {
+      const sentences = Array.from({ length: 20 }, (_, i) =>
+        `Sentence number ${i + 1} provides additional context about the deployment.`
+      ).join(' ');
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'user', content: sentences.repeat(3) }),
+      ];
+      const result = compressMessages(messages, { recencyWindow: 0 });
+      const match = result.messages[0].content!.match(/\[summary: (.*?)(?:\s*\(|\s*\||\])/);
+      expect(match).toBeTruthy();
+      expect(match![1].length).toBeLessThanOrEqual(400);
     });
   });
 

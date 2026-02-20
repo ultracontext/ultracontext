@@ -32,33 +32,102 @@ function collectParentIds(msgs: Message[]): string[] {
 
 const FILLER_RE = /^(?:great|sure|ok|okay|thanks|thank you|got it|right|yes|no|alright|absolutely|exactly|indeed|cool|nice|perfect|wonderful|awesome|fantastic|sounds good|makes sense|i see|i understand|understood|noted|certainly|of course|no problem|no worries|will do|let me|i'll|i can|i would|well|so|now)[,.!?\s]/i;
 
+const EMPHASIS_RE = /\b(?:importantly|note that|however|critical|crucial|essential|significant|notably|key point|in particular|specifically|must|require[ds]?|never|always)\b/i;
+
+function scoreSentence(sentence: string): number {
+  let score = 0;
+  // camelCase identifiers
+  score += (sentence.match(/\b[a-z]+(?:[A-Z][a-z]+)+\b/g) ?? []).length * 3;
+  // PascalCase identifiers
+  score += (sentence.match(/\b[A-Z][a-z]+(?:[A-Z][a-z]+)+\b/g) ?? []).length * 3;
+  // snake_case identifiers
+  score += (sentence.match(/\b[a-z]+(?:_[a-z]+)+\b/g) ?? []).length * 3;
+  // Emphasis phrases
+  if (EMPHASIS_RE.test(sentence)) score += 4;
+  // Numbers with units
+  score += (sentence.match(/\b\d+(?:\.\d+)?\s*(?:seconds?|ms|MB|GB|TB|KB|retries?|workers?|threads?|nodes?|replicas?|requests?|%)\b/gi) ?? []).length * 2;
+  // Vowelless abbreviations (3+ consonants)
+  score += (sentence.match(/\b[bcdfghjklmnpqrstvwxz]{3,}\b/gi) ?? []).length * 2;
+  // Optimal length bonus
+  if (sentence.length >= 40 && sentence.length <= 120) score += 2;
+  // Filler penalty
+  if (FILLER_RE.test(sentence.trim())) score -= 10;
+  return score;
+}
+
 function summarize(text: string): string {
-  const sentences = text.match(/[^.!?\n]+[.!?]+/g);
+  const paragraphs = text.split(/\n\n+/).filter(p => p.trim().length > 0);
 
-  if (!sentences || sentences.length === 0) {
-    return text.slice(0, 200).trim();
+  type Scored = { text: string; score: number; origIdx: number; primary: boolean };
+  const allSentences: Scored[] = [];
+  let globalIdx = 0;
+
+  for (const para of paragraphs) {
+    const sentences = para.match(/[^.!?\n]+[.!?]+/g);
+    if (!sentences || sentences.length === 0) {
+      const trimmed = para.trim();
+      if (trimmed.length > 0) {
+        allSentences.push({ text: trimmed, score: scoreSentence(trimmed), origIdx: globalIdx++, primary: true });
+      }
+      continue;
+    }
+    // Score all sentences, mark the best per paragraph as primary
+    let bestIdx = 0;
+    let bestScore = -Infinity;
+    const paraSentences: Scored[] = [];
+    for (let i = 0; i < sentences.length; i++) {
+      const s = sentences[i].trim();
+      const sc = scoreSentence(s);
+      paraSentences.push({ text: s, score: sc, origIdx: globalIdx + i, primary: false });
+      if (sc > bestScore) {
+        bestScore = sc;
+        bestIdx = i;
+      }
+    }
+    paraSentences[bestIdx].primary = true;
+    allSentences.push(...paraSentences);
+    globalIdx += sentences.length;
   }
 
-  // Skip leading filler sentences
-  let firstIdx = 0;
-  while (firstIdx < sentences.length && FILLER_RE.test(sentences[firstIdx].trim())) {
-    firstIdx++;
-  }
-  // If all sentences are filler, fall back to the first one
-  if (firstIdx >= sentences.length) firstIdx = 0;
-
-  const first = sentences[firstIdx].trim();
-  const last = sentences[sentences.length - 1].trim();
-
-  let result: string;
-  if (firstIdx === sentences.length - 1 || first === last) {
-    result = first;
-  } else {
-    result = `${first} ... ${last}`;
+  if (allSentences.length === 0) {
+    return text.slice(0, 400).trim();
   }
 
-  if (result.length > 200) {
-    return result.slice(0, 197) + '...';
+  // Greedy budget packing: primary sentences first, then fill with others
+  // Skip filler (negative score) and deduplicate by text
+  const budget = 400;
+  const selected: Scored[] = [];
+  const seenText = new Set<string>();
+  let usedChars = 0;
+
+  const primaryByScore = allSentences.filter(s => s.primary && s.score >= 0).sort((a, b) => b.score - a.score);
+  const secondaryByScore = allSentences.filter(s => !s.primary && s.score >= 0).sort((a, b) => b.score - a.score);
+
+  for (const pool of [primaryByScore, secondaryByScore]) {
+    for (const entry of pool) {
+      if (seenText.has(entry.text)) continue;
+      const separatorLen = selected.length > 0 ? 5 : 0;
+      if (usedChars + separatorLen + entry.text.length <= budget) {
+        selected.push(entry);
+        seenText.add(entry.text);
+        usedChars += separatorLen + entry.text.length;
+      }
+    }
+  }
+
+  // If nothing fits (all filler or all too long), take the highest-scored and truncate
+  if (selected.length === 0) {
+    const best = allSentences.slice().sort((a, b) => b.score - a.score)[0];
+    const truncated = best.text.slice(0, 400).trim();
+    return truncated.length > 397 ? truncated.slice(0, 397) + '...' : truncated;
+  }
+
+  // Re-sort by original position to preserve reading order
+  selected.sort((a, b) => a.origIdx - b.origIdx);
+
+  const result = selected.map(s => s.text).join(' ... ');
+  if (result.length > 400) {
+    return result.slice(0, 397) + '...';
   }
   return result;
 }
