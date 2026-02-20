@@ -70,6 +70,36 @@ describe('classifyMessage', () => {
       expect(r.reasons).toContain('api_key');
     });
 
+    it('detects API keys with hyphens (sk-proj-*)', () => {
+      const r = classifyMessage('Key: sk-proj-abc123def456ghi789jkl012mno345pqr');
+      expect(r.decision).toBe('T0');
+      expect(r.reasons).toContain('api_key');
+    });
+
+    it('detects AWS access key IDs', () => {
+      const r = classifyMessage('AWS key: AKIAIOSFODNN7EXAMPLE');
+      expect(r.decision).toBe('T0');
+      expect(r.reasons).toContain('api_key');
+    });
+
+    it('detects GitHub PAT classic (ghp_*)', () => {
+      const r = classifyMessage('Token: ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijkl');
+      expect(r.decision).toBe('T0');
+      expect(r.reasons).toContain('api_key');
+    });
+
+    it('detects GitHub fine-grained PAT', () => {
+      const r = classifyMessage('Token: github_pat_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ab');
+      expect(r.decision).toBe('T0');
+      expect(r.reasons).toContain('api_key');
+    });
+
+    it('detects Stripe keys', () => {
+      const r = classifyMessage('Stripe: sk_live_ABCDEFGHIJKLMNOPQRSTUVWx');
+      expect(r.decision).toBe('T0');
+      expect(r.reasons).toContain('api_key');
+    });
+
     it('detects git SHAs', () => {
       const r = classifyMessage('commit a3f9b2c1d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9');
       expect(r.decision).toBe('T0');
