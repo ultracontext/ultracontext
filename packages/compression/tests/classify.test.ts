@@ -27,16 +27,16 @@ describe('classifyMessage', () => {
       expect(r.reasons).toContain('url');
     });
 
-    it('detects SQL SELECT...FROM', () => {
+    it('detects SQL SELECT...FROM (keyword density)', () => {
       const r = classifyMessage('SELECT id, name FROM users WHERE active = 1');
       expect(r.decision).toBe('T0');
-      expect(r.reasons).toContain('sql_query');
+      expect(r.reasons).toContain('sql_content');
     });
 
     it('detects SQL CREATE TABLE', () => {
       const r = classifyMessage('CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(255))');
       expect(r.decision).toBe('T0');
-      expect(r.reasons).toContain('sql_query');
+      expect(r.reasons).toContain('sql_content');
     });
 
     it('detects multiline SQL JOIN', () => {
@@ -44,27 +44,50 @@ describe('classifyMessage', () => {
         'SELECT u.id, o.total\nFROM users u\nJOIN orders o ON u.id = o.user_id\nWHERE o.total > 100'
       );
       expect(r.decision).toBe('T0');
-      expect(r.reasons).toContain('sql_query');
+      expect(r.reasons).toContain('sql_content');
     });
 
     it('detects SQL INSERT INTO', () => {
       const r = classifyMessage("INSERT INTO logs (level, message) VALUES ('error', 'timeout')");
       expect(r.decision).toBe('T0');
-      expect(r.reasons).toContain('sql_query');
+      expect(r.reasons).toContain('sql_content');
     });
 
-    it('detects SQL UPDATE...SET', () => {
+    it('detects SQL UPDATE...WHERE', () => {
       const r = classifyMessage("UPDATE users SET active = 0 WHERE last_login < '2024-01-01'");
       expect(r.decision).toBe('T0');
-      expect(r.reasons).toContain('sql_query');
+      expect(r.reasons).toContain('sql_content');
     });
 
-    it('does not false-positive on prose "select...from"', () => {
+    it('detects CTE (WITH RECURSIVE)', () => {
+      const r = classifyMessage('WITH RECURSIVE cte AS (SELECT 1 UNION SELECT n+1 FROM cte WHERE n < 10) SELECT * FROM cte');
+      expect(r.decision).toBe('T0');
+      expect(r.reasons).toContain('sql_content');
+    });
+
+    it('detects TRUNCATE + CASCADE', () => {
+      const r = classifyMessage('TRUNCATE TABLE sessions CASCADE');
+      expect(r.decision).toBe('T0');
+      expect(r.reasons).toContain('sql_content');
+    });
+
+    it('detects GRANT/REVOKE', () => {
+      const r = classifyMessage('GRANT SELECT ON users TO readonly_role');
+      expect(r.decision).toBe('T0');
+      expect(r.reasons).toContain('sql_content');
+    });
+
+    it('does not false-positive on single SQL keyword in prose', () => {
       const r = classifyMessage('Please select your option from the dropdown menu on the left side of the screen.');
-      expect(r.reasons).not.toContain('sql_query');
+      expect(r.reasons).not.toContain('sql_content');
     });
 
-    it('detects API keys', () => {
+    it('does not false-positive on prose with "update" and non-SQL context', () => {
+      const r = classifyMessage('We need to update the documentation and delete the old drafts from the shared drive.');
+      expect(r.reasons).not.toContain('sql_content');
+    });
+
+    it('detects OpenAI API keys', () => {
       const r = classifyMessage('Token: sk-abc123def456ghi789jkl012mno345pqr');
       expect(r.decision).toBe('T0');
       expect(r.reasons).toContain('api_key');
@@ -98,6 +121,42 @@ describe('classifyMessage', () => {
       const r = classifyMessage('Stripe: sk_live_ABCDEFGHIJKLMNOPQRSTUVWx');
       expect(r.decision).toBe('T0');
       expect(r.reasons).toContain('api_key');
+    });
+
+    it('detects Slack tokens', () => {
+      const r = classifyMessage('Bot token: xoxb-123456789012-abcdefghij1234567890');
+      expect(r.decision).toBe('T0');
+      expect(r.reasons).toContain('api_key');
+    });
+
+    it('detects SendGrid keys', () => {
+      const r = classifyMessage('SG.abcdefghijklmnopqrstuv.wxyz0123456789abcdefghijklmno');
+      expect(r.decision).toBe('T0');
+      expect(r.reasons).toContain('api_key');
+    });
+
+    it('detects GitLab PAT', () => {
+      const r = classifyMessage('Token: glpat-abc123def456ghi789jkl0');
+      expect(r.decision).toBe('T0');
+      expect(r.reasons).toContain('api_key');
+    });
+
+    it('detects Google API keys', () => {
+      const r = classifyMessage('Key: AIzaSyA1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q');
+      expect(r.decision).toBe('T0');
+      expect(r.reasons).toContain('api_key');
+    });
+
+    it('detects unknown provider keys via generic entropy fallback', () => {
+      // Looks like prefix + separator + mixed alphanumeric body
+      const r = classifyMessage('Token: myservice-a8Kj2mNp4qRs6tUv8wXy0zBc3dEfGh');
+      expect(r.decision).toBe('T0');
+      expect(r.reasons).toContain('api_key');
+    });
+
+    it('does not false-positive on normal identifiers', () => {
+      const r = classifyMessage('The component uses my-very-long-css-class-name-here');
+      expect(r.reasons).not.toContain('api_key');
     });
 
     it('detects git SHAs', () => {

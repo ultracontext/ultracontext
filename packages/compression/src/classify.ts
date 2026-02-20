@@ -42,18 +42,53 @@ function detectStructuralPatterns(text: string): {
 
 // -- Head 5: Content-Type Detector (CTD) --
 
+// SQL keyword density: 2+ distinct SQL keywords with at least one anchor → T0
+// "Anchor" keywords are unambiguously SQL — words like SELECT, FROM, UPDATE, DELETE
+// are too common in English to count alone.
+const SQL_ALL_RE = /\b(?:SELECT|FROM|WHERE|JOIN|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE|MERGE|GRANT|REVOKE|HAVING|UNION|GROUP\s+BY|ORDER\s+BY|DISTINCT|LIMIT|OFFSET|VALUES|PRIMARY\s+KEY|FOREIGN\s+KEY|NOT\s+NULL|VARCHAR|INTEGER|BOOLEAN|CONSTRAINT|CASCADE|FETCH|CURSOR|DECLARE|PROCEDURE|TRIGGER|SCHEMA|VIEW|RETURNING|ON\s+CONFLICT|UPSERT|WITH\s+RECURSIVE|INNER\s+JOIN|LEFT\s+JOIN|RIGHT\s+JOIN|CROSS\s+JOIN|FULL\s+JOIN|NATURAL\s+JOIN)\b/gi;
+const SQL_ANCHORS = new Set([
+  'WHERE', 'JOIN', 'HAVING', 'UNION', 'DISTINCT', 'OFFSET', 'VALUES',
+  'TRUNCATE', 'MERGE', 'GRANT', 'REVOKE', 'CURSOR', 'DECLARE',
+  'PROCEDURE', 'TRIGGER', 'SCHEMA', 'GROUP BY', 'ORDER BY',
+  'PRIMARY KEY', 'FOREIGN KEY', 'NOT NULL', 'VARCHAR', 'INTEGER',
+  'BOOLEAN', 'CONSTRAINT', 'CASCADE', 'RETURNING', 'ON CONFLICT',
+  'WITH RECURSIVE', 'UPSERT', 'INNER JOIN', 'LEFT JOIN', 'RIGHT JOIN',
+  'CROSS JOIN', 'FULL JOIN', 'NATURAL JOIN',
+]);
+
+function detectSqlContent(text: string): boolean {
+  const matches = text.match(SQL_ALL_RE);
+  if (!matches) return false;
+  const distinct = new Set(matches.map(m => m.toUpperCase().replace(/\s+/g, ' ')));
+  if (distinct.size < 2) return false;
+  for (const kw of distinct) {
+    if (SQL_ANCHORS.has(kw)) return true;
+  }
+  return false;
+}
+
+// API key patterns: known providers + generic entropy fallback
+const API_KEY_PATTERNS: RegExp[] = [
+  /sk-[a-zA-Z0-9_-]{20,}/,                                           // OpenAI / Anthropic
+  /\bAKIA[A-Z0-9]{16}\b/,                                            // AWS access key ID
+  /\bgh[posrt]_[a-zA-Z0-9]{36,}\b/,                                  // GitHub tokens (PAT, OAuth, etc.)
+  /\bgithub_pat_[a-zA-Z0-9_]{36,}\b/,                                // GitHub fine-grained PAT
+  /\b[sr]k_(live|test)_[a-zA-Z0-9]{24,}\b/,                          // Stripe
+  /\bxox[bpra]-[a-zA-Z0-9-]{20,}\b/,                                 // Slack
+  /\bSG\.[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9_-]{20,}\b/,                 // SendGrid
+  /\bglpat-[a-zA-Z0-9_-]{20,}\b/,                                    // GitLab
+  /\bnpm_[a-zA-Z0-9]{36,}\b/,                                        // npm
+  /\bAIza[a-zA-Z0-9_-]{35}\b/,                                       // Google API
+  // Generic fallback: prefix + separator + 20+ mixed alphanumeric body
+  /\b[a-zA-Z][a-zA-Z0-9]{1,14}[-_](?=[a-zA-Z0-9_-]*[0-9])(?=[a-zA-Z0-9_-]*[a-zA-Z])[a-zA-Z0-9_-]{20,}\b/,
+];
+
 const FORCE_T0_PATTERNS: Array<{ re: RegExp; label: string }> = [
   { re: /https?:\/\/[^\s]+/,                                        label: 'url'                },
   { re: /[\w.+-]+@[\w-]+\.[a-z]{2,}/i,                              label: 'email'              },
   { re: /\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b/,                       label: 'phone'              },
   { re: /\b(v\d+\.\d+(\.\d+)?|version\s+\d+)\b/i,                  label: 'version_number'     },
   { re: /[a-f0-9]{40,64}/i,                                         label: 'hash_or_sha'        },
-  { re: /\b(?:SELECT\s+(?!(?:your|my|the|a|an|this|that|one)\s).+?\s+FROM|INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM|CREATE\s+TABLE|ALTER\s+TABLE|DROP\s+TABLE)\b/is, label: 'sql_query' },
-  { re: /sk-[a-zA-Z0-9_-]{20,}/,                                     label: 'api_key'            },
-  { re: /\bAKIA[A-Z0-9]{16}\b/,                                      label: 'api_key'            },
-  { re: /\bgh[ps]_[a-zA-Z0-9]{36,}\b/,                               label: 'api_key'            },
-  { re: /\bgithub_pat_[a-zA-Z0-9_]{36,}\b/,                          label: 'api_key'            },
-  { re: /\b[sr]k_(live|test)_[a-zA-Z0-9]{24,}\b/,                    label: 'api_key'            },
   { re: /(?:\/[\w.-]+){2,}/,                                         label: 'file_path'          },
   { re: /\b\d+(\.\d+){1,5}\b/,                                      label: 'ip_or_semver'       },
   { re: /"[^"]{3,}"(?:\s*[,:])/,                                    label: 'quoted_key'         },
@@ -67,9 +102,23 @@ function detectContentTypes(text: string): {
   reasons: string[];
 } {
   const reasons: string[] = [];
+
+  // SQL keyword density
+  if (detectSqlContent(text)) reasons.push('sql_content');
+
+  // API key detection (known + generic)
+  for (const re of API_KEY_PATTERNS) {
+    if (re.test(text)) {
+      reasons.push('api_key');
+      break; // one hit is enough
+    }
+  }
+
+  // Other content-type patterns
   for (const { re, label } of FORCE_T0_PATTERNS) {
     if (re.test(text)) reasons.push(label);
   }
+
   return { isT0: reasons.length > 0, reasons };
 }
 
