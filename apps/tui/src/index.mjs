@@ -91,6 +91,7 @@ const cfg = {
   engineerId: process.env.DAEMON_ENGINEER_ID ?? process.env.USER ?? "unknown-engineer",
   host: (process.env.DAEMON_HOST || os.hostname() || "unknown-host").trim(),
   uiRefreshMs: toInt(process.env.TUI_REFRESH_MS, 1200),
+  resumeAutoRefreshMs: Math.max(toInt(process.env.RESUME_AUTO_REFRESH_MS, 3500), 0),
   uiRecentLimit: toInt(process.env.TUI_RECENT_LIMIT, 240),
   configFile: resolveRuntimeConfigPath(),
   soundEnabled: boolFromEnv(process.env.DAEMON_SOUND_ENABLED, true),
@@ -183,6 +184,7 @@ const runtime = {
   uc: null,
   uiController: null,
   renderTimer: null,
+  contextRefreshTimer: null,
   stop: null,
   seenLogSignatures: new Set(),
   seenLogQueue: [],
@@ -1733,6 +1735,15 @@ async function tuiMain() {
   }, Math.max(cfg.uiRefreshMs, 250));
   runtime.renderTimer.unref?.();
 
+  if (cfg.resumeAutoRefreshMs > 0) {
+    runtime.contextRefreshTimer = setInterval(() => {
+      if (ui.selectedTab !== "contexts") return;
+      if (ui.resume.loading || ui.resume.syncing) return;
+      void loadResumeContexts();
+    }, Math.max(cfg.resumeAutoRefreshMs, 1000));
+    runtime.contextRefreshTimer.unref?.();
+  }
+
   process.on("SIGINT", () => stop("sigint"));
   process.on("SIGTERM", () => stop("sigterm"));
 
@@ -1742,6 +1753,8 @@ async function tuiMain() {
 
   if (runtime.renderTimer) clearInterval(runtime.renderTimer);
   runtime.renderTimer = null;
+  if (runtime.contextRefreshTimer) clearInterval(runtime.contextRefreshTimer);
+  runtime.contextRefreshTimer = null;
 
   runtime.uiController?.stop();
   runtime.uiController = null;
@@ -1758,6 +1771,8 @@ async function tuiMain() {
 tuiMain().catch(async (error) => {
   if (runtime.renderTimer) clearInterval(runtime.renderTimer);
   runtime.renderTimer = null;
+  if (runtime.contextRefreshTimer) clearInterval(runtime.contextRefreshTimer);
+  runtime.contextRefreshTimer = null;
 
   runtime.uiController?.stop();
   runtime.uiController = null;

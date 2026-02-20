@@ -22,7 +22,7 @@ export function footerHelpText({ bootstrapActive, resumeTargetPickerActive, sele
     return "Controls: ↑/↓ navigate, Enter focus/open, ← back, q/Ctrl+C quit.";
   }
   if (selectedTab === "contexts") {
-    return "Contexts: r refresh, ↑/↓ select context, Enter/Space adapt, ← back, q/Ctrl+C quit.";
+    return "Contexts: auto-refresh on, r refresh now, ↑/↓ select context, Enter/Space adapt, ← back, q/Ctrl+C quit.";
   }
   if (selectedTab === "configs") {
     return "Controls: ↑/↓ select config, Enter/→ apply, ← back, q/Ctrl+C quit.";
