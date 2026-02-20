@@ -29,7 +29,7 @@ export function HeaderPanel({ snapshot, stdoutColumns }) {
 
   const health = snapshot.stats.errors > 0 ? "DEGRADED" : "HEALTHY";
   const healthColor = health === "HEALTHY" ? "green" : "yellow";
-  const tagline = "Live Context Engine";
+  const tagline = "The Context Hub for AI Agents";
   const innerWidth = Math.max(stdoutColumns, 40);
   const spinnerVisualWidth = 28;
   const gap = innerWidth >= 96 ? 3 : 2;
