@@ -42,6 +42,7 @@ export const schema = {
 };
 
 export type ApiDb = PostgresJsDatabase<typeof schema>;
+export type NodeRow = typeof nodes.$inferSelect;
 
 type DbRegistry = {
     clients: Map<string, Sql>;

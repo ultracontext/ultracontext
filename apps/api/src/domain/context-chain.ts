@@ -92,7 +92,7 @@ export async function getOrderedNodes(db: ApiDb, headId: string) {
     const contextNodes = await db.select().from(nodes).where(and(eq(nodes.context_id, headId), ne(nodes.type, 'context')));
 
     if (contextNodes.length === 0) return [];
-    return orderNodes(contextNodes as Array<{ public_id: string; prev_id: string | null; created_at: string }>);
+    return orderNodes(contextNodes);
 }
 
 export async function getVersions(db: ApiDb, rootId: string): Promise<VersionInfo[]> {

@@ -3,3 +3,4 @@ export { HeroLockup } from "./HeroLockup.mjs";
 export { MenuPanel } from "./MenuPanel.mjs";
 export { NarrowWidthPanel } from "./NarrowWidthPanel.mjs";
 export { Section } from "./Section.mjs";
+export { default as Spinner } from "./Spinner.mjs";

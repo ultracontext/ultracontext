@@ -38,6 +38,9 @@ importers:
       tsx:
         specifier: ^4.20.5
         version: 4.21.0
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
 
   apps/daemon:
     dependencies:
@@ -524,6 +527,7 @@ packages:
     resolution: {integrity: sha512-quIpnYznjU9lHshEOAYLoZ9s3jweleHlZIAWR/jX9gAWNg/JhQ1wj0KGRf7/Zm+obRrYd9GjPVJg790QY9N5AQ==}
     peerDependencies:
       '@aws-sdk/client-rds-data': '>=3'
+      '@cloudflare/workers-types': '>=4'
       '@electric-sql/pglite': '>=0.2.0'
       '@libsql/client': '>=0.10.0'
       '@libsql/client-wasm': '>=0.10.0'
@@ -553,6 +557,8 @@ packages:
       sqlite3: '>=5'
     peerDependenciesMeta:
       '@aws-sdk/client-rds-data':
+        optional: true
+      '@cloudflare/workers-types':
         optional: true
       '@electric-sql/pglite':
         optional: true

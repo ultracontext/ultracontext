@@ -17,7 +17,7 @@ cp .env.example .env
 
 ## Notes
 
-- This package opens the TUI client and connects to daemon local WebSocket runtime state from `apps/daemon` (recommended discovery file in root `.env`: `ULTRACONTEXT_DAEMON_INFO_FILE=../../.ultracontext/daemon.info`).
+- This package opens the TUI client and connects to daemon local WebSocket runtime state from `apps/daemon` (recommended discovery file in root `.env`: `ULTRACONTEXT_DAEMON_INFO_FILE=~/.ultracontext/daemon.info`).
 - Environment variables are loaded from monorepo root `.env` by default, with fallback to `apps/tui/.env` and `apps/daemon/.env`.
 - Use `DOTENV_CONFIG_PATH=/custom/path/.env` to override the env file location.
 - TUI does not auto-start the daemon.
