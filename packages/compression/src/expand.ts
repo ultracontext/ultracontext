@@ -74,8 +74,10 @@ export function expandMessages(
   let result = expandOnce(messages, store);
 
   if (options?.recursive) {
+    const MAX_DEPTH = 10;
+    let depth = 0;
     let hasMore = result.messages.some(m => hasOriginal(m));
-    while (hasMore) {
+    while (hasMore && depth < MAX_DEPTH) {
       const next = expandOnce(result.messages, store);
       result = {
         messages: next.messages,
@@ -84,6 +86,7 @@ export function expandMessages(
         missing_ids: [...result.missing_ids, ...next.missing_ids],
       };
       hasMore = next.messages_expanded > 0 && next.messages.some(m => hasOriginal(m));
+      depth++;
     }
   }
 
@@ -110,9 +113,10 @@ export function searchVerbatim(
     }
   }
 
+  // Always create a new RegExp to avoid mutating the caller's lastIndex
   const re = typeof pattern === 'string'
     ? new RegExp(pattern, 'g')
-    : pattern.global ? pattern : new RegExp(pattern.source, pattern.flags + 'g');
+    : new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : pattern.flags + 'g');
 
   const results: SearchResult[] = [];
   for (const [id, msg] of Object.entries(verbatim)) {

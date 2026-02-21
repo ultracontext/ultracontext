@@ -7,7 +7,7 @@ import type { CompressOptions, CompressResult, CompressToFitOptions, CompressToF
  * because the ID is advisory provenance, not a security primitive.
  */
 function makeSummaryId(ids: string[]): string {
-  const key = ids.slice().sort().join('\0');
+  const key = ids.length === 1 ? ids[0] : ids.slice().sort().join('\0');
   let h = 5381;
   for (let i = 0; i < key.length; i++) {
     h = ((h << 5) + h + key.charCodeAt(i)) >>> 0;
@@ -696,10 +696,43 @@ function estimateTokensTotal(messages: Message[]): number {
   return messages.reduce((sum, m) => sum + estimateTokens(m), 0);
 }
 
+function makeCtfFastPath(
+  messages: Message[],
+  tokenBudget: number,
+  sourceVersion: number,
+): CompressToFitResult | undefined {
+  const totalTokens = estimateTokensTotal(messages);
+  if (totalTokens <= tokenBudget) {
+    return {
+      messages,
+      compression: {
+        original_version: sourceVersion,
+        ratio: 1,
+        token_ratio: 1,
+        messages_compressed: 0,
+        messages_preserved: messages.length,
+      },
+      verbatim: {},
+      fits: true,
+      recencyWindow: messages.length,
+      tokenCount: totalTokens,
+    };
+  }
+  return undefined;
+}
+
+function makeCtfResult(cr: CompressResult, rw: number, tokenBudget: number): CompressToFitResult {
+  const tokens = estimateTokensTotal(cr.messages);
+  return { ...cr, fits: tokens <= tokenBudget, recencyWindow: rw, tokenCount: tokens };
+}
+
 /**
- * Compress messages to fit within a token budget by progressively reducing
- * the recency window. Returns the tightest fit found, or the best effort
- * with `fits: false` if the budget is impossible to meet.
+ * Compress messages to fit within a token budget by binary-searching the
+ * recency window. Token count is monotonically non-increasing as rw
+ * decreases, so binary search finds the optimal rw in O(log n) calls.
+ *
+ * Returns the largest `recencyWindow` (least compression) that fits,
+ * or the best effort with `fits: false` if the budget is impossible to meet.
  *
  * Throws if `options.summarizer` is set — use `compressToFitAsync` instead.
  */
@@ -715,59 +748,38 @@ export function compressToFit(
   const minRw = options?.minRecencyWindow ?? 0;
   const sourceVersion = options?.sourceVersion ?? 0;
 
-  // Fast path: already under budget
-  const totalTokens = estimateTokensTotal(messages);
-  if (totalTokens <= tokenBudget) {
-    return {
-      messages,
-      compression: {
-        original_version: sourceVersion,
-        ratio: 1,
-        token_ratio: 1,
-        messages_compressed: 0,
-        messages_preserved: messages.length,
-      },
-      verbatim: {},
-      fits: true,
-      recencyWindow: messages.length,
-      tokenCount: totalTokens,
-    };
+  const fast = makeCtfFastPath(messages, tokenBudget, sourceVersion);
+  if (fast) return fast;
+
+  // Binary search: find the largest rw where tokens <= budget
+  let lo = minRw;
+  let hi = messages.length - 1;
+  let lastResult: CompressToFitResult | undefined;
+  let lastRw = -1;
+
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    const cr = compressMessages(messages, { ...options, recencyWindow: mid, summarizer: undefined });
+    lastResult = makeCtfResult(cr, mid, tokenBudget);
+    lastRw = mid;
+
+    if (lastResult.fits) {
+      lo = mid;
+    } else {
+      hi = mid - 1;
+    }
   }
 
-  let best: CompressToFitResult | undefined;
-  let prevCompressed = -1;
+  // Return cached result if we already computed at lo
+  if (lastRw === lo && lastResult) return lastResult;
 
-  for (let rw = messages.length - 1; rw >= minRw; rw--) {
-    const cr = compressMessages(messages, { ...options, recencyWindow: rw, summarizer: undefined });
-    const tokens = estimateTokensTotal(cr.messages);
-
-    const candidate: CompressToFitResult = {
-      ...cr,
-      fits: tokens <= tokenBudget,
-      recencyWindow: rw,
-      tokenCount: tokens,
-    };
-
-    if (!best || tokens < best.tokenCount) {
-      best = candidate;
-    }
-
-    if (tokens <= tokenBudget) {
-      return candidate;
-    }
-
-    // Early exit: if reducing rw didn't compress more messages, further reduction won't help
-    if (cr.compression.messages_compressed === prevCompressed && prevCompressed >= 0) {
-      break;
-    }
-    prevCompressed = cr.compression.messages_compressed;
-  }
-
-  return best!;
+  const cr = compressMessages(messages, { ...options, recencyWindow: lo, summarizer: undefined });
+  return makeCtfResult(cr, lo, tokenBudget);
 }
 
 /**
  * Async variant of `compressToFit` that supports an LLM-powered summarizer.
+ * Uses the same binary search strategy.
  */
 export async function compressToFitAsync(
   messages: Message[],
@@ -777,52 +789,29 @@ export async function compressToFitAsync(
   const minRw = options?.minRecencyWindow ?? 0;
   const sourceVersion = options?.sourceVersion ?? 0;
 
-  // Fast path: already under budget
-  const totalTokens = estimateTokensTotal(messages);
-  if (totalTokens <= tokenBudget) {
-    return {
-      messages,
-      compression: {
-        original_version: sourceVersion,
-        ratio: 1,
-        token_ratio: 1,
-        messages_compressed: 0,
-        messages_preserved: messages.length,
-      },
-      verbatim: {},
-      fits: true,
-      recencyWindow: messages.length,
-      tokenCount: totalTokens,
-    };
+  const fast = makeCtfFastPath(messages, tokenBudget, sourceVersion);
+  if (fast) return fast;
+
+  let lo = minRw;
+  let hi = messages.length - 1;
+  let lastResult: CompressToFitResult | undefined;
+  let lastRw = -1;
+
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    const cr = await compressMessagesAsync(messages, { ...options, recencyWindow: mid });
+    lastResult = makeCtfResult(cr, mid, tokenBudget);
+    lastRw = mid;
+
+    if (lastResult.fits) {
+      lo = mid;
+    } else {
+      hi = mid - 1;
+    }
   }
 
-  let best: CompressToFitResult | undefined;
-  let prevCompressed = -1;
+  if (lastRw === lo && lastResult) return lastResult;
 
-  for (let rw = messages.length - 1; rw >= minRw; rw--) {
-    const cr = await compressMessagesAsync(messages, { ...options, recencyWindow: rw });
-    const tokens = estimateTokensTotal(cr.messages);
-
-    const candidate: CompressToFitResult = {
-      ...cr,
-      fits: tokens <= tokenBudget,
-      recencyWindow: rw,
-      tokenCount: tokens,
-    };
-
-    if (!best || tokens < best.tokenCount) {
-      best = candidate;
-    }
-
-    if (tokens <= tokenBudget) {
-      return candidate;
-    }
-
-    if (cr.compression.messages_compressed === prevCompressed && prevCompressed >= 0) {
-      break;
-    }
-    prevCompressed = cr.compression.messages_compressed;
-  }
-
-  return best!;
+  const cr = await compressMessagesAsync(messages, { ...options, recencyWindow: lo });
+  return makeCtfResult(cr, lo, tokenBudget);
 }

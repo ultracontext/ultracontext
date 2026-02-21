@@ -110,6 +110,25 @@ describe('expandMessages', () => {
     expect(partial.missing_ids).toContain('b');
   });
 
+  it('recursive expansion stops on circular references (depth cap)', () => {
+    // Create circular: A's original is B, B's original is A
+    const msgA: Message = {
+      ...msg({ id: 'a', index: 0, role: 'user', content: '[summary: A]' }),
+      metadata: { _uc_original: { ids: ['b'], summary_id: 'uc_sum_a', version: 0 } },
+    };
+    const msgB: Message = {
+      ...msg({ id: 'b', index: 0, role: 'user', content: '[summary: B]' }),
+      metadata: { _uc_original: { ids: ['a'], summary_id: 'uc_sum_b', version: 0 } },
+    };
+    const store = { a: msgA, b: msgB };
+
+    // This would infinite-loop without the depth cap
+    const result = expandMessages([msgA], store, { recursive: true });
+    // Should terminate — exact output depends on depth cap, but it must not hang
+    expect(result.messages.length).toBeGreaterThan(0);
+    expect(result.messages_expanded).toBeGreaterThan(0);
+  });
+
   it('recursive expansion with function store restores double-compressed messages', () => {
     const input: Message[] = [
       msg({ id: 'a', index: 0, role: 'user', content: PROSE }),
@@ -206,6 +225,43 @@ describe('searchVerbatim', () => {
     ];
     const results = searchVerbatim(compressed, {}, /test/);
     expect(results).toEqual([]);
+  });
+
+  it('adds g flag to non-global regex without mutating original', () => {
+    const input: Message[] = [
+      msg({ id: 'u1', index: 0, role: 'user', content: PROSE }),
+    ];
+    const { messages: compressed, verbatim } = compressMessages(input, { recencyWindow: 0 });
+    const re = /general topics/i; // non-global
+    const results = searchVerbatim(compressed, verbatim, re);
+    expect(results.length).toBe(1);
+    expect(results[0].matches.length).toBeGreaterThan(0);
+    // Original regex should not be mutated
+    expect(re.global).toBe(false);
+    expect(re.lastIndex).toBe(0);
+  });
+
+  it('handles zero-length match patterns', () => {
+    const verbatim: VerbatimMap = {
+      x: msg({ id: 'x', index: 0, role: 'user', content: 'abc' }),
+    };
+    // Lookahead produces zero-length matches
+    const results = searchVerbatim([], verbatim, /(?=a)/g);
+    expect(results.length).toBe(1);
+    expect(results[0].matches.length).toBe(1);
+    expect(results[0].matches[0]).toBe('');
+  });
+
+  it('does not mutate caller regex lastIndex', () => {
+    const input: Message[] = [
+      msg({ id: 'u1', index: 0, role: 'user', content: PROSE }),
+    ];
+    const { messages: compressed, verbatim } = compressMessages(input, { recencyWindow: 0 });
+    const re = /general/g;
+    re.lastIndex = 5; // caller set lastIndex
+    searchVerbatim(compressed, verbatim, re);
+    // Since we clone, the original regex is untouched
+    expect(re.lastIndex).toBe(5);
   });
 
   it('falls back to messageId when not found in compressed', () => {

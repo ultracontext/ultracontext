@@ -1151,6 +1151,16 @@ describe('compressMessagesAsync', () => {
     expect(expanded.missing_ids).toEqual([]);
   });
 
+  it('works with a synchronous summarizer (non-Promise return)', async () => {
+    const syncSummarizer = (text: string) => text.slice(0, 40) + '...';
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, role: 'user', content: LONG_PROSE }),
+    ];
+    const result = await compressMessagesAsync(messages, { recencyWindow: 0, summarizer: syncSummarizer });
+    expect(result.compression.messages_compressed).toBe(1);
+    expect(result.messages[0].content).toMatch(/^\[summary:/);
+  });
+
   it('code-split path: summarizer called on prose only, fences preserved', async () => {
     const calls: string[] = [];
     const trackingSummarizer = async (text: string) => {
@@ -1292,5 +1302,19 @@ describe('compressToFit', () => {
     const asyncResult = await compressToFitAsync(messages, 200, { summarizer: aggressiveSummarizer });
     // Async with aggressive summarizer should produce equal or fewer tokens
     expect(asyncResult.tokenCount).toBeLessThanOrEqual(syncResult.tokenCount);
+  });
+
+  it('compressToFitAsync round-trip integrity', async () => {
+    const prose = 'This is a long message about general topics that could be compressed since it has no verbatim content. '.repeat(10);
+    const messages: Message[] = [
+      msg({ id: 'sys', index: 0, role: 'system', content: 'System prompt.' }),
+      msg({ id: 'u1', index: 1, role: 'user', content: prose }),
+      msg({ id: 'a1', index: 2, role: 'assistant', content: prose }),
+    ];
+    const totalTokens = messages.reduce((sum, m) => sum + estimateTokens(m), 0);
+    const result = await compressToFitAsync(messages, Math.floor(totalTokens / 2));
+    const expanded = expandMessages(result.messages, result.verbatim);
+    expect(expanded.messages).toEqual(messages);
+    expect(expanded.missing_ids).toEqual([]);
   });
 });

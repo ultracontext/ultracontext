@@ -29,7 +29,9 @@ export type CompressResult = {
   messages: Message[];
   compression: {
     original_version: number;
+    /** Character-based compression ratio: original_chars / compressed_chars. >1 means savings. */
     ratio: number;
+    /** Token-based compression ratio: original_tokens / compressed_tokens. >1 means savings. */
     token_ratio: number;
     messages_compressed: number;
     messages_preserved: number;
