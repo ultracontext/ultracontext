@@ -58,7 +58,8 @@ Right now, we're reinventing the wheel for every car we build. Instead of tackli
 
 ## Why UltraContext
 
-- **Simple API** — Five methods. That's it.
+- **Simple API** — Seven methods. That's it.
+- **Context compression** — Shrink conversations losslessly. Code and structure stay verbatim; prose gets summarized.
 - **Automatic versioning** — Updates/deletes create versions. Nothing is lost.
 - **Time-travel** — Jump to any point by version, index, or timestamp.
 - **Schema-free** — Store any JSON. Own your data structure.
@@ -119,6 +120,13 @@ await uc.update(ctx.id, { index: -1, content: 'Fix last message' });
 // delete - remove by id or index (auto-versions)
 await uc.delete(ctx.id, 'msg_xyz');
 await uc.delete(ctx.id, -1);
+
+// compress - shrink context losslessly (auto-versions)
+await uc.compress(ctx.id);
+await uc.compress(ctx.id, { preserve: ['system'], recencyWindow: 4 });
+
+// uncompress - restore original messages
+await uc.uncompress(ctx.id);
 ```
 
 <br />
