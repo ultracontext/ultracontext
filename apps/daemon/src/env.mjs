@@ -23,4 +23,22 @@ function loadEnv() {
   dotenv.config({ ...DOTENV_OPTIONS, path: APP_ENV_PATH });
 }
 
+const REPO_RELATIVE_PATH_VARS = [
+  "ULTRACONTEXT_CONFIG_FILE",
+  "ULTRACONTEXT_DB_FILE",
+  "ULTRACONTEXT_LOCK_FILE",
+  "ULTRACONTEXT_DAEMON_INFO_FILE",
+  "ULTRACONTEXT_DAEMON_LOG_FILE",
+];
+
+function resolvePathVars() {
+  for (const key of REPO_RELATIVE_PATH_VARS) {
+    const val = process.env[key];
+    if (val && (val.startsWith("./") || val.startsWith("../"))) {
+      process.env[key] = path.resolve(REPO_ROOT, val);
+    }
+  }
+}
+
 loadEnv();
+resolvePathVars();
