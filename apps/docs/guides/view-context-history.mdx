@@ -1,0 +1,308 @@
+---
+title: 'View Context History'
+description: 'Debug and audit by viewing any point in time'
+---
+
+<img
+    className='block'
+    src='/images/guides/covers/context-history-guide-cover.svg'
+    alt='UltraContext - Context history guide cover'
+/>
+
+## Guide Overview
+
+After this guide, you'll be able to:
+
+-   Rewind to any point in time
+-   See exactly what your AI saw when it made a decision
+-   Find where things went wrong in seconds, not hours
+
+## Why View Context History?
+
+You know the feeling. Your agent does something unexpected. A user reports a bug. You open your logs and stare at a wall of JSON. Hundreds of messages across dozens of contexts. Timestamps everywhere. You scroll. And scroll. And scroll. Where do you even start?
+
+You feel powerless. The answer is somewhere in that mess, but finding it feels like searching for a needle in a haystack—blindfolded. Hours pass. Frustration builds. You start questioning your life choices.
+
+What if you could rewind to cherry-pick the exact moment things went wrong? **You'd finally be in control of your agent.** Understanding why it did what it did becomes trivial.
+
+This is why we built UltraContext.
+
+Every update or delete creates a version. Every append has a timestamp. Rewind to any moment—by version number, by timestamp, by message index—and see the exact state your AI saw. No more scrolling through logs. No more guessing. Just the facts you need.
+
+**Like git, but for your context.**
+
+## How Versions Work
+
+Versions are automatically created on **updates and deletes only**. Appends don't create versions.
+
+<Frame caption='v0: create → v1: msg1 updated → v2: msg2 deleted'>
+<img
+    className='block'
+    src='/images/guides/versioning-contexts-diagram.svg'
+    alt='How UltraContext versioning works'
+/>
+</Frame>
+
+```
+v0 (create)    @ 10:00
+  ├─ append    @ 10:01
+  └─ append    @ 10:05
+v1 (update)    @ 11:00
+v2 (delete)    @ 12:00
+```
+
+## Get Version History
+
+You can get the version history of a context by passing `history: true` to the `get` method. This will return the current state of the context, the version number, and the version history.
+
+<CodeGroup>
+```typescript TypeScript
+const { data, version, versions } = await uc.get(contextId, { history: true });
+```
+
+```python Python
+result = uc.get(context_id, history=True)
+data, version, versions = result["data"], result["version"], result["versions"]
+```
+</CodeGroup>
+
+```json
+{
+  "data": [...],
+  "version": 2,
+  "versions": [
+    { "version": 0, "created_at": "2024-01-10T10:00:00Z", "operation": "create", "affected": null },
+    { "version": 1, "created_at": "2024-01-10T11:00:00Z", "operation": "update", "affected": ["msg_abc"] },
+    { "version": 2, "created_at": "2024-01-10T12:00:00Z", "operation": "delete", "affected": ["msg_xyz"] }
+  ]
+}
+```
+
+## Time Travel
+
+Go back to any point: by version number, timestamp, or message index.
+
+### By Version
+
+Get exact state after a specific update or delete.
+
+<CodeGroup>
+```typescript TypeScript
+const { data } = await uc.get(contextId, { version: 1 });
+```
+
+```python Python
+result = uc.get(context_id, version=1)
+```
+</CodeGroup>
+
+### By Index
+
+Get first N messages (0 through index).
+
+<CodeGroup>
+```typescript TypeScript
+const { data } = await uc.get(contextId, { at: 5 });
+```
+
+```python Python
+result = uc.get(context_id, at=5)
+```
+</CodeGroup>
+
+### By Timestamp
+
+Get state at any moment, including between appends.
+
+<CodeGroup>
+```typescript TypeScript
+const { data } = await uc.get(contextId, { before: '2024-01-10T10:30:00Z' });
+```
+
+```python Python
+result = uc.get(context_id, before="2024-01-10T10:30:00Z")
+```
+</CodeGroup>
+
+### Combine All
+
+<CodeGroup>
+```typescript TypeScript
+const { data } = await uc.get(contextId, {
+    version: 1,
+    before: '2024-01-10T11:15:00Z',
+    at: 2,
+});
+```
+
+```python Python
+result = uc.get(context_id, version=1, before="2024-01-10T11:15:00Z", at=2)
+```
+</CodeGroup>
+
+Order of priority: version → filter by time → slice by index.
+
+## Audit Trail
+
+Every update or delete automatically records:
+- **version** — sequential version number
+- **operation** — create, update, or delete
+- **affected** — which message IDs changed
+- **created_at** — ISO timestamp
+
+Optionally, you can also add `metadata` to track other information about the change.
+
+<CodeGroup>
+```typescript TypeScript
+await uc.update(contextId,
+  { id: 'msg_xyz', content: 'Redacted' },
+  { metadata: { reason: 'pii_redaction', performed_by: 'admin@co.com' } }
+)
+```
+
+```python Python
+uc.update(context_id,
+  id="msg_xyz",
+  content="Redacted",
+  metadata={"reason": "pii_redaction", "performed_by": "admin@co.com"}
+)
+```
+</CodeGroup>
+
+Retrieve with `history: true`:
+
+```json
+{
+  "versions": [
+    {
+      "version": 0,
+      "operation": "create",
+      "affected": null,
+      "created_at": "2024-01-10T10:00:00Z"
+    },
+    {
+      "version": 1,
+      "operation": "update",
+      "affected": ["msg_xyz"],
+      "created_at": "2024-01-10T11:00:00Z",
+      "metadata": {
+        "reason": "pii_redaction",
+        "performed_by": "admin@co.com"
+      }
+    }
+  ]
+}
+```
+
+## Examples
+
+### Debug Agent Failure
+
+Something went wrong. Trace back to see what context it had when it failed.
+
+<CodeGroup>
+```typescript TypeScript
+import { UltraContext } from 'ultracontext';
+
+const uc = new UltraContext({ apiKey: process.env.ULTRACONTEXT_API_KEY });
+const contextId = 'ctx_abc123'; // your context ID
+
+// get full history
+const { data, versions } = await uc.get(contextId, { history: true });
+
+// find error and see what AI saw before it
+const error = data.find((m) => m.metadata?.error);
+const prior = await uc.get(contextId, { at: error.index - 1 });
+```
+
+```python Python
+from ultracontext import UltraContext
+import os
+
+uc = UltraContext(api_key=os.environ["ULTRACONTEXT_API_KEY"])
+context_id = "ctx_abc123"  # your context ID
+
+# get full history
+result = uc.get(context_id, history=True)
+
+# find error and see what AI saw before it
+error = next(m for m in result["data"] if m.get("metadata", {}).get("error"))
+prior = uc.get(context_id, at=error["index"] - 1)
+```
+</CodeGroup>
+
+---
+
+### Compare Prompt Versions
+
+Prompt was updated at v2. Compare agent behavior before and after.
+
+<CodeGroup>
+```typescript TypeScript
+import { UltraContext } from 'ultracontext';
+
+const uc = new UltraContext({ apiKey: process.env.ULTRACONTEXT_API_KEY });
+const contextId = 'ctx_abc123';
+
+// get state at different versions
+const before = await uc.get(contextId, { version: 1 });
+const after = await uc.get(contextId, { version: 2 });
+
+// compare system prompts
+const promptBefore = before.data.find((m) => m.role === 'system');
+const promptAfter = after.data.find((m) => m.role === 'system');
+```
+
+```python Python
+from ultracontext import UltraContext
+import os
+
+uc = UltraContext(api_key=os.environ["ULTRACONTEXT_API_KEY"])
+context_id = "ctx_abc123"
+
+# get state at different versions
+before = uc.get(context_id, version=1)
+after = uc.get(context_id, version=2)
+
+# compare system prompts
+prompt_before = next(m for m in before["data"] if m["role"] == "system")
+prompt_after = next(m for m in after["data"] if m["role"] == "system")
+```
+</CodeGroup>
+
+---
+
+### Reconstruct User Session
+
+Support ticket: "What did user X see at 3:42pm?"
+
+<CodeGroup>
+```typescript TypeScript
+import { UltraContext } from 'ultracontext';
+
+const uc = new UltraContext({ apiKey: process.env.ULTRACONTEXT_API_KEY });
+const contextId = 'ctx_abc123';
+
+// get exact state at that moment
+const snapshot = await uc.get(contextId, { before: '2024-01-10T15:42:00Z' });
+```
+
+```python Python
+from ultracontext import UltraContext
+import os
+
+uc = UltraContext(api_key=os.environ["ULTRACONTEXT_API_KEY"])
+context_id = "ctx_abc123"
+
+# get exact state at that moment
+snapshot = uc.get(context_id, before="2024-01-10T15:42:00Z")
+```
+</CodeGroup>
+
+<Card
+    title='Next: Fork & Clone Contexts'
+    icon='code-branch'
+    href='/guides/fork-clone-contexts'
+>
+    Create copies from any point in history.
+</Card>

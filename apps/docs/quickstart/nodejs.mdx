@@ -1,0 +1,124 @@
+---
+title: 'Node.js'
+description: 'Manage your agent context with Node.js'
+---
+
+## Prerequisites
+
+To follow this quickstart, you'll need:
+
+-   **An UltraContext API key**
+
+If you don't have one yet, [apply for early access](https://ultracontext.ai) to get one.
+
+## 1. Install
+
+<CodeGroup>
+```bash npm
+npm install ultracontext
+```
+
+```bash yarn
+yarn add ultracontext
+```
+
+```bash pnpm
+pnpm add ultracontext
+```
+
+```bash bun
+bun add ultracontext
+```
+
+</CodeGroup>
+
+## 2. Create your first context
+
+```typescript TypeScript
+import { UltraContext } from 'ultracontext';
+const uc = new UltraContext({ apiKey: process.env.ULTRACONTEXT_API_KEY });
+const ctx = await uc.create();
+
+// append messages
+await uc.append(ctx.id, { role: 'system', content: 'You are a helpful assistant.' }); // v0
+await uc.append(ctx.id, { role: 'user', content: 'Hello!' }); // v0
+
+// update and delete messages
+await uc.update(ctx.id, { index: 0, content: 'New system prompt.' }); // v1
+await uc.delete(ctx.id, -1); // v2
+
+// or by id
+// await uc.update(ctx.id, { id: 'msg_abc', content: 'Fixed!' });
+// await uc.delete(ctx.id, 'msg_xyz');
+
+// context is automatically versioned — fetch with history
+const { data, versions } = await uc.get(ctx.id, { history: true });
+// → versions: [
+//     { version: 0, operation: 'create', affected: null },
+//     { version: 1, operation: 'update', affected: ['msg_a'] },
+//     ...
+// ]
+
+// use it with your favorite LLM framework
+const response = await generateText({ model, messages: data });
+```
+
+Every update and delete auto-creates a new version. Retrieve any previous state with `uc.get(ctx.id, { version: n })`.
+
+<Info>UltraContext is **framework-agnostic** and **schema-free**. Use it with any LLM provider and store context in any format you need.</Info>
+
+Messages can have any fields you need:
+
+```typescript TypeScript
+await uc.append(ctx.id, {
+    role: 'user',
+    content: 'Hello!',
+    model: 'gpt-4o',
+    tokens: 150,
+    custom_field: 'anything',
+});
+
+// stored as:
+// {
+//   id: 'msg_abc',
+//   index: 0,
+//   role: 'user',
+//   content: 'Hello!',
+//   model: 'gpt-4o',
+//   tokens: 150,
+//   custom_field: 'anything'
+// }
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+    <Card
+        title='Store & Retrieve'
+        icon='database'
+        href='/guides/store-retrieve-contexts'
+    >
+        Create contexts and manage messages.
+    </Card>
+    <Card
+        title='View History'
+        icon='clock-rotate-left'
+        href='/guides/view-context-history'
+    >
+        Time-travel through context versions.
+    </Card>
+    <Card
+        title='Fork & Clone'
+        icon='code-branch'
+        href='/guides/fork-clone-contexts'
+    >
+        Branch contexts for parallel workflows.
+    </Card>
+    <Card
+        title='Edit Contexts'
+        icon='pen'
+        href='/guides/edit-contexts'
+    >
+        Update and delete messages.
+    </Card>
+</CardGroup>

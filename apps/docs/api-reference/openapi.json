@@ -1,0 +1,742 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "UltraContext",
+    "description": "Manage conversation contexts with automatic versioning. Every mutation creates a new branch, preserving full history.",
+    "version": "1.1.0"
+  },
+  "servers": [
+    {
+      "url": "https://api.ultracontext.ai"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "paths": {
+    "/contexts": {
+      "post": {
+        "summary": "Create context",
+        "description": "Create a new context. Optionally copy from an existing context using the `from` parameter, and specify a `version` to fork from a specific version.",
+        "operationId": "createContext",
+        "x-mint": {
+          "content": "<Tip>Use `from` with `version`, `at`, or `before` to fork from a specific point in history. Learn more in the [Fork & Clone Contexts](/guides/fork-clone-contexts) guide.</Tip>"
+        },
+        "x-codeSamples": [
+          {
+            "lang": "typescript",
+            "label": "TypeScript",
+            "source": "const ctx = await uc.create()\n\n// With metadata\nconst ctx = await uc.create({ metadata: { name: 'my-session' } })\n\n// Copy from existing (latest version)\nconst fork = await uc.create({ from: 'ctx_abc123' })\n\n// Fork from specific version\nconst v1Fork = await uc.create({ from: 'ctx_abc123', version: 1 })\n\n// Fork at specific message index\nconst partial = await uc.create({ from: 'ctx_abc123', at: 5 })\n\n// Fork from point-in-time\nconst snapshot = await uc.create({ from: 'ctx_abc123', before: '2024-01-15T10:30:00Z' })"
+          },
+          {
+            "lang": "python",
+            "label": "Python",
+            "source": "ctx = uc.create()\n\n# With metadata\nctx = uc.create(metadata={'name': 'my-session'})\n\n# Copy from existing (latest version)\nfork = uc.create(from_='ctx_abc123')\n\n# Fork from specific version\nv1_fork = uc.create(from_='ctx_abc123', version=1)\n\n# Fork at specific message index\npartial = uc.create(from_='ctx_abc123', at=5)\n\n# Fork from point-in-time\nsnapshot = uc.create(from_='ctx_abc123', before='2024-01-15T10:30:00Z')"
+          },
+          {
+            "lang": "bash",
+            "label": "cURL",
+            "source": "curl -X POST https://api.ultracontext.ai/contexts \\\n  -H \"Authorization: Bearer $API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"metadata\": {\"name\": \"my-session\"}}'\n\n# Fork from specific version\ncurl -X POST https://api.ultracontext.ai/contexts \\\n  -H \"Authorization: Bearer $API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"from\": \"ctx_abc123\", \"version\": 1}'\n\n# Fork from point-in-time\ncurl -X POST https://api.ultracontext.ai/contexts \\\n  -H \"Authorization: Bearer $API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"from\": \"ctx_abc123\", \"before\": \"2024-01-15T10:30:00Z\"}'"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateContextInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Context created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Context"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid index (when using `at` with `from`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Version not found (when using `version` with `from`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "List contexts",
+        "description": "List all root contexts for your project. Sorted by `created_at` descending (newest first).",
+        "operationId": "listContexts",
+        "x-codeSamples": [
+          {
+            "lang": "typescript",
+            "label": "TypeScript",
+            "source": "// List all contexts\nconst { data } = await uc.get()\n\n// With limit\nconst { data } = await uc.get({ limit: 10 })"
+          },
+          {
+            "lang": "python",
+            "label": "Python",
+            "source": "# List all contexts\nresult = uc.get()\n\n# With limit\nresult = uc.get(limit=10)"
+          },
+          {
+            "lang": "bash",
+            "label": "cURL",
+            "source": "curl https://api.ultracontext.ai/contexts \\\n  -H \"Authorization: Bearer $API_KEY\"\n\n# With limit\ncurl \"https://api.ultracontext.ai/contexts?limit=10\" \\\n  -H \"Authorization: Bearer $API_KEY\""
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of contexts to return",
+            "schema": {
+              "type": "integer",
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of contexts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Context"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/contexts/{id}": {
+      "get": {
+        "summary": "Get context",
+        "description": "Get context with all messages. Returns latest version by default.",
+        "operationId": "getContext",
+        "x-mint": {
+          "content": "<Info>The `versions` array is only returned when `?history=true`.</Info>"
+        },
+        "x-codeSamples": [
+          {
+            "lang": "typescript",
+            "label": "TypeScript",
+            "source": "// Get current version\nconst { data, version } = await uc.get('ctx_abc123')\n\n// With version history\nconst { data, version, versions } = await uc.get('ctx_abc123', { history: true })\n\n// Get specific version\nconst { data } = await uc.get('ctx_abc123', { version: 1 })\n\n// Get at specific message index\nconst { data } = await uc.get('ctx_abc123', { at: 5 })\n\n// Get point-in-time state\nconst { data } = await uc.get('ctx_abc123', { before: '2024-01-15T10:30:00Z' })"
+          },
+          {
+            "lang": "python",
+            "label": "Python",
+            "source": "# Get current version\nresult = uc.get('ctx_abc123')\n\n# With version history\nresult = uc.get('ctx_abc123', history=True)\n\n# Get specific version\nresult = uc.get('ctx_abc123', version=1)\n\n# Get at specific message index\nresult = uc.get('ctx_abc123', at=5)\n\n# Get point-in-time state\nresult = uc.get('ctx_abc123', before='2024-01-15T10:30:00Z')"
+          },
+          {
+            "lang": "bash",
+            "label": "cURL",
+            "source": "# Get current version\ncurl https://api.ultracontext.ai/contexts/ctx_abc123 \\\n  -H \"Authorization: Bearer $API_KEY\"\n\n# With version history\ncurl \"https://api.ultracontext.ai/contexts/ctx_abc123?history=true\" \\\n  -H \"Authorization: Bearer $API_KEY\"\n\n# Get specific version\ncurl \"https://api.ultracontext.ai/contexts/ctx_abc123?version=1\" \\\n  -H \"Authorization: Bearer $API_KEY\"\n\n# Get point-in-time state\ncurl \"https://api.ultracontext.ai/contexts/ctx_abc123?before=2024-01-15T10:30:00Z\" \\\n  -H \"Authorization: Bearer $API_KEY\""
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Context ID (ctx_...)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "Version number to retrieve (0-indexed). Defaults to latest.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "at",
+            "in": "query",
+            "description": "Return messages 0 through this index (point-in-time retrieval)",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "description": "ISO timestamp. Returns point-in-time state: finds version created before timestamp, then filters messages by created_at.",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "history",
+            "in": "query",
+            "description": "Include version history in response",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Context messages with version info",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetContextResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid index (when using ?at=)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Context not found, version not found, or index out of range",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Append messages",
+        "description": "Append one or more messages to the context.",
+        "operationId": "appendMessages",
+        "x-mint": {
+          "content": "<Info>Appends do **not** create a new version of the context. This happens because the `at` parameter on the GET endpoint is enough to retrieve previous states by index.</Info>\n\n<Warning>`index` is a reserved field. The `metadata` field is extracted and stored at the message level—it won't appear as a regular content field.</Warning>"
+        },
+        "x-codeSamples": [
+          {
+            "lang": "typescript",
+            "label": "TypeScript",
+            "source": "// Single message\nconst { data, version } = await uc.append('ctx_abc123', { role: 'user', content: 'Hello!' })\n\n// With metadata\nconst { data, version } = await uc.append('ctx_abc123', {\n  role: 'user',\n  content: 'Hello!',\n  metadata: { source: 'web' }\n})"
+          },
+          {
+            "lang": "python",
+            "label": "Python",
+            "source": "# Single message\nresult = uc.append('ctx_abc123', {'role': 'user', 'content': 'Hello!'})\n\n# With metadata\nresult = uc.append('ctx_abc123', {\n  'role': 'user',\n  'content': 'Hello!',\n  'metadata': {'source': 'web'}\n})"
+          },
+          {
+            "lang": "bash",
+            "label": "cURL",
+            "source": "curl -X POST https://api.ultracontext.ai/contexts/ctx_abc123 \\\n  -H \"Authorization: Bearer $API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"role\": \"user\", \"content\": \"Hello!\", \"metadata\": {\"source\": \"web\"}}'"
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Context ID (ctx_...)",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Single message or array. The `metadata` field is extracted; all other fields stored as content.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppendInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Messages appended",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Context not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update messages",
+        "description": "Update one or more messages by `id` or `index`. Each update automatically creates a new version.",
+        "operationId": "updateMessages",
+        "x-mint": {
+          "content": "<Info>Include `metadata` in the request body to record why this update was made. It is optional, but recommended to make audit trail easier to understand.</Info>"
+        },
+        "x-codeSamples": [
+          {
+            "lang": "typescript",
+            "label": "TypeScript",
+            "source": "// Update by id\nconst { data, version } = await uc.update('ctx_abc123', { id: 'msg_xyz', content: 'Fixed!' })\n\n// Update by index (0 = first message, -1 = last)\nconst { data, version } = await uc.update('ctx_abc123', { index: 0, content: 'New system prompt' })\nconst { data, version } = await uc.update('ctx_abc123', { index: -1, content: 'Fix last msg' })\n\n// With audit metadata\nconst { data, version } = await uc.update('ctx_abc123', \n  { id: 'msg_xyz', content: 'Fixed!' },\n  { metadata: { reason: 'typo fix', author: 'alice' } }\n)\n\n// Multiple updates\nawait uc.update('ctx_abc123', [\n  { index: 0, content: 'Updated system prompt' },\n  { id: 'msg_bbb', content: 'Updated 2' }\n])\n\n// Multiple updates with audit metadata\nawait uc.update('ctx_abc123', [\n  { index: 0, content: 'Updated system prompt' },\n  { id: 'msg_bbb', content: 'Updated 2' }\n], { metadata: { reason: 'batch fix', ticket: 'JIRA-456' } })"
+          },
+          {
+            "lang": "python",
+            "label": "Python",
+            "source": "# Update by id\nresult = uc.update('ctx_abc123', id='msg_xyz', content='Fixed!')\n\n# Update by index (0 = first message, -1 = last)\nresult = uc.update('ctx_abc123', index=0, content='New system prompt')\nresult = uc.update('ctx_abc123', index=-1, content='Fix last msg')\n\n# With audit metadata\nresult = uc.update('ctx_abc123',\n  index=0, content='Fixed!',\n  metadata={'reason': 'typo fix', 'author': 'alice'}\n)\n\n# Multiple updates\nuc.update('ctx_abc123', [\n  {'index': 0, 'content': 'Updated system prompt'},\n  {'id': 'msg_bbb', 'content': 'Updated 2'}\n])\n\n# Multiple updates with audit metadata\nuc.update('ctx_abc123', [\n  {'index': 0, 'content': 'Updated system prompt'},\n  {'id': 'msg_bbb', 'content': 'Updated 2'}\n], metadata={'reason': 'batch fix', 'ticket': 'JIRA-456'})"
+          },
+          {
+            "lang": "bash",
+            "label": "cURL",
+            "source": "# Update by id\ncurl -X PATCH https://api.ultracontext.ai/contexts/ctx_abc123 \\\n  -H \"Authorization: Bearer $API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"id\": \"msg_xyz\", \"content\": \"Fixed typo!\"}'\n\n# Update by index (0 = first, -1 = last)\ncurl -X PATCH https://api.ultracontext.ai/contexts/ctx_abc123 \\\n  -H \"Authorization: Bearer $API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"index\": 0, \"content\": \"New system prompt\"}'\n\n# Update last message\ncurl -X PATCH https://api.ultracontext.ai/contexts/ctx_abc123 \\\n  -H \"Authorization: Bearer $API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"index\": -1, \"content\": \"Fixed last message\"}'\n\n# With audit metadata\ncurl -X PATCH https://api.ultracontext.ai/contexts/ctx_abc123 \\\n  -H \"Authorization: Bearer $API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"updates\": [{\"index\": 0, \"content\": \"Fixed!\"}], \"metadata\": {\"reason\": \"typo fix\"}}'"
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Context ID (ctx_...)",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Single update, array of updates, or object with `updates` array and `metadata` for audit trail.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateRequestBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Messages updated (new version created)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (both id and index provided, neither provided, or index out of range)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Context or message not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete messages",
+        "description": "Delete one or more messages by `id` or `index`. Each deletion automatically creates a new version.",
+        "operationId": "deleteMessages",
+        "x-mint": {
+          "content": "<Tip>Mix IDs and indices: `[\"msg_abc\", 0, -1]`</Tip>\n\n<Info>Include `metadata` in the request body to record why this deletion was made. It is optional, but recommended to make audit trail easier to understand.</Info>"
+        },
+        "x-codeSamples": [
+          {
+            "lang": "typescript",
+            "label": "TypeScript",
+            "source": "// Delete by id\nconst { data, version } = await uc.delete('ctx_abc123', 'msg_xyz')\n\n// Delete by index (0 = first, -1 = last)\nconst { data, version } = await uc.delete('ctx_abc123', 0)  // delete first\nconst { data, version } = await uc.delete('ctx_abc123', -1) // delete last\n\n// With audit metadata\nconst { data, version } = await uc.delete('ctx_abc123', 'msg_xyz', {\n  metadata: { reason: 'hallucination', ticket: 'JIRA-123' }\n})\n\n// Multiple deletes (mix of ids and indices)\nawait uc.delete('ctx_abc123', ['msg_aaa', 0, -1])"
+          },
+          {
+            "lang": "python",
+            "label": "Python",
+            "source": "# Delete by id\nresult = uc.delete('ctx_abc123', 'msg_xyz')\n\n# Delete by index (0 = first, -1 = last)\nresult = uc.delete('ctx_abc123', 0)  # delete first\nresult = uc.delete('ctx_abc123', -1)  # delete last\n\n# With audit metadata\nresult = uc.delete('ctx_abc123', 'msg_xyz',\n  metadata={'reason': 'hallucination', 'ticket': 'JIRA-123'}\n)\n\n# Multiple deletes (mix of ids and indices)\nuc.delete('ctx_abc123', ['msg_aaa', 0, -1])"
+          },
+          {
+            "lang": "bash",
+            "label": "cURL",
+            "source": "# Delete by id\ncurl -X DELETE https://api.ultracontext.ai/contexts/ctx_abc123 \\\n  -H \"Authorization: Bearer $API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"ids\": \"msg_xyz\"}'\n\n# Delete by index (0 = first, -1 = last)\ncurl -X DELETE https://api.ultracontext.ai/contexts/ctx_abc123 \\\n  -H \"Authorization: Bearer $API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"ids\": 0}'\n\n# Delete last message\ncurl -X DELETE https://api.ultracontext.ai/contexts/ctx_abc123 \\\n  -H \"Authorization: Bearer $API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"ids\": -1}'\n\n# With audit metadata\ncurl -X DELETE https://api.ultracontext.ai/contexts/ctx_abc123 \\\n  -H \"Authorization: Bearer $API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"ids\": [0, \"msg_xyz\"], \"metadata\": {\"reason\": \"cleanup\"}}'"
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Context ID (ctx_...)",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Message ID(s) to delete, with optional audit metadata",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Messages deleted (new version created)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Index out of range",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Context or message not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "API key from your UltraContext dashboard"
+      }
+    },
+    "schemas": {
+      "Context": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier (ctx_...)",
+            "example": "ctx_a1b2c3d4e5f6"
+          },
+          "metadata": {
+            "type": "object",
+            "description": "User-defined metadata",
+            "additionalProperties": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp"
+          }
+        }
+      },
+      "Message": {
+        "type": "object",
+        "description": "Message with unwrapped content. Your fields are merged at the top level.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier (msg_...)",
+            "example": "msg_x1y2z3"
+          },
+          "index": {
+            "type": "integer",
+            "description": "0-based position in context",
+            "example": 0
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": true
+      },
+      "Version": {
+        "type": "object",
+        "description": "Version history entry with audit trail",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "description": "0-indexed version number",
+            "example": 0
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp"
+          },
+          "operation": {
+            "type": "string",
+            "enum": ["create", "update", "delete"],
+            "description": "Operation that created this version"
+          },
+          "affected": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "description": "Message IDs affected by update/delete operations. Null for create."
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "User-provided audit metadata (e.g., reason, performed_by). Only present when provided."
+          }
+        }
+      },
+      "GetContextResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Message"
+            }
+          },
+          "version": {
+            "type": "integer",
+            "description": "Current version number being viewed"
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Version"
+            },
+            "description": "Version history (only present when ?history=true)"
+          }
+        }
+      },
+      "WriteResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Message"
+            }
+          },
+          "version": {
+            "type": "integer",
+            "description": "Current version number after the write"
+          }
+        }
+      },
+      "CreateContextInput": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "Source context ID to copy from (optional)"
+          },
+          "version": {
+            "type": "integer",
+            "description": "When forking with `from`, copy from this specific version (0-indexed)"
+          },
+          "at": {
+            "type": "integer",
+            "description": "When forking with `from`, copy only messages 0 through this index"
+          },
+          "before": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When forking with `from`, copy point-in-time state before this ISO timestamp"
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "User-defined metadata for this context"
+          }
+        },
+        "description": "Create a new context with optional fork params and metadata"
+      },
+      "AppendInput": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/AppendMessage"
+          },
+          {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AppendMessage"
+            }
+          }
+        ]
+      },
+      "AppendMessage": {
+        "type": "object",
+        "properties": {
+          "metadata": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Message metadata (extracted and stored separately)"
+          }
+        },
+        "additionalProperties": true,
+        "description": "Message content with optional metadata. `index` is reserved."
+      },
+      "UpdateInput": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Message ID to update (msg_...). Either id or index required, not both."
+          },
+          "index": {
+            "type": "integer",
+            "description": "Message index (0 = first, -1 = last). Either `id` or `index` required."
+          }
+        },
+        "additionalProperties": true,
+        "description": "Include `id` OR `index` (not both) and any fields to merge into the message"
+      },
+      "UpdateRequestBody": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/UpdateInput"
+          },
+          {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UpdateInput"
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "updates": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/UpdateInput"
+                },
+                "description": "Array of updates to apply"
+              },
+              "metadata": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "Audit metadata for this version (e.g., reason, author)"
+              }
+            },
+            "required": ["updates"]
+          }
+        ]
+      },
+      "DeleteInput": {
+        "type": "object",
+        "required": ["ids"],
+        "properties": {
+          "ids": {
+            "oneOf": [
+              {
+                "type": "string",
+                "description": "Single message ID (msg_...)"
+              },
+              {
+                "type": "integer",
+                "description": "Single message index (0 = first, -1 = last)"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "oneOf": [
+                    { "type": "string" },
+                    { "type": "integer" }
+                  ]
+                },
+                "description": "Array of message IDs and/or indices"
+              }
+            ]
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Audit metadata for this version (e.g., reason, ticket)"
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "Error message"
+          }
+        }
+      }
+    }
+  }
+}

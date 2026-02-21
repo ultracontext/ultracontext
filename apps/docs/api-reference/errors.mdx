@@ -1,0 +1,114 @@
+---
+title: 'Errors'
+description: 'Error codes and handling'
+---
+
+All errors return a JSON object with an `error` field.
+
+## Error Response Format
+
+```json
+{
+  "error": "Context not found"
+}
+```
+
+## HTTP Status Codes
+
+| Status | Description |
+|--------|-------------|
+| 200 | Success |
+| 201 | Created |
+| 400 | Bad request (invalid params) |
+| 401 | Unauthorized (invalid/missing API key) |
+| 404 | Not found |
+| 500 | Server error |
+
+## Common Errors
+
+| Error | Status | Cause |
+|-------|--------|-------|
+| Context not found | 404 | Context ID doesn't exist |
+| Version not found | 404 | Version number out of range |
+| Message not found: {id} | 404 | Message ID doesn't exist in context |
+| Invalid index | 400 | `at` parameter is negative or invalid |
+| Index out of range | 400 | Index exceeds message count |
+| version, at, and before require from | 400 | Used time-travel params without `from` in create |
+| Invalid timestamp format | 400 | `before` param is not a valid ISO timestamp |
+
+## SDK Error Handling
+
+The SDK throws `UltraContextHttpError` for failed requests:
+
+```typescript
+import { UltraContext, UltraContextHttpError } from 'ultracontext'
+
+try {
+  await uc.get('ctx_invalid')
+} catch (error) {
+  if (error instanceof UltraContextHttpError) {
+    console.log('Status:', error.status)      // 404
+    console.log('URL:', error.url)            // https://api.ultracontext.ai/contexts/ctx_invalid
+    console.log('Body:', error.bodyText)      // {"error":"Context not found"}
+  }
+}
+```
+
+## Error Properties
+
+```typescript
+class UltraContextHttpError extends Error {
+  readonly status: number    // HTTP status code
+  readonly url: string       // Request URL
+  readonly bodyText?: string // Response body
+}
+```
+
+## Handling Specific Errors
+
+```typescript
+async function safeGet(contextId: string) {
+  try {
+    return await uc.get(contextId)
+  } catch (error) {
+    if (error instanceof UltraContextHttpError) {
+      switch (error.status) {
+        case 404:
+          // context doesn't exist - create it
+          const ctx = await uc.create()
+          return uc.get(ctx.id)
+        case 401:
+          throw new Error('Invalid API key')
+        default:
+          throw error
+      }
+    }
+    throw error
+  }
+}
+```
+
+## Retry Logic
+
+For transient errors (500), implement exponential backoff:
+
+```typescript
+async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await fn()
+    } catch (error) {
+      if (error instanceof UltraContextHttpError && error.status >= 500) {
+        // wait before retry: 1s, 2s, 4s
+        await new Promise(r => setTimeout(r, 1000 * Math.pow(2, i)))
+        continue
+      }
+      throw error
+    }
+  }
+  throw new Error('Max retries exceeded')
+}
+
+// usage
+const ctx = await withRetry(() => uc.create())
+```

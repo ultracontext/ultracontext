@@ -1,0 +1,421 @@
+---
+title: 'Edit Contexts'
+description: 'Update and delete messages with full audit trail'
+---
+
+<img
+    className='block'
+    src='/images/guides/covers/edit-context-guide-cover.svg'
+    alt='UltraContext - Edit context guide cover'
+/>
+
+## Guide Overview
+
+After this guide, you'll be able to:
+
+-   Replace messages mid-conversation (e.g. system prompts)
+-   Delete messages mid-conversation
+-   Track every context change
+
+## Why Edit Contexts?
+
+You want to tweak the system prompt. But first, the ritual. Copy it somewhere. Just in case. Make the edit. Test. It's worse. What was the prompt before? You're debugging blind—reconstructing from memory. And editing without losing the audit trail? A pain.
+
+What if you could skip the ritual? **Edit anything. Never lose the original.** Every change tracked. Rewind anytime. Effortlessly.
+
+UltraContext gives you that out of the box.
+
+Update or delete any message with a single API call. Every change creates a new version. The original is preserved. Add metadata to track why. Full audit trail, full control. Zero complexity.
+
+**Edit freely. The system remembers.**
+
+## Editing Contexts
+
+Updates and deletes automatically create new versions. This means you can always rewind to any mutation point.
+
+<CodeGroup>
+```typescript TypeScript
+import { UltraContext } from 'ultracontext';
+
+const uc = new UltraContext({ apiKey: process.env.ULTRACONTEXT_API_KEY });
+
+// create context and append messages (v0)
+const ctx = await uc.create();
+await uc.append(ctx.id, { role: 'system', content: 'You are a helpful assistant.' });
+await uc.append(ctx.id, { role: 'user', content: 'Hello!' });
+await uc.append(ctx.id, { role: 'assistant', content: 'Hi there!' });
+
+// replace system prompt (v1)
+await uc.update(ctx.id, { index: 0, content: 'You are a concise assistant.' });
+
+// delete last message (v2)
+await uc.delete(ctx.id, -1);
+
+// update with audit metadata (v3)
+await uc.update(
+    ctx.id,
+    { index: 0, content: 'You are a concise assistant. Always cite sources.' },
+    { metadata: { reason: 'Added citation requirement', author: 'alice' } }
+);
+
+// Result:
+// {
+//   data: [
+//     { role: 'system', content: 'You are a concise assistant. Always cite sources.' },
+//     { role: 'user', content: 'Hello!' }
+//   ],
+//   version: 3
+// }
+```
+
+```python Python
+from ultracontext import UltraContext
+import os
+
+uc = UltraContext(api_key=os.environ["ULTRACONTEXT_API_KEY"])
+
+# create context and append messages (v0)
+ctx = uc.create()
+uc.append(ctx["id"], {"role": "system", "content": "You are a helpful assistant."})
+uc.append(ctx["id"], {"role": "user", "content": "Hello!"})
+uc.append(ctx["id"], {"role": "assistant", "content": "Hi there!"})
+
+# replace system prompt (v1)
+uc.update(ctx["id"], index=0, content="You are a concise assistant.")
+
+# delete last message (v2)
+uc.delete(ctx["id"], -1)
+
+# update with audit metadata (v3)
+uc.update(
+    ctx["id"],
+    index=0,
+    content="You are a concise assistant. Always cite sources.",
+    metadata={"reason": "Added citation requirement", "author": "alice"}
+)
+
+# Result:
+# {
+#   "data": [
+#     { "role": "system", "content": "You are a concise assistant. Always cite sources." },
+#     { "role": "user", "content": "Hello!" }
+#   ],
+#   "version": 3
+# }
+```
+</CodeGroup>
+
+<Info>Appends don't create new versions. Using `before` and `at` is enough to travel back in time for them. </Info>
+
+## Update Messages
+
+Update by message ID or index:
+
+<CodeGroup>
+```typescript TypeScript
+// by ID
+await uc.update(contextId, { id: 'msg_abc', content: 'Fixed content' });
+
+// by index (0 = first, -1 = last)
+await uc.update(contextId, { index: 0, content: 'Fixed first message' });
+await uc.update(contextId, { index: -1, content: 'Fixed last message' });
+```
+
+```python Python
+# by ID
+uc.update(context_id, id="msg_abc", content="Fixed content")
+
+# by index (0 = first, -1 = last)
+uc.update(context_id, index=0, content="Fixed first message")
+uc.update(context_id, index=-1, content="Fixed last message")
+```
+</CodeGroup>
+
+### Update multiple messages
+
+<CodeGroup>
+```typescript TypeScript
+await uc.update(contextId, [
+    { id: 'msg_abc', content: 'Fixed content 1' },
+    { id: 'msg_def', content: 'Fixed content 2' },
+]);
+```
+
+```python Python
+uc.update(context_id, [
+    {"id": "msg_abc", "content": "Fixed content 1"},
+    {"id": "msg_def", "content": "Fixed content 2"},
+])
+```
+</CodeGroup>
+
+### Partial updates
+
+Updates are partial by default. Only the fields you specify get changed. Everything else stays intact.
+
+<CodeGroup>
+```typescript TypeScript
+// original message
+// {
+//   role: 'assistant',
+//   content: 'Hello!',
+//   tool_calls: [{ id: 'call_1', name: 'search' }],
+//   metadata: { model: 'gpt-4', tokens: 150 }
+// }
+
+// update only the content
+await uc.update(contextId, { index: 0, content: 'Hi there!' });
+
+// result: content changed, everything else preserved
+// {
+//   role: 'assistant',
+//   content: 'Hi there!',
+//   tool_calls: [{ id: 'call_1', name: 'search' }],
+//   metadata: { model: 'gpt-4', tokens: 150 }
+// }
+```
+
+```python Python
+# original message
+# {
+#   "role": "assistant",
+#   "content": "Hello!",
+#   "tool_calls": [{"id": "call_1", "name": "search"}],
+#   "metadata": {"model": "gpt-4", "tokens": 150}
+# }
+
+# update only the content
+uc.update(context_id, index=0, content="Hi there!")
+
+# result: content changed, everything else preserved
+# {
+#   "role": "assistant",
+#   "content": "Hi there!",
+#   "tool_calls": [{"id": "call_1", "name": "search"}],
+#   "metadata": {"model": "gpt-4", "tokens": 150}
+# }
+```
+</CodeGroup>
+
+## Delete Messages
+
+Delete by ID or index:
+
+<CodeGroup>
+```typescript TypeScript
+// by ID
+await uc.delete(contextId, 'msg_abc');
+
+// by index
+await uc.delete(contextId, 0); // first message
+await uc.delete(contextId, -1); // last message
+```
+
+```python Python
+# by ID
+uc.delete(context_id, "msg_abc")
+
+# by index
+uc.delete(context_id, 0)  # first message
+uc.delete(context_id, -1)  # last message
+```
+</CodeGroup>
+
+### Delete multiple messages
+
+<CodeGroup>
+```typescript TypeScript
+// by IDs
+await uc.delete(contextId, ['msg_abc', 'msg_def']);
+
+// by indices
+await uc.delete(contextId, [0, 2, 4]);
+
+// mixed
+await uc.delete(contextId, ['msg_abc', 1, -1]);
+```
+
+```python Python
+# by IDs
+uc.delete(context_id, ["msg_abc", "msg_def"])
+
+# by indices
+uc.delete(context_id, [0, 2, 4])
+
+# mixed
+uc.delete(context_id, ["msg_abc", 1, -1])
+```
+</CodeGroup>
+
+## Including Metadata
+
+<Tip>Include metadata to track why changes were made. It is optional, but recommended to make audit trail easier to understand.</Tip>
+
+<CodeGroup>
+```typescript TypeScript
+await uc.update(contextId, { id: 'msg_abc', content: 'Fixed typo' }, { metadata: { reason: 'typo', author: 'alice' } });
+
+await uc.delete(contextId, 'msg_xyz', {
+    metadata: { reason: 'hallucination', ticket: 'JIRA-123' },
+});
+```
+
+```python Python
+uc.update(context_id, id="msg_abc", content="Fixed typo", metadata={"reason": "typo", "author": "alice"})
+
+uc.delete(context_id, "msg_xyz", metadata={"reason": "hallucination", "ticket": "JIRA-123"})
+```
+</CodeGroup>
+
+View the audit trail:
+
+<CodeGroup>
+```typescript TypeScript
+const { versions } = await uc.get(contextId, { history: true });
+
+// versions[2] = {
+//   operation: 'update',
+//   affected: ['msg_abc'],
+//   metadata: { reason: 'typo', author: 'alice' }
+// }
+```
+
+```python Python
+result = uc.get(context_id, history=True)
+
+# result["versions"][2] = {
+#   "operation": "update",
+#   "affected": ["msg_abc"],
+#   "metadata": { "reason": "typo", "author": "alice" }
+# }
+```
+</CodeGroup>
+
+## Examples
+
+### Replace System Prompt
+
+<CodeGroup>
+```typescript TypeScript
+import { UltraContext } from 'ultracontext';
+
+const uc = new UltraContext({ apiKey: process.env.ULTRACONTEXT_API_KEY });
+
+// create context with system prompt
+const ctx = await uc.create();
+await uc.append(ctx.id, { role: 'system', content: 'You are a helpful assistant.' });
+await uc.append(ctx.id, { role: 'user', content: 'Hello!' });
+
+// replace system prompt (index 0)
+await uc.update(ctx.id, { index: 0, content: 'You are a concise assistant. Always cite sources.' });
+
+// previous version preserved - roll back anytime
+const previous = await uc.get(ctx.id, { version: 0 });
+```
+
+```python Python
+from ultracontext import UltraContext
+import os
+
+uc = UltraContext(api_key=os.environ["ULTRACONTEXT_API_KEY"])
+
+# create context with system prompt
+ctx = uc.create()
+uc.append(ctx["id"], {"role": "system", "content": "You are a helpful assistant."})
+uc.append(ctx["id"], {"role": "user", "content": "Hello!"})
+
+# replace system prompt (index 0)
+uc.update(ctx["id"], index=0, content="You are a concise assistant. Always cite sources.")
+
+# previous version preserved - roll back anytime
+previous = uc.get(ctx["id"], version=0)
+```
+</CodeGroup>
+
+<Tip>Track `prompt_version` in the message metadata. This lets you correlate agent behavior with specific prompt versions.</Tip>
+
+---
+
+### Undo Last Message
+
+Remove the last message from the conversation.
+
+<CodeGroup>
+```typescript TypeScript
+import { UltraContext } from 'ultracontext';
+
+const uc = new UltraContext({ apiKey: process.env.ULTRACONTEXT_API_KEY });
+
+// create a new context
+const { id: contextId } = await uc.create();
+
+// add messages to the context
+await uc.append(contextId, { role: 'user', content: 'Hello!' });
+await uc.append(contextId, { role: 'assistant', content: 'Hi there!' });
+
+// At this point, the context looks like this (v0):
+// {
+//   version: 0,
+//   data: [
+//     { role: 'user', content: 'Hello!' },
+//     { role: 'assistant', content: 'Hi there!' }
+//   ]
+// }
+
+// oops, undo the last message
+await uc.delete(contextId, -1);
+
+// After deleting the last message, the context looks like this (v1):
+// {
+//   version: 1,
+//   data: [
+//     { role: 'user', content: 'Hello!' }
+//   ]
+// }
+```
+
+```python Python
+from ultracontext import UltraContext
+import os
+
+uc = UltraContext(api_key=os.environ["ULTRACONTEXT_API_KEY"])
+
+# create a new context
+ctx = uc.create()
+context_id = ctx["id"]
+
+# add messages to the context
+uc.append(context_id, {"role": "user", "content": "Hello!"})
+uc.append(context_id, {"role": "assistant", "content": "Hi there!"})
+
+# At this point, the context looks like this (v0):
+# {
+#   "version": 0,
+#   "data": [
+#     { "role": "user", "content": "Hello!" },
+#     { "role": "assistant", "content": "Hi there!" }
+#   ]
+# }
+
+# oops, undo the last message
+uc.delete(context_id, -1)
+
+# After deleting the last message, the context looks like this (v1):
+# {
+#   "version": 1,
+#   "data": [
+#     { "role": "user", "content": "Hello!" }
+#   ]
+# }
+```
+</CodeGroup>
+
+<Tip>Deleting a message creates a new version of the conversation. The original is always preserved in the version history. Notice that after deleting the last message, the version number is incremented by 1 in our example, so v0 is completely preserved.</Tip>
+
+<Card
+    title='See also: Fork & Clone Contexts'
+    icon='code-branch'
+    href='/guides/fork-clone-contexts'
+>
+    For major changes, consider forking instead of editing.
+</Card>

@@ -1,0 +1,352 @@
+---
+title: 'Introduction'
+description: 'The Context API for AI Agents'
+---
+
+<img
+    className='block dark:hidden'
+    src='/images/hero-light.png'
+    alt='Light mode interface'
+/>
+
+<img
+    className='hidden dark:block'
+    src='/images/hero-dark.png'
+    alt='Dark mode interface'
+/>
+
+**UltraContext is the context API for AI agents.**
+
+It's the simplest way to control what your agents see. Replace messages, compact/offload long context, replay decisions and roll back mistakes with a single API call. Versioned context out of the box. Full history. Zero complexity.
+
+Focus on building your product, not duct-taping context.
+
+---
+
+# Why Context Matters
+
+As LLMs take over as the new operating system, managing AI context becomes more and more valuable.
+
+Context is the **RAM** — it’s everything LLMs can see. That’s the last interface between humans and AI. It’s the lowest level of abstraction we can get to.
+
+<Frame caption='Source: Andrej Karpathy (adapted)'>
+
+    <img
+    className='block'
+    src='/images/karpathy-llm-os.png'
+    alt='LLM as Operating System (Karpathy)'
+
+/>
+
+</Frame>
+
+Managing what goes in and out of this RAM is **context engineering**. The more we scale these LLM systems (or agents) to do real work, the more it becomes critical.
+
+The catch? Context is finite. As it grows, model attention spreads thin — this is known as **context rot**. We should aim to provide the smallest set of high-signal tokens that get the job done.
+
+<Accordion title="Context engineering techniques">
+
+**Compaction** — Reversible reduction. Strip info that can be reconstructed from external state. File write? Drop content, keep path. Search? Drop results, keep query. No information lost, just externalized.
+
+**Summarization** — Irreversible reduction. Use only when compaction gains are tiny. Key trick: use structured schemas (fields to fill), not freeform prompts. Keep last few tool calls in full detail so the model knows where it left off.
+
+**Offloading** — Move context outside the window. Dump to files, retrieve on demand via path or ID. Even pre-summary context can be saved as a log file — models can grep it later if needed.
+
+**Isolation** — Two patterns:
+
+-   _By communicating_: Subagent gets only an instruction, returns only a result. Use for clear, bounded tasks.
+-   _By sharing context_: Subagent sees full history but has its own system prompt. Use when tasks need prior context. Trade-off: larger pre-fill, no KV cache reuse.
+
+**Caching** — Stable context prefixes enable KV cache reuse. Dynamic tool injection breaks the cache. Keep atomic tools fixed; offload extensibility to sandbox utilities or code execution.
+
+UltraContext gives you primitives for all of these. See the [guides](/guides/store-retrieve-contexts) for patterns.
+
+</Accordion>
+
+<Info>
+The internet before HTTP was a mess of incompatible protocols. Information was spread all over the place. Growth only exploded once we standardized the basic interface layer.
+
+We're at that exact moment with AI.
+
+</Info>
+
+Right now, we're reinventing the wheel for every car we build. Instead of tackling interesting problems through applications, we catch ourselves spending most of our time gluing context together.
+
+**It's time to simplify.**
+
+# Why UltraContext
+
+|                          |                                                                     |
+| ------------------------ | ------------------------------------------------------------------- |
+| **Simple API**           | Five methods. That's it.                                            |
+| **Automatic versioning** | Changes create versions automatically. Full history out of the box. |
+| **Time-travel**          | Jump to any point in your context history.                          |
+| **Fast**                 | Globally distributed. Low latency.                                  |
+| **Schema-free**          | Store context in any format. Own your data structure.               |
+| **Framework-agnostic**   | Works with any framework. No vendor lock-in.                        |
+
+Just plug & play.
+
+---
+
+# How it works
+
+A single idea is all you need.
+
+UltraContext consists of **Contexts** holding **Messages**. That's it. Simple yet insanely powerful. Let's dive in.
+
+<CodeGroup>
+```typescript Node.js
+import { UltraContext } from 'ultracontext';
+const uc = new UltraContext({ apiKey: 'uc_live_...' });
+
+// create a new context
+const ctx = await uc.create();
+
+// append, update and delete messages effortlessly
+await uc.append(ctx.id, { role: 'system', content: 'You are a helpful assistant.' }); // v0
+await uc.append(ctx.id, { role: 'user', content: 'Hello!' }); // v0
+await uc.update(ctx.id, { index: 0, content: 'New system prompt.' }); // v1
+await uc.delete(ctx.id, -1); // v2
+
+// context is automatically versioned — fetch with history
+const { data, versions } = await uc.get(ctx.id, { history: true });
+// → versions: [
+//     { version: 0, operation: 'create', affected: null },
+//     { version: 1, operation: 'update', affected: ['msg_a'] },
+//     { version: 2, operation: 'delete', affected: ['msg_b'] }
+// ]
+
+// use it with your favorite LLM framework
+const response = await generateText({ model, messages: data });
+
+````
+
+```python Python
+from ultracontext import UltraContext
+uc = UltraContext(api_key="uc_live_...")
+
+# create a new context
+ctx = uc.create()
+
+# append, update and delete messages effortlessly
+uc.append(ctx["id"], {"role": "system", "content": "You are a helpful assistant."})  # v0
+uc.append(ctx["id"], {"role": "user", "content": "Hello!"})  # v0
+uc.update(ctx["id"], {"index": 0, "content": "New system prompt."})  # v1
+uc.delete(ctx["id"], -1)  # v2
+
+# context is automatically versioned — fetch with history
+data, versions = uc.get(ctx["id"], history=True)
+# → versions: [
+#     {"version": 0, "operation": "create", "affected": None},
+#     {"version": 1, "operation": "update", "affected": ["msg_a"]},
+#     {"version": 2, "operation": "delete", "affected": ["msg_b"]}
+#   ]
+
+# use it with your favorite LLM framework
+response = generate_text(model=model, messages=data)
+````
+
+</CodeGroup>
+
+**Versioning is automatic.** Nothing is ever lost — everything is preserved out of the box. You don't have to worry about it. Just build your applications knowing you can get time travel with a single line of code:
+
+```
+v0 (create)     v1 (update msg1)     v2 (delete msg2)
+├── msg1        ├── msg1 ← modified  ├── msg1
+├── msg2        ├── msg2
+```
+
+<CodeGroup>
+```typescript Node.js
+// go back to version 0 (before system prompt was changed)
+const v0 = await uc.get(ctx.id, { version: 0 });
+// → {
+//     data: [
+//       { role: 'system', content: 'You are a helpful assistant.' },
+//       { role: 'user', content: 'Hello!' }
+//     ],
+//     version: 0
+//   }
+```
+
+```python Python
+# go back to version 0 (before system prompt was changed)
+v0 = uc.get(ctx["id"], version=0)
+# → {
+#     "data": [
+#       {"role": "system", "content": "You are a helpful assistant."},
+#       {"role": "user", "content": "Hello!"}
+#     ],
+#     "version": 0
+#   }
+```
+
+</CodeGroup>
+
+<Info>
+    Only **updates** and **deletes** generate new versions. Appends do not because you can time travel by index. See the [View Context
+    History](/guides/view-context-history) guide for more.
+</Info>
+
+## Contexts
+
+**Contexts** are just containers. They can hold any collection of data you want. Conversation threads, user preferences, notes, etc. You name it.
+
+<CodeGroup>
+```typescript Node.js
+import { UltraContext } from 'ultracontext';
+const uc = new UltraContext({ apiKey: 'uc_live_...' });
+
+// create new contexts
+const ctx = await uc.create();
+const ctx2 = await uc.create({ metadata: { user_id: '123' } });
+
+// list all contexts
+const { data } = await uc.get();
+
+// retrieve a context (by id, message index, timestamp or version)
+const { data } = await uc.get('ctx_abc123');
+const { data } = await uc.get('ctx_abc123', { at: 5 });
+const { data } = await uc.get('ctx_abc123', { before: '2024-01-01T00:00:00Z' });
+const { data } = await uc.get('ctx_abc123', { version: 2 });
+
+// retrieve a context with history
+const { data, versions } = await uc.get('ctx_abc123', { history: true });
+
+// fork a context from an existing one
+const fork = await uc.create({ from: 'ctx_abc123' });
+
+````
+
+```python Python
+from ultracontext import UltraContext
+uc = UltraContext(api_key="uc_live_...")
+
+# create new contexts
+ctx = uc.create()
+ctx2 = uc.create(metadata={"user_id": "123"})
+
+# list all contexts
+result = uc.get()
+
+# retrieve a context (by id, message index, timestamp or version)
+result = uc.get("ctx_abc123")
+result = uc.get("ctx_abc123", at=5)
+result = uc.get("ctx_abc123", before="2024-01-01T00:00:00Z")
+result = uc.get("ctx_abc123", version=2)
+
+# retrieve a context with history
+result = uc.get("ctx_abc123", history=True)
+
+# fork a context from an existing one
+fork = uc.create(from_="ctx_abc123")
+````
+
+</CodeGroup>
+
+<Tip>Forks are a powerful way to easily explore different scenarios without losing a single bit of data.</Tip>
+
+## Messages
+
+**Messages** are the building blocks of a context. They're **schema-free** JSON objects, so you define the shape. Append, update, and delete with a single API call.
+
+<CodeGroup>
+```typescript Node.js
+import { UltraContext } from 'ultracontext';
+const uc = new UltraContext({ apiKey: 'uc_live_...' });
+const ctx = await uc.create();
+
+// append a single message
+await uc.append(ctx.id, { role: 'user', content: 'Hello!' });
+
+// append multiple messages at once (messages are schema-free)
+await uc.append(ctx.id, [
+    { role: 'user', content: 'Hi' },
+    { role: 'assistant', content: 'Hello!' },
+    { foo: 'bar' }
+]);
+
+// update message by id or index (creates new version automatically)
+await uc.update(ctx.id, { id: 'msg_xyz', content: 'Fixed!' });
+await uc.update(ctx.id, { index: 0, content: 'New system prompt' });
+
+// multiple updates at once
+await uc.update(ctx.id, [
+    { id: 'msg_xyz', content: 'Fixed!' },
+    { index: 0, content: 'New system prompt' },
+    { index: -1, content: 'Fix last message' }
+]);
+
+// delete by id or index (creates new version)
+await uc.delete(ctx.id, 'msg_xyz');
+await uc.delete(ctx.id, -1); // delete last message
+
+````
+
+```python Python
+from ultracontext import UltraContext
+uc = UltraContext(api_key="uc_live_...")
+ctx = uc.create()
+
+# append a single message
+uc.append(ctx["id"], {"role": "user", "content": "Hello!"})
+
+# append multiple messages at once (messages are schema-free)
+uc.append(ctx["id"], [
+    {"role": "user", "content": "Hi"},
+    {"role": "assistant", "content": "Hello!"},
+    {"foo": "bar"}
+])
+
+# update message by id or index (creates new version automatically)
+uc.update(ctx["id"], {"id": "msg_xyz", "content": "Fixed!"})
+uc.update(ctx["id"], {"index": 0, "content": "New system prompt"})
+
+# multiple updates at once
+uc.update(ctx["id"], [
+    {"id": "msg_xyz", "content": "Fixed!"},
+    {"index": 0, "content": "New system prompt"},
+    {"index": -1, "content": "Fix last message"}
+])
+
+# delete by id or index (creates new version)
+uc.delete(ctx["id"], "msg_xyz")
+uc.delete(ctx["id"], -1)  # delete last message
+````
+
+</CodeGroup>
+
+Everything is a message. Think of messages as atoms in a molecule.
+
+<Info>**metadata** and **index** keys are reserved for internal use.</Info>
+
+That's the entire API.
+
+---
+
+## Quick links
+
+<CardGroup cols={2}>
+    <Card
+        title='Quickstart'
+        icon='rocket'
+        href='/quickstart/nodejs'
+    >
+        Get running in 2 minutes.
+    </Card>
+    <Card
+        title='Guides'
+        icon='book-open-cover'
+        href='/guides/store-retrieve-contexts'
+    >
+        Practical patterns for common use cases.
+    </Card>
+    <Card
+        title='API Reference'
+        icon='terminal'
+        href='/api-reference/introduction'
+    >
+        Full endpoint documentation.
+    </Card>
+</CardGroup>

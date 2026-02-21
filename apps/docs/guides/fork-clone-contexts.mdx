@@ -1,0 +1,438 @@
+---
+title: 'Fork & Clone Contexts'
+description: 'Create copies from any point in history'
+---
+
+<img
+    className='block'
+    src='/images/guides/covers/fork-clone-contexts-guide-cover.svg'
+    alt='UltraContext - Fork & Clone contexts guide cover'
+/>
+
+## Guide Overview
+
+After this guide, you'll be able to:
+
+-   Fork contexts to explore different flows
+-   Rollback when things go wrong
+-   Create safe copies for experimentation
+
+The nicest part? *Without losing a single bit of data.*
+
+## Why Fork & Clone contexts?
+
+We've all been there. You had a great conversation with Claude. It finally gets your codebase, the problem, the constraints. Then the conversation gets too long. It starts forgetting. Contradicting itself. You want to scream.
+
+What if you could capture that perfect moment? Fork right when the LLM still has all the context. Branch in new directions while keeping the original intact. **Freedom to explore. Always being able to come back.**
+
+Here is where UltraContext comes in.
+
+<img
+    className='block'
+    src='/images/guides/fork-clone-contexts-diagram.svg'
+    alt='Fork & Clone contexts diagram using UltraContext'
+/>
+
+Wanna rollback to a previous version? Test a different conversation flow? Different system prompt? Different model? Different tools? You name it.
+
+We've got your back. And without losing a single bit of data.
+
+## Forking
+
+Create a copy of an existing context:
+
+<CodeGroup>
+```typescript TypeScript
+// basic fork — full copy
+const fork = await uc.create({ from: 'ctx_abc123' });
+
+// by version — exact state after update/delete
+const fork = await uc.create({ from: 'ctx_abc123', version: 1 });
+
+// by timestamp — state at that moment
+const fork = await uc.create({ from: 'ctx_abc123', before: '2024-01-10T10:30:00Z' });
+
+// by index — first N messages (0 to at)
+const fork = await uc.create({ from: 'ctx_abc123', at: 5 });
+
+// combine all — order: version → time → index
+const fork = await uc.create({
+    from: 'ctx_abc123',
+    version: 1,
+    before: '2024-01-10T11:15:00Z',
+    at: 5,
+});
+```
+
+```python Python
+# basic fork — full copy
+fork = uc.create(from_="ctx_abc123")
+
+# by version — exact state after update/delete
+fork = uc.create(from_="ctx_abc123", version=1)
+
+# by timestamp — state at that moment
+fork = uc.create(from_="ctx_abc123", before="2024-01-10T10:30:00Z")
+
+# by index — first N messages (0 to at)
+fork = uc.create(from_="ctx_abc123", at=5)
+
+# combine all — order: version → time → index
+fork = uc.create(
+    from_="ctx_abc123",
+    version=1,
+    before="2024-01-10T11:15:00Z",
+    at=5,
+)
+```
+</CodeGroup>
+
+<Note>In Python, use `from_` (with underscore) since `from` is a reserved keyword.</Note>
+
+<Info>
+`create()` without `from` creates a new empty context.
+The `version`, `before`, and `at` params require `from`.
+</Info>
+
+### By Version
+
+Gets exact state after that update or delete.
+
+<CodeGroup>
+```typescript TypeScript
+const fork = await uc.create({ from: 'ctx_abc123', version: 1 });
+```
+
+```python Python
+fork = uc.create(from_="ctx_abc123", version=1)
+```
+</CodeGroup>
+
+### By Timestamp
+
+Gets state at that moment (finds version + filters messages).
+
+<CodeGroup>
+```typescript TypeScript
+const fork = await uc.create({ from: 'ctx_abc123', before: '2024-01-10T10:30:00Z' });
+```
+
+```python Python
+fork = uc.create(from_="ctx_abc123", before="2024-01-10T10:30:00Z")
+```
+</CodeGroup>
+
+### By Index
+
+Gets first N messages (indices 0 to `at`).
+
+<CodeGroup>
+```typescript TypeScript
+const fork = await uc.create({ from: 'ctx_abc123', at: 5 });
+```
+
+```python Python
+fork = uc.create(from_="ctx_abc123", at=5)
+```
+</CodeGroup>
+
+#### Using metadata to find index
+
+Find a checkpoint marked with metadata, then fork up to that point:
+
+<CodeGroup>
+```typescript TypeScript
+// find checkpoint index
+const { data: history } = await uc.get(contextId);
+const checkpointIndex = history.findIndex((m) => m.metadata?.checkpoint === 'codebase_indexed');
+
+// fork up to checkpoint — fresh start on great context
+const fork = await uc.create({ from: contextId, at: checkpointIndex });
+
+// continue from there
+await uc.append(fork.id, { role: 'user', content: 'Let's continue from here.' });
+```
+
+```python Python
+# find checkpoint index
+history = uc.get(context_id)["data"]
+checkpoint_index = next(i for i, m in enumerate(history) if m.get("metadata", {}).get("checkpoint") == "codebase_indexed")
+
+# fork up to checkpoint — fresh start on great context
+fork = uc.create(from_=context_id, at=checkpoint_index)
+
+# continue from there
+uc.append(fork["id"], {"role": "user", "content": "Let's continue from here."})
+```
+</CodeGroup>
+
+### Combine All
+
+<CodeGroup>
+```typescript TypeScript
+const fork = await uc.create({
+    from: 'ctx_abc123',
+    version: 1,
+    before: '2024-01-10T11:15:00Z',
+    at: 5,
+});
+```
+
+```python Python
+fork = uc.create(
+    from_="ctx_abc123",
+    version=1,
+    before="2024-01-10T11:15:00Z",
+    at=5,
+)
+```
+</CodeGroup>
+
+Order: version → filter by time → slice by index.
+
+<Info>When using `version` and `before` together, `version` selects the base state, then `before` filters messages within that version.</Info>
+
+## Add Metadata
+
+Track why you forked:
+
+<CodeGroup>
+```typescript TypeScript
+const fork = await uc.create({
+    from: 'ctx_abc123',
+    version: 1,
+    metadata: {
+        forked_from: 'ctx_abc123',
+        reason: 'rollback',
+        ticket: 'JIRA-123',
+    },
+});
+```
+
+```python Python
+fork = uc.create(
+    from_="ctx_abc123",
+    version=1,
+    metadata={
+        "forked_from": "ctx_abc123",
+        "reason": "rollback",
+        "ticket": "JIRA-123",
+    },
+)
+```
+</CodeGroup>
+
+## Examples
+
+### Compare Prompts
+
+Fork to test different prompts from the same starting point.
+
+<CodeGroup>
+```typescript TypeScript
+// 1. set up baseline
+const baseline = await uc.create()
+await uc.append(baseline.id, [
+  { role: 'system', content: 'You are a helpful assistant.' },
+  { role: 'user', content: 'Help me write a marketing email.' }
+])
+
+// 2. fork for experiments
+const formal = await uc.create({
+  from: baseline.id,
+  metadata: { experiment: 'formal_tone' }
+})
+await uc.append(formal.id, {
+  role: 'system',
+  content: 'Write in a formal, professional tone.'
+})
+
+const casual = await uc.create({
+  from: baseline.id,
+  metadata: { experiment: 'casual_tone' }
+})
+await uc.append(casual.id, {
+  role: 'system',
+  content: 'Write in a friendly, casual tone.'
+})
+
+// 3. run in parallel
+const [responseA, responseB] = await Promise.all([
+  generate(formal.id),
+  generate(casual.id)
+])
+```
+
+```python Python
+# 1. set up baseline
+baseline = uc.create()
+uc.append(baseline["id"], [
+    {"role": "system", "content": "You are a helpful assistant."},
+    {"role": "user", "content": "Help me write a marketing email."}
+])
+
+# 2. fork for experiments
+formal = uc.create(from_=baseline["id"], metadata={"experiment": "formal_tone"})
+uc.append(formal["id"], {"role": "system", "content": "Write in a formal, professional tone."})
+
+casual = uc.create(from_=baseline["id"], metadata={"experiment": "casual_tone"})
+uc.append(casual["id"], {"role": "system", "content": "Write in a friendly, casual tone."})
+
+# 3. run both
+response_a = generate(formal["id"])
+response_b = generate(casual["id"])
+```
+</CodeGroup>
+
+---
+
+### Compare Models
+
+Fork to test the same prompt across different models.
+
+<CodeGroup>
+```typescript TypeScript
+const models = ['gpt-4o', 'claude-3-opus', 'gemini-pro']
+
+const results = await Promise.all(
+  models.map(async model => {
+    const fork = await uc.create({
+      from: baseline.id,
+      metadata: { model }
+    })
+    const response = await generate(fork.id, { model })
+    return { model, contextId: fork.id, response }
+  })
+)
+```
+
+```python Python
+models = ["gpt-4o", "claude-3-opus", "gemini-pro"]
+
+results = []
+for model in models:
+    fork = uc.create(from_=baseline["id"], metadata={"model": model})
+    response = generate(fork["id"], model=model)
+    results.append({"model": model, "context_id": fork["id"], "response": response})
+```
+</CodeGroup>
+
+---
+
+### Rollback on Error
+
+Automatically revert when something goes wrong.
+
+<CodeGroup>
+```typescript TypeScript
+import { UltraContext } from 'ultracontext';
+
+const uc = new UltraContext({ apiKey: process.env.ULTRACONTEXT_API_KEY });
+
+async function safeAgentStep(contextId: string, action: () => Promise<string>) {
+    // get current state before attempting action
+    const { version: beforeVersion } = await uc.get(contextId, { history: true });
+
+    try {
+        const result = await action();
+        await uc.append(contextId, {
+            role: 'assistant',
+            content: result,
+            metadata: { status: 'success' },
+        });
+        return { success: true, result };
+    } catch (error) {
+        // rollback to before this step
+        const rollback = await uc.create({
+            from: contextId,
+            version: beforeVersion,
+            metadata: { rolled_back_from: contextId, error: error.message },
+        });
+        return { success: false, rolledBackTo: rollback.id };
+    }
+}
+```
+
+```python Python
+from ultracontext import UltraContext
+import os
+
+uc = UltraContext(api_key=os.environ["ULTRACONTEXT_API_KEY"])
+
+def safe_agent_step(context_id: str, action):
+    # get current state before attempting action
+    before_version = uc.get(context_id, history=True)["version"]
+
+    try:
+        result = action()
+        uc.append(context_id, {
+            "role": "assistant",
+            "content": result,
+            "metadata": {"status": "success"},
+        })
+        return {"success": True, "result": result}
+    except Exception as e:
+        # rollback to before this step
+        rollback = uc.create(
+            from_=context_id,
+            version=before_version,
+            metadata={"rolled_back_from": context_id, "error": str(e)},
+        )
+        return {"success": False, "rolled_back_to": rollback["id"]}
+```
+</CodeGroup>
+
+<Tip>Always capture the version number BEFORE attempting risky operations. This gives you a clean rollback point.</Tip>
+
+---
+
+### Conversation Branching UI
+
+Let users explore "what if" scenarios.
+
+<CodeGroup>
+```typescript TypeScript
+import { UltraContext } from 'ultracontext';
+
+const uc = new UltraContext({ apiKey: process.env.ULTRACONTEXT_API_KEY });
+
+// fork up to (but not including) the message to change
+async function branchFromMessage(contextId: string, atIndex: number) {
+    const branch = await uc.create({
+        from: contextId,
+        at: atIndex - 1,
+        metadata: { branched_from: contextId, branch_point: atIndex },
+    });
+    return branch.id;
+}
+
+// get all branches for a conversation
+async function getBranches(originalContextId: string) {
+    const { data: allContexts } = await uc.get();
+    return allContexts.filter((ctx) => ctx.metadata?.branched_from === originalContextId);
+}
+```
+
+```python Python
+from ultracontext import UltraContext
+import os
+
+uc = UltraContext(api_key=os.environ["ULTRACONTEXT_API_KEY"])
+
+# fork up to (but not including) the message to change
+def branch_from_message(context_id: str, at_index: int):
+    branch = uc.create(
+        from_=context_id,
+        at=at_index - 1,
+        metadata={"branched_from": context_id, "branch_point": at_index},
+    )
+    return branch["id"]
+
+# get all branches for a conversation
+def get_branches(original_context_id: str):
+    all_contexts = uc.get()["data"]
+    return [ctx for ctx in all_contexts if ctx.get("metadata", {}).get("branched_from") == original_context_id]
+```
+</CodeGroup>
+
+<Tip>Store `branched_from` in metadata to build a tree view of conversation branches in your UI.</Tip>

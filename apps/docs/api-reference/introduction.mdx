@@ -1,0 +1,107 @@
+---
+title: 'Introduction'
+description: 'UltraContext API reference'
+---
+
+## Base URL
+
+```
+https://api.ultracontext.ai
+```
+
+## Authentication
+
+All endpoints require a Bearer token. Get your API key from the dashboard.
+
+```bash
+curl https://api.ultracontext.ai/contexts \
+  -H "Authorization: Bearer uc_live_xxxxx"
+```
+
+## Quick Example
+
+Create a context, append a message, and retrieve it:
+
+<CodeGroup>
+```typescript Node.js
+import { UltraContext } from 'ultracontext';
+const uc = new UltraContext({ apiKey: process.env.ULTRACONTEXT_API_KEY });
+
+// create a context
+const ctx = await uc.create();
+
+// append a message
+await uc.append(ctx.id, { role: 'user', content: 'Hello!' });
+
+// retrieve the context
+const { data } = await uc.get(ctx.id);
+```
+
+```python Python
+from ultracontext import UltraContext
+import os
+
+uc = UltraContext(api_key=os.environ["ULTRACONTEXT_API_KEY"])
+
+# create a context
+ctx = uc.create()
+
+# append a message
+uc.append(ctx["id"], {"role": "user", "content": "Hello!"})
+
+# retrieve the context
+result = uc.get(ctx["id"])
+```
+
+```bash curl
+# create a context
+curl -X POST https://api.ultracontext.ai/contexts \
+  -H "Authorization: Bearer $ULTRACONTEXT_API_KEY" \
+  -H "Content-Type: application/json"
+
+# append a message
+curl -X POST https://api.ultracontext.ai/contexts/ctx_abc123 \
+  -H "Authorization: Bearer $ULTRACONTEXT_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"role": "user", "content": "Hello!"}'
+
+# retrieve the context
+curl https://api.ultracontext.ai/contexts/ctx_abc123 \
+  -H "Authorization: Bearer $ULTRACONTEXT_API_KEY"
+```
+</CodeGroup>
+
+## Response Format
+
+All responses return JSON with a consistent structure:
+
+```json
+{
+  "data": [
+    { "id": "msg_...", "index": 0, "role": "user", "content": "...", "metadata": {} },
+    { "id": "msg_...", "index": 1, "role": "assistant", "content": "...", "metadata": {} }
+  ],
+  "version": 0
+}
+```
+
+Each message includes an `index` field (0-based position in context). Add `?history=true` to include version history. See [View Context History](/guides/view-context-history) for details.
+
+## Error Handling
+
+Errors return a JSON object with an `error` field:
+
+```json
+{
+  "error": "Context not found"
+}
+```
+
+| Status | Description |
+|--------|-------------|
+| 200 | Success |
+| 201 | Created |
+| 400 | Bad request (invalid params) |
+| 401 | Unauthorized (invalid/missing API key) |
+| 404 | Not found |
+| 500 | Server error |

@@ -1,0 +1,95 @@
+{
+    "$schema": "https://mintlify.com/docs.json",
+    "theme": "almond",
+    "name": "UltraContext",
+    "description": "Context infrastructure for AI agents. Store, version, and retrieve conversation history.",
+    "colors": {
+        "primary": "#000000",
+        "light": "#ffffff",
+        "dark": "#2960e7"
+    },
+    "appearance": {
+        "default": "dark"
+    },
+    "favicon": "/favicon.svg",
+    "navigation": {
+        "anchors": [
+            {
+                "anchor": "Documentation",
+                "icon": "book-open-cover",
+                "groups": [
+                    {
+                        "group": "Documentation",
+                        "pages": ["index"]
+                    },
+                    {
+                        "group": "Quickstart",
+                        "pages": ["quickstart/nodejs", "quickstart/python"]
+                    },
+                    {
+                        "group": "Guides",
+                        "pages": [
+                            "guides/store-retrieve-contexts",
+                            "guides/edit-contexts",
+                            "guides/view-context-history",
+                            "guides/fork-clone-contexts"
+                        ]
+                    }
+                ]
+            },
+            {
+                "anchor": "API Reference",
+                "icon": "square-terminal",
+                "openapi": "/api-reference/openapi.json",
+                "groups": [
+                    {
+                        "group": "API Reference",
+                        "pages": ["api-reference/introduction", "api-reference/authentication", "api-reference/errors"]
+                    },
+                    {
+                        "group": "Contexts",
+                        "pages": [
+                            "POST /contexts",
+                            "GET /contexts",
+                            "GET /contexts/{id}",
+                            "POST /contexts/{id}",
+                            "PATCH /contexts/{id}",
+                            "DELETE /contexts/{id}"
+                        ]
+                    }
+                ]
+            },
+            {
+                "anchor": "Changelog",
+                "icon": "clock-rotate-left",
+                "groups": [
+                    {
+                        "group": "Updates",
+                        "pages": ["changelog"]
+                    }
+                ]
+            }
+        ]
+    },
+    "logo": {
+        "light": "/logo/light.svg",
+        "dark": "/logo/dark.svg",
+        "href": "https://ultracontext.ai"
+    },
+    "navbar": {
+        "primary": {
+            "type": "button",
+            "label": "Get Started",
+            "href": "https://ultracontext.ai"
+        }
+    },
+    "contextual": {
+        "options": ["copy", "view", "chatgpt", "claude", "cursor"]
+    },
+    "footer": {
+        "socials": {
+            "x": "https://x.com/ultracontext",
+            "github": "https://github.com/ultracontext"
+        }
+    }
+}

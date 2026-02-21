@@ -1,0 +1,77 @@
+---
+title: 'Authentication'
+description: 'API keys and security'
+---
+
+All API requests require authentication via Bearer token.
+
+## API Key Format
+
+```
+uc_live_xxxxxxxxxxxxxxxxxxxxxxxxxx
+uc_test_xxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+- `uc_live_` prefix for production
+- `uc_test_` prefix for development/testing
+
+## Using with SDK
+
+```typescript
+import { UltraContext } from 'ultracontext'
+
+const uc = new UltraContext({
+  apiKey: process.env.ULTRACONTEXT_API_KEY
+})
+```
+
+## Using with REST
+
+Include the API key in the `Authorization` header:
+
+```bash
+curl https://api.ultracontext.ai/contexts \
+  -H "Authorization: Bearer uc_live_xxxxx"
+```
+
+## Security Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use environment variables" icon="lock">
+    Never hardcode API keys. Use `.env` files or secret managers.
+  </Card>
+  <Card title="Don't commit keys" icon="code-branch">
+    Add `.env` to `.gitignore`. Use `.env.example` for templates.
+  </Card>
+  <Card title="Rotate if exposed" icon="rotate">
+    If a key is compromised, regenerate it immediately in the dashboard.
+  </Card>
+  <Card title="Use test keys for dev" icon="flask">
+    Use `uc_test_` keys during development to avoid polluting production data.
+  </Card>
+</CardGroup>
+
+## Environment Setup
+
+```bash
+# .env
+ULTRACONTEXT_API_KEY=uc_live_xxxxx
+
+# .env.example (commit this)
+ULTRACONTEXT_API_KEY=uc_live_your_key_here
+```
+
+```typescript
+// Load from environment
+const uc = new UltraContext({
+  apiKey: process.env.ULTRACONTEXT_API_KEY!
+})
+```
+
+## Server-Side Only
+
+<Warning>
+API keys should only be used server-side. Never expose them in client-side code or browser JavaScript.
+</Warning>
+
+For client-side applications, create a backend API route that proxies requests to UltraContext.

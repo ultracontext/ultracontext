@@ -1,0 +1,653 @@
+---
+title: 'Store & Retrieve Contexts'
+description: 'Persist conversation history across sessions'
+---
+
+<img
+    className='block'
+    src='/images/guides/covers/store-retrieve-contexts-guide-cover.svg'
+    alt='UltraContext - Store & retrieve contexts guide cover'
+/>
+
+## Guide Overview
+
+After this guide, you'll be able to:
+
+-   Persist context across sessions (e.g. chats, conversations)
+-   Retrieve context from a specific point in time
+
+## Why Store & Retrieve Contexts?
+
+Picture this: You build a simple AI agent. Works like a charm. As it gets more useful, you wanna save messages so you can get back to past conversations. Sounds simple, right?
+
+So you start storing them somewhere. You didn't notice it yet, but complexity quietly added up in your system. You're now dealing with timestamps, ordering, metadata and sessions. At some point, while implementing a tiny custom feature, you realize you've been _wasting more time on infrastructure rather than on the agent itself_. You feel frustrated. The initial excitement fades away. Welcome to the club.
+
+What if infrastructure wasn't the bottleneck? **Everything would be way simpler.** With UltraContext, storing and retrieving contexts is trivial. From now on, we'll do the heavy lifting for you. It's time to build.
+
+## Storing Contexts
+
+Create a context and append messages:
+
+<CodeGroup>
+```typescript TypeScript
+import { UltraContext } from 'ultracontext';
+
+const uc = new UltraContext({ apiKey: process.env.ULTRACONTEXT_API_KEY });
+
+// create a new context
+const ctx = await uc.create();
+// → { id: 'ctx_abc123', created_at: '2024-01-10T10:00:00Z' }
+
+// append messages
+await uc.append(ctx.id, { role: 'system', content: 'You are a helpful assistant.' });
+await uc.append(ctx.id, { role: 'user', content: 'Hello! What is the capital of France?' });
+
+// append multiple messages at once
+await uc.append(ctx.id, [
+    { role: 'assistant', content: 'Paris is the capital of France.' },
+    { role: 'user', content: 'Thank you!' },
+]);
+
+// Stored as:
+// {
+//    data: [
+//        { id: 'msg_a1b2c3', index: 0, role: 'system', content: 'You are a helpful assistant.' },
+//        { id: 'msg_d4e5f6', index: 1, role: 'user', content: 'Hello! What is the capital of France?' },
+//        { id: 'msg_g7h8i9', index: 2, role: 'assistant', content: 'Paris is the capital of France.' },
+//        { id: 'msg_j0k1l2', index: 3, role: 'user', content: 'Thank you!' },
+//    ],
+//    version: 0
+// }
+```
+
+```python Python
+from ultracontext import UltraContext
+import os
+
+uc = UltraContext(api_key=os.environ["ULTRACONTEXT_API_KEY"])
+
+# create a new context
+ctx = uc.create()
+# → { "id": "ctx_abc123", "created_at": "2024-01-10T10:00:00Z" }
+
+# append messages
+uc.append(ctx["id"], {"role": "system", "content": "You are a helpful assistant."})
+uc.append(ctx["id"], {"role": "user", "content": "Hello! What is the capital of France?"})
+
+# append multiple messages at once
+uc.append(ctx["id"], [
+    {"role": "assistant", "content": "Paris is the capital of France."},
+    {"role": "user", "content": "Thank you!"},
+])
+
+# Stored as:
+# {
+#    "data": [
+#        { "id": "msg_a1b2c3", "index": 0, "role": "system", "content": "You are a helpful assistant." },
+#        { "id": "msg_d4e5f6", "index": 1, "role": "user", "content": "Hello! What is the capital of France?" },
+#        { "id": "msg_g7h8i9", "index": 2, "role": "assistant", "content": "Paris is the capital of France." },
+#        { "id": "msg_j0k1l2", "index": 3, "role": "user", "content": "Thank you!" },
+#    ],
+#    "version": 0
+# }
+```
+
+</CodeGroup>
+
+<Info>
+
+Appends don't generate new versions—only updates and deletes do. This means you can travel back in time by index or timestamp without version overhead. See the [View Context History](/guides/view-context-history) guide for more details.
+
+</Info>
+
+<Tip>
+
+UltraContext is schema-free. Store any fields you need. Only `id` and `index` are reserved keys.
+
+</Tip>
+
+### Metadata
+
+Attach metadata at both the context level and message level:
+
+<CodeGroup>
+```typescript TypeScript
+// Metadata at context level
+const ctx = await uc.create({
+    metadata: { user_id: 'u_123', session_type: 'support' },
+});
+// → {
+//     id: 'ctx_abc123',
+//     created_at: '2024-01-10T10:00:00Z',
+//     metadata: { user_id: 'u_123', session_type: 'support' }
+//   }
+
+// Metadata at message level
+await uc.append(ctx.id, {
+    role: 'user',
+    content: 'Hello!',
+    metadata: { source: 'web', ip: '192.168.1.1' },
+});
+// → stored as:
+// {
+//     id: 'msg_abc',
+//     index: 0,
+//     role: 'user',
+//     content: 'Hello!',
+//     metadata: { source: 'web', ip: '192.168.1.1' }
+// }
+```
+
+```python Python
+#  Metadata at context level
+ctx = uc.create(metadata={"user_id": "u_123", "session_type": "support"})
+# → {
+#     "id": "ctx_abc123",
+#     "created_at": "2024-01-10T10:00:00Z",
+#     "metadata": { "user_id": "u_123", "session_type": "support" }
+#   }
+
+# Metadata at message level
+uc.append(ctx["id"], {
+    "role": "user",
+    "content": "Hello!",
+    "metadata": {"source": "web", "ip": "192.168.1.1"},
+})
+# → stored as:
+# {
+#     "id": "msg_abc",
+#     "index": 0,
+#     "role": "user",
+#     "content": "Hello!",
+#     "metadata": { "source": "web", "ip": "192.168.1.1" }
+# }
+```
+</CodeGroup>
+
+<Info>
+Context level `metadata` is useful for: 
+- User IDs
+- Session types
+</Info>
+
+<Info>
+Message level `metadata` is great for: 
+- Marking checkpoints
+- Token usage
+- Model
+</Info>
+
+## Retrieving Contexts
+
+Multiple ways to fetch context: current state, specific version, point in time, or by message index.
+
+<CodeGroup>
+```typescript TypeScript
+// current state
+const { data, version } = await uc.get(contextId);
+
+// by index — first N messages (0 to at)
+const { data } = await uc.get(contextId, { at: 5 });
+
+// by timestamp — state at that moment. Uses ISO 8601 format
+const { data } = await uc.get(contextId, { before: '2024-01-10T10:30:00Z' });
+
+// by version — exact state after that mutation
+const { data } = await uc.get(contextId, { version: 1 });
+
+// with history — see all mutations
+const { data, version, versions } = await uc.get(contextId, { history: true });
+```
+
+```python Python
+# current state
+result = uc.get(context_id)
+
+# by index — first N messages (0 to at)
+result = uc.get(context_id, at=5)
+
+# by timestamp — state at that moment. Uses ISO 8601 format
+result = uc.get(context_id, before="2024-01-10T10:30:00Z")
+
+# by version — exact state after that mutation
+result = uc.get(context_id, version=1)
+
+# with history — see all mutations
+result = uc.get(context_id, history=True)
+```
+</CodeGroup>
+
+### Get current state
+
+<CodeGroup>
+```typescript TypeScript
+const { data, version } = await uc.get(contextId);
+```
+
+```python Python
+result = uc.get(context_id)
+data, version = result["data"], result["version"]
+```
+
+</CodeGroup>
+
+### Retrieve by index
+
+Get messages 0 through a specific index:
+
+<CodeGroup>
+```typescript TypeScript
+// first 6 messages (indices 0-5)
+const { data } = await uc.get(contextId, { at: 5 });
+```
+
+```python Python
+# first 6 messages (indices 0-5)
+result = uc.get(context_id, at=5)
+```
+
+</CodeGroup>
+
+### Retrieve by timestamp
+
+Get state at any point in time:
+
+<CodeGroup>
+```typescript TypeScript
+const { data } = await uc.get(contextId, { before: '2024-01-10T10:30:00Z' });
+```
+
+```python Python
+result = uc.get(context_id, before="2024-01-10T10:30:00Z")
+```
+
+</CodeGroup>
+
+### Retrieve by version
+
+Use `history: true` to see what mutations happened and which versions exist:
+
+<CodeGroup>
+```typescript TypeScript
+const { data, version, versions } = await uc.get(contextId, { history: true });
+
+// → versions: [
+//    { version: 0, operation: 'create', affected: null, created_at: '...' },
+//    { version: 1, operation: 'update', affected: ['msg_abc'], created_at: '...' },
+// ]
+```
+
+```python Python
+result = uc.get(context_id, history=True)
+
+# → result["versions"]: [
+#     { "version": 0, "operation": "create", "affected": None, "created_at": "..." },
+#     { "version": 1, "operation": "update", "affected": ["msg_abc"], "created_at": "..." },
+#   ]
+```
+
+</CodeGroup>
+
+Then you can retrieve the state at a specific version:
+
+<CodeGroup>
+```typescript TypeScript
+const { data } = await uc.get(contextId, { version: 1 });
+```
+
+```python Python
+result = uc.get(context_id, version=1)
+```
+
+</CodeGroup>
+
+<Info>See [View Context History](/guides/view-context-history) for advanced time-travel patterns.</Info>
+
+## Listing Contexts
+
+List all contexts in your project. By default, contexts are sorted by `created_at` in descending order (newest first).
+
+<CodeGroup>
+```typescript TypeScript
+const { data } = await uc.get();
+// → {
+//     data: [
+//       { id: 'ctx_xyz789', created_at: '2024-01-15T10:00:00Z', metadata: {} },
+//       { id: 'ctx_abc123', created_at: '2024-01-10T10:00:00Z', metadata: { user_id: '123' } },
+//     ]
+//   }
+
+// with limit
+const { data } = await uc.get({ limit: 10 });
+```
+
+```python Python
+result = uc.get()
+# → {
+#     "data": [
+#       { "id": "ctx_xyz789", "created_at": "2024-01-15T10:00:00Z", "metadata": {} },
+#       { "id": "ctx_abc123", "created_at": "2024-01-10T10:00:00Z", "metadata": { "user_id": "123" } },
+#     ]
+#   }
+
+# with limit
+result = uc.get(limit=10)
+```
+
+</CodeGroup>
+
+## Examples
+
+### Resume Chats
+
+Resuming chats is simple. Just retrieve the associated context and continue the conversation from there.
+
+<CodeGroup>
+
+```typescript TypeScript
+import { UltraContext } from 'ultracontext';
+
+const uc = new UltraContext({ apiKey: process.env.ULTRACONTEXT_API_KEY });
+
+// on first visit: create context, store ID in your session/database
+const ctx = await uc.create();
+
+// on each message exchange: append both sides
+await uc.append(ctx.id, { role: 'user', content: userMessage });
+await uc.append(ctx.id, { role: 'assistant', content: assistantResponse });
+
+// on return visit: retrieve existing context
+const { data: messages } = await uc.get(ctx.id);
+// → ready to send to LLM or display in UI
+```
+
+```python Python
+from ultracontext import UltraContext
+import os
+
+uc = UltraContext(api_key=os.environ["ULTRACONTEXT_API_KEY"])
+
+# on first visit: create context, store ID in your session/database
+ctx = uc.create()
+
+# on each message exchange: append both sides
+uc.append(ctx["id"], {"role": "user", "content": user_message})
+uc.append(ctx["id"], {"role": "assistant", "content": assistant_response})
+
+# on return visit: retrieve existing context
+result = uc.get(ctx["id"])
+# → ready to send to LLM or display in UI
+```
+
+</CodeGroup>
+
+<Tip>Store the `contextId` in your session, database, or URL. Retrieve it on return visits to resume the conversation.</Tip>
+
+### Retrieve to Checkpoint
+
+Retrieve the context up to a specific checkpoint.
+
+<Steps>
+  <Step title="Mark your checkpoint with metadata as you go">
+    <CodeGroup>
+    ```typescript TypeScript
+    await uc.append(contextId, {
+        role: 'assistant',
+        content: 'I now have full context of your codebase.',
+        metadata: { checkpoint: 'codebase_indexed' },
+    });
+    ```
+
+    ```python Python
+    uc.append(context_id, {
+        "role": "assistant",
+        "content": "I now have full context of your codebase.",
+        "metadata": {"checkpoint": "codebase_indexed"},
+    })
+    ```
+    </CodeGroup>
+  </Step>
+  <Step title="Find checkpoint index">
+    <CodeGroup>
+    ```typescript TypeScript
+    const { data: history } = await uc.get(contextId);
+    const checkpointIndex = history.findIndex((m) => m.metadata?.checkpoint === 'codebase_indexed');
+    ```
+
+    ```python Python
+    result = uc.get(context_id)
+    history = result["data"]
+    checkpoint_index = next(i for i, m in enumerate(history) if m.get("metadata", {}).get("checkpoint") == "codebase_indexed")
+    ```
+    </CodeGroup>
+  </Step>
+  <Step title="Retrieve messages up to checkpoint">
+    <CodeGroup>
+    ```typescript TypeScript
+    const { data: messages } = await uc.get(contextId, { at: checkpointIndex });
+    ```
+
+    ```python Python
+    result = uc.get(context_id, at=checkpoint_index)
+    messages = result["data"]
+    ```
+    </CodeGroup>
+  </Step>
+  <Step title="(Optional) Fork context from checkpoint">
+    <CodeGroup>
+    ```typescript TypeScript
+    const fork = await uc.create({ from: contextId, at: checkpointIndex });
+    ```
+
+    ```python Python
+    fork = uc.create(from_=context_id, at=checkpoint_index)
+    ```
+    </CodeGroup>
+  </Step>
+</Steps>
+
+<Info>
+You can use `metadata` to retrieve a context up to a specific relevant part, discard everything **after** that point to start a fresh context from there.
+
+Forking is a great way to carry context over new sessions while maintaining a high signal-to-noise token ratio (and still preserving the original).
+
+See the [Fork & Clone Contexts](/guides/fork-clone-contexts#using-metadata-to-find-index) guide for this pattern.
+
+</Info>
+
+---
+
+### Start Fresh with Summary
+
+Start a new context with a summary of the previous one.
+
+<Steps>
+  <Step title="Get latest context">
+    <CodeGroup>
+    ```typescript TypeScript
+    // list all contexts (newest first)
+    const { data: contexts } = await uc.get();
+
+    // get messages from the latest
+    const { data: messages } = await uc.get(contexts[0].id);
+    ```
+
+    ```python Python
+    # list all contexts (newest first)
+    contexts = uc.get()["data"]
+
+    # get messages from the latest
+    messages = uc.get(contexts[0]["id"])["data"]
+    ```
+    </CodeGroup>
+  </Step>
+  <Step title="Summarize context">
+    <CodeGroup>
+    ```typescript TypeScript
+    const summary = await generateSummary(messages);
+    ```
+
+    ```python Python
+    summary = generate_summary(messages)
+    ```
+    </CodeGroup>
+  </Step>
+  <Step title="Create new context">
+    <CodeGroup>
+    ```typescript TypeScript
+    const ctx = await uc.create();
+    ```
+
+    ```python Python
+    ctx = uc.create()
+    ```
+    </CodeGroup>
+  </Step>
+  <Step title="Append summary">
+    <CodeGroup>
+    ```typescript TypeScript
+    await uc.append(ctx.id, {
+        role: 'system',
+        content: `Previous context summary:\n${summary}`,
+    });
+    ```
+
+    ```python Python
+    uc.append(ctx["id"], {
+        "role": "system",
+        "content": f"Previous context summary:\n{summary}",
+    })
+    ```
+    </CodeGroup>
+  </Step>
+</Steps>
+
+---
+
+### Switch Frameworks
+
+UltraContext is framework-agnostic. Switch between LLM frameworks without changing your stored data. 
+
+<CodeGroup>
+```typescript OpenAI SDK
+import { UltraContext } from 'ultracontext';
+import OpenAI from 'openai';
+
+const uc = new UltraContext({ apiKey: process.env.ULTRACONTEXT_API_KEY });
+const openai = new OpenAI();
+
+// retrieve context
+const { data: messages } = await uc.get(contextId);
+
+// prepare messages for OpenAI
+const parsed = parseForOpenAI(messages);
+
+const response = await openai.chat.completions.create({
+    model: 'gpt-4o',
+    messages: parsed,
+});
+```
+
+```typescript Anthropic SDK
+import { UltraContext } from 'ultracontext';
+import Anthropic from '@anthropic-ai/sdk';
+
+const uc = new UltraContext({ apiKey: process.env.ULTRACONTEXT_API_KEY });
+const anthropic = new Anthropic();
+
+// retrieve context
+const { data: messages } = await uc.get(contextId);
+
+// prepare messages for Anthropic
+const parsed = parseForAnthropic(messages);
+
+const response = await anthropic.messages.create({
+    model: 'claude-sonnet-4-20250514',
+    max_tokens: 1024,
+    ...parsed,
+});
+```
+
+```typescript Google
+import { UltraContext } from 'ultracontext';
+import { GoogleGenerativeAI } from '@google/generative-ai';
+
+const uc = new UltraContext({ apiKey: process.env.ULTRACONTEXT_API_KEY });
+const model = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY).getGenerativeModel({ model: 'gemini-1.5-flash' });
+
+// retrieve context
+const { data: messages } = await uc.get(contextId);
+
+// prepare messages for Google
+const parsed = parseForGoogle(messages);
+
+const response = await model.generateContent({
+    contents: parsed,
+});
+```
+
+```typescript Vercel AI SDK
+import { UltraContext } from 'ultracontext';
+import { generateText } from 'ai';
+import { openai } from '@ai-sdk/openai';
+
+const uc = new UltraContext({ apiKey: process.env.ULTRACONTEXT_API_KEY });
+
+// retrieve context
+const { data: messages } = await uc.get(contextId);
+
+// prepare messages for Vercel AI SDK
+const parsed = parseForVercel(messages);
+
+const response = await generateText({
+    model: openai('gpt-4o'),
+    messages: parsed,
+});
+```
+
+```python LangChain
+from ultracontext import UltraContext
+from langchain_openai import ChatOpenAI
+import os
+
+uc = UltraContext(api_key=os.environ["ULTRACONTEXT_API_KEY"])
+model = ChatOpenAI(model="gpt-4o")
+
+# retrieve context
+messages = uc.get(context_id)["data"]
+
+# prepare messages for LangChain
+parsed = parse_for_langchain(messages)
+
+response = model.invoke(parsed)
+```
+
+```python CrewAI
+from ultracontext import UltraContext
+from crewai import Agent, Task, Crew
+import os
+
+uc = UltraContext(api_key=os.environ["ULTRACONTEXT_API_KEY"])
+crew = Crew(agents=[...], tasks=[...])
+
+# retrieve context
+messages = uc.get(context_id)["data"]
+
+# prepare messages for CrewAI
+parsed = parse_for_crewai(messages)
+
+result = crew.kickoff(inputs=parsed)
+```
+</CodeGroup>
+
+<Info>The `parseFor*` functions are placeholders—implement based on your schema and each provider's message format.</Info>
+
+<Tip>Store context once, use anywhere. No vendor lock-in. No data migration when switching providers.</Tip>
+
+<Card
+    title='Next: Edit Contexts'
+    icon='pen-to-square'
+    href='/guides/edit-contexts'
+>
+    Update and delete messages with full audit trail.
+</Card>
