@@ -1628,7 +1628,7 @@ function buildUiSnapshot() {
       selectedIndex: selectedConfigIndex,
       items: configItems,
     },
-    recentLogs: ui.recentLogs.slice(-Math.max(cfg.uiRecentLimit, 1)),
+    recentLogs: ui.recentLogs.slice(-runtimeLogsKeep()),
     sourceStats: ui.sourceOrder.map((name) => ({
       name,
       ...ensureSourceStats(name),

@@ -247,7 +247,7 @@ function pushRecentLog(level, message, data) {
     text: line,
   });
 
-  const keep = Math.max(cfg.uiRecentLimit, 1);
+  const keep = runtimeLogsKeep();
   while (state.recentLogs.length > keep) state.recentLogs.shift();
 
   const last = state.recentLogs[state.recentLogs.length - 1];

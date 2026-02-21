@@ -9,21 +9,22 @@ const REPO_ROOT = path.resolve(APP_ROOT, "..", "..");
 const ROOT_ENV_PATH = path.join(REPO_ROOT, ".env");
 const APP_ENV_PATH = path.join(APP_ROOT, ".env");
 const DAEMON_ENV_PATH = path.join(REPO_ROOT, "apps", "daemon", ".env");
+const DOTENV_OPTIONS = { override: true, quiet: true };
 
 function loadEnv() {
   const explicitPath = String(process.env.DOTENV_CONFIG_PATH ?? "").trim();
   if (explicitPath) {
-    dotenv.config({ path: explicitPath, override: true });
+    dotenv.config({ ...DOTENV_OPTIONS, path: explicitPath });
     return;
   }
 
-  const rootResult = dotenv.config({ path: ROOT_ENV_PATH, override: true });
+  const rootResult = dotenv.config({ ...DOTENV_OPTIONS, path: ROOT_ENV_PATH });
   if (!rootResult.error) return;
 
-  const appResult = dotenv.config({ path: APP_ENV_PATH, override: true });
+  const appResult = dotenv.config({ ...DOTENV_OPTIONS, path: APP_ENV_PATH });
   if (!appResult.error) return;
 
-  dotenv.config({ path: DAEMON_ENV_PATH, override: true });
+  dotenv.config({ ...DOTENV_OPTIONS, path: DAEMON_ENV_PATH });
 }
 
 loadEnv();
