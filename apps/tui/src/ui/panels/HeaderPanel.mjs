@@ -1,7 +1,7 @@
 import React from "react";
 import { Box, Text } from "ink";
 
-import Spinner from "../../Spinner.mjs";
+import Spinner from "../components/Spinner.mjs";
 import { HeroLockup } from "../components/index.mjs";
 import { fitToWidth, formatTime } from "../format.mjs";
 
