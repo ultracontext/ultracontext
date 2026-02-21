@@ -17,16 +17,16 @@ const FOOTER_QUIPS = [
 ];
 
 function renderFooterQuip(quip) {
-  const token = "ultrathink";
+  const keyword = "ultrathink";
   const lower = String(quip ?? "").toLowerCase();
-  const index = lower.indexOf(token);
+  const index = lower.indexOf(keyword);
   if (index < 0) {
     return React.createElement(Text, { color: "gray", bold: true }, quip);
   }
 
   const before = quip.slice(0, index);
-  const match = quip.slice(index, index + token.length);
-  const after = quip.slice(index + token.length);
+  const match = quip.slice(index, index + keyword.length);
+  const after = quip.slice(index + keyword.length);
 
   return React.createElement(
     Box,

@@ -1,6 +1,6 @@
 import { and, desc, eq, isNull } from 'drizzle-orm';
 
-import { nodes, type ApiDb } from '../db';
+import { nodes, type ApiDb, type NodeRow } from '../db';
 import { buildNodeInsertRecords, findHead, findTail, getOrderedNodes, getVersions } from '../domain/context-chain';
 import { generatePublicId } from '../domain/public-ids';
 import type { HttpApp } from '../types/http';
@@ -59,7 +59,7 @@ export function registerContextRoutes(app: HttpApp) {
             return c.json({ error: 'version, at, and before require from' }, 400);
         }
 
-        let sourceNodes: any[] = [];
+        let sourceNodes: NodeRow[] = [];
         if (from) {
             const sourceCtx = firstRow(
                 await db
@@ -91,7 +91,7 @@ export function registerContextRoutes(app: HttpApp) {
                 sourceNodes = await getOrderedNodes(db, sourceHead.public_id);
 
                 if (beforeTs !== undefined) {
-                    sourceNodes = sourceNodes.filter((n: any) => new Date(n.created_at).getTime() <= beforeTs);
+                    sourceNodes = sourceNodes.filter((n) => new Date(n.created_at).getTime() <= beforeTs!);
                 }
 
                 if (at !== undefined) {
@@ -147,7 +147,7 @@ export function registerContextRoutes(app: HttpApp) {
         }
 
         if (sourceNodes.length > 0) {
-            const nodeInputs = sourceNodes.map((n: any) => ({
+            const nodeInputs = sourceNodes.map((n) => ({
                 type: 'message',
                 content: n.content,
                 metadata: n.metadata,
@@ -182,7 +182,7 @@ export function registerContextRoutes(app: HttpApp) {
             .limit(limit);
 
         return c.json({
-            data: data.map((n: any) => ({
+            data: data.map((n) => ({
                 id: n.public_id,
                 metadata: n.metadata,
                 created_at: n.created_at,
@@ -295,7 +295,7 @@ export function registerContextRoutes(app: HttpApp) {
 
         let orderedNodes = await getOrderedNodes(db, head.public_id);
         if (beforeTs !== undefined) {
-            orderedNodes = orderedNodes.filter((n: any) => new Date(n.created_at).getTime() <= beforeTs);
+            orderedNodes = orderedNodes.filter((n) => new Date(n.created_at).getTime() <= beforeTs!);
         }
 
         const versionsResponse = includeHistory
@@ -314,7 +314,7 @@ export function registerContextRoutes(app: HttpApp) {
             if (isNaN(idx) || idx < 0) return c.json({ error: 'Invalid index' }, 400);
             if (idx >= orderedNodes.length) return c.json({ error: 'Index out of range' }, 404);
 
-            const result = orderedNodes.slice(0, idx + 1).map((n: any, i: number) => ({
+            const result = orderedNodes.slice(0, idx + 1).map((n, i) => ({
                 ...n.content,
                 id: n.public_id,
                 index: i,
@@ -323,7 +323,7 @@ export function registerContextRoutes(app: HttpApp) {
             return c.json({ data: result, version: currentVersion, ...(versionsResponse && { versions: versionsResponse }) });
         }
 
-        const result = orderedNodes.map((n: any, index: number) => ({
+        const result = orderedNodes.map((n, index) => ({
             ...n.content,
             id: n.public_id,
             index,
@@ -371,7 +371,7 @@ export function registerContextRoutes(app: HttpApp) {
         if (!currentHead) return c.json({ error: 'HEAD not found' }, 500);
 
         const orderedNodes = await getOrderedNodes(db, currentHead.public_id);
-        const nodeIds = new Set(orderedNodes.map((n: any) => n.public_id));
+        const nodeIds = new Set(orderedNodes.map((n) => n.public_id));
 
         const resolvedUpdates: Array<{ id: string; [key: string]: unknown }> = [];
         for (const u of updates) {
@@ -407,7 +407,7 @@ export function registerContextRoutes(app: HttpApp) {
             return c.json({ error: message }, 500);
         }
 
-        const newNodes = orderedNodes.map((n: any) => {
+        const newNodes = orderedNodes.map((n) => {
             const update = updateMap.get(n.public_id);
             const { id: _id, ...changes } = update ?? { id: null };
             return {
@@ -480,7 +480,7 @@ export function registerContextRoutes(app: HttpApp) {
         if (!currentHead) return c.json({ error: 'HEAD not found' }, 500);
 
         const orderedNodes = await getOrderedNodes(db, currentHead.public_id);
-        const nodeIds = new Set(orderedNodes.map((n: any) => n.public_id));
+        const nodeIds = new Set(orderedNodes.map((n) => n.public_id));
 
         const idsToDelete: string[] = [];
         for (const input of rawIds) {
@@ -512,8 +512,8 @@ export function registerContextRoutes(app: HttpApp) {
             return c.json({ error: message }, 500);
         }
 
-        const filtered = orderedNodes.filter((n: any) => !deleteSet.has(n.public_id));
-        const newNodes = filtered.map((n: any) => ({
+        const filtered = orderedNodes.filter((n) => !deleteSet.has(n.public_id));
+        const newNodes = filtered.map((n) => ({
             public_id: generatePublicId('msg'),
             project_id: projectId,
             type: 'message',
