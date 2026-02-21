@@ -1179,6 +1179,51 @@ describe('compressMessagesAsync', () => {
     // Code fence preserved in output
     expect(result.messages[0].content).toContain(code);
   });
+
+  it('falls back to deterministic when summarizer returns empty string', async () => {
+    const emptySummarizer = async () => '';
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, role: 'user', content: LONG_PROSE }),
+    ];
+    const withEmpty = await compressMessagesAsync(messages, { recencyWindow: 0, summarizer: emptySummarizer });
+    const withoutLlm = compressMessages(messages, { recencyWindow: 0 });
+    // Empty string should be rejected — deterministic fallback produces same result
+    expect(withEmpty.messages).toEqual(withoutLlm.messages);
+  });
+
+  it('no compressed message has empty content when summarizer returns empty', async () => {
+    const emptySummarizer = async () => '';
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, role: 'user', content: LONG_PROSE }),
+      msg({ id: '2', index: 1, role: 'user', content: LONG_PROSE }),
+    ];
+    const result = await compressMessagesAsync(messages, { recencyWindow: 0, summarizer: emptySummarizer });
+    for (const m of result.messages) {
+      expect(typeof m.content === 'string' ? m.content.length : 0).toBeGreaterThan(0);
+    }
+  });
+
+  it('code-split path: falls back to deterministic when summarizer returns empty', async () => {
+    const emptySummarizer = async () => '';
+    const prose = 'This is a detailed explanation of how the authentication system works and integrates with the session manager. '.repeat(3);
+    const code = '```ts\nconst x = 1;\n```';
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, role: 'assistant', content: `${prose}\n\n${code}` }),
+    ];
+    const withEmpty = await compressMessagesAsync(messages, { recencyWindow: 0, summarizer: emptySummarizer });
+    const withoutLlm = compressMessages(messages, { recencyWindow: 0 });
+    expect(withEmpty.messages).toEqual(withoutLlm.messages);
+  });
+
+  it('falls back to deterministic when summarizer returns equal-length text', async () => {
+    const sameLengthSummarizer = async (text: string) => 'x'.repeat(text.length);
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, role: 'user', content: LONG_PROSE }),
+    ];
+    const withSame = await compressMessagesAsync(messages, { recencyWindow: 0, summarizer: sameLengthSummarizer });
+    const withoutLlm = compressMessages(messages, { recencyWindow: 0 });
+    expect(withSame.messages).toEqual(withoutLlm.messages);
+  });
 });
 
 // ---------------------------------------------------------------------------
