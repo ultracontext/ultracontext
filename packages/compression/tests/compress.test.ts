@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { compressMessages } from '../src/compress.js';
+import { compressMessages, compressMessagesAsync, compressToFit, compressToFitAsync, estimateTokens } from '../src/compress.js';
+import { expandMessages } from '../src/expand.js';
 import type { Message } from '../src/types.js';
 
 function msg(overrides: Partial<Message> & { id: string; index: number }): Message {
@@ -1073,5 +1074,223 @@ describe('compressMessages', () => {
       };
       expect(meta.parent_ids).toEqual([priorSummaryId]);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// compressMessagesAsync
+// ---------------------------------------------------------------------------
+
+const LONG_PROSE = 'This is a long message about general topics that could be compressed. '.repeat(5);
+
+describe('compressMessagesAsync', () => {
+  it('sync compressMessages throws when summarizer is provided', () => {
+    expect(() =>
+      compressMessages(
+        [msg({ id: '1', index: 0, role: 'user', content: LONG_PROSE })],
+        { recencyWindow: 0, summarizer: (t) => t.slice(0, 20) },
+      ),
+    ).toThrow('summarizer requires compressMessagesAsync');
+  });
+
+  it('async with no summarizer produces identical output to sync', async () => {
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, role: 'system', content: 'System prompt.' }),
+      msg({ id: '2', index: 1, role: 'user', content: LONG_PROSE }),
+      msg({ id: '3', index: 2, role: 'assistant', content: LONG_PROSE }),
+    ];
+    const sync = compressMessages(messages, { recencyWindow: 0 });
+    const async_ = await compressMessagesAsync(messages, { recencyWindow: 0 });
+    expect(async_.messages).toEqual(sync.messages);
+    expect(async_.compression).toEqual(sync.compression);
+    expect(async_.verbatim).toEqual(sync.verbatim);
+  });
+
+  it('uses LLM result when shorter than input', async () => {
+    const mockSummarizer = async (text: string) => text.slice(0, 50) + '...';
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, role: 'user', content: LONG_PROSE }),
+    ];
+    const result = await compressMessagesAsync(messages, { recencyWindow: 0, summarizer: mockSummarizer });
+    expect(result.compression.messages_compressed).toBe(1);
+    // The summary should contain the truncated text from our mock
+    expect(result.messages[0].content).toMatch(/^\[summary:/);
+  });
+
+  it('falls back to deterministic when LLM returns longer text', async () => {
+    const growingSummarizer = async (text: string) => text + ' EXTRA PADDING THAT MAKES IT LONGER';
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, role: 'user', content: LONG_PROSE }),
+    ];
+    const withLlm = await compressMessagesAsync(messages, { recencyWindow: 0, summarizer: growingSummarizer });
+    const withoutLlm = compressMessages(messages, { recencyWindow: 0 });
+    // Should fall back to deterministic — same output
+    expect(withLlm.messages).toEqual(withoutLlm.messages);
+  });
+
+  it('falls back when LLM throws', async () => {
+    const failingSummarizer = async () => { throw new Error('LLM unavailable'); };
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, role: 'user', content: LONG_PROSE }),
+    ];
+    const withLlm = await compressMessagesAsync(messages, { recencyWindow: 0, summarizer: failingSummarizer });
+    const withoutLlm = compressMessages(messages, { recencyWindow: 0 });
+    expect(withLlm.messages).toEqual(withoutLlm.messages);
+  });
+
+  it('round-trip: async compress then expand = byte-identical', async () => {
+    const messages: Message[] = [
+      msg({ id: 'sys', index: 0, role: 'system', content: 'System prompt.' }),
+      msg({ id: 'u1', index: 1, role: 'user', content: LONG_PROSE }),
+      msg({ id: 'a1', index: 2, role: 'assistant', content: LONG_PROSE }),
+    ];
+    const compressed = await compressMessagesAsync(messages, { recencyWindow: 0 });
+    expect(compressed.compression.messages_compressed).toBeGreaterThan(0);
+    const expanded = expandMessages(compressed.messages, compressed.verbatim);
+    expect(expanded.messages).toEqual(messages);
+    expect(expanded.missing_ids).toEqual([]);
+  });
+
+  it('code-split path: summarizer called on prose only, fences preserved', async () => {
+    const calls: string[] = [];
+    const trackingSummarizer = async (text: string) => {
+      calls.push(text);
+      return text.slice(0, 50) + '...';
+    };
+    const prose = 'This is a detailed explanation of how the authentication system works and integrates with the session manager. '.repeat(3);
+    const code = '```ts\nconst x = 1;\n```';
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, role: 'assistant', content: `${prose}\n\n${code}` }),
+    ];
+    const result = await compressMessagesAsync(messages, { recencyWindow: 0, summarizer: trackingSummarizer });
+    // Summarizer should have been called with prose, not code
+    expect(calls.length).toBe(1);
+    expect(calls[0]).not.toContain('```');
+    // Code fence preserved in output
+    expect(result.messages[0].content).toContain(code);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// compressToFit
+// ---------------------------------------------------------------------------
+
+describe('compressToFit', () => {
+  it('returns fits: true when already under budget (zero compression)', () => {
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, role: 'user', content: 'Short message.' }),
+    ];
+    const result = compressToFit(messages, 1000);
+    expect(result.fits).toBe(true);
+    expect(result.compression.messages_compressed).toBe(0);
+    expect(result.messages).toEqual(messages);
+    expect(result.tokenCount).toBeLessThanOrEqual(1000);
+  });
+
+  it('reduces recencyWindow until under budget', () => {
+    const prose = 'This is a long message about general topics that could be compressed since it has no verbatim content. '.repeat(10);
+    const messages: Message[] = [];
+    for (let i = 0; i < 10; i++) {
+      messages.push(msg({ id: `${i}`, index: i, role: i % 2 === 0 ? 'user' : 'assistant', content: prose }));
+    }
+    const totalTokens = messages.reduce((sum, m) => sum + estimateTokens(m), 0);
+    // Set budget to ~half the total
+    const result = compressToFit(messages, Math.floor(totalTokens / 2));
+    expect(result.fits).toBe(true);
+    expect(result.tokenCount).toBeLessThanOrEqual(Math.floor(totalTokens / 2));
+    expect(result.recencyWindow).toBeLessThan(messages.length);
+    expect(result.compression.messages_compressed).toBeGreaterThan(0);
+  });
+
+  it('returns fits: false with best effort for impossible budgets', () => {
+    const prose = 'This is a long message about general topics that could be compressed since it has no verbatim content. '.repeat(10);
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, role: 'user', content: prose }),
+      msg({ id: '2', index: 1, role: 'assistant', content: prose }),
+    ];
+    const result = compressToFit(messages, 1); // impossibly small budget
+    expect(result.fits).toBe(false);
+    // Still returns best effort
+    expect(result.tokenCount).toBeGreaterThan(1);
+    expect(result.compression.messages_compressed).toBeGreaterThan(0);
+  });
+
+  it('preserves round-trip integrity', () => {
+    const prose = 'This is a long message about general topics that could be compressed since it has no verbatim content. '.repeat(10);
+    const messages: Message[] = [
+      msg({ id: 'sys', index: 0, role: 'system', content: 'System prompt.' }),
+      msg({ id: 'u1', index: 1, role: 'user', content: prose }),
+      msg({ id: 'a1', index: 2, role: 'assistant', content: prose }),
+    ];
+    const totalTokens = messages.reduce((sum, m) => sum + estimateTokens(m), 0);
+    const result = compressToFit(messages, Math.floor(totalTokens / 2));
+    const expanded = expandMessages(result.messages, result.verbatim);
+    expect(expanded.messages).toEqual(messages);
+    expect(expanded.missing_ids).toEqual([]);
+  });
+
+  it('respects minRecencyWindow', () => {
+    const prose = 'This is a long message about general topics that could be compressed since it has no verbatim content. '.repeat(10);
+    const messages: Message[] = [];
+    for (let i = 0; i < 10; i++) {
+      messages.push(msg({ id: `${i}`, index: i, role: i % 2 === 0 ? 'user' : 'assistant', content: prose }));
+    }
+    const result = compressToFit(messages, 1, { minRecencyWindow: 5 });
+    expect(result.recencyWindow).toBeGreaterThanOrEqual(5);
+  });
+
+  it('recencyWindow and tokenCount in result are accurate', () => {
+    const prose = 'This is a long message about general topics that could be compressed since it has no verbatim content. '.repeat(10);
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, role: 'user', content: prose }),
+      msg({ id: '2', index: 1, role: 'assistant', content: prose }),
+      msg({ id: '3', index: 2, role: 'user', content: 'Final question.' }),
+    ];
+    const totalTokens = messages.reduce((sum, m) => sum + estimateTokens(m), 0);
+    const result = compressToFit(messages, Math.floor(totalTokens / 2));
+    // Verify tokenCount matches actual token count of result
+    const actualTokens = result.messages.reduce((sum: number, m: Message) => sum + estimateTokens(m), 0);
+    expect(result.tokenCount).toBe(actualTokens);
+  });
+
+  it('handles single message', () => {
+    const prose = 'This is a long message about general topics that could be compressed since it has no verbatim content. '.repeat(10);
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, role: 'user', content: prose }),
+    ];
+    const result = compressToFit(messages, 10);
+    // Single message, budget too small — best effort
+    expect(result.fits).toBe(false);
+    expect(result.tokenCount).toBeGreaterThan(0);
+  });
+
+  it('handles empty input', () => {
+    const result = compressToFit([], 1000);
+    expect(result.fits).toBe(true);
+    expect(result.messages).toEqual([]);
+    expect(result.tokenCount).toBe(0);
+  });
+
+  it('sync throws when summarizer provided', () => {
+    expect(() =>
+      compressToFit(
+        [msg({ id: '1', index: 0, role: 'user', content: 'test' })],
+        1000,
+        { summarizer: (t) => t.slice(0, 10) },
+      ),
+    ).toThrow('summarizer requires compressToFitAsync');
+  });
+
+  it('compressToFitAsync with summarizer achieves tighter fit', async () => {
+    const prose = 'This is a long message about general topics that could be compressed since it has no verbatim content. '.repeat(10);
+    const messages: Message[] = [];
+    for (let i = 0; i < 8; i++) {
+      messages.push(msg({ id: `${i}`, index: i, role: i % 2 === 0 ? 'user' : 'assistant', content: prose }));
+    }
+    const aggressiveSummarizer = async (text: string) => text.slice(0, 30) + '...';
+    const syncResult = compressToFit(messages, 200);
+    const asyncResult = await compressToFitAsync(messages, 200, { summarizer: aggressiveSummarizer });
+    // Async with aggressive summarizer should produce equal or fewer tokens
+    expect(asyncResult.tokenCount).toBeLessThanOrEqual(syncResult.tokenCount);
   });
 });

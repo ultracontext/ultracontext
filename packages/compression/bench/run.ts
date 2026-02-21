@@ -1,6 +1,6 @@
-import { compressMessages } from '../src/compress.js';
+import { compressMessages, compressToFit } from '../src/compress.js';
 import { expandMessages } from '../src/expand.js';
-import type { Message } from '../src/types.js';
+import type { CompressToFitResult, Message } from '../src/types.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -449,6 +449,46 @@ function run(): void {
   }
 
   console.log('All scenarios passed round-trip verification.');
+
+  // ---------------------------------------------------------------------------
+  // compressToFit scenario
+  // ---------------------------------------------------------------------------
+
+  console.log();
+  console.log('compressToFit Benchmark');
+  console.log(sep);
+
+  const deepMessages = deepConversation().messages;
+  const tokenBudget = 2000;
+  const t0 = performance.now();
+  const ctfResult: CompressToFitResult = compressToFit(deepMessages, tokenBudget);
+  const t1 = performance.now();
+
+  // Round-trip check
+  const expanded = expandMessages(ctfResult.messages, ctfResult.verbatim);
+  const ctfRoundTrip =
+    JSON.stringify(deepMessages) === JSON.stringify(expanded.messages) && expanded.missing_ids.length === 0
+      ? 'PASS'
+      : 'FAIL';
+
+  console.log(`  Input:          ${deepMessages.length} messages, ${chars(deepMessages)} chars`);
+  console.log(`  Token budget:   ${tokenBudget}`);
+  console.log(`  Fits:           ${ctfResult.fits}`);
+  console.log(`  Final rw:       ${ctfResult.recencyWindow}`);
+  console.log(`  Token count:    ${ctfResult.tokenCount}`);
+  console.log(`  Compressed:     ${ctfResult.compression.messages_compressed} msgs`);
+  console.log(`  Preserved:      ${ctfResult.compression.messages_preserved} msgs`);
+  console.log(`  Round-trip:     ${ctfRoundTrip}`);
+  console.log(`  Time:           ${(t1 - t0).toFixed(2)}ms`);
+  console.log(sep);
+
+  if (ctfRoundTrip === 'FAIL') {
+    console.error('FAIL: compressToFit round-trip failed');
+    process.exit(1);
+  }
+
+  console.log();
+  console.log('All benchmarks passed.');
 }
 
 run();

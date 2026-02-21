@@ -1,5 +1,5 @@
 import { classifyMessage } from './classify.js';
-import type { CompressOptions, CompressResult, Message } from './types.js';
+import type { CompressOptions, CompressResult, CompressToFitOptions, CompressToFitResult, Message, Summarizer } from './types.js';
 
 /**
  * Deterministic summary ID from sorted source message IDs.
@@ -232,9 +232,90 @@ function contentLength(msg: Message): number {
   return typeof msg.content === 'string' ? msg.content.length : 0;
 }
 
-function estimateTokens(msg: Message): number {
+/** Estimate token count for a single message (~3.5 chars/token). */
+export function estimateTokens(msg: Message): number {
   return Math.ceil(contentLength(msg) / 3.5);
 }
+
+// ---------------------------------------------------------------------------
+// Shared helpers extracted for sync / async reuse
+// ---------------------------------------------------------------------------
+
+type Classified = { msg: Message; preserved: boolean; codeSplit?: boolean };
+
+function classifyAll(
+  messages: Message[],
+  preserveRoles: Set<string>,
+  recencyWindow: number,
+): Classified[] {
+  const recencyStart = Math.max(0, messages.length - recencyWindow);
+
+  return messages.map((msg, idx) => {
+    const content = typeof msg.content === 'string' ? msg.content : '';
+
+    if (msg.role && preserveRoles.has(msg.role)) {
+      return { msg, preserved: true };
+    }
+    if (recencyWindow > 0 && idx >= recencyStart) {
+      return { msg, preserved: true };
+    }
+    if (msg.tool_calls && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
+      return { msg, preserved: true };
+    }
+    if (content.length < 120) {
+      return { msg, preserved: true };
+    }
+    if (content.startsWith('[summary:')) {
+      return { msg, preserved: true };
+    }
+    if (content.includes('```')) {
+      const segments = splitCodeAndProse(content);
+      const totalProse = segments
+        .filter(s => s.type === 'prose')
+        .reduce((sum, s) => sum + s.content.length, 0);
+      if (totalProse >= 200) {
+        return { msg, preserved: false, codeSplit: true };
+      }
+      return { msg, preserved: true };
+    }
+    if (content && classifyMessage(content).decision === 'T0') {
+      return { msg, preserved: true };
+    }
+    if (content && isValidJson(content)) {
+      return { msg, preserved: true };
+    }
+
+    return { msg, preserved: false };
+  });
+}
+
+function computeStats(
+  originalMessages: Message[],
+  resultMessages: Message[],
+  messagesCompressed: number,
+  messagesPreserved: number,
+  sourceVersion: number,
+): CompressResult['compression'] {
+  const originalTotalChars = originalMessages.reduce((sum, m) => sum + contentLength(m), 0);
+  const compressedTotalChars = resultMessages.reduce((sum, m) => sum + contentLength(m), 0);
+  const ratio = compressedTotalChars > 0 ? originalTotalChars / compressedTotalChars : 1;
+
+  const originalTotalTokens = originalMessages.reduce((sum, m) => sum + estimateTokens(m), 0);
+  const compressedTotalTokens = resultMessages.reduce((sum, m) => sum + estimateTokens(m), 0);
+  const tokenRatio = compressedTotalTokens > 0 ? originalTotalTokens / compressedTotalTokens : 1;
+
+  return {
+    original_version: sourceVersion,
+    ratio: messagesCompressed === 0 ? 1 : ratio,
+    token_ratio: messagesCompressed === 0 ? 1 : tokenRatio,
+    messages_compressed: messagesCompressed,
+    messages_preserved: messagesPreserved,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Sync compression
+// ---------------------------------------------------------------------------
 
 /**
  * Compress a message array, returning compressed messages, stats, and
@@ -244,6 +325,8 @@ function estimateTokens(msg: Message): number {
  * Partial writes (e.g. storing compressed messages without their
  * verbatim originals) will cause data loss that `expandMessages()`
  * surfaces via `missing_ids`.
+ *
+ * Throws if `options.summarizer` is set — use `compressMessagesAsync` instead.
  */
 export function compressMessages(
   messages: Message[],
@@ -251,6 +334,9 @@ export function compressMessages(
 ): CompressResult {
   if (options.mode === 'lossy') {
     throw new Error('Lossy compression is not yet implemented (501)');
+  }
+  if (options.summarizer) {
+    throw new Error('summarizer requires compressMessagesAsync (use the async API)');
   }
 
   const sourceVersion = options.sourceVersion ?? 0;
@@ -270,68 +356,9 @@ export function compressMessages(
   }
 
   const preserveRoles = new Set(options.preserve ?? ['system']);
-  const originalTotalChars = messages.reduce((sum, m) => sum + contentLength(m), 0);
   const recencyWindow = options.recencyWindow ?? 4;
-  const recencyStart = Math.max(0, messages.length - recencyWindow);
+  const classified = classifyAll(messages, preserveRoles, recencyWindow);
 
-  // Step 1: classify each message as preserved or compressible
-  const classified: Array<{ msg: Message; preserved: boolean; codeSplit?: boolean }> = messages.map((msg, idx) => {
-    const content = typeof msg.content === 'string' ? msg.content : '';
-
-    // Rule 1: role in preserve list
-    if (msg.role && preserveRoles.has(msg.role)) {
-      return { msg, preserved: true };
-    }
-
-    // Rule 2: recency protection
-    if (recencyWindow > 0 && idx >= recencyStart) {
-      return { msg, preserved: true };
-    }
-
-    // Rule 3: messages with tool_calls (assistant's function call request)
-    if (msg.tool_calls && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
-      return { msg, preserved: true };
-    }
-
-    // Rule 4: short content
-    if (content.length < 120) {
-      return { msg, preserved: true };
-    }
-
-    // Rule 5: already-compressed content — don't double-compress
-    if (content.startsWith('[summary:')) {
-      return { msg, preserved: true };
-    }
-
-    // Rule 6: code fence splitting — extract fences verbatim, summarize prose
-    if (content.includes('```')) {
-      const segments = splitCodeAndProse(content);
-      const totalProse = segments
-        .filter(s => s.type === 'prose')
-        .reduce((sum, s) => sum + s.content.length, 0);
-      // 200, not 120: the [summary: ... | entities: ...] bracket + \n\n separators
-      // add ~80-100 chars of overhead; prose under 200 chars yields negligible or
-      // negative savings after that overhead is applied.
-      if (totalProse >= 200) {
-        return { msg, preserved: false, codeSplit: true };
-      }
-      return { msg, preserved: true };
-    }
-
-    // Rule 7: VBC classifies as T0
-    if (content && classifyMessage(content).decision === 'T0') {
-      return { msg, preserved: true };
-    }
-
-    // Rule 8: valid JSON
-    if (content && isValidJson(content)) {
-      return { msg, preserved: true };
-    }
-
-    return { msg, preserved: false };
-  });
-
-  // Step 2: compress non-preserved messages (respecting role boundaries)
   const result: Message[] = [];
   const verbatim: Record<string, Message> = {};
   let messagesCompressed = 0;
@@ -359,7 +386,6 @@ export function compressMessages(
       const entitySuffix = entities.length > 0 ? ` | entities: ${entities.join(', ')}` : '';
       const compressed = `[summary: ${summaryText}${entitySuffix}]\n\n${codeFences.join('\n\n')}`;
 
-      // Guard: skip compression if output >= original
       if (compressed.length >= content.length) {
         result.push(msg);
         messagesPreserved++;
@@ -397,14 +423,12 @@ export function compressMessages(
       i++;
     }
 
-    // Build summary from group content
     const allContent = group.map(g => typeof g.msg.content === 'string' ? g.msg.content : '').join(' ');
     const summaryText = summarize(allContent);
     const entities = extractEntities(allContent);
     const entitySuffix = entities.length > 0 ? ` | entities: ${entities.join(', ')}` : '';
 
     if (group.length > 1) {
-      // Consecutive same-role merging
       const summary = `[summary: ${summaryText} (${group.length} messages merged)${entitySuffix}]`;
       const combinedLength = group.reduce((sum, g) => sum + contentLength(g.msg), 0);
 
@@ -437,7 +461,6 @@ export function compressMessages(
         messagesCompressed += group.length;
       }
     } else {
-      // Single non-preserved message
       const single = group[0].msg;
       const content = typeof single.content === 'string' ? single.content : '';
       const summary = `[summary: ${summaryText}${entitySuffix}]`;
@@ -468,22 +491,338 @@ export function compressMessages(
     }
   }
 
-  const compressedTotalChars = result.reduce((sum, m) => sum + contentLength(m), 0);
-  const ratio = compressedTotalChars > 0 ? originalTotalChars / compressedTotalChars : 1;
+  return {
+    messages: result,
+    compression: computeStats(messages, result, messagesCompressed, messagesPreserved, sourceVersion),
+    verbatim,
+  };
+}
 
-  const originalTotalTokens = messages.reduce((sum, m) => sum + estimateTokens(m), 0);
-  const compressedTotalTokens = result.reduce((sum, m) => sum + estimateTokens(m), 0);
-  const tokenRatio = compressedTotalTokens > 0 ? originalTotalTokens / compressedTotalTokens : 1;
+// ---------------------------------------------------------------------------
+// Async compression (LLM summarizer support)
+// ---------------------------------------------------------------------------
+
+async function withFallback(text: string, userSummarizer?: Summarizer): Promise<string> {
+  if (userSummarizer) {
+    try {
+      const result = await userSummarizer(text);
+      if (typeof result === 'string' && result.length < text.length) return result;
+    } catch { /* fall through to deterministic */ }
+  }
+  return summarize(text);
+}
+
+/**
+ * Async variant of `compressMessages` that supports an LLM-powered summarizer.
+ *
+ * Three-level fallback per message:
+ *   1. LLM summarizer (if provided and returns shorter text)
+ *   2. Deterministic `summarize()` (sentence extraction + entities)
+ *   3. Caller-side size guard preserves original if still not shorter
+ */
+export async function compressMessagesAsync(
+  messages: Message[],
+  options: CompressOptions = {},
+): Promise<CompressResult> {
+  if (options.mode === 'lossy') {
+    throw new Error('Lossy compression is not yet implemented (501)');
+  }
+
+  const sourceVersion = options.sourceVersion ?? 0;
+  const userSummarizer = options.summarizer;
+
+  if (messages.length === 0) {
+    return {
+      messages: [],
+      compression: {
+        original_version: sourceVersion,
+        ratio: 1,
+        token_ratio: 1,
+        messages_compressed: 0,
+        messages_preserved: 0,
+      },
+      verbatim: {},
+    };
+  }
+
+  const preserveRoles = new Set(options.preserve ?? ['system']);
+  const recencyWindow = options.recencyWindow ?? 4;
+  const classified = classifyAll(messages, preserveRoles, recencyWindow);
+
+  const result: Message[] = [];
+  const verbatim: Record<string, Message> = {};
+  let messagesCompressed = 0;
+  let messagesPreserved = 0;
+  let i = 0;
+
+  while (i < classified.length) {
+    const { msg, preserved } = classified[i];
+
+    if (preserved) {
+      result.push(msg);
+      messagesPreserved++;
+      i++;
+      continue;
+    }
+
+    // Code-split: extract fences verbatim, summarize surrounding prose
+    if (classified[i].codeSplit) {
+      const content = typeof msg.content === 'string' ? msg.content : '';
+      const segments = splitCodeAndProse(content);
+      const proseText = segments.filter(s => s.type === 'prose').map(s => s.content).join(' ');
+      const codeFences = segments.filter(s => s.type === 'code').map(s => s.content);
+      const summaryText = await withFallback(proseText, userSummarizer);
+      const entities = extractEntities(proseText);
+      const entitySuffix = entities.length > 0 ? ` | entities: ${entities.join(', ')}` : '';
+      const compressed = `[summary: ${summaryText}${entitySuffix}]\n\n${codeFences.join('\n\n')}`;
+
+      if (compressed.length >= content.length) {
+        result.push(msg);
+        messagesPreserved++;
+        i++;
+        continue;
+      }
+
+      const csIds = [msg.id];
+      const csSummaryId = makeSummaryId(csIds);
+      const csParents = collectParentIds([msg]);
+      verbatim[msg.id] = msg;
+      result.push({
+        ...msg,
+        content: compressed,
+        metadata: {
+          ...(msg.metadata ?? {}),
+          _uc_original: {
+            ids: csIds,
+            summary_id: csSummaryId,
+            ...(csParents.length > 0 ? { parent_ids: csParents } : {}),
+            version: sourceVersion,
+          },
+        },
+      });
+      messagesCompressed++;
+      i++;
+      continue;
+    }
+
+    // Collect consecutive non-preserved messages with the SAME role
+    const group: Array<{ msg: Message; preserved: boolean }> = [];
+    const groupRole = classified[i].msg.role;
+    while (i < classified.length && !classified[i].preserved && !classified[i].codeSplit && classified[i].msg.role === groupRole) {
+      group.push(classified[i]);
+      i++;
+    }
+
+    const allContent = group.map(g => typeof g.msg.content === 'string' ? g.msg.content : '').join(' ');
+    const summaryText = await withFallback(allContent, userSummarizer);
+    const entities = extractEntities(allContent);
+    const entitySuffix = entities.length > 0 ? ` | entities: ${entities.join(', ')}` : '';
+
+    if (group.length > 1) {
+      const summary = `[summary: ${summaryText} (${group.length} messages merged)${entitySuffix}]`;
+      const combinedLength = group.reduce((sum, g) => sum + contentLength(g.msg), 0);
+
+      if (summary.length >= combinedLength) {
+        for (const g of group) {
+          result.push(g.msg);
+          messagesPreserved++;
+        }
+      } else {
+        const mergeIds = group.map(g => g.msg.id);
+        const mergeSummaryId = makeSummaryId(mergeIds);
+        const mergeParents = collectParentIds(group.map(g => g.msg));
+        for (const g of group) { verbatim[g.msg.id] = g.msg; }
+        const mergedMsg: Message = {
+          id: group[0].msg.id,
+          index: group[0].msg.index,
+          role: group[0].msg.role,
+          content: summary,
+          metadata: {
+            ...(group[0].msg.metadata ?? {}),
+            _uc_original: {
+              ids: mergeIds,
+              summary_id: mergeSummaryId,
+              ...(mergeParents.length > 0 ? { parent_ids: mergeParents } : {}),
+              version: sourceVersion,
+            },
+          },
+        };
+        result.push(mergedMsg);
+        messagesCompressed += group.length;
+      }
+    } else {
+      const single = group[0].msg;
+      const content = typeof single.content === 'string' ? single.content : '';
+      const summary = `[summary: ${summaryText}${entitySuffix}]`;
+
+      if (summary.length >= content.length) {
+        result.push(single);
+        messagesPreserved++;
+      } else {
+        const singleIds = [single.id];
+        const singleSummaryId = makeSummaryId(singleIds);
+        const singleParents = collectParentIds([single]);
+        verbatim[single.id] = single;
+        result.push({
+          ...single,
+          content: summary,
+          metadata: {
+            ...(single.metadata ?? {}),
+            _uc_original: {
+              ids: singleIds,
+              summary_id: singleSummaryId,
+              ...(singleParents.length > 0 ? { parent_ids: singleParents } : {}),
+              version: sourceVersion,
+            },
+          },
+        });
+        messagesCompressed++;
+      }
+    }
+  }
 
   return {
     messages: result,
-    compression: {
-      original_version: sourceVersion,
-      ratio: messagesCompressed === 0 ? 1 : ratio,
-      token_ratio: messagesCompressed === 0 ? 1 : tokenRatio,
-      messages_compressed: messagesCompressed,
-      messages_preserved: messagesPreserved,
-    },
+    compression: computeStats(messages, result, messagesCompressed, messagesPreserved, sourceVersion),
     verbatim,
   };
+}
+
+// ---------------------------------------------------------------------------
+// compressToFit — budget-driven compression with recencyWindow search
+// ---------------------------------------------------------------------------
+
+function estimateTokensTotal(messages: Message[]): number {
+  return messages.reduce((sum, m) => sum + estimateTokens(m), 0);
+}
+
+/**
+ * Compress messages to fit within a token budget by progressively reducing
+ * the recency window. Returns the tightest fit found, or the best effort
+ * with `fits: false` if the budget is impossible to meet.
+ *
+ * Throws if `options.summarizer` is set — use `compressToFitAsync` instead.
+ */
+export function compressToFit(
+  messages: Message[],
+  tokenBudget: number,
+  options?: CompressToFitOptions,
+): CompressToFitResult {
+  if (options?.summarizer) {
+    throw new Error('summarizer requires compressToFitAsync (use the async API)');
+  }
+
+  const minRw = options?.minRecencyWindow ?? 0;
+  const sourceVersion = options?.sourceVersion ?? 0;
+
+  // Fast path: already under budget
+  const totalTokens = estimateTokensTotal(messages);
+  if (totalTokens <= tokenBudget) {
+    return {
+      messages,
+      compression: {
+        original_version: sourceVersion,
+        ratio: 1,
+        token_ratio: 1,
+        messages_compressed: 0,
+        messages_preserved: messages.length,
+      },
+      verbatim: {},
+      fits: true,
+      recencyWindow: messages.length,
+      tokenCount: totalTokens,
+    };
+  }
+
+  let best: CompressToFitResult | undefined;
+  let prevCompressed = -1;
+
+  for (let rw = messages.length - 1; rw >= minRw; rw--) {
+    const cr = compressMessages(messages, { ...options, recencyWindow: rw, summarizer: undefined });
+    const tokens = estimateTokensTotal(cr.messages);
+
+    const candidate: CompressToFitResult = {
+      ...cr,
+      fits: tokens <= tokenBudget,
+      recencyWindow: rw,
+      tokenCount: tokens,
+    };
+
+    if (!best || tokens < best.tokenCount) {
+      best = candidate;
+    }
+
+    if (tokens <= tokenBudget) {
+      return candidate;
+    }
+
+    // Early exit: if reducing rw didn't compress more messages, further reduction won't help
+    if (cr.compression.messages_compressed === prevCompressed && prevCompressed >= 0) {
+      break;
+    }
+    prevCompressed = cr.compression.messages_compressed;
+  }
+
+  return best!;
+}
+
+/**
+ * Async variant of `compressToFit` that supports an LLM-powered summarizer.
+ */
+export async function compressToFitAsync(
+  messages: Message[],
+  tokenBudget: number,
+  options?: CompressToFitOptions,
+): Promise<CompressToFitResult> {
+  const minRw = options?.minRecencyWindow ?? 0;
+  const sourceVersion = options?.sourceVersion ?? 0;
+
+  // Fast path: already under budget
+  const totalTokens = estimateTokensTotal(messages);
+  if (totalTokens <= tokenBudget) {
+    return {
+      messages,
+      compression: {
+        original_version: sourceVersion,
+        ratio: 1,
+        token_ratio: 1,
+        messages_compressed: 0,
+        messages_preserved: messages.length,
+      },
+      verbatim: {},
+      fits: true,
+      recencyWindow: messages.length,
+      tokenCount: totalTokens,
+    };
+  }
+
+  let best: CompressToFitResult | undefined;
+  let prevCompressed = -1;
+
+  for (let rw = messages.length - 1; rw >= minRw; rw--) {
+    const cr = await compressMessagesAsync(messages, { ...options, recencyWindow: rw });
+    const tokens = estimateTokensTotal(cr.messages);
+
+    const candidate: CompressToFitResult = {
+      ...cr,
+      fits: tokens <= tokenBudget,
+      recencyWindow: rw,
+      tokenCount: tokens,
+    };
+
+    if (!best || tokens < best.tokenCount) {
+      best = candidate;
+    }
+
+    if (tokens <= tokenBudget) {
+      return candidate;
+    }
+
+    if (cr.compression.messages_compressed === prevCompressed && prevCompressed >= 0) {
+      break;
+    }
+    prevCompressed = cr.compression.messages_compressed;
+  }
+
+  return best!;
 }

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { compressMessages } from '../src/compress.js';
-import { expandMessages } from '../src/expand.js';
-import type { Message } from '../src/types.js';
+import { expandMessages, searchVerbatim } from '../src/expand.js';
+import type { Message, VerbatimMap } from '../src/types.js';
 
 function msg(overrides: Partial<Message> & { id: string; index: number }): Message {
   return { role: 'user', content: '', metadata: {}, ...overrides };
@@ -131,5 +131,91 @@ describe('expandMessages', () => {
     expect(deep.messages.map(m => m.id)).toEqual(['a', 'b', 'c']);
     expect(deep.messages[0].content).toBe(PROSE);
     expect(deep.missing_ids).toEqual([]);
+  });
+});
+
+describe('searchVerbatim', () => {
+  it('returns matches grouped by summaryId', () => {
+    const input: Message[] = [
+      msg({ id: 'u1', index: 0, role: 'user', content: PROSE }),
+      msg({ id: 'u2', index: 1, role: 'user', content: PROSE }),
+    ];
+    const { messages: compressed, verbatim } = compressMessages(input, { recencyWindow: 0 });
+    const results = searchVerbatim(compressed, verbatim, /general topics/);
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].summaryId).toMatch(/^uc_sum_/);
+    expect(results[0].matches).toContain('general topics');
+  });
+
+  it('returns [] when no matches', () => {
+    const input: Message[] = [
+      msg({ id: 'u1', index: 0, role: 'user', content: PROSE }),
+    ];
+    const { messages: compressed, verbatim } = compressMessages(input, { recencyWindow: 0 });
+    const results = searchVerbatim(compressed, verbatim, /ZZZZNOTFOUND/);
+    expect(results).toEqual([]);
+  });
+
+  it('works with string pattern', () => {
+    const input: Message[] = [
+      msg({ id: 'u1', index: 0, role: 'user', content: PROSE }),
+    ];
+    const { messages: compressed, verbatim } = compressMessages(input, { recencyWindow: 0 });
+    const results = searchVerbatim(compressed, verbatim, 'general topics');
+    expect(results.length).toBe(1);
+    expect(results[0].matches.length).toBeGreaterThan(0);
+  });
+
+  it('works with RegExp with flags (case-insensitive)', () => {
+    const input: Message[] = [
+      msg({ id: 'u1', index: 0, role: 'user', content: PROSE }),
+    ];
+    const { messages: compressed, verbatim } = compressMessages(input, { recencyWindow: 0 });
+    const results = searchVerbatim(compressed, verbatim, /GENERAL TOPICS/gi);
+    expect(results.length).toBe(1);
+    expect(results[0].matches[0]).toBe('general topics');
+  });
+
+  it('multiple matches per message', () => {
+    const input: Message[] = [
+      msg({ id: 'u1', index: 0, role: 'user', content: PROSE }),
+    ];
+    const { messages: compressed, verbatim } = compressMessages(input, { recencyWindow: 0 });
+    // PROSE repeats "general topics" 5 times
+    const results = searchVerbatim(compressed, verbatim, /general topics/g);
+    expect(results.length).toBe(1);
+    expect(results[0].matches.length).toBe(5);
+  });
+
+  it('handles merged messages (multi-id summary)', () => {
+    const input: Message[] = [
+      msg({ id: 'a', index: 0, role: 'user', content: PROSE }),
+      msg({ id: 'b', index: 1, role: 'user', content: PROSE }),
+    ];
+    const { messages: compressed, verbatim } = compressMessages(input, { recencyWindow: 0 });
+    // Both originals should be in verbatim and share the same summaryId
+    const results = searchVerbatim(compressed, verbatim, /general topics/);
+    expect(results.length).toBe(2); // one per original message
+    expect(results[0].summaryId).toBe(results[1].summaryId);
+    expect(results[0].summaryId).toMatch(/^uc_sum_/);
+  });
+
+  it('empty verbatim returns []', () => {
+    const compressed: Message[] = [
+      msg({ id: '1', index: 0, role: 'user', content: 'test' }),
+    ];
+    const results = searchVerbatim(compressed, {}, /test/);
+    expect(results).toEqual([]);
+  });
+
+  it('falls back to messageId when not found in compressed', () => {
+    // Verbatim with an entry not referenced in compressed messages
+    const verbatim: VerbatimMap = {
+      orphan: msg({ id: 'orphan', index: 0, role: 'user', content: 'find me here' }),
+    };
+    const results = searchVerbatim([], verbatim, /find me/);
+    expect(results.length).toBe(1);
+    expect(results[0].summaryId).toBe('orphan');
+    expect(results[0].messageId).toBe('orphan');
   });
 });

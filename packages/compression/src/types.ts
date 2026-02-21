@@ -1,9 +1,13 @@
+export type Summarizer = (text: string) => string | Promise<string>;
+
 export type CompressOptions = {
   preserve?: string[];
   mode?: 'lossless' | 'lossy';
   recencyWindow?: number;
   /** Context version at the time of compression. Flows into _uc_original.version and compression.original_version. */
   sourceVersion?: number;
+  /** LLM-powered summarizer. Only usable with compressMessagesAsync / compressToFitAsync. */
+  summarizer?: Summarizer;
 };
 
 export type VerbatimMap = Record<string, Message>;
@@ -46,6 +50,31 @@ export type ClassifyResult = {
   decision: 'T0' | 'T2' | 'T3';
   confidence: number;
   reasons: string[];
+};
+
+export type CompressToFitOptions = CompressOptions & {
+  /** Minimum recencyWindow to stop at. Default: 0. */
+  minRecencyWindow?: number;
+};
+
+export type CompressToFitResult = CompressResult & {
+  /** Whether the result fits within the token budget. */
+  fits: boolean;
+  /** Final recencyWindow used. */
+  recencyWindow: number;
+  /** Estimated token count of the result. */
+  tokenCount: number;
+};
+
+export type SearchResult = {
+  /** uc_sum_XXX covering this message. */
+  summaryId: string;
+  /** Original message ID. */
+  messageId: string;
+  /** Matched message content. */
+  content: string;
+  /** Regex match strings. */
+  matches: string[];
 };
 
 export type Message = {
