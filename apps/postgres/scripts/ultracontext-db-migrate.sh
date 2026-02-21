@@ -27,6 +27,19 @@ if ! docker compose ps --services --status running | grep -qx "postgres"; then
   docker compose up -d postgres
 fi
 
+echo "Waiting for postgres to become ready..."
+for _ in {1..30}; do
+  if docker compose exec -T postgres pg_isready -U "$DB_USER" -d "$DB_NAME" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+
+if ! docker compose exec -T postgres pg_isready -U "$DB_USER" -d "$DB_NAME" >/dev/null 2>&1; then
+  echo "Postgres did not become ready in time."
+  exit 1
+fi
+
 echo "Applying schema to database '$DB_NAME' as user '$DB_USER'..."
 docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$DB_USER" -d "$DB_NAME" < "$SCHEMA_FILE"
 
