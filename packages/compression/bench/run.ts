@@ -1,6 +1,6 @@
-import { compressMessages, compressToFit } from '../src/compress.js';
-import { expandMessages } from '../src/expand.js';
-import type { CompressToFitResult, Message } from '../src/types.js';
+import { compress } from '../src/compress.js';
+import { uncompress } from '../src/expand.js';
+import type { CompressResult, Message } from '../src/types.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -357,9 +357,9 @@ function run(): void {
   for (const scenario of scenarios) {
     const t0 = performance.now();
 
-    const cr = compressMessages(scenario.messages, { recencyWindow: 0 });
+    const cr = compress(scenario.messages, { recencyWindow: 0 });
 
-    const er = expandMessages(cr.messages, cr.verbatim);
+    const er = uncompress(cr.messages, cr.verbatim);
 
     const t1 = performance.now();
 
@@ -451,21 +451,21 @@ function run(): void {
   console.log('All scenarios passed round-trip verification.');
 
   // ---------------------------------------------------------------------------
-  // compressToFit scenario
+  // tokenBudget scenario
   // ---------------------------------------------------------------------------
 
   console.log();
-  console.log('compressToFit Benchmark');
+  console.log('tokenBudget Benchmark');
   console.log(sep);
 
   const deepMessages = deepConversation().messages;
   const tokenBudget = 2000;
   const t0 = performance.now();
-  const ctfResult: CompressToFitResult = compressToFit(deepMessages, tokenBudget);
+  const ctfResult: CompressResult = compress(deepMessages, { tokenBudget });
   const t1 = performance.now();
 
   // Round-trip check
-  const expanded = expandMessages(ctfResult.messages, ctfResult.verbatim);
+  const expanded = uncompress(ctfResult.messages, ctfResult.verbatim);
   const ctfRoundTrip =
     JSON.stringify(deepMessages) === JSON.stringify(expanded.messages) && expanded.missing_ids.length === 0
       ? 'PASS'
@@ -483,7 +483,7 @@ function run(): void {
   console.log(sep);
 
   if (ctfRoundTrip === 'FAIL') {
-    console.error('FAIL: compressToFit round-trip failed');
+    console.error('FAIL: tokenBudget round-trip failed');
     process.exit(1);
   }
 

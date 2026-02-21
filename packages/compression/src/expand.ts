@@ -1,4 +1,4 @@
-import type { ExpandOptions, ExpandResult, Message, SearchResult, VerbatimMap } from './types.js';
+import type { UncompressOptions, UncompressResult, Message, VerbatimMap } from './types.js';
 
 type StoreLookup = VerbatimMap | ((id: string) => Message | undefined);
 
@@ -11,7 +11,7 @@ function hasOriginal(msg: Message): msg is Message & { metadata: { _uc_original:
   return Array.isArray(orig?.ids) && (orig!.ids as unknown[]).length > 0;
 }
 
-function expandOnce(messages: Message[], store: StoreLookup): ExpandResult {
+function expandOnce(messages: Message[], store: StoreLookup): UncompressResult {
   const out: Message[] = [];
   let expanded = 0;
   let passthrough = 0;
@@ -66,11 +66,11 @@ function expandOnce(messages: Message[], store: StoreLookup): ExpandResult {
  * from a non-atomic write where compressed messages were persisted but
  * their verbatim originals were not.
  */
-export function expandMessages(
+export function uncompress(
   messages: Message[],
   store: StoreLookup,
-  options?: ExpandOptions,
-): ExpandResult {
+  options?: UncompressOptions,
+): UncompressResult {
   let result = expandOnce(messages, store);
 
   if (options?.recursive) {
@@ -91,55 +91,4 @@ export function expandMessages(
   }
 
   return result;
-}
-
-/**
- * Search the verbatim store for messages matching a pattern.
- * Returns matches with their summary IDs for provenance tracking.
- */
-export function searchVerbatim(
-  compressed: Message[],
-  verbatim: VerbatimMap,
-  pattern: RegExp | string,
-): SearchResult[] {
-  // Build inverse map: original message ID → summaryId
-  const idToSummary = new Map<string, string>();
-  for (const msg of compressed) {
-    if (!hasOriginal(msg)) continue;
-    const orig = msg.metadata._uc_original as { ids: string[]; summary_id?: string };
-    const summaryId = typeof orig.summary_id === 'string' ? orig.summary_id : '';
-    for (const id of orig.ids) {
-      idToSummary.set(id, summaryId);
-    }
-  }
-
-  // Always create a new RegExp to avoid mutating the caller's lastIndex
-  const re = typeof pattern === 'string'
-    ? new RegExp(pattern, 'g')
-    : new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : pattern.flags + 'g');
-
-  const results: SearchResult[] = [];
-  for (const [id, msg] of Object.entries(verbatim)) {
-    const content = typeof msg.content === 'string' ? msg.content : '';
-    if (!content) continue;
-
-    re.lastIndex = 0;
-    const matches: string[] = [];
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(content)) !== null) {
-      matches.push(m[0]);
-      if (m[0].length === 0) { re.lastIndex++; }
-    }
-
-    if (matches.length > 0) {
-      results.push({
-        summaryId: idToSummary.get(id) ?? id,
-        messageId: id,
-        content,
-        matches,
-      });
-    }
-  }
-
-  return results;
 }

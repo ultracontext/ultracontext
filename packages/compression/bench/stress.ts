@@ -5,8 +5,8 @@
  * Run: npx tsx bench/stress.ts
  */
 import { classifyMessage } from '../src/classify.js';
-import { compressMessages } from '../src/compress.js';
-import { expandMessages } from '../src/expand.js';
+import { compress } from '../src/compress.js';
+import { uncompress } from '../src/expand.js';
 import type { Message } from '../src/types.js';
 
 let nextId = 1;
@@ -150,7 +150,7 @@ test('C1: long prose tool result gets compressed', () => {
     'resource ownership.';
 
   const messages = [msg('tool', toolProse)];
-  const r = compressMessages(messages, { recencyWindow: 0 });
+  const r = compress(messages, { recencyWindow: 0 });
   const compressed = r.compression.messages_compressed > 0;
   const summary = r.messages[0].content?.startsWith('[summary:') ?? false;
   return {
@@ -188,7 +188,7 @@ test('D1: multi-paragraph prose compresses and captures emphasis from paragraph 
     'includes smoke tests and canary analysis to catch regressions early.';
 
   const messages = [msg('user', prose)];
-  const r = compressMessages(messages, { recencyWindow: 0 });
+  const r = compress(messages, { recencyWindow: 0 });
   const content = r.messages[0].content ?? '';
   const compressed = r.compression.messages_compressed > 0;
   const capturesEmphasis = content.includes('caching') || content.includes('cache');
@@ -227,8 +227,8 @@ test('E1: compress → expand round-trip on mixed tool conversation', () => {
     msg('assistant', 'Happy to help!'),
   ];
 
-  const cr = compressMessages(input, { recencyWindow: 0 });
-  const er = expandMessages(cr.messages, cr.verbatim);
+  const cr = compress(input, { recencyWindow: 0 });
+  const er = uncompress(cr.messages, cr.verbatim);
 
   const roundTrip = JSON.stringify(er.messages) === JSON.stringify(input);
   const noMissing = er.missing_ids.length === 0;

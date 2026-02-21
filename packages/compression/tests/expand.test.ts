@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { compressMessages } from '../src/compress.js';
-import { expandMessages, searchVerbatim } from '../src/expand.js';
-import type { Message, VerbatimMap } from '../src/types.js';
+import { compress } from '../src/compress.js';
+import { uncompress } from '../src/expand.js';
+import type { Message } from '../src/types.js';
 
 function msg(overrides: Partial<Message> & { id: string; index: number }): Message {
   return { role: 'user', content: '', metadata: {}, ...overrides };
@@ -9,8 +9,8 @@ function msg(overrides: Partial<Message> & { id: string; index: number }): Messa
 
 const PROSE = 'This is a long message about general topics that could be compressed. '.repeat(5);
 
-describe('expandMessages', () => {
-  it('roundtrip: compress then expand restores exact input', () => {
+describe('uncompress', () => {
+  it('roundtrip: compress then uncompress restores exact input', () => {
     const codeProse = 'This is a detailed explanation of how the authentication system works and integrates with the session manager. '.repeat(3);
     const input: Message[] = [
       msg({ id: 'sys', index: 0, role: 'system', content: 'System prompt.' }),
@@ -18,10 +18,10 @@ describe('expandMessages', () => {
       msg({ id: 'a1', index: 2, role: 'assistant', content: `${codeProse}\n\n\`\`\`ts\nconst x = 1;\n\`\`\`` }),
       msg({ id: 'u2', index: 3, role: 'user', content: 'Short.' }),
     ];
-    const compressed = compressMessages(input, { recencyWindow: 0 });
+    const compressed = compress(input, { recencyWindow: 0 });
     expect(compressed.compression.messages_compressed).toBeGreaterThan(0);
 
-    const expanded = expandMessages(compressed.messages, compressed.verbatim);
+    const expanded = uncompress(compressed.messages, compressed.verbatim);
     expect(expanded.messages).toEqual(input);
     expect(expanded.missing_ids).toEqual([]);
   });
@@ -31,8 +31,8 @@ describe('expandMessages', () => {
       msg({ id: '1', index: 0, role: 'system', content: 'System prompt.' }),
       msg({ id: '2', index: 1, role: 'user', content: 'Short.' }),
     ];
-    const compressed = compressMessages(input);
-    const expanded = expandMessages(compressed.messages, compressed.verbatim);
+    const compressed = compress(input);
+    const expanded = uncompress(compressed.messages, compressed.verbatim);
     expect(expanded.messages).toEqual(input);
     expect(expanded.messages_expanded).toBe(0);
     expect(expanded.messages_passthrough).toBe(2);
@@ -43,10 +43,10 @@ describe('expandMessages', () => {
       msg({ id: 'a', index: 0, role: 'user', content: PROSE }),
       msg({ id: 'b', index: 1, role: 'user', content: PROSE }),
     ];
-    const compressed = compressMessages(input, { recencyWindow: 0 });
+    const compressed = compress(input, { recencyWindow: 0 });
     expect(compressed.messages.length).toBe(1);
 
-    const expanded = expandMessages(compressed.messages, compressed.verbatim);
+    const expanded = uncompress(compressed.messages, compressed.verbatim);
     expect(expanded.messages.length).toBe(2);
     expect(expanded.messages[0].id).toBe('a');
     expect(expanded.messages[1].id).toBe('b');
@@ -54,7 +54,7 @@ describe('expandMessages', () => {
   });
 
   it('empty input returns empty output', () => {
-    const result = expandMessages([], {});
+    const result = uncompress([], {});
     expect(result.messages).toEqual([]);
     expect(result.messages_expanded).toBe(0);
     expect(result.messages_passthrough).toBe(0);
@@ -62,8 +62,6 @@ describe('expandMessages', () => {
   });
 
   it('non-recursive stops after one expansion layer', () => {
-    // Manually construct a two-layer nesting:
-    // outer message points to "mid" which itself has _uc_original pointing to "deep"
     const deepOriginal: Message = msg({ id: 'deep', index: 0, role: 'user', content: 'Original deep content.' });
     const midMessage: Message = {
       ...msg({ id: 'mid', index: 0, role: 'user', content: '[summary: mid-level]' }),
@@ -76,16 +74,14 @@ describe('expandMessages', () => {
 
     const store = { mid: midMessage, deep: deepOriginal };
 
-    // Non-recursive: outer → mid, but mid still has _uc_original
-    const shallow = expandMessages([outerMessage], store);
+    const shallow = uncompress([outerMessage], store);
     expect(shallow.messages_expanded).toBe(1);
     expect(shallow.messages[0].id).toBe('mid');
     expect(shallow.messages[0].content).toBe('[summary: mid-level]');
     const hasMeta = !!(shallow.messages[0].metadata?._uc_original as { ids: string[] })?.ids?.length;
     expect(hasMeta).toBe(true);
 
-    // Recursive: outer → mid → deep
-    const deep = expandMessages([outerMessage], store, { recursive: true });
+    const deep = uncompress([outerMessage], store, { recursive: true });
     expect(deep.messages[0].id).toBe('deep');
     expect(deep.messages[0].content).toBe('Original deep content.');
     expect(deep.messages_expanded).toBe(2);
@@ -96,22 +92,19 @@ describe('expandMessages', () => {
       msg({ id: 'a', index: 0, role: 'user', content: PROSE }),
       msg({ id: 'b', index: 1, role: 'user', content: PROSE }),
     ];
-    const compressed = compressMessages(input, { recencyWindow: 0 });
+    const compressed = compress(input, { recencyWindow: 0 });
 
-    // Completely empty store — summary kept as fallback
-    const empty = expandMessages(compressed.messages, {});
+    const empty = uncompress(compressed.messages, {});
     expect(empty.missing_ids.sort()).toEqual(['a', 'b']);
     expect(empty.messages.length).toBe(1);
     expect(empty.messages[0].content).toMatch(/^\[summary:/);
 
-    // Partial store — found IDs expanded, missing reported
-    const partial = expandMessages(compressed.messages, { a: input[0] });
+    const partial = uncompress(compressed.messages, { a: input[0] });
     expect(partial.messages.find(m => m.id === 'a')).toBeDefined();
     expect(partial.missing_ids).toContain('b');
   });
 
   it('recursive expansion stops on circular references (depth cap)', () => {
-    // Create circular: A's original is B, B's original is A
     const msgA: Message = {
       ...msg({ id: 'a', index: 0, role: 'user', content: '[summary: A]' }),
       metadata: { _uc_original: { ids: ['b'], summary_id: 'uc_sum_a', version: 0 } },
@@ -122,11 +115,50 @@ describe('expandMessages', () => {
     };
     const store = { a: msgA, b: msgB };
 
-    // This would infinite-loop without the depth cap
-    const result = expandMessages([msgA], store, { recursive: true });
-    // Should terminate — exact output depends on depth cap, but it must not hang
+    const result = uncompress([msgA], store, { recursive: true });
     expect(result.messages.length).toBeGreaterThan(0);
     expect(result.messages_expanded).toBeGreaterThan(0);
+  });
+
+  it('function store works without recursive option', () => {
+    const input: Message[] = [
+      msg({ id: 'a', index: 0, role: 'user', content: PROSE }),
+    ];
+    const compressed = compress(input, { recencyWindow: 0 });
+    expect(compressed.compression.messages_compressed).toBe(1);
+
+    const lookupFn = (id: string) => compressed.verbatim[id];
+    const expanded = uncompress(compressed.messages, lookupFn);
+    expect(expanded.messages.length).toBe(1);
+    expect(expanded.messages[0].id).toBe('a');
+    expect(expanded.messages[0].content).toBe(PROSE);
+    expect(expanded.messages_expanded).toBe(1);
+    expect(expanded.missing_ids).toEqual([]);
+  });
+
+  it('recursive expansion respects MAX_DEPTH and terminates', () => {
+    // Build a chain of 20 messages where each points to the next.
+    // The initial expandOnce runs before the loop, then the loop runs
+    // up to MAX_DEPTH=10 more times, so max total expansions = 11.
+    const chain: Message[] = [];
+    for (let i = 0; i < 20; i++) {
+      chain.push({
+        ...msg({ id: `m${i}`, index: 0, role: 'user', content: `[summary: level ${i}]` }),
+        metadata: i < 19
+          ? { _uc_original: { ids: [`m${i + 1}`], summary_id: `uc_sum_${i}`, version: 0 } }
+          : {},
+      });
+    }
+    const store: Record<string, Message> = {};
+    for (const m of chain) { store[m.id] = m; }
+
+    const result = uncompress([chain[0]], store, { recursive: true });
+    // 1 initial expansion + 10 loop iterations = 11 max
+    expect(result.messages_expanded).toBeLessThanOrEqual(11);
+    // Should NOT have reached the leaf (m19) since depth cap stops well before
+    expect(result.messages[0].id).not.toBe('m19');
+    // Should have stopped at m11 (0→1 initial, then 1→2, 2→3, ..., 10→11 in loop)
+    expect(result.messages[0].id).toBe('m11');
   });
 
   it('recursive expansion with function store restores double-compressed messages', () => {
@@ -134,144 +166,20 @@ describe('expandMessages', () => {
       msg({ id: 'a', index: 0, role: 'user', content: PROSE }),
       msg({ id: 'b', index: 1, role: 'user', content: PROSE }),
     ];
-    const first = compressMessages(input, { recencyWindow: 0 });
+    const first = compress(input, { recencyWindow: 0 });
 
     const round2Input: Message[] = [
       ...first.messages,
       msg({ id: 'c', index: 2, role: 'user', content: PROSE }),
     ];
-    const second = compressMessages(round2Input, { recencyWindow: 0 });
+    const second = compress(round2Input, { recencyWindow: 0 });
     const combined = { ...first.verbatim, ...second.verbatim };
 
-    // Function store variant
     const lookupFn = (id: string) => combined[id];
-    const deep = expandMessages(second.messages, lookupFn, { recursive: true });
+    const deep = uncompress(second.messages, lookupFn, { recursive: true });
     expect(deep.messages.length).toBe(3);
     expect(deep.messages.map(m => m.id)).toEqual(['a', 'b', 'c']);
     expect(deep.messages[0].content).toBe(PROSE);
     expect(deep.missing_ids).toEqual([]);
-  });
-});
-
-describe('searchVerbatim', () => {
-  it('returns matches grouped by summaryId', () => {
-    const input: Message[] = [
-      msg({ id: 'u1', index: 0, role: 'user', content: PROSE }),
-      msg({ id: 'u2', index: 1, role: 'user', content: PROSE }),
-    ];
-    const { messages: compressed, verbatim } = compressMessages(input, { recencyWindow: 0 });
-    const results = searchVerbatim(compressed, verbatim, /general topics/);
-    expect(results.length).toBeGreaterThan(0);
-    expect(results[0].summaryId).toMatch(/^uc_sum_/);
-    expect(results[0].matches).toContain('general topics');
-  });
-
-  it('returns [] when no matches', () => {
-    const input: Message[] = [
-      msg({ id: 'u1', index: 0, role: 'user', content: PROSE }),
-    ];
-    const { messages: compressed, verbatim } = compressMessages(input, { recencyWindow: 0 });
-    const results = searchVerbatim(compressed, verbatim, /ZZZZNOTFOUND/);
-    expect(results).toEqual([]);
-  });
-
-  it('works with string pattern', () => {
-    const input: Message[] = [
-      msg({ id: 'u1', index: 0, role: 'user', content: PROSE }),
-    ];
-    const { messages: compressed, verbatim } = compressMessages(input, { recencyWindow: 0 });
-    const results = searchVerbatim(compressed, verbatim, 'general topics');
-    expect(results.length).toBe(1);
-    expect(results[0].matches.length).toBeGreaterThan(0);
-  });
-
-  it('works with RegExp with flags (case-insensitive)', () => {
-    const input: Message[] = [
-      msg({ id: 'u1', index: 0, role: 'user', content: PROSE }),
-    ];
-    const { messages: compressed, verbatim } = compressMessages(input, { recencyWindow: 0 });
-    const results = searchVerbatim(compressed, verbatim, /GENERAL TOPICS/gi);
-    expect(results.length).toBe(1);
-    expect(results[0].matches[0]).toBe('general topics');
-  });
-
-  it('multiple matches per message', () => {
-    const input: Message[] = [
-      msg({ id: 'u1', index: 0, role: 'user', content: PROSE }),
-    ];
-    const { messages: compressed, verbatim } = compressMessages(input, { recencyWindow: 0 });
-    // PROSE repeats "general topics" 5 times
-    const results = searchVerbatim(compressed, verbatim, /general topics/g);
-    expect(results.length).toBe(1);
-    expect(results[0].matches.length).toBe(5);
-  });
-
-  it('handles merged messages (multi-id summary)', () => {
-    const input: Message[] = [
-      msg({ id: 'a', index: 0, role: 'user', content: PROSE }),
-      msg({ id: 'b', index: 1, role: 'user', content: PROSE }),
-    ];
-    const { messages: compressed, verbatim } = compressMessages(input, { recencyWindow: 0 });
-    // Both originals should be in verbatim and share the same summaryId
-    const results = searchVerbatim(compressed, verbatim, /general topics/);
-    expect(results.length).toBe(2); // one per original message
-    expect(results[0].summaryId).toBe(results[1].summaryId);
-    expect(results[0].summaryId).toMatch(/^uc_sum_/);
-  });
-
-  it('empty verbatim returns []', () => {
-    const compressed: Message[] = [
-      msg({ id: '1', index: 0, role: 'user', content: 'test' }),
-    ];
-    const results = searchVerbatim(compressed, {}, /test/);
-    expect(results).toEqual([]);
-  });
-
-  it('adds g flag to non-global regex without mutating original', () => {
-    const input: Message[] = [
-      msg({ id: 'u1', index: 0, role: 'user', content: PROSE }),
-    ];
-    const { messages: compressed, verbatim } = compressMessages(input, { recencyWindow: 0 });
-    const re = /general topics/i; // non-global
-    const results = searchVerbatim(compressed, verbatim, re);
-    expect(results.length).toBe(1);
-    expect(results[0].matches.length).toBeGreaterThan(0);
-    // Original regex should not be mutated
-    expect(re.global).toBe(false);
-    expect(re.lastIndex).toBe(0);
-  });
-
-  it('handles zero-length match patterns', () => {
-    const verbatim: VerbatimMap = {
-      x: msg({ id: 'x', index: 0, role: 'user', content: 'abc' }),
-    };
-    // Lookahead produces zero-length matches
-    const results = searchVerbatim([], verbatim, /(?=a)/g);
-    expect(results.length).toBe(1);
-    expect(results[0].matches.length).toBe(1);
-    expect(results[0].matches[0]).toBe('');
-  });
-
-  it('does not mutate caller regex lastIndex', () => {
-    const input: Message[] = [
-      msg({ id: 'u1', index: 0, role: 'user', content: PROSE }),
-    ];
-    const { messages: compressed, verbatim } = compressMessages(input, { recencyWindow: 0 });
-    const re = /general/g;
-    re.lastIndex = 5; // caller set lastIndex
-    searchVerbatim(compressed, verbatim, re);
-    // Since we clone, the original regex is untouched
-    expect(re.lastIndex).toBe(5);
-  });
-
-  it('falls back to messageId when not found in compressed', () => {
-    // Verbatim with an entry not referenced in compressed messages
-    const verbatim: VerbatimMap = {
-      orphan: msg({ id: 'orphan', index: 0, role: 'user', content: 'find me here' }),
-    };
-    const results = searchVerbatim([], verbatim, /find me/);
-    expect(results.length).toBe(1);
-    expect(results[0].summaryId).toBe('orphan');
-    expect(results[0].messageId).toBe('orphan');
   });
 });

@@ -32,11 +32,10 @@ Zero dependencies. Works in Node, Deno, Bun, and edge runtimes.
 
 Context is the RAM of LLMs. As it grows, model attention spreads thin (**context rot**). Compression keeps the signal-to-noise ratio high by summarizing prose while preserving code, structured data, and technical content verbatim.
 
-- **Lossless round-trip** — `compress` then `expand` restores byte-identical originals
+- **Lossless round-trip** — `compress` then `uncompress` restores byte-identical originals
 - **Code-aware** — Fences, SQL, JSON, API keys, URLs, and file paths stay verbatim
 - **LLM-powered** — Plug in any summarizer (Claude, GPT, Ollama, etc.) for higher-quality summaries
-- **Budget-driven** — `compressToFit` automatically finds the right compression level for a token budget
-- **Searchable** — `searchVerbatim` finds original messages by regex after compression
+- **Budget-driven** — `tokenBudget` option automatically finds the right compression level
 - **Zero dependencies** — Pure TypeScript, no crypto, no network calls
 
 <br />
@@ -52,16 +51,16 @@ npm install @ultracontext/compression
 ## Quick Start
 
 ```ts
-import { compressMessages, expandMessages } from '@ultracontext/compression';
+import { compress, uncompress } from '@ultracontext/compression';
 
 // compress — prose gets summarized, code stays verbatim
-const { messages, verbatim, compression } = compressMessages(messages, {
+const { messages, verbatim, compression } = compress(messages, {
   preserve: ['system'],  // roles to never compress
   recencyWindow: 4,      // protect the last N messages
 });
 
-// expand — restore originals from the verbatim store
-const { messages: originals } = expandMessages(messages, verbatim);
+// uncompress — restore originals from the verbatim store
+const { messages: originals } = uncompress(messages, verbatim);
 ```
 
 **Important:** `messages` and `verbatim` must be persisted together atomically. Writing compressed messages without their verbatim originals causes irrecoverable data loss.
@@ -70,17 +69,25 @@ const { messages: originals } = expandMessages(messages, verbatim);
 
 ## API
 
-### compressMessages
+### compress
 
-Deterministic compression. Summarizes prose, preserves code and structured content.
+Deterministic compression by default. Returns a `Promise` when a `summarizer` is provided.
 
 ```ts
-import { compressMessages } from '@ultracontext/compression';
+import { compress } from '@ultracontext/compression';
 
-const result = compressMessages(messages, {
-  preserve: ['system'],   // roles to never compress (default: ['system'])
-  recencyWindow: 4,        // protect last N messages (default: 4)
-  sourceVersion: 1,        // version tag for provenance tracking
+// Sync — no summarizer
+const result = compress(messages, {
+  preserve: ['system'],
+  recencyWindow: 4,
+  sourceVersion: 1,
+});
+
+// Async — with LLM summarizer
+const result = await compress(messages, {
+  summarizer: async (text) => {
+    return await myLlm.summarize(text);
+  },
 });
 
 result.messages;                        // compressed message array
@@ -91,134 +98,83 @@ result.compression.messages_compressed; // how many were compressed
 result.compression.messages_preserved;  // how many were kept as-is
 ```
 
-### compressMessagesAsync
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `preserve` | `string[]` | `['system']` | Roles to never compress |
+| `recencyWindow` | `number` | `4` | Protect the last N messages from compression |
+| `sourceVersion` | `number` | `0` | Version tag for provenance tracking |
+| `summarizer` | `Summarizer` | — | LLM-powered summarizer. When provided, `compress()` returns a `Promise` |
+| `tokenBudget` | `number` | — | Target token count. When set, binary-searches `recencyWindow` to fit |
+| `minRecencyWindow` | `number` | `0` | Floor for `recencyWindow` when using `tokenBudget` |
 
-Same as `compressMessages`, but supports an LLM-powered summarizer for higher-quality summaries.
+#### Summarizer fallback
 
-Three-level fallback per message:
-1. **LLM summarizer** — uses the result if shorter than the original
-2. **Deterministic** — sentence extraction + entity preservation
-3. **Size guard** — preserves original if compression would increase size
+When a `summarizer` is provided, each message goes through a three-level fallback:
+
+1. **LLM summarizer** — uses the result if it is non-empty **and** strictly shorter than the input
+2. **Deterministic** — sentence extraction + entity preservation (if the LLM threw, returned empty, or returned equal/longer text)
+3. **Size guard** — preserves original verbatim if even deterministic compression would increase size
+
+#### Token budget
+
+Use `tokenBudget` to automatically find the least compression needed to fit a token limit. The engine binary-searches `recencyWindow` internally.
 
 ```ts
-import { compressMessagesAsync } from '@ultracontext/compression';
+const result = compress(messages, {
+  tokenBudget: 4000,
+  minRecencyWindow: 2,
+});
 
-const result = await compressMessagesAsync(messages, {
-  recencyWindow: 4,
-  summarizer: async (text) => {
-    // your LLM call here — return a shorter string
-    return await myLlm.summarize(text);
-  },
+result.fits;       // true if result fits within budget
+result.tokenCount; // estimated token count
+
+// With LLM summarizer for tighter fits
+const result = await compress(messages, {
+  tokenBudget: 4000,
+  summarizer: mySummarizer,
 });
 ```
 
-The sync `compressMessages` throws if you pass a `summarizer` to prevent silent misconfiguration.
+### uncompress
 
-### expandMessages
+Restore originals from the verbatim store. Always sync. Supports recursive expansion for multi-layer compression (up to 10 levels deep).
 
-Restore originals from the verbatim store. Supports recursive expansion for multi-layer compression.
+The second argument accepts either a plain `VerbatimMap` object or a lookup function `(id: string) => Message | undefined` — useful when verbatim data lives in a database rather than in-memory.
 
 ```ts
-import { expandMessages } from '@ultracontext/compression';
+import { uncompress } from '@ultracontext/compression';
 
-const { messages, missing_ids } = expandMessages(compressed, verbatim);
+const { messages, missing_ids } = uncompress(compressed, verbatim);
 
 // recursive — follows chains of compressed-then-recompressed messages
-const deep = expandMessages(compressed, verbatim, { recursive: true });
+const deep = uncompress(compressed, verbatim, { recursive: true });
+
+// function store — look up originals from a database
+const result = uncompress(compressed, (id) => db.getMessageById(id));
 
 // missing_ids.length > 0 means data loss (partial write)
 ```
 
-### compressToFit
-
-Budget-driven compression. Automatically searches for the least compression needed to fit a token budget.
-
-```ts
-import { compressToFit } from '@ultracontext/compression';
-
-const result = compressToFit(messages, 4000, {
-  minRecencyWindow: 2,  // never compress the last 2 messages
-});
-
-result.fits;          // true if result fits within budget
-result.recencyWindow; // final recencyWindow used
-result.tokenCount;    // estimated token count
-result.messages;      // compressed messages
-result.verbatim;      // verbatim store
-```
-
-Use `compressToFitAsync` to combine budget-driven compression with an LLM summarizer:
-
-```ts
-import { compressToFitAsync } from '@ultracontext/compression';
-
-const result = await compressToFitAsync(messages, 4000, {
-  summarizer: mySummarizer,
-  minRecencyWindow: 2,
-});
-```
-
-### searchVerbatim
-
-Search the verbatim store for original messages matching a pattern.
-
-```ts
-import { searchVerbatim } from '@ultracontext/compression';
-
-const results = searchVerbatim(compressed, verbatim, /authentication/i);
-
-for (const hit of results) {
-  hit.summaryId;  // uc_sum_XXX — which summary covers this message
-  hit.messageId;  // original message ID
-  hit.content;    // full original message content
-  hit.matches;    // matched strings
-}
-```
-
-Accepts `RegExp` or `string`. Adds the `g` flag automatically if missing.
-
-### estimateTokens
-
-Quick token estimate for a single message (~3.5 chars/token).
-
-```ts
-import { estimateTokens } from '@ultracontext/compression';
-
-const tokens = estimateTokens(message);
-```
-
-### classifyMessage
-
-Classify a message's content as structured (T0), mixed (T2), or prose (T3).
-
-```ts
-import { classifyMessage } from '@ultracontext/compression';
-
-const { decision, confidence, reasons } = classifyMessage(content);
-// decision: 'T0' (preserve) | 'T2' (mixed) | 'T3' (compressible)
-```
-
 ### createSummarizer
 
-Create an LLM-powered summarizer with an optimized prompt template. Use `createSummarizer` for optimized prompts, or write your own `Summarizer` function for full control.
+Create an LLM-powered summarizer with an optimized prompt template.
 
 ```ts
-import { createSummarizer, compressMessagesAsync } from '@ultracontext/compression';
+import { createSummarizer, compress } from '@ultracontext/compression';
 
 const summarizer = createSummarizer(
   async (prompt) => {
-    // call any LLM — just return the response text
     return await myLlm.complete(prompt);
   },
-  { maxResponseTokens: 300 },  // optional, 300 is the default
+  { maxResponseTokens: 300 },
 );
 
-const result = await compressMessagesAsync(messages, { summarizer });
+const result = await compress(messages, { summarizer });
 ```
 
 The prompt preserves code references, file paths, function/variable names, URLs, API keys, error messages, numbers, and technical decisions — stripping only filler and redundant explanations.
 
-For domain-specific compression, use `systemPrompt` to inject context that gets prepended to the built-in rules:
+For domain-specific compression, use `systemPrompt` to inject context:
 
 ```ts
 const summarizer = createSummarizer(callLlm, {
@@ -235,14 +191,14 @@ const summarizer = createSummarizer(callLlm, {
 
 ### createEscalatingSummarizer
 
-Three-level escalation summarizer implementing the LCM approach (normal → aggressive → deterministic fallback):
+Three-level escalation summarizer (normal → aggressive → deterministic fallback):
 
 1. **Level 1: Normal** — concise prose summary via the LLM
-2. **Level 2: Aggressive** — terse bullet points at half the token budget (if Level 1 fails, returns empty, or returns longer text)
-3. **Level 3: Deterministic** — sentence extraction fallback via `withFallback` in the compression pipeline (if Level 2 also fails)
+2. **Level 2: Aggressive** — terse bullet points at half the token budget (if Level 1 fails or returns longer text)
+3. **Level 3: Deterministic** — sentence extraction fallback via the compression pipeline
 
 ```ts
-import { createEscalatingSummarizer, compressMessagesAsync } from '@ultracontext/compression';
+import { createEscalatingSummarizer, compress } from '@ultracontext/compression';
 
 const summarizer = createEscalatingSummarizer(
   async (prompt) => myLlm.complete(prompt),
@@ -253,7 +209,7 @@ const summarizer = createEscalatingSummarizer(
   },
 );
 
-const result = await compressMessagesAsync(messages, { summarizer });
+const result = await compress(messages, { summarizer });
 ```
 
 | Option | Type | Default | Description |
@@ -274,7 +230,7 @@ The `summarizer` option accepts any function with the signature `(text: string) 
 
 ```ts
 import Anthropic from '@anthropic-ai/sdk';
-import { createSummarizer, compressMessagesAsync } from '@ultracontext/compression';
+import { createSummarizer, compress } from '@ultracontext/compression';
 
 const anthropic = new Anthropic();
 
@@ -287,14 +243,14 @@ const summarizer = createSummarizer(async (prompt) => {
   return msg.content[0].type === 'text' ? msg.content[0].text : '';
 });
 
-const result = await compressMessagesAsync(messages, { summarizer });
+const result = await compress(messages, { summarizer });
 ```
 
 ### OpenAI
 
 ```ts
 import OpenAI from 'openai';
-import { createSummarizer, compressMessagesAsync } from '@ultracontext/compression';
+import { createSummarizer, compress } from '@ultracontext/compression';
 
 const openai = new OpenAI();
 
@@ -307,14 +263,14 @@ const summarizer = createSummarizer(async (prompt) => {
   return res.choices[0].message.content ?? '';
 });
 
-const result = await compressMessagesAsync(messages, { summarizer });
+const result = await compress(messages, { summarizer });
 ```
 
 ### Google Gemini
 
 ```ts
 import { GoogleGenAI } from '@google/genai';
-import { createSummarizer, compressMessagesAsync } from '@ultracontext/compression';
+import { createSummarizer, compress } from '@ultracontext/compression';
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
@@ -326,7 +282,7 @@ const summarizer = createSummarizer(async (prompt) => {
   return res.text ?? '';
 });
 
-const result = await compressMessagesAsync(messages, { summarizer });
+const result = await compress(messages, { summarizer });
 ```
 
 ### xAI (Grok)
@@ -335,7 +291,7 @@ xAI's API is OpenAI-compatible — use the OpenAI SDK with a different base URL:
 
 ```ts
 import OpenAI from 'openai';
-import { createSummarizer, compressMessagesAsync } from '@ultracontext/compression';
+import { createSummarizer, compress } from '@ultracontext/compression';
 
 const xai = new OpenAI({
   apiKey: process.env.XAI_API_KEY,
@@ -351,13 +307,13 @@ const summarizer = createSummarizer(async (prompt) => {
   return res.choices[0].message.content ?? '';
 });
 
-const result = await compressMessagesAsync(messages, { summarizer });
+const result = await compress(messages, { summarizer });
 ```
 
 ### Ollama
 
 ```ts
-import { createSummarizer, compressMessagesAsync } from '@ultracontext/compression';
+import { createSummarizer, compress } from '@ultracontext/compression';
 
 const summarizer = createSummarizer(async (prompt) => {
   const res = await fetch('http://localhost:11434/api/generate', {
@@ -369,7 +325,7 @@ const summarizer = createSummarizer(async (prompt) => {
   return json.response;
 });
 
-const result = await compressMessagesAsync(messages, { summarizer });
+const result = await compress(messages, { summarizer });
 ```
 
 ### Any Provider
@@ -428,6 +384,26 @@ Messages are preserved (never compressed) when any of these apply:
 7. **Structured content** — classifier detects T0 (code, SQL, keys, etc.)
 8. **Valid JSON** — parseable JSON content
 9. **Size guard** — compressed output would be larger than original
+
+<br />
+
+## Provenance Metadata
+
+Every compressed message carries a `_uc_original` object in its `metadata` field:
+
+```ts
+{
+  ids: string[];          // original message IDs this summary covers
+  summary_id: string;     // deterministic ID (uc_sum_<hash>) for this summary
+  parent_ids?: string[];  // summary_ids of prior compressions (provenance chain)
+  version: number;        // sourceVersion at time of compression
+}
+```
+
+- **`ids`** — always an array, even for single messages. These are the keys into the `verbatim` map.
+- **`summary_id`** — derived from `ids` via djb2 hash. Deterministic: same input IDs always produce the same summary_id.
+- **`parent_ids`** — present only when compressing already-compressed messages (re-compression). Forms a chain for multi-layer provenance tracking.
+- **`version`** — mirrors `CompressOptions.sourceVersion`. Defaults to `0`.
 
 <br />
 

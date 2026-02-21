@@ -1,18 +1,18 @@
-export { classifyMessage } from './classify.js';
-export { compressMessages, compressMessagesAsync, compressToFit, compressToFitAsync, estimateTokens } from './compress.js';
-export { expandMessages, searchVerbatim } from './expand.js';
+// Primary
+export { compress } from './compress.js';
+export { uncompress } from './expand.js';
+
+// Helpers (LLM integration)
 export { createSummarizer, createEscalatingSummarizer } from './summarizer.js';
+
+// Types
 export type {
-  ClassifyResult,
   CompressOptions,
   CompressResult,
-  CompressToFitOptions,
-  CompressToFitResult,
   CreateSummarizerOptions,
-  ExpandOptions,
-  ExpandResult,
   Message,
-  SearchResult,
   Summarizer,
+  UncompressOptions,
+  UncompressResult,
   VerbatimMap,
 } from './types.js';

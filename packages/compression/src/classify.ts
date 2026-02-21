@@ -1,4 +1,8 @@
-import type { ClassifyResult } from './types.js';
+export type ClassifyResult = {
+  decision: 'T0' | 'T2' | 'T3';
+  confidence: number;
+  reasons: string[];
+};
 
 // -- Head 1: Structural Pattern Detector (SPD) --
 

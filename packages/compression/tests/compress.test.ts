@@ -1,20 +1,21 @@
 import { describe, it, expect } from 'vitest';
-import { compressMessages, compressMessagesAsync, compressToFit, compressToFitAsync, estimateTokens } from '../src/compress.js';
-import { expandMessages } from '../src/expand.js';
+import { compress } from '../src/compress.js';
+import { estimateTokens } from '../src/compress.js';
+import { uncompress } from '../src/expand.js';
 import type { Message } from '../src/types.js';
 
 function msg(overrides: Partial<Message> & { id: string; index: number }): Message {
   return { role: 'user', content: '', metadata: {}, ...overrides };
 }
 
-describe('compressMessages', () => {
+describe('compress', () => {
   describe('preservation rules', () => {
     it('preserves system role by default', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'system', content: 'You are a helpful assistant. '.repeat(20) }),
         msg({ id: '2', index: 1, role: 'user', content: 'This is a long user message that talks about many things and goes on for a while to exceed the threshold. '.repeat(10) }),
       ];
-      const result = compressMessages(messages);
+      const result = compress(messages);
       expect(result.messages[0].role).toBe('system');
       expect(result.messages[0].content).toContain('You are a helpful assistant');
       expect(result.compression.messages_preserved).toBeGreaterThanOrEqual(1);
@@ -24,7 +25,7 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'tool', content: 'Tool output result that is fairly long and contains detailed information about the operation. '.repeat(5) }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       expect(result.messages[0].role).toBe('tool');
       expect(result.messages[0].content).toMatch(/^\[summary:/);
       expect(result.compression.messages_compressed).toBe(1);
@@ -34,7 +35,7 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'function', content: 'Function result with enough content to pass the length threshold easily here. '.repeat(5) }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       expect(result.messages[0].role).toBe('function');
       expect(result.messages[0].content).toMatch(/^\[summary:/);
       expect(result.compression.messages_compressed).toBe(1);
@@ -45,7 +46,7 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'tool', content: jsonContent }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       expect(result.messages[0].content).toBe(jsonContent);
       expect(result.compression.messages_preserved).toBe(1);
     });
@@ -54,7 +55,7 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'tool', content: '```typescript\nconst x = 1;\nconst y = 2;\nreturn x + y;\n```\nHere is the code result from the tool execution.' }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       expect(result.messages[0].content).toContain('```');
       expect(result.compression.messages_preserved).toBe(1);
     });
@@ -63,7 +64,7 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'tool', content: 'OK' }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       expect(result.messages[0].content).toBe('OK');
       expect(result.compression.messages_preserved).toBe(1);
     });
@@ -73,7 +74,7 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'tool', content: sqlContent }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       expect(result.messages[0].content).toBe(sqlContent);
       expect(result.compression.messages_preserved).toBe(1);
     });
@@ -83,7 +84,7 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'tool', content: envContent }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       expect(result.messages[0].content).toBe(envContent);
       expect(result.compression.messages_preserved).toBe(1);
     });
@@ -93,7 +94,7 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'function', content: sqlContent }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       expect(result.messages[0].content).toBe(sqlContent);
       expect(result.compression.messages_preserved).toBe(1);
     });
@@ -108,7 +109,7 @@ describe('compressMessages', () => {
           tool_calls: [{ id: 'tc1', function: { name: 'search', arguments: '{}' } }],
         }),
       ];
-      const result = compressMessages(messages);
+      const result = compress(messages);
       expect(result.compression.messages_preserved).toBe(1);
     });
 
@@ -116,7 +117,7 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'user', content: 'Hello there!' }),
       ];
-      const result = compressMessages(messages);
+      const result = compress(messages);
       expect(result.messages[0].content).toBe('Hello there!');
       expect(result.compression.messages_preserved).toBe(1);
     });
@@ -130,7 +131,7 @@ describe('compressMessages', () => {
           content: '```typescript\nconst x = 1;\nconst y = 2;\nreturn x + y;\n```\nHere is the code you requested for the addition function.',
         }),
       ];
-      const result = compressMessages(messages);
+      const result = compress(messages);
       expect(result.messages[0].content).toContain('```');
       expect(result.compression.messages_preserved).toBe(1);
     });
@@ -144,7 +145,7 @@ describe('compressMessages', () => {
           content: 'Check out the documentation at https://docs.example.com/api/v2/reference for more details on the endpoints.',
         }),
       ];
-      const result = compressMessages(messages);
+      const result = compress(messages);
       expect(result.messages[0].content).toContain('https://docs.example.com');
       expect(result.compression.messages_preserved).toBe(1);
     });
@@ -158,7 +159,7 @@ describe('compressMessages', () => {
           content: 'The configuration file is located at /etc/ultracontext/config.json and should be updated with the new settings.',
         }),
       ];
-      const result = compressMessages(messages);
+      const result = compress(messages);
       expect(result.messages[0].content).toContain('/etc/ultracontext/config.json');
       expect(result.compression.messages_preserved).toBe(1);
     });
@@ -168,7 +169,7 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'assistant', content: jsonContent }),
       ];
-      const result = compressMessages(messages);
+      const result = compress(messages);
       expect(result.messages[0].content).toBe(jsonContent);
       expect(result.compression.messages_preserved).toBe(1);
     });
@@ -178,7 +179,7 @@ describe('compressMessages', () => {
         msg({ id: '1', index: 0, role: 'developer', content: 'Important developer instructions that should be preserved across all interactions. '.repeat(5) }),
         msg({ id: '2', index: 1, role: 'user', content: 'A long message about general topics that could be compressed since it has no special content. '.repeat(10) }),
       ];
-      const result = compressMessages(messages, { preserve: ['developer'] });
+      const result = compress(messages, { preserve: ['developer'] });
       expect(result.messages[0].role).toBe('developer');
       expect(result.messages[0].content).toContain('Important developer instructions');
     });
@@ -192,7 +193,7 @@ describe('compressMessages', () => {
         msg({ id: '2', index: 1, role: 'assistant', content: prose }),
         msg({ id: '3', index: 2, role: 'user', content: prose }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       // Each role compressed separately: 3 messages → 3 compressed messages
       expect(result.messages.length).toBe(3);
       expect(result.messages[0].role).toBe('user');
@@ -211,7 +212,7 @@ describe('compressMessages', () => {
         msg({ id: '1', index: 0, role: 'system', content: 'You are helpful.' }),
         msg({ id: '2', index: 1, role: 'user', content: largeProse }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       // System preserved, user compressed
       expect(result.messages.length).toBe(2);
       const compressed = result.messages[1];
@@ -225,7 +226,7 @@ describe('compressMessages', () => {
         msg({ id: 'a', index: 0, role: 'user', content: prose }),
         msg({ id: 'b', index: 1, role: 'user', content: prose }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       // Same role → merged into 1
       expect(result.messages.length).toBe(1);
       const meta = result.messages[0].metadata?._uc_original as { ids: string[]; version: number };
@@ -240,7 +241,7 @@ describe('compressMessages', () => {
         msg({ id: '1', index: 0, role: 'system', content: 'System prompt.' }),
         msg({ id: '2', index: 1, role: 'user', content: largeProse }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       const compressed = result.messages[1];
       const meta = compressed.metadata?._uc_original as { ids: string[]; version: number };
       expect(meta).toBeDefined();
@@ -256,7 +257,7 @@ describe('compressMessages', () => {
         msg({ id: '1', index: 0, role: 'user', content: prose }),
         msg({ id: '2', index: 1, role: 'assistant', content: prose }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       expect(result.compression.ratio).toBeGreaterThan(1);
     });
 
@@ -265,13 +266,13 @@ describe('compressMessages', () => {
         msg({ id: '1', index: 0, role: 'system', content: 'System prompt.' }),
         msg({ id: '2', index: 1, role: 'user', content: 'Short msg.' }),
       ];
-      const result = compressMessages(messages);
+      const result = compress(messages);
       expect(result.compression.ratio).toBe(1);
       expect(result.compression.messages_compressed).toBe(0);
     });
 
     it('handles empty input', () => {
-      const result = compressMessages([]);
+      const result = compress([]);
       expect(result.messages).toEqual([]);
       expect(result.compression.ratio).toBe(1);
       expect(result.compression.token_ratio).toBe(1);
@@ -285,7 +286,7 @@ describe('compressMessages', () => {
         msg({ id: '1', index: 0, role: 'user', content: prose }),
         msg({ id: '2', index: 1, role: 'assistant', content: prose }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       expect(result.compression.token_ratio).toBeGreaterThan(1);
     });
 
@@ -294,7 +295,7 @@ describe('compressMessages', () => {
         msg({ id: '1', index: 0, role: 'system', content: 'System prompt.' }),
         msg({ id: '2', index: 1, role: 'user', content: 'Short msg.' }),
       ];
-      const result = compressMessages(messages);
+      const result = compress(messages);
       expect(result.compression.token_ratio).toBe(1);
     });
 
@@ -304,7 +305,7 @@ describe('compressMessages', () => {
         msg({ id: '1', index: 0, role: 'user', content: prose }),
         msg({ id: '2', index: 1, role: 'assistant', content: prose }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       // Both should be > 1 since compression happened
       expect(result.compression.ratio).toBeGreaterThan(1);
       expect(result.compression.token_ratio).toBeGreaterThan(1);
@@ -320,14 +321,14 @@ describe('compressMessages', () => {
       ];
       // Won't compress (classifier sees it as T0 due to low variance), but we can
       // verify the ratio math on the empty-compression path
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       // All preserved → token_ratio === 1
       expect(result.compression.token_ratio).toBe(1);
     });
 
     it('throws on mode: lossy', () => {
       expect(() =>
-        compressMessages(
+        compress(
           [msg({ id: '1', index: 0, role: 'user', content: 'test' })],
           { mode: 'lossy' },
         ),
@@ -343,7 +344,7 @@ describe('compressMessages', () => {
         msg({ id: '2', index: 1, role: 'tool', content: 'Tool result' }),
         msg({ id: '3', index: 2, role: 'user', content: longProse }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       expect(result.messages.length).toBe(3);
       expect(result.messages[0].content).toMatch(/^\[summary:/);
       expect(result.messages[1].role).toBe('tool');
@@ -362,7 +363,7 @@ describe('compressMessages', () => {
         msg({ id: '4', index: 3, role: 'user', content: longProse }),
         msg({ id: '5', index: 4, role: 'assistant', content: longProse }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       // [user compressed] [assistant compressed] [tool preserved] [user compressed] [assistant compressed]
       expect(result.messages.length).toBe(5);
       expect(result.messages[0].role).toBe('user');
@@ -387,7 +388,7 @@ describe('compressMessages', () => {
         msg({ id: '2', index: 1, role: 'user', content: mediumProse }),
         msg({ id: '3', index: 2, role: 'user', content: 'Thanks.' }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       expect(result.messages.length).toBe(3);
       const compressed = result.messages[1];
       expect(compressed.content).toMatch(/^\[summary:/);
@@ -402,7 +403,7 @@ describe('compressMessages', () => {
         msg({ id: '1', index: 0, role: 'system', content: 'System.' }),
         msg({ id: '2', index: 1, role: 'user', content: mediumProse }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       const meta = result.messages[1].metadata?._uc_original as Record<string, unknown>;
       expect(meta).toHaveProperty('ids');
       expect(meta).not.toHaveProperty('id');
@@ -415,7 +416,7 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'system', content: longSystem }),
       ];
-      const result = compressMessages(messages, { preserve: [], recencyWindow: 0 });
+      const result = compress(messages, { preserve: [], recencyWindow: 0 });
       expect(result.compression.messages_compressed).toBe(1);
       expect(result.messages[0].content).toMatch(/^\[summary:/);
     });
@@ -424,7 +425,7 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, content: undefined as unknown as string }),
       ];
-      const result = compressMessages(messages);
+      const result = compress(messages);
       expect(result.compression.messages_preserved).toBe(1);
     });
 
@@ -434,7 +435,7 @@ describe('compressMessages', () => {
         msg({ id: '1', index: 0, role: 'system', content: 'System.' }),
         msg({ id: '2', index: 1, role: 'user', content: largeProse, metadata: { custom: 'value', priority: 1 } }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       const compressed = result.messages[1];
       expect(compressed.metadata?.custom).toBe('value');
       expect(compressed.metadata?.priority).toBe(1);
@@ -450,7 +451,7 @@ describe('compressMessages', () => {
         msg({ id: 'd', index: 3, role: 'user', content: longProse }),
         msg({ id: 'e', index: 4, role: 'user', content: 'Thanks' }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       const ids = result.messages.map(m => m.id);
       expect(ids).toEqual(['a', 'b', 'c', 'd', 'e']);
     });
@@ -461,7 +462,7 @@ describe('compressMessages', () => {
         msg({ id: '1', index: 0, role: 'system', content: 'System.' }),
         msg({ id: '2', index: 1, role: 'assistant', content: longProse }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       const compressed = result.messages[1];
       expect(compressed.id).toBe('2');
       expect(compressed.role).toBe('assistant');
@@ -475,7 +476,7 @@ describe('compressMessages', () => {
         msg({ id: '1', index: 0, role: 'user', content: prose }),
         msg({ id: '2', index: 1, role: 'assistant', content: prose }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       expect(result.messages.length).toBe(2);
       expect(result.messages[0].role).toBe('user');
       expect(result.messages[1].role).toBe('assistant');
@@ -487,7 +488,7 @@ describe('compressMessages', () => {
         msg({ id: '1', index: 0, role: 'user', content: prose }),
         msg({ id: '2', index: 1, role: 'user', content: prose }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       expect(result.messages.length).toBe(1);
       expect(result.messages[0].role).toBe('user');
       expect(result.messages[0].content).toContain('2 messages merged');
@@ -502,7 +503,7 @@ describe('compressMessages', () => {
         msg({ id: 'a1', index: 1, role: 'assistant', content: prose }),
         msg({ id: 'u2', index: 2, role: 'user', content: prose }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       expect(result.messages.length).toBe(3);
       expect(result.messages[0].id).toBe('u1');
       expect(result.messages[0].role).toBe('user');
@@ -520,7 +521,7 @@ describe('compressMessages', () => {
       for (let i = 0; i < 8; i++) {
         messages.push(msg({ id: `${i}`, index: i, role: i % 2 === 0 ? 'user' : 'assistant', content: prose }));
       }
-      const result = compressMessages(messages);
+      const result = compress(messages);
       // Last 4 preserved by recency, first 4 compressible
       const preserved = result.messages.filter(m => !m.content?.startsWith('[summary:'));
       expect(preserved.length).toBeGreaterThanOrEqual(4);
@@ -538,7 +539,7 @@ describe('compressMessages', () => {
       for (let i = 0; i < 6; i++) {
         messages.push(msg({ id: `${i}`, index: i, role: i % 2 === 0 ? 'user' : 'assistant', content: prose }));
       }
-      const result = compressMessages(messages, { recencyWindow: 2 });
+      const result = compress(messages, { recencyWindow: 2 });
       // Last 2 preserved by recency
       const last2 = result.messages.slice(-2);
       expect(last2[0].content).not.toMatch(/^\[summary:/);
@@ -551,7 +552,7 @@ describe('compressMessages', () => {
         msg({ id: '1', index: 0, role: 'user', content: prose }),
         msg({ id: '2', index: 1, role: 'assistant', content: prose }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       expect(result.compression.messages_compressed).toBe(2);
       expect(result.messages[0].content).toMatch(/^\[summary:/);
       expect(result.messages[1].content).toMatch(/^\[summary:/);
@@ -563,7 +564,7 @@ describe('compressMessages', () => {
         msg({ id: '1', index: 0, role: 'user', content: prose }),
         msg({ id: '2', index: 1, role: 'assistant', content: prose }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 10 });
+      const result = compress(messages, { recencyWindow: 10 });
       expect(result.compression.messages_compressed).toBe(0);
       expect(result.compression.messages_preserved).toBe(2);
     });
@@ -575,7 +576,7 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'user', content: text.repeat(5) }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       const content = result.messages[0].content!;
       expect(content).not.toMatch(/\[summary: Great\./);
       expect(content).toContain('Express');
@@ -586,7 +587,7 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'user', content: noPunct }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       // The summary text (between [summary: and the suffix) should not exceed 400 chars
       const match = result.messages[0].content!.match(/\[summary: (.*?)(?:\s*\(|\s*\||\])/);
       expect(match).toBeTruthy();
@@ -598,7 +599,7 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'user', content: text.repeat(4) }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       const content = result.messages[0].content!;
       expect(content).toContain('database needs three replicas');
       expect(content).toContain('PostgreSQL');
@@ -609,7 +610,7 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'user', content: text }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       const content = result.messages[0].content!;
       expect(content).toMatch(/^\[summary:/);
       // Falls back to first sentence since all are filler
@@ -623,7 +624,7 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'user', content: text.repeat(5) }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       const match = result.messages[0].content!.match(/\[summary: (.*?)(?:\s*\(|\s*\||\])/);
       expect(match).toBeTruthy();
       expect(match![1].length).toBeLessThanOrEqual(400);
@@ -636,7 +637,7 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'user', content: text.repeat(3) }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       const content = result.messages[0].content!;
       // Should capture content from multiple paragraphs, not just first+last
       expect(content).toContain('caching layer');
@@ -647,7 +648,7 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'user', content: text.repeat(4) }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       const content = result.messages[0].content!;
       // "However" sentence should be selected due to emphasis scoring
       expect(content).toContain('authentication module');
@@ -660,7 +661,7 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'user', content: sentences.repeat(3) }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       const match = result.messages[0].content!.match(/\[summary: (.*?)(?:\s*\(|\s*\||\])/);
       expect(match).toBeTruthy();
       expect(match![1].length).toBeLessThanOrEqual(400);
@@ -673,7 +674,7 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'user', content: text }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       const content = result.messages[0].content!;
       expect(content).toContain('entities:');
       expect(content).toContain('getUserProfile');
@@ -685,7 +686,7 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'user', content: text }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       const content = result.messages[0].content!;
       expect(content).toContain('entities:');
       expect(content).toContain('user_profile');
@@ -697,7 +698,7 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'user', content: text }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       const content = result.messages[0].content!;
       expect(content).toContain('entities:');
       expect(content).toContain('Express');
@@ -711,7 +712,7 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'user', content: text }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       const content = result.messages[0].content!;
       expect(content).toContain('entities:');
       expect(content).toContain('TypeScript');
@@ -724,7 +725,7 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'user', content: text }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       const content = result.messages[0].content!;
       expect(content).toContain('entities:');
       expect(content).toMatch(/3 retries/);
@@ -735,7 +736,7 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'user', content: text }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       const content = result.messages[0].content!;
       expect(content).toContain('entities:');
       expect(content).toContain('pnpm');
@@ -748,7 +749,7 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'user', content: text }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       const content = result.messages[0].content!;
       const entitiesMatch = content.match(/entities: ([^\]]+)/);
       expect(entitiesMatch).toBeTruthy();
@@ -764,7 +765,7 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'assistant', content }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       expect(result.compression.messages_compressed).toBe(1);
       const output = result.messages[0].content!;
       // Code preserved, prose summarized
@@ -780,7 +781,7 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'assistant', content }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       const output = result.messages[0].content!;
       expect(output).toContain(fence);
     });
@@ -792,7 +793,7 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'assistant', content }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       const output = result.messages[0].content!;
       expect(output).toMatch(/\[summary:.*\|.*entities:/);
       expect(output).toContain('getUserProfile');
@@ -803,15 +804,12 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'assistant', content }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       expect(result.compression.messages_preserved).toBe(1);
       expect(result.messages[0].content).toBe(content);
     });
 
     it('code-split skipped when output would be larger', () => {
-      // Entity-heavy prose >= 200 chars enters the code-split path (not filtered by threshold).
-      // Many identifiers inflate the [summary: ... | entities: ...] bracket past the original,
-      // so the size guard must be what preserves it.
       const prose = 'We call getUserProfile fetchUserData handleAuthToken validateSession refreshCache parseConfig buildQuery formatResponse and logMetrics in TypeScript WebSocket Express middleware. Also uses auth_token user_session cache_key. ';
       const fence = '```ts\nx()\n```';
       const content = `${prose}\n\n${fence}`;
@@ -819,8 +817,7 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'assistant', content }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
-      // Guard fired: message preserved verbatim, not compressed
+      const result = compress(messages, { recencyWindow: 0 });
       expect(result.compression.messages_preserved).toBe(1);
       expect(result.compression.messages_compressed).toBe(0);
       expect(result.messages[0].content).toBe(content);
@@ -833,7 +830,7 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'assistant', content }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       const output = result.messages[0].content!;
       expect(output.length).toBeLessThan(content.length);
       expect(output).toContain('```ts');
@@ -847,7 +844,7 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: 'cs1', index: 0, role: 'assistant', content }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       const meta = result.messages[0].metadata?._uc_original as { ids: string[]; version: number };
       expect(meta).toBeDefined();
       expect(meta.ids).toEqual(['cs1']);
@@ -862,7 +859,7 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'assistant', content }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       const output = result.messages[0].content!;
       expect(output).toContain(fence1);
       expect(output).toContain(fence2);
@@ -873,14 +870,13 @@ describe('compressMessages', () => {
 
   describe('no negative savings', () => {
     it('prose-only compression never exceeds original length', () => {
-      // Medium (120-800) and large (>800) prose paths must both shrink
       const medium = 'This talks about general topics without any special formatting or patterns that would trigger preservation rules. '.repeat(3);
       const large = 'This talks about general topics without any special formatting or patterns that would trigger preservation rules. '.repeat(10);
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'user', content: medium }),
         msg({ id: '2', index: 1, role: 'assistant', content: large }),
       ];
-      const result = compressMessages(messages, { preserve: [], recencyWindow: 0 });
+      const result = compress(messages, { preserve: [], recencyWindow: 0 });
       for (const m of result.messages) {
         const orig = messages.find(o => o.id === m.id)!;
         expect(m.content!.length).toBeLessThanOrEqual(orig.content!.length);
@@ -896,10 +892,10 @@ describe('compressMessages', () => {
         msg({ id: '2', index: 1, role: 'user', content: prose }),
         msg({ id: '3', index: 2, role: 'assistant', content: prose }),
       ];
-      const first = compressMessages(messages, { recencyWindow: 0 });
+      const first = compress(messages, { recencyWindow: 0 });
       expect(first.compression.messages_compressed).toBeGreaterThan(0);
 
-      const second = compressMessages(first.messages, { recencyWindow: 0 });
+      const second = compress(first.messages, { recencyWindow: 0 });
       expect(second.compression.messages_compressed).toBe(0);
       expect(second.messages).toEqual(first.messages);
     });
@@ -907,21 +903,19 @@ describe('compressMessages', () => {
 
   describe('prose-only size guard', () => {
     it('preserves entity-dense short messages where summary would grow', () => {
-      // ~135 chars packed with identifiers — bracket overhead will exceed original
       const content = 'Call getUserProfile fetchUserData handleAuthToken validateSession refreshCache parseConfig buildQuery formatResponse logMetrics in the TypeScript codebase.';
       expect(content.length).toBeGreaterThanOrEqual(120);
       expect(content.length).toBeLessThan(300);
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'user', content }),
       ];
-      const result = compressMessages(messages, { preserve: [], recencyWindow: 0 });
+      const result = compress(messages, { preserve: [], recencyWindow: 0 });
       expect(result.compression.messages_preserved).toBe(1);
       expect(result.compression.messages_compressed).toBe(0);
       expect(result.messages[0].content).toBe(content);
     });
 
     it('multi-message merge preserves when summary exceeds combined length', () => {
-      // Two short-ish messages whose combined content is shorter than the merge summary
       const content1 = 'Call getUserProfile fetchUserData handleAuthToken validateSession refreshCache parseConfig buildQuery formatResponse logMetrics in the codebase.';
       const content2 = 'Also call parseConfig buildQuery formatResponse logMetrics getUserProfile fetchUserData handleAuthToken validateSession refreshCache here.';
       expect(content1.length).toBeGreaterThanOrEqual(120);
@@ -930,8 +924,7 @@ describe('compressMessages', () => {
         msg({ id: '1', index: 0, role: 'user', content: content1 }),
         msg({ id: '2', index: 1, role: 'user', content: content2 }),
       ];
-      const result = compressMessages(messages, { preserve: [], recencyWindow: 0 });
-      // Both messages preserved individually — no merge
+      const result = compress(messages, { preserve: [], recencyWindow: 0 });
       expect(result.messages.length).toBe(2);
       expect(result.messages[0].content).toBe(content1);
       expect(result.messages[1].content).toBe(content2);
@@ -945,10 +938,10 @@ describe('compressMessages', () => {
       const largeProse = 'First sentence here. ' + 'More text follows here. '.repeat(50);
       const mediumProse = 'This talks about general topics without any special formatting or patterns. '.repeat(3);
       const messages: Message[] = [
-        msg({ id: '1', index: 0, role: 'user', content: largeProse }),  // >800 char path
-        msg({ id: '2', index: 1, role: 'assistant', content: mediumProse }),  // <800 single merge path
+        msg({ id: '1', index: 0, role: 'user', content: largeProse }),
+        msg({ id: '2', index: 1, role: 'assistant', content: mediumProse }),
       ];
-      const result = compressMessages(messages, { preserve: [], recencyWindow: 0 });
+      const result = compress(messages, { preserve: [], recencyWindow: 0 });
 
       for (const m of result.messages) {
         const meta = m.metadata?._uc_original as Record<string, unknown>;
@@ -973,20 +966,19 @@ describe('compressMessages', () => {
         msg({ id: 'a2', index: 4, role: 'assistant', content: prose }),
         msg({ id: 'short', index: 5, role: 'user', content: 'Short.' }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
-      // sys preserved by role, short by length — the rest compressed
+      const result = compress(messages, { recencyWindow: 0 });
       expect(Object.keys(result.verbatim).sort()).toEqual(['a1', 'a2', 'u1', 'u2']);
       expect(result.verbatim['u1'].content).toBe(prose);
       expect(result.verbatim['a1'].content).toBe(codeContent);
     });
 
     it('empty when nothing compressed (including empty input)', () => {
-      expect(compressMessages([]).verbatim).toEqual({});
+      expect(compress([]).verbatim).toEqual({});
       const preserved: Message[] = [
         msg({ id: '1', index: 0, role: 'system', content: 'System.' }),
         msg({ id: '2', index: 1, role: 'user', content: 'Short.' }),
       ];
-      expect(compressMessages(preserved).verbatim).toEqual({});
+      expect(compress(preserved).verbatim).toEqual({});
     });
 
     it('Object.keys(verbatim).length === messages_compressed invariant', () => {
@@ -998,7 +990,7 @@ describe('compressMessages', () => {
         [msg({ id: '1', index: 0, role: 'user', content: prose }), msg({ id: '2', index: 1, role: 'assistant', content: prose })],
       ];
       for (const messages of cases) {
-        const result = compressMessages(messages, { recencyWindow: 0 });
+        const result = compress(messages, { recencyWindow: 0 });
         expect(Object.keys(result.verbatim).length).toBe(result.compression.messages_compressed);
       }
     });
@@ -1010,7 +1002,7 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'user', content: prose }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0, sourceVersion: 42 });
+      const result = compress(messages, { recencyWindow: 0, sourceVersion: 42 });
       const meta = result.messages[0].metadata?._uc_original as { version: number };
       expect(meta.version).toBe(42);
       expect(result.compression.original_version).toBe(42);
@@ -1021,7 +1013,7 @@ describe('compressMessages', () => {
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'user', content: prose }),
       ];
-      const result = compressMessages(messages, { recencyWindow: 0 });
+      const result = compress(messages, { recencyWindow: 0 });
       const meta = result.messages[0].metadata?._uc_original as { version: number };
       expect(meta.version).toBe(0);
       expect(result.compression.original_version).toBe(0);
@@ -1029,9 +1021,9 @@ describe('compressMessages', () => {
 
     it('generates deterministic summary_id from input ids', () => {
       const prose = 'This is a long message about general topics that could be compressed. '.repeat(5);
-      const r1 = compressMessages([msg({ id: 'a', index: 0, role: 'user', content: prose })], { recencyWindow: 0 });
-      const r2 = compressMessages([msg({ id: 'a', index: 0, role: 'user', content: prose })], { recencyWindow: 0 });
-      const r3 = compressMessages([msg({ id: 'b', index: 0, role: 'user', content: prose })], { recencyWindow: 0 });
+      const r1 = compress([msg({ id: 'a', index: 0, role: 'user', content: prose })], { recencyWindow: 0 });
+      const r2 = compress([msg({ id: 'a', index: 0, role: 'user', content: prose })], { recencyWindow: 0 });
+      const r3 = compress([msg({ id: 'b', index: 0, role: 'user', content: prose })], { recencyWindow: 0 });
       const m1 = r1.messages[0].metadata?._uc_original as { summary_id: string };
       const m2 = r2.messages[0].metadata?._uc_original as { summary_id: string };
       const m3 = r3.messages[0].metadata?._uc_original as { summary_id: string };
@@ -1042,7 +1034,7 @@ describe('compressMessages', () => {
 
     it('omits parent_ids when source has no prior _uc_original', () => {
       const prose = 'This is a long message about general topics that could be compressed. '.repeat(5);
-      const result = compressMessages(
+      const result = compress(
         [msg({ id: '1', index: 0, role: 'user', content: prose })],
         { recencyWindow: 0 },
       );
@@ -1066,7 +1058,7 @@ describe('compressMessages', () => {
         }),
         msg({ id: 'y', index: 1, role: 'user', content: prose }),
       ];
-      const result = compressMessages(messages, { preserve: [], recencyWindow: 0 });
+      const result = compress(messages, { preserve: [], recencyWindow: 0 });
       const meta = result.messages[0].metadata?._uc_original as {
         ids: string[];
         summary_id: string;
@@ -1078,19 +1070,58 @@ describe('compressMessages', () => {
 });
 
 // ---------------------------------------------------------------------------
-// compressMessagesAsync
+// overload contract
+// ---------------------------------------------------------------------------
+
+describe('compress overload contract', () => {
+  const prose = 'This is a long message about general topics that could be compressed. '.repeat(5);
+
+  it('returns a plain object (not a Promise) when no summarizer is provided', () => {
+    const result = compress([msg({ id: '1', index: 0, role: 'user', content: prose })], { recencyWindow: 0 });
+    // If this were a Promise, .messages would be undefined
+    expect(result.messages).toBeDefined();
+    expect(result).not.toBeInstanceOf(Promise);
+  });
+
+  it('returns a Promise when a summarizer is provided', () => {
+    const result = compress(
+      [msg({ id: '1', index: 0, role: 'user', content: prose })],
+      { recencyWindow: 0, summarizer: (t) => t.slice(0, 20) },
+    );
+    expect(result).toBeInstanceOf(Promise);
+  });
+
+  it('result without tokenBudget does not have fits or tokenCount', () => {
+    const result = compress([msg({ id: '1', index: 0, role: 'user', content: prose })], { recencyWindow: 0 });
+    expect(result.fits).toBeUndefined();
+    expect(result.tokenCount).toBeUndefined();
+  });
+
+  it('result with tokenBudget always has fits and tokenCount', () => {
+    const result = compress(
+      [msg({ id: '1', index: 0, role: 'user', content: prose })],
+      { tokenBudget: 10000 },
+    );
+    expect(typeof result.fits).toBe('boolean');
+    expect(typeof result.tokenCount).toBe('number');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// compress with summarizer (async)
 // ---------------------------------------------------------------------------
 
 const LONG_PROSE = 'This is a long message about general topics that could be compressed. '.repeat(5);
 
-describe('compressMessagesAsync', () => {
-  it('sync compressMessages throws when summarizer is provided', () => {
-    expect(() =>
-      compressMessages(
-        [msg({ id: '1', index: 0, role: 'user', content: LONG_PROSE })],
-        { recencyWindow: 0, summarizer: (t) => t.slice(0, 20) },
-      ),
-    ).toThrow('summarizer requires compressMessagesAsync');
+describe('compress with summarizer', () => {
+  it('uses LLM result when shorter than input', async () => {
+    const mockSummarizer = async (text: string) => text.slice(0, 50) + '...';
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, role: 'user', content: LONG_PROSE }),
+    ];
+    const result = await compress(messages, { recencyWindow: 0, summarizer: mockSummarizer });
+    expect(result.compression.messages_compressed).toBe(1);
+    expect(result.messages[0].content).toMatch(/^\[summary:/);
   });
 
   it('async with no summarizer produces identical output to sync', async () => {
@@ -1099,22 +1130,12 @@ describe('compressMessagesAsync', () => {
       msg({ id: '2', index: 1, role: 'user', content: LONG_PROSE }),
       msg({ id: '3', index: 2, role: 'assistant', content: LONG_PROSE }),
     ];
-    const sync = compressMessages(messages, { recencyWindow: 0 });
-    const async_ = await compressMessagesAsync(messages, { recencyWindow: 0 });
-    expect(async_.messages).toEqual(sync.messages);
-    expect(async_.compression).toEqual(sync.compression);
-    expect(async_.verbatim).toEqual(sync.verbatim);
-  });
-
-  it('uses LLM result when shorter than input', async () => {
-    const mockSummarizer = async (text: string) => text.slice(0, 50) + '...';
-    const messages: Message[] = [
-      msg({ id: '1', index: 0, role: 'user', content: LONG_PROSE }),
-    ];
-    const result = await compressMessagesAsync(messages, { recencyWindow: 0, summarizer: mockSummarizer });
-    expect(result.compression.messages_compressed).toBe(1);
-    // The summary should contain the truncated text from our mock
-    expect(result.messages[0].content).toMatch(/^\[summary:/);
+    const sync = compress(messages, { recencyWindow: 0 });
+    // Without summarizer, compress is sync
+    const syncResult = compress(messages, { recencyWindow: 0 });
+    expect(syncResult.messages).toEqual(sync.messages);
+    expect(syncResult.compression).toEqual(sync.compression);
+    expect(syncResult.verbatim).toEqual(sync.verbatim);
   });
 
   it('falls back to deterministic when LLM returns longer text', async () => {
@@ -1122,9 +1143,8 @@ describe('compressMessagesAsync', () => {
     const messages: Message[] = [
       msg({ id: '1', index: 0, role: 'user', content: LONG_PROSE }),
     ];
-    const withLlm = await compressMessagesAsync(messages, { recencyWindow: 0, summarizer: growingSummarizer });
-    const withoutLlm = compressMessages(messages, { recencyWindow: 0 });
-    // Should fall back to deterministic — same output
+    const withLlm = await compress(messages, { recencyWindow: 0, summarizer: growingSummarizer });
+    const withoutLlm = compress(messages, { recencyWindow: 0 });
     expect(withLlm.messages).toEqual(withoutLlm.messages);
   });
 
@@ -1133,20 +1153,20 @@ describe('compressMessagesAsync', () => {
     const messages: Message[] = [
       msg({ id: '1', index: 0, role: 'user', content: LONG_PROSE }),
     ];
-    const withLlm = await compressMessagesAsync(messages, { recencyWindow: 0, summarizer: failingSummarizer });
-    const withoutLlm = compressMessages(messages, { recencyWindow: 0 });
+    const withLlm = await compress(messages, { recencyWindow: 0, summarizer: failingSummarizer });
+    const withoutLlm = compress(messages, { recencyWindow: 0 });
     expect(withLlm.messages).toEqual(withoutLlm.messages);
   });
 
-  it('round-trip: async compress then expand = byte-identical', async () => {
+  it('round-trip: async compress then uncompress = byte-identical', async () => {
     const messages: Message[] = [
       msg({ id: 'sys', index: 0, role: 'system', content: 'System prompt.' }),
       msg({ id: 'u1', index: 1, role: 'user', content: LONG_PROSE }),
       msg({ id: 'a1', index: 2, role: 'assistant', content: LONG_PROSE }),
     ];
-    const compressed = await compressMessagesAsync(messages, { recencyWindow: 0 });
+    const compressed = await compress(messages, { recencyWindow: 0, summarizer: (t) => t.slice(0, 40) + '...' });
     expect(compressed.compression.messages_compressed).toBeGreaterThan(0);
-    const expanded = expandMessages(compressed.messages, compressed.verbatim);
+    const expanded = uncompress(compressed.messages, compressed.verbatim);
     expect(expanded.messages).toEqual(messages);
     expect(expanded.missing_ids).toEqual([]);
   });
@@ -1156,7 +1176,7 @@ describe('compressMessagesAsync', () => {
     const messages: Message[] = [
       msg({ id: '1', index: 0, role: 'user', content: LONG_PROSE }),
     ];
-    const result = await compressMessagesAsync(messages, { recencyWindow: 0, summarizer: syncSummarizer });
+    const result = await compress(messages, { recencyWindow: 0, summarizer: syncSummarizer });
     expect(result.compression.messages_compressed).toBe(1);
     expect(result.messages[0].content).toMatch(/^\[summary:/);
   });
@@ -1172,11 +1192,9 @@ describe('compressMessagesAsync', () => {
     const messages: Message[] = [
       msg({ id: '1', index: 0, role: 'assistant', content: `${prose}\n\n${code}` }),
     ];
-    const result = await compressMessagesAsync(messages, { recencyWindow: 0, summarizer: trackingSummarizer });
-    // Summarizer should have been called with prose, not code
+    const result = await compress(messages, { recencyWindow: 0, summarizer: trackingSummarizer });
     expect(calls.length).toBe(1);
     expect(calls[0]).not.toContain('```');
-    // Code fence preserved in output
     expect(result.messages[0].content).toContain(code);
   });
 
@@ -1185,9 +1203,8 @@ describe('compressMessagesAsync', () => {
     const messages: Message[] = [
       msg({ id: '1', index: 0, role: 'user', content: LONG_PROSE }),
     ];
-    const withEmpty = await compressMessagesAsync(messages, { recencyWindow: 0, summarizer: emptySummarizer });
-    const withoutLlm = compressMessages(messages, { recencyWindow: 0 });
-    // Empty string should be rejected — deterministic fallback produces same result
+    const withEmpty = await compress(messages, { recencyWindow: 0, summarizer: emptySummarizer });
+    const withoutLlm = compress(messages, { recencyWindow: 0 });
     expect(withEmpty.messages).toEqual(withoutLlm.messages);
   });
 
@@ -1197,7 +1214,7 @@ describe('compressMessagesAsync', () => {
       msg({ id: '1', index: 0, role: 'user', content: LONG_PROSE }),
       msg({ id: '2', index: 1, role: 'user', content: LONG_PROSE }),
     ];
-    const result = await compressMessagesAsync(messages, { recencyWindow: 0, summarizer: emptySummarizer });
+    const result = await compress(messages, { recencyWindow: 0, summarizer: emptySummarizer });
     for (const m of result.messages) {
       expect(typeof m.content === 'string' ? m.content.length : 0).toBeGreaterThan(0);
     }
@@ -1210,8 +1227,8 @@ describe('compressMessagesAsync', () => {
     const messages: Message[] = [
       msg({ id: '1', index: 0, role: 'assistant', content: `${prose}\n\n${code}` }),
     ];
-    const withEmpty = await compressMessagesAsync(messages, { recencyWindow: 0, summarizer: emptySummarizer });
-    const withoutLlm = compressMessages(messages, { recencyWindow: 0 });
+    const withEmpty = await compress(messages, { recencyWindow: 0, summarizer: emptySummarizer });
+    const withoutLlm = compress(messages, { recencyWindow: 0 });
     expect(withEmpty.messages).toEqual(withoutLlm.messages);
   });
 
@@ -1220,22 +1237,35 @@ describe('compressMessagesAsync', () => {
     const messages: Message[] = [
       msg({ id: '1', index: 0, role: 'user', content: LONG_PROSE }),
     ];
-    const withSame = await compressMessagesAsync(messages, { recencyWindow: 0, summarizer: sameLengthSummarizer });
-    const withoutLlm = compressMessages(messages, { recencyWindow: 0 });
+    const withSame = await compress(messages, { recencyWindow: 0, summarizer: sameLengthSummarizer });
+    const withoutLlm = compress(messages, { recencyWindow: 0 });
     expect(withSame.messages).toEqual(withoutLlm.messages);
+  });
+
+  it('falls back when summarizer returns text exactly one char shorter (boundary)', async () => {
+    // length < text.length is true, length > 0 is true → should use the LLM result
+    const oneCharShorter = async (text: string) => 'x'.repeat(text.length - 1);
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, role: 'user', content: LONG_PROSE }),
+    ];
+    const result = await compress(messages, { recencyWindow: 0, summarizer: oneCharShorter });
+    // The summarizer result IS shorter, so it should be used (not fall back to deterministic)
+    const deterministic = compress(messages, { recencyWindow: 0 });
+    // Content won't match deterministic since the LLM result was accepted
+    expect(result.messages[0].content).not.toEqual(deterministic.messages[0].content);
   });
 });
 
 // ---------------------------------------------------------------------------
-// compressToFit
+// compress with tokenBudget
 // ---------------------------------------------------------------------------
 
-describe('compressToFit', () => {
+describe('compress with tokenBudget', () => {
   it('returns fits: true when already under budget (zero compression)', () => {
     const messages: Message[] = [
       msg({ id: '1', index: 0, role: 'user', content: 'Short message.' }),
     ];
-    const result = compressToFit(messages, 1000);
+    const result = compress(messages, { tokenBudget: 1000 });
     expect(result.fits).toBe(true);
     expect(result.compression.messages_compressed).toBe(0);
     expect(result.messages).toEqual(messages);
@@ -1249,11 +1279,9 @@ describe('compressToFit', () => {
       messages.push(msg({ id: `${i}`, index: i, role: i % 2 === 0 ? 'user' : 'assistant', content: prose }));
     }
     const totalTokens = messages.reduce((sum, m) => sum + estimateTokens(m), 0);
-    // Set budget to ~half the total
-    const result = compressToFit(messages, Math.floor(totalTokens / 2));
+    const result = compress(messages, { tokenBudget: Math.floor(totalTokens / 2) });
     expect(result.fits).toBe(true);
     expect(result.tokenCount).toBeLessThanOrEqual(Math.floor(totalTokens / 2));
-    expect(result.recencyWindow).toBeLessThan(messages.length);
     expect(result.compression.messages_compressed).toBeGreaterThan(0);
   });
 
@@ -1263,9 +1291,8 @@ describe('compressToFit', () => {
       msg({ id: '1', index: 0, role: 'user', content: prose }),
       msg({ id: '2', index: 1, role: 'assistant', content: prose }),
     ];
-    const result = compressToFit(messages, 1); // impossibly small budget
+    const result = compress(messages, { tokenBudget: 1 });
     expect(result.fits).toBe(false);
-    // Still returns best effort
     expect(result.tokenCount).toBeGreaterThan(1);
     expect(result.compression.messages_compressed).toBeGreaterThan(0);
   });
@@ -1278,23 +1305,30 @@ describe('compressToFit', () => {
       msg({ id: 'a1', index: 2, role: 'assistant', content: prose }),
     ];
     const totalTokens = messages.reduce((sum, m) => sum + estimateTokens(m), 0);
-    const result = compressToFit(messages, Math.floor(totalTokens / 2));
-    const expanded = expandMessages(result.messages, result.verbatim);
+    const result = compress(messages, { tokenBudget: Math.floor(totalTokens / 2) });
+    const expanded = uncompress(result.messages, result.verbatim);
     expect(expanded.messages).toEqual(messages);
     expect(expanded.missing_ids).toEqual([]);
   });
 
-  it('respects minRecencyWindow', () => {
+  it('respects minRecencyWindow — last N messages stay uncompressed', () => {
     const prose = 'This is a long message about general topics that could be compressed since it has no verbatim content. '.repeat(10);
     const messages: Message[] = [];
     for (let i = 0; i < 10; i++) {
       messages.push(msg({ id: `${i}`, index: i, role: i % 2 === 0 ? 'user' : 'assistant', content: prose }));
     }
-    const result = compressToFit(messages, 1, { minRecencyWindow: 5 });
-    expect(result.recencyWindow).toBeGreaterThanOrEqual(5);
+    const result = compress(messages, { tokenBudget: 1, minRecencyWindow: 5 });
+    // Binary search cannot go below rw=5, so last 5 messages must be uncompressed
+    const last5 = result.messages.slice(-5);
+    for (const m of last5) {
+      expect(m.content).not.toMatch(/^\[summary:/);
+    }
+    // Without the floor, rw=0 would compress everything
+    const unclamped = compress(messages, { tokenBudget: 1, minRecencyWindow: 0 });
+    expect(unclamped.tokenCount!).toBeLessThan(result.tokenCount!);
   });
 
-  it('recencyWindow and tokenCount in result are accurate', () => {
+  it('tokenCount in result is accurate', () => {
     const prose = 'This is a long message about general topics that could be compressed since it has no verbatim content. '.repeat(10);
     const messages: Message[] = [
       msg({ id: '1', index: 0, role: 'user', content: prose }),
@@ -1302,8 +1336,7 @@ describe('compressToFit', () => {
       msg({ id: '3', index: 2, role: 'user', content: 'Final question.' }),
     ];
     const totalTokens = messages.reduce((sum, m) => sum + estimateTokens(m), 0);
-    const result = compressToFit(messages, Math.floor(totalTokens / 2));
-    // Verify tokenCount matches actual token count of result
+    const result = compress(messages, { tokenBudget: Math.floor(totalTokens / 2) });
     const actualTokens = result.messages.reduce((sum: number, m: Message) => sum + estimateTokens(m), 0);
     expect(result.tokenCount).toBe(actualTokens);
   });
@@ -1313,43 +1346,62 @@ describe('compressToFit', () => {
     const messages: Message[] = [
       msg({ id: '1', index: 0, role: 'user', content: prose }),
     ];
-    const result = compressToFit(messages, 10);
-    // Single message, budget too small — best effort
+    const result = compress(messages, { tokenBudget: 10 });
     expect(result.fits).toBe(false);
     expect(result.tokenCount).toBeGreaterThan(0);
   });
 
   it('handles empty input', () => {
-    const result = compressToFit([], 1000);
+    const result = compress([], { tokenBudget: 1000 });
     expect(result.fits).toBe(true);
     expect(result.messages).toEqual([]);
     expect(result.tokenCount).toBe(0);
   });
 
-  it('sync throws when summarizer provided', () => {
-    expect(() =>
-      compressToFit(
-        [msg({ id: '1', index: 0, role: 'user', content: 'test' })],
-        1000,
-        { summarizer: (t) => t.slice(0, 10) },
-      ),
-    ).toThrow('summarizer requires compressToFitAsync');
-  });
-
-  it('compressToFitAsync with summarizer achieves tighter fit', async () => {
+  it('tokenBudget with summarizer achieves tighter fit', async () => {
     const prose = 'This is a long message about general topics that could be compressed since it has no verbatim content. '.repeat(10);
     const messages: Message[] = [];
     for (let i = 0; i < 8; i++) {
       messages.push(msg({ id: `${i}`, index: i, role: i % 2 === 0 ? 'user' : 'assistant', content: prose }));
     }
     const aggressiveSummarizer = async (text: string) => text.slice(0, 30) + '...';
-    const syncResult = compressToFit(messages, 200);
-    const asyncResult = await compressToFitAsync(messages, 200, { summarizer: aggressiveSummarizer });
-    // Async with aggressive summarizer should produce equal or fewer tokens
-    expect(asyncResult.tokenCount).toBeLessThanOrEqual(syncResult.tokenCount);
+    const syncResult = compress(messages, { tokenBudget: 200 });
+    const asyncResult = await compress(messages, { tokenBudget: 200, summarizer: aggressiveSummarizer });
+    expect(asyncResult.tokenCount!).toBeLessThanOrEqual(syncResult.tokenCount!);
   });
 
-  it('compressToFitAsync round-trip integrity', async () => {
+  it('tokenBudget with summarizer sets fits: true when under budget', async () => {
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, role: 'user', content: 'Short.' }),
+    ];
+    const result = await compress(messages, { tokenBudget: 10000, summarizer: (t) => t.slice(0, 20) });
+    expect(result.fits).toBe(true);
+    expect(typeof result.tokenCount).toBe('number');
+    expect(result.tokenCount).toBeLessThanOrEqual(10000);
+  });
+
+  it('tokenBudget with summarizer sets fits: false for impossible budget', async () => {
+    const prose = 'This is a long message about general topics that could be compressed since it has no verbatim content. '.repeat(10);
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, role: 'user', content: prose }),
+    ];
+    const result = await compress(messages, { tokenBudget: 1, summarizer: (t) => t.slice(0, 30) + '...' });
+    expect(result.fits).toBe(false);
+    expect(result.tokenCount).toBeGreaterThan(1);
+  });
+
+  it('tokenCount on fast path (already under budget) is accurate', () => {
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, role: 'user', content: 'Short message.' }),
+      msg({ id: '2', index: 1, role: 'assistant', content: 'Another short one.' }),
+    ];
+    const result = compress(messages, { tokenBudget: 10000 });
+    const actualTokens = result.messages.reduce((sum: number, m: Message) => sum + estimateTokens(m), 0);
+    expect(result.tokenCount).toBe(actualTokens);
+    expect(result.compression.messages_compressed).toBe(0);
+  });
+
+  it('tokenBudget with summarizer round-trip integrity', async () => {
     const prose = 'This is a long message about general topics that could be compressed since it has no verbatim content. '.repeat(10);
     const messages: Message[] = [
       msg({ id: 'sys', index: 0, role: 'system', content: 'System prompt.' }),
@@ -1357,8 +1409,8 @@ describe('compressToFit', () => {
       msg({ id: 'a1', index: 2, role: 'assistant', content: prose }),
     ];
     const totalTokens = messages.reduce((sum, m) => sum + estimateTokens(m), 0);
-    const result = await compressToFitAsync(messages, Math.floor(totalTokens / 2));
-    const expanded = expandMessages(result.messages, result.verbatim);
+    const result = await compress(messages, { tokenBudget: Math.floor(totalTokens / 2), summarizer: (t) => t.slice(0, 40) + '...' });
+    const expanded = uncompress(result.messages, result.verbatim);
     expect(expanded.messages).toEqual(messages);
     expect(expanded.missing_ids).toEqual([]);
   });

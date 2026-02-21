@@ -1,5 +1,5 @@
 import { classifyMessage } from './classify.js';
-import type { CompressOptions, CompressResult, CompressToFitOptions, CompressToFitResult, Message, Summarizer } from './types.js';
+import type { CompressOptions, CompressResult, Message, Summarizer } from './types.js';
 
 /**
  * Deterministic summary ID from sorted source message IDs.
@@ -314,29 +314,15 @@ function computeStats(
 }
 
 // ---------------------------------------------------------------------------
-// Sync compression
+// Sync compression (internal)
 // ---------------------------------------------------------------------------
 
-/**
- * Compress a message array, returning compressed messages, stats, and
- * a verbatim map of every original that was replaced.
- *
- * The caller MUST persist `messages` and `verbatim` atomically.
- * Partial writes (e.g. storing compressed messages without their
- * verbatim originals) will cause data loss that `expandMessages()`
- * surfaces via `missing_ids`.
- *
- * Throws if `options.summarizer` is set — use `compressMessagesAsync` instead.
- */
-export function compressMessages(
+function compressSync(
   messages: Message[],
   options: CompressOptions = {},
 ): CompressResult {
   if (options.mode === 'lossy') {
     throw new Error('Lossy compression is not yet implemented (501)');
-  }
-  if (options.summarizer) {
-    throw new Error('summarizer requires compressMessagesAsync (use the async API)');
   }
 
   const sourceVersion = options.sourceVersion ?? 0;
@@ -499,7 +485,7 @@ export function compressMessages(
 }
 
 // ---------------------------------------------------------------------------
-// Async compression (LLM summarizer support)
+// Async compression (internal, LLM summarizer support)
 // ---------------------------------------------------------------------------
 
 async function withFallback(text: string, userSummarizer?: Summarizer): Promise<string> {
@@ -512,15 +498,7 @@ async function withFallback(text: string, userSummarizer?: Summarizer): Promise<
   return summarize(text);
 }
 
-/**
- * Async variant of `compressMessages` that supports an LLM-powered summarizer.
- *
- * Three-level fallback per message:
- *   1. LLM summarizer (if provided and returns shorter text)
- *   2. Deterministic `summarize()` (sentence extraction + entities)
- *   3. Caller-side size guard preserves original if still not shorter
- */
-export async function compressMessagesAsync(
+async function compressAsync(
   messages: Message[],
   options: CompressOptions = {},
 ): Promise<CompressResult> {
@@ -689,18 +667,18 @@ export async function compressMessagesAsync(
 }
 
 // ---------------------------------------------------------------------------
-// compressToFit — budget-driven compression with recencyWindow search
+// Token budget helpers (absorbed from compressToFit)
 // ---------------------------------------------------------------------------
 
 function estimateTokensTotal(messages: Message[]): number {
   return messages.reduce((sum, m) => sum + estimateTokens(m), 0);
 }
 
-function makeCtfFastPath(
+function budgetFastPath(
   messages: Message[],
   tokenBudget: number,
   sourceVersion: number,
-): CompressToFitResult | undefined {
+): CompressResult | undefined {
   const totalTokens = estimateTokensTotal(messages);
   if (totalTokens <= tokenBudget) {
     return {
@@ -714,93 +692,38 @@ function makeCtfFastPath(
       },
       verbatim: {},
       fits: true,
-      recencyWindow: messages.length,
       tokenCount: totalTokens,
+      recencyWindow: messages.length,
     };
   }
   return undefined;
 }
 
-function makeCtfResult(cr: CompressResult, rw: number, tokenBudget: number): CompressToFitResult {
+function addBudgetFields(cr: CompressResult, tokenBudget: number, recencyWindow: number): CompressResult {
   const tokens = estimateTokensTotal(cr.messages);
-  return { ...cr, fits: tokens <= tokenBudget, recencyWindow: rw, tokenCount: tokens };
+  return { ...cr, fits: tokens <= tokenBudget, tokenCount: tokens, recencyWindow };
 }
 
-/**
- * Compress messages to fit within a token budget by binary-searching the
- * recency window. Token count is monotonically non-increasing as rw
- * decreases, so binary search finds the optimal rw in O(log n) calls.
- *
- * Returns the largest `recencyWindow` (least compression) that fits,
- * or the best effort with `fits: false` if the budget is impossible to meet.
- *
- * Throws if `options.summarizer` is set — use `compressToFitAsync` instead.
- */
-export function compressToFit(
+function compressSyncWithBudget(
   messages: Message[],
   tokenBudget: number,
-  options?: CompressToFitOptions,
-): CompressToFitResult {
-  if (options?.summarizer) {
-    throw new Error('summarizer requires compressToFitAsync (use the async API)');
-  }
+  options: CompressOptions,
+): CompressResult {
+  const minRw = options.minRecencyWindow ?? 0;
+  const sourceVersion = options.sourceVersion ?? 0;
 
-  const minRw = options?.minRecencyWindow ?? 0;
-  const sourceVersion = options?.sourceVersion ?? 0;
-
-  const fast = makeCtfFastPath(messages, tokenBudget, sourceVersion);
-  if (fast) return fast;
-
-  // Binary search: find the largest rw where tokens <= budget
-  let lo = minRw;
-  let hi = messages.length - 1;
-  let lastResult: CompressToFitResult | undefined;
-  let lastRw = -1;
-
-  while (lo < hi) {
-    const mid = Math.ceil((lo + hi) / 2);
-    const cr = compressMessages(messages, { ...options, recencyWindow: mid, summarizer: undefined });
-    lastResult = makeCtfResult(cr, mid, tokenBudget);
-    lastRw = mid;
-
-    if (lastResult.fits) {
-      lo = mid;
-    } else {
-      hi = mid - 1;
-    }
-  }
-
-  // Return cached result if we already computed at lo
-  if (lastRw === lo && lastResult) return lastResult;
-
-  const cr = compressMessages(messages, { ...options, recencyWindow: lo, summarizer: undefined });
-  return makeCtfResult(cr, lo, tokenBudget);
-}
-
-/**
- * Async variant of `compressToFit` that supports an LLM-powered summarizer.
- * Uses the same binary search strategy.
- */
-export async function compressToFitAsync(
-  messages: Message[],
-  tokenBudget: number,
-  options?: CompressToFitOptions,
-): Promise<CompressToFitResult> {
-  const minRw = options?.minRecencyWindow ?? 0;
-  const sourceVersion = options?.sourceVersion ?? 0;
-
-  const fast = makeCtfFastPath(messages, tokenBudget, sourceVersion);
+  const fast = budgetFastPath(messages, tokenBudget, sourceVersion);
   if (fast) return fast;
 
   let lo = minRw;
   let hi = messages.length - 1;
-  let lastResult: CompressToFitResult | undefined;
+  let lastResult: CompressResult | undefined;
   let lastRw = -1;
 
   while (lo < hi) {
     const mid = Math.ceil((lo + hi) / 2);
-    const cr = await compressMessagesAsync(messages, { ...options, recencyWindow: mid });
-    lastResult = makeCtfResult(cr, mid, tokenBudget);
+    const cr = compressSync(messages, { ...options, recencyWindow: mid, summarizer: undefined, tokenBudget: undefined });
+    lastResult = addBudgetFields(cr, tokenBudget, mid);
     lastRw = mid;
 
     if (lastResult.fits) {
@@ -812,6 +735,83 @@ export async function compressToFitAsync(
 
   if (lastRw === lo && lastResult) return lastResult;
 
-  const cr = await compressMessagesAsync(messages, { ...options, recencyWindow: lo });
-  return makeCtfResult(cr, lo, tokenBudget);
+  const cr = compressSync(messages, { ...options, recencyWindow: lo, summarizer: undefined, tokenBudget: undefined });
+  return addBudgetFields(cr, tokenBudget, lo);
+}
+
+async function compressAsyncWithBudget(
+  messages: Message[],
+  tokenBudget: number,
+  options: CompressOptions,
+): Promise<CompressResult> {
+  const minRw = options.minRecencyWindow ?? 0;
+  const sourceVersion = options.sourceVersion ?? 0;
+
+  const fast = budgetFastPath(messages, tokenBudget, sourceVersion);
+  if (fast) return fast;
+
+  let lo = minRw;
+  let hi = messages.length - 1;
+  let lastResult: CompressResult | undefined;
+  let lastRw = -1;
+
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    const cr = await compressAsync(messages, { ...options, recencyWindow: mid, tokenBudget: undefined });
+    lastResult = addBudgetFields(cr, tokenBudget, mid);
+    lastRw = mid;
+
+    if (lastResult.fits) {
+      lo = mid;
+    } else {
+      hi = mid - 1;
+    }
+  }
+
+  if (lastRw === lo && lastResult) return lastResult;
+
+  const cr = await compressAsync(messages, { ...options, recencyWindow: lo, tokenBudget: undefined });
+  return addBudgetFields(cr, tokenBudget, lo);
+}
+
+// ---------------------------------------------------------------------------
+// Public API: compress() with overloads
+// ---------------------------------------------------------------------------
+
+/**
+ * Compress a message array. Sync by default; async when a `summarizer` is provided.
+ *
+ * The caller MUST persist `messages` and `verbatim` atomically.
+ * Partial writes (e.g. storing compressed messages without their
+ * verbatim originals) will cause data loss that `uncompress()`
+ * surfaces via `missing_ids`.
+ */
+export function compress(
+  messages: Message[],
+  options?: CompressOptions,
+): CompressResult;
+export function compress(
+  messages: Message[],
+  options: CompressOptions & { summarizer: Summarizer },
+): Promise<CompressResult>;
+export function compress(
+  messages: Message[],
+  options: CompressOptions = {},
+): CompressResult | Promise<CompressResult> {
+  const hasSummarizer = !!options.summarizer;
+  const hasBudget = options.tokenBudget != null;
+
+  if (hasSummarizer) {
+    // Async paths
+    if (hasBudget) {
+      return compressAsyncWithBudget(messages, options.tokenBudget!, options);
+    }
+    return compressAsync(messages, options);
+  }
+
+  // Sync paths
+  if (hasBudget) {
+    return compressSyncWithBudget(messages, options.tokenBudget!, options);
+  }
+  return compressSync(messages, options);
 }
