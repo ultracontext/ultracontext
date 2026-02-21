@@ -42,15 +42,15 @@ pnpm --filter ultracontext-daemon run dev
 - TUI client lives in `apps/tui`.
 - Environment variables are loaded from monorepo root `.env` by default, with fallback to `apps/daemon/.env`.
 - Use `DOTENV_CONFIG_PATH=/custom/path/.env` to override the env file location.
-- Daemon uses local SQLite for offsets/dedupe/config cache (`~/.ultracontext/daemon.db` by default).
-- Daemon exposes local WebSocket runtime state for TUI (`~/.ultracontext/daemon.info` by default).
+- Daemon uses local SQLite for offsets/dedupe/config cache (recommended in root `.env`: `ULTRACONTEXT_DB_FILE=../../.ultracontext/daemon.db`).
+- Daemon exposes local WebSocket runtime state for TUI (recommended in root `.env`: `ULTRACONTEXT_DAEMON_INFO_FILE=../../.ultracontext/daemon.info`).
 - Sound effects and resume UX now live in the TUI client.
 
 ## Main Env Vars
 
 - `ULTRACONTEXT_API_KEY`
 - `ULTRACONTEXT_BASE_URL`
-- `ULTRACONTEXT_CONFIG_FILE` (default: `~/.ultracontext/config.json`)
+- `ULTRACONTEXT_CONFIG_FILE` (recommended in root `.env`: `../../.ultracontext/config.json`)
 - `ULTRACONTEXT_DB_FILE`
 - `ULTRACONTEXT_LOCK_FILE`
 - `ULTRACONTEXT_DAEMON_WS_HOST`

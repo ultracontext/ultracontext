@@ -125,6 +125,10 @@ Workspace apps live in `apps/*` and shared internal modules live in `packages/*`
 
 ```bash
 pnpm install
+pnpm ultracontext:db:up
+pnpm ultracontext:migrate
+pnpm ultracontext:api
+pnpm ultracontext:key:local
 pnpm --filter ultracontext-daemon run dev
 pnpm --filter ultracontext-tui run dev
 ```

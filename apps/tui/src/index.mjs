@@ -83,6 +83,13 @@ function normalizeBootstrapModeWithPrompt(raw) {
   return normalizeBootstrapMode(raw, { allowPrompt: true }) || "";
 }
 
+function readEnv(...keys) {
+  for (const key of keys) {
+    if (process.env[key] !== undefined) return process.env[key];
+  }
+  return undefined;
+}
+
 const cfg = {
   apiKey: normalizeApiKey(process.env.ULTRACONTEXT_API_KEY),
   baseUrl: (process.env.ULTRACONTEXT_BASE_URL ?? "https://api.ultracontext.ai").trim(),
@@ -94,11 +101,21 @@ const cfg = {
   resumeAutoRefreshMs: Math.max(toInt(process.env.RESUME_AUTO_REFRESH_MS, 3500), 0),
   uiRecentLimit: toInt(process.env.TUI_RECENT_LIMIT, 240),
   configFile: resolveRuntimeConfigPath(),
-  soundEnabled: boolFromEnv(process.env.DAEMON_SOUND_ENABLED, true),
-  startupSoundEnabled: boolFromEnv(process.env.DAEMON_STARTUP_SOUND_ENABLED, true),
-  contextSoundEnabled: boolFromEnv(process.env.DAEMON_CONTEXT_SOUND_ENABLED, true),
-  startupGreetingFile: expandHome(process.env.DAEMON_STARTUP_GREETING_FILE ?? DEFAULT_STARTUP_SOUND_FILE),
-  contextCreatedSoundFile: expandHome(process.env.DAEMON_CONTEXT_SOUND_FILE ?? DEFAULT_CONTEXT_SOUND_FILE),
+  soundEnabled: boolFromEnv(readEnv("TUI_SOUND_ENABLED", "DAEMON_SOUND_ENABLED"), true),
+  startupSoundEnabled: boolFromEnv(
+    readEnv("TUI_STARTUP_SOUND_ENABLED", "DAEMON_STARTUP_SOUND_ENABLED"),
+    true
+  ),
+  contextSoundEnabled: boolFromEnv(
+    readEnv("TUI_CONTEXT_SOUND_ENABLED", "DAEMON_CONTEXT_SOUND_ENABLED"),
+    true
+  ),
+  startupGreetingFile: expandHome(
+    readEnv("TUI_STARTUP_SOUND_FILE", "DAEMON_STARTUP_GREETING_FILE") ?? DEFAULT_STARTUP_SOUND_FILE
+  ),
+  contextCreatedSoundFile: expandHome(
+    readEnv("TUI_CONTEXT_SOUND_FILE", "DAEMON_CONTEXT_SOUND_FILE") ?? DEFAULT_CONTEXT_SOUND_FILE
+  ),
   bootstrapMode: normalizeBootstrapModeWithPrompt(process.env.DAEMON_BOOTSTRAP_MODE ?? "prompt") || "prompt",
   bootstrapReset: boolFromEnv(process.env.DAEMON_BOOTSTRAP_RESET, false),
   claudeIncludeSubagents: boolFromEnv(process.env.CLAUDE_INCLUDE_SUBAGENTS, false),
@@ -131,12 +148,12 @@ const CONFIG_TOGGLES = [
   {
     key: "startupSoundEnabled",
     label: "Startup sounds",
-    description: "Play sound when daemon startup is detected",
+    description: "Play sound when the TUI starts",
   },
   {
     key: "contextSoundEnabled",
     label: "Context sounds",
-    description: "Play duck sound when a new context is created",
+    description: "Play duck sound when the TUI detects a new context",
   },
 ];
 
@@ -190,6 +207,8 @@ const runtime = {
   seenLogQueue: [],
   initialLogsSeeded: false,
   syncCount: 0,
+  resumeKnownContextIds: new Set(),
+  resumeBaselineReady: false,
 };
 
 const sound = { startupFile: "", contextFile: "", warnedNonDarwin: false };
@@ -444,10 +463,7 @@ function handleDaemonWsMessage(message) {
     } else {
       clearDaemonOfflineNotice();
       if (runtime.syncCount > 0 && !wasOnline) {
-        playStartupGreetingSound();
-      }
-      if (runtime.syncCount > 0) {
-        handleNewRemoteLogs(newLogEntries);
+        ui.resume.notice = "Daemon reconnected.";
       }
     }
 
@@ -464,7 +480,7 @@ function handleDaemonWsMessage(message) {
     } else {
       clearDaemonOfflineNotice();
       if (runtime.syncCount > 0 && !wasOnline) {
-        playStartupGreetingSound();
+        ui.resume.notice = "Daemon reconnected.";
       }
     }
     runtime.syncCount += 1;
@@ -474,9 +490,7 @@ function handleDaemonWsMessage(message) {
 
   if (message.type === DAEMON_WS_MESSAGE_TYPES.LOG) {
     const appended = appendRemoteLogEntry(message.data);
-    if (appended && runtime.syncCount > 0) {
-      handleNewRemoteLogs([appended]);
-    }
+    void appended;
     renderDashboard();
     return;
   }
@@ -488,11 +502,7 @@ function handleDaemonWsMessage(message) {
   }
 
   if (message.type === DAEMON_WS_MESSAGE_TYPES.CONTEXT_EVENT) {
-    const action = String(message.data?.action ?? "");
-    const contextKind = String(message.data?.contextKind ?? "session");
-    if (action === "created" && contextKind === "session" && runtime.syncCount > 0) {
-      playContextCreatedSound();
-    }
+    // TUI-driven context sound is based on API context list diffs, not daemon events.
     return;
   }
 }
@@ -924,16 +934,32 @@ function resumeSummaryMarkdown({ context, messages }) {
   return lines.join("\n");
 }
 
-async function loadResumeContexts() {
+async function loadResumeContexts({ silent = false } = {}) {
   if (!runtime.uc || ui.resume.loading) return;
   ui.resume.loading = true;
-  ui.resume.error = "";
-  ui.resume.notice = "Loading contexts from UltraContext...";
-  renderDashboard();
+  if (!silent) {
+    ui.resume.error = "";
+    ui.resume.notice = "Loading contexts from UltraContext...";
+    renderDashboard();
+  }
 
   try {
     const listed = await runtime.uc.get({ limit: Math.max(cfg.resumeContextLimit, 1) });
     const filtered = resumeSortContexts(resumeFilterContexts(resumeDedupeById(listed.data)));
+    const nextIds = new Set(filtered.map((ctx) => String(ctx?.id ?? "")).filter(Boolean));
+    let newContextCount = 0;
+    if (runtime.resumeBaselineReady) {
+      for (const id of nextIds) {
+        if (!runtime.resumeKnownContextIds.has(id)) newContextCount += 1;
+      }
+    }
+    runtime.resumeKnownContextIds = nextIds;
+    if (!runtime.resumeBaselineReady) runtime.resumeBaselineReady = true;
+
+    if (newContextCount > 0) {
+      playContextCreatedSound();
+    }
+
     ui.resume.contexts = filtered;
     if (ui.resume.selectedIndex >= filtered.length) {
       ui.resume.selectedIndex = Math.max(filtered.length - 1, 0);
@@ -949,15 +975,19 @@ async function loadResumeContexts() {
       else sourceCounts.other += 1;
     }
 
-    const filterLabel = cfg.resumeSourceFilter === "all" ? "all sources" : cfg.resumeSourceFilter;
-    ui.resume.notice = `Loaded ${filtered.length} session contexts (${filterLabel}: codex=${sourceCounts.codex}, claude=${sourceCounts.claude}, openclaw=${sourceCounts.openclaw}, other=${sourceCounts.other})`;
-    if (filtered.length === 0) {
-      ui.resume.notice = `No contexts found for filter=${cfg.resumeSourceFilter}`;
+    if (!silent) {
+      const filterLabel = cfg.resumeSourceFilter === "all" ? "all sources" : cfg.resumeSourceFilter;
+      ui.resume.notice = `Loaded ${filtered.length} session contexts (${filterLabel}: codex=${sourceCounts.codex}, claude=${sourceCounts.claude}, openclaw=${sourceCounts.openclaw}, other=${sourceCounts.other})`;
+      if (filtered.length === 0) {
+        ui.resume.notice = `No contexts found for filter=${cfg.resumeSourceFilter}`;
+      }
     }
   } catch (error) {
-    const details = errorDetails(error);
-    ui.resume.error = details.message ?? "Failed loading contexts";
-    ui.resume.notice = "";
+    if (!silent) {
+      const details = errorDetails(error);
+      ui.resume.error = details.message ?? "Failed loading contexts";
+      ui.resume.notice = "";
+    }
   } finally {
     ui.resume.loading = false;
     renderDashboard();
@@ -1365,16 +1395,6 @@ function playContextCreatedSound() {
   playSoundFile(sound.contextFile);
 }
 
-function handleNewRemoteLogs(entries) {
-  if (!Array.isArray(entries) || entries.length === 0) return;
-
-  const hasStartup = entries.some((entry) => String(entry.text ?? "").includes("Daemon started"));
-  const hasContextCreated = entries.some((entry) => String(entry.text ?? "").includes("Context created"));
-
-  if (hasStartup) playStartupGreetingSound();
-  if (hasContextCreated) playContextCreatedSound();
-}
-
 function configToggleItems() {
   const masterEnabled = Boolean(cfg.soundEnabled);
   const soundItems = CONFIG_TOGGLES.map((item) => {
@@ -1649,11 +1669,6 @@ async function tuiMain() {
     throw new Error("TUI mode requires a TTY.");
   }
 
-  const uc = new UltraContext({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl });
-  runtime.uc = uc;
-
-  await uc.get({ limit: 1 });
-
   try {
     const fileLoad = await loadConfigPrefsFromFile();
     if (!fileLoad.loaded) {
@@ -1666,6 +1681,11 @@ async function tuiMain() {
   await prepareSoundConfig();
   playStartupGreetingSound();
   setDaemonOfflineNotice();
+
+  const uc = new UltraContext({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl });
+  runtime.uc = uc;
+
+  await uc.get({ limit: 1 });
 
   runtime.daemonClient = createDaemonWsClient({
     host: cfg.daemonWsHost,
@@ -1737,9 +1757,8 @@ async function tuiMain() {
 
   if (cfg.resumeAutoRefreshMs > 0) {
     runtime.contextRefreshTimer = setInterval(() => {
-      if (ui.selectedTab !== "contexts") return;
       if (ui.resume.loading || ui.resume.syncing) return;
-      void loadResumeContexts();
+      void loadResumeContexts({ silent: ui.selectedTab !== "contexts" });
     }, Math.max(cfg.resumeAutoRefreshMs, 1000));
     runtime.contextRefreshTimer.unref?.();
   }

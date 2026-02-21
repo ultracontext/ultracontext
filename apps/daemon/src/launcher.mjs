@@ -36,6 +36,20 @@ async function readJsonFile(filePath) {
   }
 }
 
+async function readLogTail(logPath, lines = 12) {
+  try {
+    const raw = await fs.readFile(logPath, "utf8");
+    const allLines = raw
+      .split("\n")
+      .map((line) => line.trimEnd())
+      .filter(Boolean);
+    if (allLines.length === 0) return [];
+    return allLines.slice(-Math.max(lines, 1));
+  } catch {
+    return [];
+  }
+}
+
 function resolveDaemonLogFile(env = process.env) {
   return expandHome(env.ULTRACONTEXT_DAEMON_LOG_FILE ?? DEFAULT_LOG_FILE);
 }
@@ -122,6 +136,13 @@ async function main() {
   await new Promise((resolve) => setTimeout(resolve, 350));
   if (!isPidAlive(child.pid)) {
     console.error("Failed to start daemon in the background.");
+    const tail = await readLogTail(logPath);
+    if (tail.length > 0) {
+      console.error("Last daemon log lines:");
+      for (const line of tail) {
+        console.error(`  ${line}`);
+      }
+    }
     console.error("Run `pnpm --filter ultracontext-daemon run start:verbose` for diagnostics.");
     process.exit(1);
     return;
