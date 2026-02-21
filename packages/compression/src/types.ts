@@ -1,5 +1,16 @@
 export type Summarizer = (text: string) => string | Promise<string>;
 
+export type CreateSummarizerOptions = {
+  /** Maximum tokens for the LLM response. Default: 300. */
+  maxResponseTokens?: number;
+  /** Domain-specific instructions prepended to the built-in rules. */
+  systemPrompt?: string;
+  /** Summarization mode. 'normal' (default) = concise prose, 'aggressive' = terse bullet points at half token budget. */
+  mode?: 'normal' | 'aggressive';
+  /** Domain-specific terms appended to the built-in preserve list. */
+  preserveTerms?: string[];
+};
+
 export type CompressOptions = {
   preserve?: string[];
   mode?: 'lossless' | 'lossy';

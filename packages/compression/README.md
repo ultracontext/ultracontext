@@ -198,30 +198,94 @@ const { decision, confidence, reasons } = classifyMessage(content);
 // decision: 'T0' (preserve) | 'T2' (mixed) | 'T3' (compressible)
 ```
 
+### createSummarizer
+
+Create an LLM-powered summarizer with an optimized prompt template. Use `createSummarizer` for optimized prompts, or write your own `Summarizer` function for full control.
+
+```ts
+import { createSummarizer, compressMessagesAsync } from '@ultracontext/compression';
+
+const summarizer = createSummarizer(
+  async (prompt) => {
+    // call any LLM — just return the response text
+    return await myLlm.complete(prompt);
+  },
+  { maxResponseTokens: 300 },  // optional, 300 is the default
+);
+
+const result = await compressMessagesAsync(messages, { summarizer });
+```
+
+The prompt preserves code references, file paths, function/variable names, URLs, API keys, error messages, numbers, and technical decisions — stripping only filler and redundant explanations.
+
+For domain-specific compression, use `systemPrompt` to inject context that gets prepended to the built-in rules:
+
+```ts
+const summarizer = createSummarizer(callLlm, {
+  systemPrompt: 'This is a legal contract. Preserve all clause numbers, party names, and defined terms.',
+});
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `maxResponseTokens` | `number` | `300` | Hint for maximum tokens in the LLM response |
+| `systemPrompt` | `string` | — | Domain-specific instructions prepended to the built-in rules |
+| `mode` | `'normal' \| 'aggressive'` | `'normal'` | `'aggressive'` produces terse bullet points at half the token budget |
+| `preserveTerms` | `string[]` | — | Domain-specific terms appended to the built-in preserve list |
+
+### createEscalatingSummarizer
+
+Three-level escalation summarizer implementing the LCM approach (normal → aggressive → deterministic fallback):
+
+1. **Level 1: Normal** — concise prose summary via the LLM
+2. **Level 2: Aggressive** — terse bullet points at half the token budget (if Level 1 fails, returns empty, or returns longer text)
+3. **Level 3: Deterministic** — sentence extraction fallback via `withFallback` in the compression pipeline (if Level 2 also fails)
+
+```ts
+import { createEscalatingSummarizer, compressMessagesAsync } from '@ultracontext/compression';
+
+const summarizer = createEscalatingSummarizer(
+  async (prompt) => myLlm.complete(prompt),
+  {
+    maxResponseTokens: 300,
+    systemPrompt: 'This is a legal contract. Preserve all clause numbers.',
+    preserveTerms: ['clause numbers', 'party names'],
+  },
+);
+
+const result = await compressMessagesAsync(messages, { summarizer });
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `maxResponseTokens` | `number` | `300` | Hint for maximum tokens in the LLM response |
+| `systemPrompt` | `string` | — | Domain-specific instructions prepended to the built-in rules |
+| `preserveTerms` | `string[]` | — | Domain-specific terms appended to the built-in preserve list |
+
+Note: `mode` is not accepted — the escalating summarizer manages both modes internally.
+
 <br />
 
 ## LLM Summarizer Examples
 
-The `summarizer` option accepts any function with the signature `(text: string) => string | Promise<string>`. Here are examples for common providers.
+The `summarizer` option accepts any function with the signature `(text: string) => string | Promise<string>`. Use `createSummarizer` to wrap your LLM call with an optimized prompt, or write the prompt yourself for full control.
 
 ### Anthropic (Claude)
 
 ```ts
 import Anthropic from '@anthropic-ai/sdk';
+import { createSummarizer, compressMessagesAsync } from '@ultracontext/compression';
 
 const anthropic = new Anthropic();
 
-const summarizer = async (text: string) => {
+const summarizer = createSummarizer(async (prompt) => {
   const msg = await anthropic.messages.create({
     model: 'claude-haiku-4-5-20251001',
     max_tokens: 300,
-    messages: [{
-      role: 'user',
-      content: `Summarize this concisely, preserving technical details:\n\n${text}`,
-    }],
+    messages: [{ role: 'user', content: prompt }],
   });
-  return msg.content[0].type === 'text' ? msg.content[0].text : text;
-};
+  return msg.content[0].type === 'text' ? msg.content[0].text : '';
+});
 
 const result = await compressMessagesAsync(messages, { summarizer });
 ```
@@ -230,20 +294,18 @@ const result = await compressMessagesAsync(messages, { summarizer });
 
 ```ts
 import OpenAI from 'openai';
+import { createSummarizer, compressMessagesAsync } from '@ultracontext/compression';
 
 const openai = new OpenAI();
 
-const summarizer = async (text: string) => {
+const summarizer = createSummarizer(async (prompt) => {
   const res = await openai.chat.completions.create({
     model: 'gpt-4o-mini',
     max_tokens: 300,
-    messages: [{
-      role: 'user',
-      content: `Summarize this concisely, preserving technical details:\n\n${text}`,
-    }],
+    messages: [{ role: 'user', content: prompt }],
   });
-  return res.choices[0].message.content ?? text;
-};
+  return res.choices[0].message.content ?? '';
+});
 
 const result = await compressMessagesAsync(messages, { summarizer });
 ```
@@ -252,16 +314,17 @@ const result = await compressMessagesAsync(messages, { summarizer });
 
 ```ts
 import { GoogleGenAI } from '@google/genai';
+import { createSummarizer, compressMessagesAsync } from '@ultracontext/compression';
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-const summarizer = async (text: string) => {
+const summarizer = createSummarizer(async (prompt) => {
   const res = await ai.models.generateContent({
     model: 'gemini-2.0-flash',
-    contents: `Summarize this concisely, preserving technical details:\n\n${text}`,
+    contents: prompt,
   });
-  return res.text ?? text;
-};
+  return res.text ?? '';
+});
 
 const result = await compressMessagesAsync(messages, { summarizer });
 ```
@@ -272,23 +335,21 @@ xAI's API is OpenAI-compatible — use the OpenAI SDK with a different base URL:
 
 ```ts
 import OpenAI from 'openai';
+import { createSummarizer, compressMessagesAsync } from '@ultracontext/compression';
 
 const xai = new OpenAI({
   apiKey: process.env.XAI_API_KEY,
   baseURL: 'https://api.x.ai/v1',
 });
 
-const summarizer = async (text: string) => {
+const summarizer = createSummarizer(async (prompt) => {
   const res = await xai.chat.completions.create({
     model: 'grok-3-fast',
     max_tokens: 300,
-    messages: [{
-      role: 'user',
-      content: `Summarize this concisely, preserving technical details:\n\n${text}`,
-    }],
+    messages: [{ role: 'user', content: prompt }],
   });
-  return res.choices[0].message.content ?? text;
-};
+  return res.choices[0].message.content ?? '';
+});
 
 const result = await compressMessagesAsync(messages, { summarizer });
 ```
@@ -296,19 +357,17 @@ const result = await compressMessagesAsync(messages, { summarizer });
 ### Ollama
 
 ```ts
-const summarizer = async (text: string) => {
+import { createSummarizer, compressMessagesAsync } from '@ultracontext/compression';
+
+const summarizer = createSummarizer(async (prompt) => {
   const res = await fetch('http://localhost:11434/api/generate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: 'llama3',
-      prompt: `Summarize this concisely, preserving technical details:\n\n${text}`,
-      stream: false,
-    }),
+    body: JSON.stringify({ model: 'llama3', prompt, stream: false }),
   });
   const json = await res.json();
   return json.response;
-};
+});
 
 const result = await compressMessagesAsync(messages, { summarizer });
 ```

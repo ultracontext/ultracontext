@@ -506,7 +506,7 @@ async function withFallback(text: string, userSummarizer?: Summarizer): Promise<
   if (userSummarizer) {
     try {
       const result = await userSummarizer(text);
-      if (typeof result === 'string' && result.length < text.length) return result;
+      if (typeof result === 'string' && result.length > 0 && result.length < text.length) return result;
     } catch { /* fall through to deterministic */ }
   }
   return summarize(text);
