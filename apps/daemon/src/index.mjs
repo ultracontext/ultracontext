@@ -355,7 +355,25 @@ function serializeConfigPrefs() {
 
 async function persistConfigPrefsToFile(targetFile = cfg.configFile) {
   const target = path.resolve(targetFile);
-  const payload = JSON.stringify(serializeConfigPrefs(), null, 2);
+  let existing = {};
+  try {
+    const raw = await fs.readFile(target, "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      existing = parsed;
+    }
+  } catch {
+    // ignore missing/invalid config file and write fresh merged payload below
+  }
+
+  const payload = JSON.stringify(
+    {
+      ...existing,
+      ...serializeConfigPrefs(),
+    },
+    null,
+    2
+  );
   await fs.mkdir(path.dirname(target), { recursive: true });
   await fs.writeFile(target, `${payload}\n`, "utf8");
   return { saved: true, file: target };

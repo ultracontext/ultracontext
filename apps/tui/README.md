@@ -17,10 +17,20 @@ cp .env.example .env
 
 ## Notes
 
-- This package opens the TUI client and connects to daemon local WebSocket runtime state from `apps/daemon` (discovery via `~/.ultracontext/daemon.info`).
+- This package opens the TUI client and connects to daemon local WebSocket runtime state from `apps/daemon` (recommended discovery file in root `.env`: `ULTRACONTEXT_DAEMON_INFO_FILE=../../.ultracontext/daemon.info`).
 - Environment variables are loaded from monorepo root `.env` by default, with fallback to `apps/tui/.env` and `apps/daemon/.env`.
 - Use `DOTENV_CONFIG_PATH=/custom/path/.env` to override the env file location.
 - TUI does not auto-start the daemon.
 - If daemon is offline, TUI shows: `pnpm --filter ultracontext-daemon run start`.
 - Startup/duck sounds are emitted by the TUI (not by the daemon).
 - Resume flow is fully handled by the TUI.
+
+## TUI Sound Env Vars
+
+- `TUI_SOUND_ENABLED` (default: `true`)
+- `TUI_STARTUP_SOUND_ENABLED` (default: `true`)
+- `TUI_CONTEXT_SOUND_ENABLED` (default: `true`)
+- `TUI_STARTUP_SOUND_FILE` (optional, default bundled file)
+- `TUI_CONTEXT_SOUND_FILE` (optional, default bundled file)
+
+Legacy `DAEMON_*` sound env names still work as fallback for compatibility.

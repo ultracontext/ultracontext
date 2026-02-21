@@ -24,6 +24,7 @@ __pycache__/
 
 # logs
 *.log
+.ultracontext/
 
 # os
 .DS_Store
