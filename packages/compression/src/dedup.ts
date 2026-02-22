@@ -31,7 +31,7 @@ export function analyzeDuplicates(
     // Skip ineligible messages
     if (msg.role && preserveRoles.has(msg.role)) continue;
     if (msg.tool_calls && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) continue;
-    if (content.startsWith('[summary:')) continue;
+    if (content.startsWith('[summary:') || content.startsWith('[summary#') || content.startsWith('[truncated')) continue;
     if (content.length < 200) continue;
 
     const hash = djb2(content);
@@ -121,7 +121,7 @@ export function analyzeFuzzyDuplicates(
     // Same skip criteria as analyzeDuplicates
     if (msg.role && preserveRoles.has(msg.role)) continue;
     if (msg.tool_calls && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) continue;
-    if (content.startsWith('[summary:')) continue;
+    if (content.startsWith('[summary:') || content.startsWith('[summary#') || content.startsWith('[truncated')) continue;
     if (content.length < 200) continue;
 
     // Skip indices already handled by exact dedup

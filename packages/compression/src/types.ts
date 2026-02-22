@@ -28,6 +28,10 @@ export type CompressOptions = {
   fuzzyDedup?: boolean;
   /** Similarity threshold for fuzzy dedup (0-1). Default: 0.85. */
   fuzzyThreshold?: number;
+  /** Embed summary_id in compressed content so downstream tools can reference it. Default: false. */
+  embedSummaryId?: boolean;
+  /** Hard-truncate non-recency messages when binary search bottoms out and budget still exceeded. Default: false. */
+  forceConverge?: boolean;
 };
 
 export type VerbatimMap = Record<string, Message>;

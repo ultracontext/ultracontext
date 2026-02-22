@@ -1766,15 +1766,13 @@ describe('structured tool output summarization', () => {
         msg({ id: '3', index: 2, content: LONG }),
       ];
       const result = compress(messages, { recencyWindow: 0, dedup: true });
-      // id:1 deduped (messages_deduped: 1), id:2 compressed (messages_compressed: 1), id:3 summarized/preserved
-      // messages_compressed should NOT include the deduped message
-      const { messages_compressed, messages_deduped } = result.compression;
+      // id:1 deduped, id:2 compressed (prose), id:3 compressed (keep target)
+      const { messages_compressed, messages_deduped = 0, messages_preserved } = result.compression;
       expect(messages_deduped).toBe(1);
-      // The deduped message should not be counted in messages_compressed
-      expect(messages_compressed).not.toContain(messages_deduped);
-      // Total affected = compressed + deduped + preserved should equal input length
-      const total = messages_compressed + (messages_deduped ?? 0) + result.compression.messages_preserved;
-      expect(total).toBe(messages.length);
+      // compressed + deduped + preserved == total input
+      expect(messages_compressed + messages_deduped + messages_preserved).toBe(messages.length);
+      // Deduped messages are NOT counted in messages_compressed
+      expect(messages_compressed).toBe(2);
     });
 
     it('exact duplicates: compressed + deduped + preserved == total', () => {
@@ -1791,5 +1789,260 @@ describe('structured tool output summarization', () => {
       expect(messages_deduped).toBe(2);
       expect(messages_compressed).toBe(1);
     });
+
+    it('Object.keys(verbatim) covers all compressed and deduped messages', () => {
+      const prose = 'This is a long message about general topics that could be compressed since it has no verbatim content. '.repeat(5);
+      const LONG = 'This is a repeated message with enough content to exceed the two hundred character minimum threshold for dedup eligibility so we can test dedup properly across multiple messages in the conversation. Extra padding here.';
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, content: LONG }),
+        msg({ id: '2', index: 1, role: 'assistant', content: prose }),
+        msg({ id: '3', index: 2, content: LONG }),
+      ];
+      const result = compress(messages, { recencyWindow: 0, dedup: true });
+      const { messages_compressed, messages_deduped = 0, messages_fuzzy_deduped = 0 } = result.compression;
+      // Verbatim map holds originals for both compressed and deduped messages
+      expect(Object.keys(result.verbatim).length).toBe(messages_compressed + messages_deduped + messages_fuzzy_deduped);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// embedSummaryId
+// ---------------------------------------------------------------------------
+
+describe('compress with embedSummaryId', () => {
+  const prose = 'This is a long message about general topics that could be compressed since it has no verbatim content. '.repeat(5);
+
+  it('embeds summary_id in content when enabled', () => {
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, role: 'user', content: prose }),
+    ];
+    const result = compress(messages, { recencyWindow: 0, embedSummaryId: true });
+    expect(result.compression.messages_compressed).toBe(1);
+    expect(result.messages[0].content).toMatch(/^\[summary#uc_sum_/);
+  });
+
+  it('does not embed summary_id by default', () => {
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, role: 'user', content: prose }),
+    ];
+    const result = compress(messages, { recencyWindow: 0 });
+    expect(result.compression.messages_compressed).toBe(1);
+    expect(result.messages[0].content).toMatch(/^\[summary: /);
+    expect(result.messages[0].content).not.toMatch(/^\[summary#/);
+  });
+
+  it('embedded ID matches metadata summary_id', () => {
+    const messages: Message[] = [
+      msg({ id: 'test-id', index: 0, role: 'user', content: prose }),
+    ];
+    const result = compress(messages, { recencyWindow: 0, embedSummaryId: true });
+    const meta = result.messages[0].metadata?._uc_original as { summary_id: string };
+    expect(meta.summary_id).toMatch(/^uc_sum_/);
+    expect(result.messages[0].content).toContain(`[summary#${meta.summary_id}:`);
+  });
+
+  it('re-compress of [summary# messages treats them as already-compressed', () => {
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, role: 'user', content: prose }),
+    ];
+    const first = compress(messages, { recencyWindow: 0, embedSummaryId: true });
+    expect(first.messages[0].content).toMatch(/^\[summary#/);
+
+    const second = compress(first.messages, { recencyWindow: 0, embedSummaryId: true });
+    // Already-compressed message should be preserved (idempotent)
+    expect(second.compression.messages_compressed).toBe(0);
+    expect(second.messages[0].content).toBe(first.messages[0].content);
+  });
+
+  it('round-trip integrity with embedSummaryId', () => {
+    const messages: Message[] = [
+      msg({ id: 'sys', index: 0, role: 'system', content: 'System prompt.' }),
+      msg({ id: 'u1', index: 1, role: 'user', content: prose }),
+      msg({ id: 'a1', index: 2, role: 'assistant', content: prose }),
+    ];
+    const result = compress(messages, { recencyWindow: 0, dedup: false, embedSummaryId: true });
+    const expanded = uncompress(result.messages, result.verbatim);
+    expect(expanded.messages).toEqual(messages);
+    expect(expanded.missing_ids).toEqual([]);
+  });
+
+  it('works with async summarizer', async () => {
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, role: 'user', content: prose }),
+    ];
+    const result = await compress(messages, {
+      recencyWindow: 0,
+      embedSummaryId: true,
+      summarizer: (t) => t.slice(0, 40) + '...',
+    });
+    expect(result.messages[0].content).toMatch(/^\[summary#uc_sum_/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// forceConverge
+// ---------------------------------------------------------------------------
+
+describe('compress with forceConverge', () => {
+  // Large JSON content gets preserved by normal compression (valid JSON check)
+  // but is eligible for force-truncation since it's > 512 chars and not a system role
+  const bigJson = JSON.stringify({ items: Array.from({ length: 50 }, (_, i) => ({ id: i, name: `item_${i}`, desc: `Description for item number ${i} which adds length` })) });
+  const prose = 'This is a long message about general topics that could be compressed since it has no verbatim content. '.repeat(10);
+
+  it('guarantees tokenCount drops when preserved messages are force-truncated', () => {
+    const messages: Message[] = [
+      msg({ id: '0', index: 0, role: 'user', content: bigJson }),
+      msg({ id: '1', index: 1, role: 'assistant', content: bigJson }),
+      msg({ id: '2', index: 2, role: 'user', content: prose }),
+    ];
+    expect(bigJson.length).toBeGreaterThan(512);
+    const without = compress(messages, { tokenBudget: 1, dedup: false });
+    const withForce = compress(messages, { tokenBudget: 1, dedup: false, forceConverge: true });
+    expect(without.fits).toBe(false);
+    expect(withForce.tokenCount!).toBeLessThan(without.tokenCount!);
+  });
+
+  it('preserves round-trip integrity (uncompress recovers originals)', () => {
+    const messages: Message[] = [
+      msg({ id: 'sys', index: 0, role: 'system', content: 'System prompt.' }),
+      msg({ id: 'u1', index: 1, role: 'user', content: bigJson }),
+      msg({ id: 'a1', index: 2, role: 'assistant', content: prose }),
+    ];
+    const result = compress(messages, { tokenBudget: 1, dedup: false, forceConverge: true });
+    const expanded = uncompress(result.messages, result.verbatim);
+    expect(expanded.messages).toEqual(messages);
+    expect(expanded.missing_ids).toEqual([]);
+  });
+
+  it('respects minRecencyWindow — recency messages NOT truncated', () => {
+    const messages: Message[] = [];
+    for (let i = 0; i < 6; i++) {
+      messages.push(msg({ id: `${i}`, index: i, role: i % 2 === 0 ? 'user' : 'assistant', content: bigJson }));
+    }
+    const result = compress(messages, { tokenBudget: 1, minRecencyWindow: 3, dedup: false, forceConverge: true });
+    // Last 3 messages are in the recency window and must not be truncated
+    const last3 = result.messages.slice(-3);
+    for (const m of last3) {
+      expect(m.content).not.toMatch(/^\[truncated/);
+    }
+  });
+
+  it('respects system role — not truncated', () => {
+    const messages: Message[] = [
+      msg({ id: 'sys', index: 0, role: 'system', content: 'A'.repeat(1000) }),
+      msg({ id: 'u1', index: 1, role: 'user', content: bigJson }),
+      msg({ id: 'a1', index: 2, role: 'assistant', content: prose }),
+    ];
+    const result = compress(messages, { tokenBudget: 1, dedup: false, forceConverge: true });
+    // System message should not be truncated
+    expect(result.messages[0].content).not.toMatch(/^\[truncated/);
+    expect(result.messages[0].content).toBe('A'.repeat(1000));
+  });
+
+  it('without forceConverge, impossible budget → fits: false', () => {
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, role: 'user', content: bigJson }),
+      msg({ id: '2', index: 1, role: 'assistant', content: prose }),
+    ];
+    const result = compress(messages, { tokenBudget: 1, dedup: false });
+    expect(result.fits).toBe(false);
+  });
+
+  it('works with async summarizer', async () => {
+    const messages: Message[] = [
+      msg({ id: '0', index: 0, role: 'user', content: bigJson }),
+      msg({ id: '1', index: 1, role: 'assistant', content: bigJson }),
+      msg({ id: '2', index: 2, role: 'user', content: prose }),
+    ];
+    const without = await compress(messages, { tokenBudget: 1, dedup: false, summarizer: (t) => t.slice(0, 30) + '...' });
+    const withForce = await compress(messages, { tokenBudget: 1, dedup: false, forceConverge: true, summarizer: (t) => t.slice(0, 30) + '...' });
+    expect(withForce.tokenCount!).toBeLessThan(without.tokenCount!);
+  });
+
+  it('no-op when already under budget', () => {
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, role: 'user', content: 'Short.' }),
+    ];
+    const result = compress(messages, { tokenBudget: 10000, forceConverge: true });
+    expect(result.fits).toBe(true);
+    expect(result.messages[0].content).toBe('Short.');
+  });
+
+  it('re-compression of [truncated messages is idempotent', () => {
+    const messages: Message[] = [
+      msg({ id: 'u1', index: 0, role: 'user', content: bigJson }),
+      msg({ id: 'a1', index: 1, role: 'assistant', content: bigJson }),
+    ];
+    const first = compress(messages, { tokenBudget: 1, dedup: false, forceConverge: true });
+    // Some messages should have been force-truncated
+    const hasTruncated = first.messages.some(m => typeof m.content === 'string' && m.content.startsWith('[truncated'));
+    expect(hasTruncated).toBe(true);
+
+    // Re-compress: truncated messages should be preserved, not re-summarized
+    const second = compress(first.messages, { recencyWindow: 0, dedup: false });
+    for (const m of second.messages) {
+      const content = typeof m.content === 'string' ? m.content : '';
+      if (content.startsWith('[truncated')) {
+        // Must still start with [truncated — not re-wrapped as [summary:
+        expect(content).not.toMatch(/^\[summary/);
+      }
+    }
+    expect(second.compression.messages_compressed).toBe(0);
+  });
+
+  it('truncates already-compressed messages that exceed 512 chars', () => {
+    // Code-split produces content > 512 chars: [summary: ...] + code fences
+    const longFence = '```ts\n' + 'const x = 1;\n'.repeat(50) + '```';
+    const longProse = 'This is a detailed explanation of the authentication system design and how it integrates with session management. '.repeat(4);
+    const codeContent = `${longProse}\n\n${longFence}`;
+    const messages: Message[] = [
+      msg({ id: 'cs1', index: 0, role: 'assistant', content: codeContent }),
+      msg({ id: 'u1', index: 1, role: 'user', content: 'Short question.' }),
+    ];
+    // First compress without budget to get the code-split result
+    const initial = compress(messages, { recencyWindow: 0, dedup: false });
+    const csSummary = initial.messages[0].content!;
+    // Code-split output should have _uc_original and be > 512 chars
+    expect(initial.messages[0].metadata?._uc_original).toBeDefined();
+    if (csSummary.length > 512) {
+      // Now compress with impossible budget + forceConverge
+      const result = compress(initial.messages, { tokenBudget: 1, dedup: false, forceConverge: true });
+      const truncMsg = result.messages[0];
+      expect(truncMsg.content).toMatch(/^\[truncated/);
+      // Original _uc_original should survive (not overwritten)
+      expect(truncMsg.metadata?._uc_original).toBeDefined();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// dedup tag includes keep-target ID
+// ---------------------------------------------------------------------------
+
+describe('dedup tag includes keep-target ID', () => {
+  const LONG = 'This is a repeated message with enough content to exceed the two hundred character minimum threshold for dedup eligibility so we can test dedup properly across multiple messages in the conversation. Extra padding here.';
+
+  it('exact dup tag contains the keep-target message ID', () => {
+    const messages: Message[] = [
+      msg({ id: 'first', index: 0, content: LONG }),
+      msg({ id: 'keep-me', index: 1, content: LONG }),
+    ];
+    const result = compress(messages, { recencyWindow: 0, dedup: true });
+    expect(result.messages[0].content).toMatch(/^\[uc:dup/);
+    expect(result.messages[0].content).toContain('of keep-me');
+  });
+
+  it('three copies — dedup tags reference the correct keep target', () => {
+    const messages: Message[] = [
+      msg({ id: 'a', index: 0, content: LONG }),
+      msg({ id: 'b', index: 1, content: LONG }),
+      msg({ id: 'c', index: 2, content: LONG }),
+    ];
+    const result = compress(messages, { recencyWindow: 0, dedup: true });
+    // c is the keep target (latest)
+    expect(result.messages[0].content).toContain('of c');
+    expect(result.messages[1].content).toContain('of c');
+    expect(result.messages[2].content).not.toMatch(/^\[uc:dup/);
   });
 });

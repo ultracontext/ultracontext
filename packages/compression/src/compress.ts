@@ -363,12 +363,14 @@ function formatSummary(
   rawText: string,
   mergeCount?: number,
   skipEntities?: boolean,
+  summaryId?: string,
 ): string {
   const entitySuffix = skipEntities
     ? ''
     : (() => { const e = extractEntities(rawText); return e.length > 0 ? ` | entities: ${e.join(', ')}` : ''; })();
   const mergeSuffix = mergeCount && mergeCount > 1 ? ` (${mergeCount} messages merged)` : '';
-  return `[summary: ${summaryText}${mergeSuffix}${entitySuffix}]`;
+  const prefix = summaryId ? `[summary#${summaryId}: ` : '[summary: ';
+  return `${prefix}${summaryText}${mergeSuffix}${entitySuffix}]`;
 }
 
 /** Collect consecutive non-preserved, non-codeSplit, non-dedup messages with the same role. */
@@ -418,7 +420,7 @@ function classifyAll(
     if (content.length < 120) {
       return { msg, preserved: true };
     }
-    if (content.startsWith('[summary:')) {
+    if (content.startsWith('[summary:') || content.startsWith('[summary#') || content.startsWith('[truncated')) {
       return { msg, preserved: true };
     }
     if (dedupAnnotations?.has(idx)) {
@@ -549,9 +551,10 @@ function compressSync(
     // Dedup: replace earlier duplicate/near-duplicate with compact reference
     if (classified[i].dedup) {
       const annotation = classified[i].dedup!;
+      const keepTargetId = messages[annotation.duplicateOfIndex].id;
       const tag = annotation.similarity != null
-        ? `[uc:near-dup — ${annotation.contentLength} chars, ~${Math.round(annotation.similarity * 100)}% match, see later message]`
-        : `[uc:dup — ${annotation.contentLength} chars, see later message]`;
+        ? `[uc:near-dup of ${keepTargetId} — ${annotation.contentLength} chars, ~${Math.round(annotation.similarity * 100)}% match]`
+        : `[uc:dup of ${keepTargetId} — ${annotation.contentLength} chars]`;
       result.push(buildCompressedMessage(msg, [msg.id], tag, sourceVersion, verbatim, [msg]));
       if (annotation.similarity != null) {
         messagesFuzzyDeduped++;
@@ -570,7 +573,8 @@ function compressSync(
       const codeFences = segments.filter(s => s.type === 'code').map(s => s.content);
       const proseBudget = proseText.length < 600 ? 200 : 400;
       const summaryText = summarize(proseText, proseBudget);
-      const compressed = `${formatSummary(summaryText, proseText, undefined, true)}\n\n${codeFences.join('\n\n')}`;
+      const embeddedId = options.embedSummaryId ? makeSummaryId([msg.id]) : undefined;
+      const compressed = `${formatSummary(summaryText, proseText, undefined, true, embeddedId)}\n\n${codeFences.join('\n\n')}`;
 
       if (compressed.length >= content.length) {
         result.push(msg);
@@ -596,10 +600,12 @@ function compressSync(
       : summarize(allContent, contentBudget);
 
     if (group.length > 1) {
-      let summary = formatSummary(summaryText, allContent, group.length);
+      const mergeIds = group.map(g => g.msg.id);
+      const embeddedId = options.embedSummaryId ? makeSummaryId(mergeIds) : undefined;
+      let summary = formatSummary(summaryText, allContent, group.length, undefined, embeddedId);
       const combinedLength = group.reduce((sum, g) => sum + contentLength(g.msg), 0);
       if (summary.length >= combinedLength) {
-        summary = formatSummary(summaryText, allContent, group.length, true);
+        summary = formatSummary(summaryText, allContent, group.length, true, embeddedId);
       }
 
       if (summary.length >= combinedLength) {
@@ -609,7 +615,6 @@ function compressSync(
         }
       } else {
         const sourceMsgs = group.map(g => g.msg);
-        const mergeIds = sourceMsgs.map(m => m.id);
         const base: Message = { ...sourceMsgs[0] };
         result.push(buildCompressedMessage(base, mergeIds, summary, sourceVersion, verbatim, sourceMsgs));
         messagesCompressed += group.length;
@@ -617,9 +622,10 @@ function compressSync(
     } else {
       const single = group[0].msg;
       const content = typeof single.content === 'string' ? single.content : '';
-      let summary = formatSummary(summaryText, allContent);
+      const embeddedId = options.embedSummaryId ? makeSummaryId([single.id]) : undefined;
+      let summary = formatSummary(summaryText, allContent, undefined, undefined, embeddedId);
       if (summary.length >= content.length) {
-        summary = formatSummary(summaryText, allContent, undefined, true);
+        summary = formatSummary(summaryText, allContent, undefined, true, embeddedId);
       }
 
       if (summary.length >= content.length) {
@@ -718,9 +724,10 @@ async function compressAsync(
     // Dedup: replace earlier duplicate/near-duplicate with compact reference
     if (classified[i].dedup) {
       const annotation = classified[i].dedup!;
+      const keepTargetId = messages[annotation.duplicateOfIndex].id;
       const tag = annotation.similarity != null
-        ? `[uc:near-dup — ${annotation.contentLength} chars, ~${Math.round(annotation.similarity * 100)}% match, see later message]`
-        : `[uc:dup — ${annotation.contentLength} chars, see later message]`;
+        ? `[uc:near-dup of ${keepTargetId} — ${annotation.contentLength} chars, ~${Math.round(annotation.similarity * 100)}% match]`
+        : `[uc:dup of ${keepTargetId} — ${annotation.contentLength} chars]`;
       result.push(buildCompressedMessage(msg, [msg.id], tag, sourceVersion, verbatim, [msg]));
       if (annotation.similarity != null) {
         messagesFuzzyDeduped++;
@@ -739,7 +746,8 @@ async function compressAsync(
       const codeFences = segments.filter(s => s.type === 'code').map(s => s.content);
       const proseBudget = proseText.length < 600 ? 200 : 400;
       const summaryText = await withFallback(proseText, userSummarizer, proseBudget);
-      const compressed = `${formatSummary(summaryText, proseText, undefined, true)}\n\n${codeFences.join('\n\n')}`;
+      const embeddedId = options.embedSummaryId ? makeSummaryId([msg.id]) : undefined;
+      const compressed = `${formatSummary(summaryText, proseText, undefined, true, embeddedId)}\n\n${codeFences.join('\n\n')}`;
 
       if (compressed.length >= content.length) {
         result.push(msg);
@@ -765,10 +773,12 @@ async function compressAsync(
       : await withFallback(allContent, userSummarizer, contentBudget);
 
     if (group.length > 1) {
-      let summary = formatSummary(summaryText, allContent, group.length);
+      const mergeIds = group.map(g => g.msg.id);
+      const embeddedId = options.embedSummaryId ? makeSummaryId(mergeIds) : undefined;
+      let summary = formatSummary(summaryText, allContent, group.length, undefined, embeddedId);
       const combinedLength = group.reduce((sum, g) => sum + contentLength(g.msg), 0);
       if (summary.length >= combinedLength) {
-        summary = formatSummary(summaryText, allContent, group.length, true);
+        summary = formatSummary(summaryText, allContent, group.length, true, embeddedId);
       }
 
       if (summary.length >= combinedLength) {
@@ -778,7 +788,6 @@ async function compressAsync(
         }
       } else {
         const sourceMsgs = group.map(g => g.msg);
-        const mergeIds = sourceMsgs.map(m => m.id);
         const base: Message = { ...sourceMsgs[0] };
         result.push(buildCompressedMessage(base, mergeIds, summary, sourceVersion, verbatim, sourceMsgs));
         messagesCompressed += group.length;
@@ -786,9 +795,10 @@ async function compressAsync(
     } else {
       const single = group[0].msg;
       const content = typeof single.content === 'string' ? single.content : '';
-      let summary = formatSummary(summaryText, allContent);
+      const embeddedId = options.embedSummaryId ? makeSummaryId([single.id]) : undefined;
+      let summary = formatSummary(summaryText, allContent, undefined, undefined, embeddedId);
       if (summary.length >= content.length) {
-        summary = formatSummary(summaryText, allContent, undefined, true);
+        summary = formatSummary(summaryText, allContent, undefined, true, embeddedId);
       }
 
       if (summary.length >= content.length) {
@@ -846,6 +856,80 @@ function addBudgetFields(cr: CompressResult, tokenBudget: number, recencyWindow:
   return { ...cr, fits: tokens <= tokenBudget, tokenCount: tokens, recencyWindow };
 }
 
+/**
+ * Force-converge pass: hard-truncate non-recency messages to guarantee the
+ * result fits within the token budget. Mirrors LCM Level 3 DeterministicTruncate.
+ */
+function forceConvergePass(
+  cr: CompressResult,
+  tokenBudget: number,
+  preserveRoles: Set<string>,
+  sourceVersion: number,
+): CompressResult {
+  if (cr.fits) return cr;
+
+  const recencyWindow = cr.recencyWindow ?? 0;
+  const cutoff = Math.max(0, cr.messages.length - recencyWindow);
+
+  // Collect eligible messages: before recency cutoff, not in preserveRoles, content > 512 chars
+  type Candidate = { idx: number; contentLen: number };
+  const candidates: Candidate[] = [];
+
+  for (let i = 0; i < cutoff; i++) {
+    const m = cr.messages[i];
+    const content = typeof m.content === 'string' ? m.content : '';
+    if (m.role && preserveRoles.has(m.role)) continue;
+    if (content.length <= 512) continue;
+    candidates.push({ idx: i, contentLen: content.length });
+  }
+
+  // Sort by content length descending (biggest savings first)
+  candidates.sort((a, b) => b.contentLen - a.contentLen);
+
+  // Clone messages and verbatim for mutation
+  const messages = cr.messages.map(m => ({ ...m, metadata: m.metadata ? { ...m.metadata } : {} }));
+  const verbatim = { ...cr.verbatim };
+  let tokenCount = cr.tokenCount!;
+
+  for (const cand of candidates) {
+    if (tokenCount <= tokenBudget) break;
+
+    const m = messages[cand.idx];
+    const content = typeof m.content === 'string' ? m.content : '';
+    const truncated = content.slice(0, 512);
+    const tag = `[truncated — ${content.length} chars: ${truncated}]`;
+
+    const oldTokens = estimateTokens(m);
+
+    // If already compressed (has _uc_original), just replace content in-place
+    const hasOriginal = !!(m.metadata?._uc_original);
+    if (hasOriginal) {
+      messages[cand.idx] = { ...m, content: tag };
+    } else {
+      // Store original in verbatim and add provenance
+      verbatim[m.id] = { ...m };
+      messages[cand.idx] = {
+        ...m,
+        content: tag,
+        metadata: {
+          ...(m.metadata ?? {}),
+          _uc_original: {
+            ids: [m.id],
+            summary_id: makeSummaryId([m.id]),
+            version: sourceVersion,
+          },
+        },
+      };
+    }
+
+    const newTokens = estimateTokens(messages[cand.idx]);
+    tokenCount -= (oldTokens - newTokens);
+  }
+
+  const fits = tokenCount <= tokenBudget;
+  return { ...cr, messages, verbatim, fits, tokenCount };
+}
+
 function compressSyncWithBudget(
   messages: Message[],
   tokenBudget: number,
@@ -875,10 +959,20 @@ function compressSyncWithBudget(
     }
   }
 
-  if (lastRw === lo && lastResult) return lastResult;
+  let result: CompressResult;
+  if (lastRw === lo && lastResult) {
+    result = lastResult;
+  } else {
+    const cr = compressSync(messages, { ...options, recencyWindow: lo, summarizer: undefined, tokenBudget: undefined });
+    result = addBudgetFields(cr, tokenBudget, lo);
+  }
 
-  const cr = compressSync(messages, { ...options, recencyWindow: lo, summarizer: undefined, tokenBudget: undefined });
-  return addBudgetFields(cr, tokenBudget, lo);
+  if (!result.fits && options.forceConverge) {
+    const preserveRoles = new Set(options.preserve ?? ['system']);
+    result = forceConvergePass(result, tokenBudget, preserveRoles, sourceVersion);
+  }
+
+  return result;
 }
 
 async function compressAsyncWithBudget(
@@ -910,10 +1004,20 @@ async function compressAsyncWithBudget(
     }
   }
 
-  if (lastRw === lo && lastResult) return lastResult;
+  let result: CompressResult;
+  if (lastRw === lo && lastResult) {
+    result = lastResult;
+  } else {
+    const cr = await compressAsync(messages, { ...options, recencyWindow: lo, tokenBudget: undefined });
+    result = addBudgetFields(cr, tokenBudget, lo);
+  }
 
-  const cr = await compressAsync(messages, { ...options, recencyWindow: lo, tokenBudget: undefined });
-  return addBudgetFields(cr, tokenBudget, lo);
+  if (!result.fits && options.forceConverge) {
+    const preserveRoles = new Set(options.preserve ?? ['system']);
+    result = forceConvergePass(result, tokenBudget, preserveRoles, sourceVersion);
+  }
+
+  return result;
 }
 
 // ---------------------------------------------------------------------------
