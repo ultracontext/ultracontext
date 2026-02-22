@@ -590,6 +590,131 @@ describe('analyzeFuzzyDuplicates', () => {
   });
 });
 
+// Content for transitive fuzzy similarity test
+// A~B shares ~90% lines, B~C shares ~90% lines, but A~C is lower (~70%)
+// This tests that transitive grouping computes real Jaccard, not threshold fallback
+const TRANSITIVE_A = [
+  'import jwt from "jsonwebtoken";',
+  'import { Request, Response } from "express";',
+  '',
+  'interface AuthPayload {',
+  '  sub: string;',
+  '  email: string;',
+  '  roles: string[];',
+  '  iat: number;',
+  '  exp: number;',
+  '}',
+  '',
+  'export class AuthService {',
+  '  private readonly secret: string;',
+  '',
+  '  constructor(secret: string) {',
+  '    this.secret = secret;',
+  '  }',
+  '',
+  '  verify(token: string): AuthPayload {',
+  '    return jwt.verify(token, this.secret) as AuthPayload;',
+  '  }',
+  '',
+  '  sign(payload: Omit<AuthPayload, "iat" | "exp">): string {',
+  '    return jwt.sign(payload, this.secret, { expiresIn: "15m" });',
+  '  }',
+  '}',
+].join('\n');
+
+// B shares ~90% with A: two lines changed (comment + renamed method)
+const TRANSITIVE_B = [
+  'import jwt from "jsonwebtoken";',
+  'import { Request, Response } from "express";',
+  '',
+  'interface AuthPayload {',
+  '  sub: string;',
+  '  email: string;',
+  '  roles: string[];',
+  '  iat: number;',
+  '  exp: number;',
+  '}',
+  '',
+  'export class AuthService {',
+  '  private readonly secret: string;',
+  '',
+  '  constructor(secret: string) {',
+  '    this.secret = secret;',
+  '  }',
+  '',
+  '  // Validates a JWT token',
+  '  validateToken(token: string): AuthPayload {',
+  '    return jwt.verify(token, this.secret) as AuthPayload;',
+  '  }',
+  '',
+  '  sign(payload: Omit<AuthPayload, "iat" | "exp">): string {',
+  '    return jwt.sign(payload, this.secret, { expiresIn: "15m" });',
+  '  }',
+  '}',
+].join('\n');
+
+// C shares ~91% with B (1 line changed: sign→issueToken) but only ~79% with A
+// (3 lines differ: verify→validateToken+comment from A→B, sign→issueToken from B→C)
+const TRANSITIVE_C = [
+  'import jwt from "jsonwebtoken";',
+  'import { Request, Response } from "express";',
+  '',
+  'interface AuthPayload {',
+  '  sub: string;',
+  '  email: string;',
+  '  roles: string[];',
+  '  iat: number;',
+  '  exp: number;',
+  '}',
+  '',
+  'export class AuthService {',
+  '  private readonly secret: string;',
+  '',
+  '  constructor(secret: string) {',
+  '    this.secret = secret;',
+  '  }',
+  '',
+  '  // Validates a JWT token',
+  '  validateToken(token: string): AuthPayload {',
+  '    return jwt.verify(token, this.secret) as AuthPayload;',
+  '  }',
+  '',
+  '  issueToken(payload: Omit<AuthPayload, "iat" | "exp">): string {',
+  '    return jwt.sign(payload, this.secret, { expiresIn: "15m" });',
+  '  }',
+  '}',
+].join('\n');
+
+describe('transitive fuzzy similarity reports real Jaccard', () => {
+  it('annotation for A~C uses computed similarity, not threshold fallback', () => {
+    // A~B ~= 0.87 (2 lines differ in 21→22), B~C ~= 0.91 (1 line differ in 22)
+    // A~C ~= 0.79 (3 lines differ: verify→comment+validateToken, sign→issueToken)
+    // Union-find groups all three; C is kept (latest); A's annotation should
+    // report real A~C Jaccard, NOT the threshold value.
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, content: TRANSITIVE_A }),
+      msg({ id: '2', index: 1, content: TRANSITIVE_B }),
+      msg({ id: '3', index: 2, content: TRANSITIVE_C }),
+    ];
+    const result = analyzeFuzzyDuplicates(messages, messages.length, new Set(['system']), new Map(), 0.85);
+    // Both A and B should be annotated; C is the keep target
+    expect(result.size).toBe(2);
+
+    // A's annotation: similarity should be the real A~C Jaccard (~0.79),
+    // NOT the threshold (0.85)
+    const annotationA = result.get(0)!;
+    expect(annotationA).toBeDefined();
+    expect(annotationA.similarity).toBeDefined();
+    expect(annotationA.similarity!).toBeLessThan(0.85);
+    expect(annotationA.similarity!).toBeGreaterThan(0.5);
+
+    // B's annotation: direct match with C (~0.91), should be >= 0.85
+    const annotationB = result.get(1)!;
+    expect(annotationB).toBeDefined();
+    expect(annotationB.similarity!).toBeGreaterThanOrEqual(0.85);
+  });
+});
+
 describe('compress with fuzzy dedup', () => {
   it('near-duplicate → earlier replaced with [uc:near-dup ...]', () => {
     const messages: Message[] = [

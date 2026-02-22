@@ -21,4 +21,4 @@ Initial release.
 - `compress(messages, options?)` — sync or async depending on whether `summarizer` is provided
 - `uncompress(messages, verbatim)` — restore originals from compressed messages + verbatim map
 - `createSummarizer(callLlm)` — wrap an LLM call with an optimized summarization prompt
-- `createEscalatingSummarizer(callLlm)` — two-level summarizer (normal then aggressive)
+- `createEscalatingSummarizer(callLlm)` — three-level summarizer (normal → aggressive → deterministic)

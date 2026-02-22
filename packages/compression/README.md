@@ -55,7 +55,7 @@ npm install @ultracontext/compression
 import { compress, uncompress } from '@ultracontext/compression';
 
 // compress — prose gets summarized, code stays verbatim
-const { messages, verbatim, compression } = compress(messages, {
+const { messages: compressed, verbatim, compression } = compress(messages, {
   preserve: ['system'],  // roles to never compress
   recencyWindow: 4,      // protect the last N messages
 });

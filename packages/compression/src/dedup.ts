@@ -264,7 +264,7 @@ export function analyzeFuzzyDuplicates(
       if (ei === keepEi) continue;
       const msgIdx = eligible[ei].index;
       // Find similarity to the keep target
-      const sim = simLookup.get(`${ei}:${keepEi}`) ?? simLookup.get(`${keepEi}:${ei}`) ?? threshold;
+      const sim = simLookup.get(`${ei}:${keepEi}`) ?? simLookup.get(`${keepEi}:${ei}`) ?? jaccardLines(eligible[ei].lines, eligible[keepEi].lines);
       annotations.set(msgIdx, {
         duplicateOfIndex: keepIdx,
         contentLength: eligible[ei].contentLength,

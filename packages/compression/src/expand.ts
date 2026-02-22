@@ -1,6 +1,6 @@
 import type { UncompressOptions, UncompressResult, Message, VerbatimMap } from './types.js';
 
-type StoreLookup = VerbatimMap | ((id: string) => Message | undefined);
+export type StoreLookup = VerbatimMap | ((id: string) => Message | undefined);
 
 function lookup(store: StoreLookup, id: string): Message | undefined {
   return typeof store === 'function' ? store(id) : store[id];

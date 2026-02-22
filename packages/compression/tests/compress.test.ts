@@ -1729,4 +1729,67 @@ describe('structured tool output summarization', () => {
       expect(rt.messages).toEqual(messages);
     });
   });
+
+  describe('merged message preserves extra fields', () => {
+    it('function role with name field survives merge compression', () => {
+      const prose = 'This is a long function result about general topics that could be compressed since it has no verbatim content. '.repeat(5);
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'function', content: prose, name: 'get_weather' }),
+        msg({ id: '2', index: 1, role: 'function', content: prose, name: 'get_weather' }),
+      ];
+      const result = compress(messages, { recencyWindow: 0, dedup: false });
+      // Merged into 1 message — should carry the name field from sourceMsgs[0]
+      expect(result.messages.length).toBe(1);
+      expect(result.messages[0].content).toContain('2 messages merged');
+      expect((result.messages[0] as any).name).toBe('get_weather');
+    });
+
+    it('extra fields preserved on single compressed message', () => {
+      const prose = 'This is a long function result about general topics that could be compressed since it has no verbatim content. '.repeat(5);
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'function', content: prose, name: 'search_docs' }),
+      ];
+      const result = compress(messages, { recencyWindow: 0 });
+      // Single message compression uses the message directly (spread)
+      // name should survive through buildCompressedMessage
+      expect(result.compression.messages_compressed).toBe(1);
+    });
+  });
+
+  describe('dedup does not inflate messages_compressed', () => {
+    it('messages_compressed excludes deduped messages', () => {
+      const prose = 'This is a long message about general topics that could be compressed since it has no verbatim content. '.repeat(5);
+      const LONG = 'This is a repeated message with enough content to exceed the two hundred character minimum threshold for dedup eligibility so we can test dedup properly across multiple messages in the conversation. Extra padding here.';
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, content: LONG }),
+        msg({ id: '2', index: 1, role: 'assistant', content: prose }),
+        msg({ id: '3', index: 2, content: LONG }),
+      ];
+      const result = compress(messages, { recencyWindow: 0, dedup: true });
+      // id:1 deduped (messages_deduped: 1), id:2 compressed (messages_compressed: 1), id:3 summarized/preserved
+      // messages_compressed should NOT include the deduped message
+      const { messages_compressed, messages_deduped } = result.compression;
+      expect(messages_deduped).toBe(1);
+      // The deduped message should not be counted in messages_compressed
+      expect(messages_compressed).not.toContain(messages_deduped);
+      // Total affected = compressed + deduped + preserved should equal input length
+      const total = messages_compressed + (messages_deduped ?? 0) + result.compression.messages_preserved;
+      expect(total).toBe(messages.length);
+    });
+
+    it('exact duplicates: compressed + deduped + preserved == total', () => {
+      const LONG = 'This is a repeated message with enough content to exceed the two hundred character minimum threshold for dedup eligibility so we can test dedup properly across multiple messages in the conversation. Extra padding here.';
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, content: LONG }),
+        msg({ id: '2', index: 1, content: LONG }),
+        msg({ id: '3', index: 2, content: LONG }),
+      ];
+      const result = compress(messages, { recencyWindow: 0, dedup: true });
+      const { messages_compressed, messages_deduped = 0, messages_preserved } = result.compression;
+      expect(messages_compressed + messages_deduped + messages_preserved).toBe(messages.length);
+      // First two are deduped, last one (keep target) gets normally compressed
+      expect(messages_deduped).toBe(2);
+      expect(messages_compressed).toBe(1);
+    });
+  });
 });

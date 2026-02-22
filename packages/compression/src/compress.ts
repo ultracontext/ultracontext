@@ -553,7 +553,6 @@ function compressSync(
         ? `[uc:near-dup — ${annotation.contentLength} chars, ~${Math.round(annotation.similarity * 100)}% match, see later message]`
         : `[uc:dup — ${annotation.contentLength} chars, see later message]`;
       result.push(buildCompressedMessage(msg, [msg.id], tag, sourceVersion, verbatim, [msg]));
-      messagesCompressed++;
       if (annotation.similarity != null) {
         messagesFuzzyDeduped++;
       } else {
@@ -611,7 +610,7 @@ function compressSync(
       } else {
         const sourceMsgs = group.map(g => g.msg);
         const mergeIds = sourceMsgs.map(m => m.id);
-        const base: Message = { id: sourceMsgs[0].id, index: sourceMsgs[0].index, role: sourceMsgs[0].role, metadata: sourceMsgs[0].metadata } as Message;
+        const base: Message = { ...sourceMsgs[0] };
         result.push(buildCompressedMessage(base, mergeIds, summary, sourceVersion, verbatim, sourceMsgs));
         messagesCompressed += group.length;
       }
@@ -723,7 +722,6 @@ async function compressAsync(
         ? `[uc:near-dup — ${annotation.contentLength} chars, ~${Math.round(annotation.similarity * 100)}% match, see later message]`
         : `[uc:dup — ${annotation.contentLength} chars, see later message]`;
       result.push(buildCompressedMessage(msg, [msg.id], tag, sourceVersion, verbatim, [msg]));
-      messagesCompressed++;
       if (annotation.similarity != null) {
         messagesFuzzyDeduped++;
       } else {
@@ -781,7 +779,7 @@ async function compressAsync(
       } else {
         const sourceMsgs = group.map(g => g.msg);
         const mergeIds = sourceMsgs.map(m => m.id);
-        const base: Message = { id: sourceMsgs[0].id, index: sourceMsgs[0].index, role: sourceMsgs[0].role, metadata: sourceMsgs[0].metadata } as Message;
+        const base: Message = { ...sourceMsgs[0] };
         result.push(buildCompressedMessage(base, mergeIds, summary, sourceVersion, verbatim, sourceMsgs));
         messagesCompressed += group.length;
       }

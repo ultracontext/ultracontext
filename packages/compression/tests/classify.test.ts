@@ -183,6 +183,19 @@ describe('classifyMessage', () => {
       expect(r.reasons).not.toContain('api_key');
     });
 
+    it('does not false-positive on sk- mid-token (e.g. flask-sk-...)', () => {
+      // sk- preceded by hyphen (mid-token) should not trigger the sk- API key pattern.
+      // Use all-alpha body to avoid the generic entropy fallback matching "flask" as a token prefix.
+      const r = classifyMessage('The package flask-sk-abcdefghijklmnopqrstuvwxyz was installed.');
+      expect(r.reasons).not.toContain('api_key');
+    });
+
+    it('still detects standalone sk- keys after boundary fix', () => {
+      // sk- at start of token (after space/equals/quote) must still match
+      const r = classifyMessage('Use sk-abc123def456ghi789jkl012mno345pqr for auth.');
+      expect(r.reasons).toContain('api_key');
+    });
+
     it('detects git SHAs', () => {
       const r = classifyMessage('commit a3f9b2c1d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9');
       expect(r.decision).toBe('T0');

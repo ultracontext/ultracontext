@@ -87,7 +87,7 @@ function detectSqlContent(text: string): boolean {
 
 // API key patterns: known providers + generic entropy fallback
 const API_KEY_PATTERNS: RegExp[] = [
-  /sk-[a-zA-Z0-9_-]{20,}/,                                           // OpenAI / Anthropic
+  /(?<![a-zA-Z0-9-])sk-[a-zA-Z0-9_-]{20,}/,                            // OpenAI / Anthropic
   /\bAKIA[A-Z0-9]{16}\b/,                                            // AWS access key ID
   /\bgh[posrt]_[a-zA-Z0-9]{36,}\b/,                                  // GitHub tokens (PAT, OAuth, etc.)
   /\bgithub_pat_[a-zA-Z0-9_]{36,}\b/,                                // GitHub fine-grained PAT

@@ -1,6 +1,7 @@
 // Primary
 export { compress } from './compress.js';
 export { uncompress } from './expand.js';
+export type { StoreLookup } from './expand.js';
 
 // Helpers (LLM integration)
 export { createSummarizer, createEscalatingSummarizer } from './summarizer.js';
