@@ -1,4 +1,5 @@
 import { classifyMessage } from './classify.js';
+import { analyzeDuplicates, type DedupAnnotation } from './dedup.js';
 import type { CompressOptions, CompressResult, Message, Summarizer } from './types.js';
 
 /**
@@ -241,7 +242,7 @@ function estimateTokens(msg: Message): number {
 // Shared helpers extracted for sync / async reuse
 // ---------------------------------------------------------------------------
 
-type Classified = { msg: Message; preserved: boolean; codeSplit?: boolean };
+type Classified = { msg: Message; preserved: boolean; codeSplit?: boolean; dedup?: DedupAnnotation };
 
 /** Build a compressed message with _uc_original provenance metadata. */
 function buildCompressedMessage(
@@ -284,7 +285,7 @@ function formatSummary(
   return `[summary: ${summaryText}${mergeSuffix}${entitySuffix}]`;
 }
 
-/** Collect consecutive non-preserved, non-codeSplit messages with the same role. */
+/** Collect consecutive non-preserved, non-codeSplit, non-dedup messages with the same role. */
 function collectGroup(
   classified: Classified[],
   startIdx: number,
@@ -292,7 +293,7 @@ function collectGroup(
   const group: Classified[] = [];
   const role = classified[startIdx].msg.role;
   let i = startIdx;
-  while (i < classified.length && !classified[i].preserved && !classified[i].codeSplit && classified[i].msg.role === role) {
+  while (i < classified.length && !classified[i].preserved && !classified[i].codeSplit && !classified[i].dedup && classified[i].msg.role === role) {
     group.push(classified[i]);
     i++;
   }
@@ -312,6 +313,7 @@ function classifyAll(
   messages: Message[],
   preserveRoles: Set<string>,
   recencyWindow: number,
+  dedupAnnotations?: Map<number, DedupAnnotation>,
 ): Classified[] {
   const recencyStart = Math.max(0, messages.length - recencyWindow);
 
@@ -332,6 +334,9 @@ function classifyAll(
     }
     if (content.startsWith('[summary:')) {
       return { msg, preserved: true };
+    }
+    if (dedupAnnotations?.has(idx)) {
+      return { msg, preserved: false, dedup: dedupAnnotations.get(idx)! };
     }
     if (content.includes('```')) {
       const segments = splitCodeAndProse(content);
@@ -367,9 +372,11 @@ function computeStats(
   messagesCompressed: number,
   messagesPreserved: number,
   sourceVersion: number,
+  messagesDeduped?: number,
 ): CompressResult['compression'] {
   const originalTotalChars = originalMessages.reduce((sum, m) => sum + contentLength(m), 0);
   const compressedTotalChars = resultMessages.reduce((sum, m) => sum + contentLength(m), 0);
+  const totalCompressed = messagesCompressed + (messagesDeduped ?? 0);
   const ratio = compressedTotalChars > 0 ? originalTotalChars / compressedTotalChars : 1;
 
   const originalTotalTokens = originalMessages.reduce((sum, m) => sum + estimateTokens(m), 0);
@@ -378,10 +385,11 @@ function computeStats(
 
   return {
     original_version: sourceVersion,
-    ratio: messagesCompressed === 0 ? 1 : ratio,
-    token_ratio: messagesCompressed === 0 ? 1 : tokenRatio,
+    ratio: totalCompressed === 0 ? 1 : ratio,
+    token_ratio: totalCompressed === 0 ? 1 : tokenRatio,
     messages_compressed: messagesCompressed,
     messages_preserved: messagesPreserved,
+    ...(messagesDeduped && messagesDeduped > 0 ? { messages_deduped: messagesDeduped } : {}),
   };
 }
 
@@ -411,12 +419,17 @@ function compressSync(
 
   const preserveRoles = new Set(options.preserve ?? ['system']);
   const recencyWindow = options.recencyWindow ?? 4;
-  const classified = classifyAll(messages, preserveRoles, recencyWindow);
+  const recencyStart = Math.max(0, messages.length - (recencyWindow > 0 ? recencyWindow : 0));
+  const dedupAnnotations = options.dedup
+    ? analyzeDuplicates(messages, recencyStart, preserveRoles)
+    : undefined;
+  const classified = classifyAll(messages, preserveRoles, recencyWindow, dedupAnnotations);
 
   const result: Message[] = [];
   const verbatim: Record<string, Message> = {};
   let messagesCompressed = 0;
   let messagesPreserved = 0;
+  let messagesDeduped = 0;
   let i = 0;
 
   while (i < classified.length) {
@@ -425,6 +438,17 @@ function compressSync(
     if (preserved) {
       result.push(msg);
       messagesPreserved++;
+      i++;
+      continue;
+    }
+
+    // Dedup: replace earlier duplicate with compact reference
+    if (classified[i].dedup) {
+      const annotation = classified[i].dedup!;
+      const replacement = `[uc:dup — ${annotation.contentLength} chars, see later message]`;
+      result.push(buildCompressedMessage(msg, [msg.id], replacement, sourceVersion, verbatim, [msg]));
+      messagesCompressed++;
+      messagesDeduped++;
       i++;
       continue;
     }
@@ -499,7 +523,7 @@ function compressSync(
 
   return {
     messages: result,
-    compression: computeStats(messages, result, messagesCompressed, messagesPreserved, sourceVersion),
+    compression: computeStats(messages, result, messagesCompressed, messagesPreserved, sourceVersion, messagesDeduped),
     verbatim,
   };
 }
@@ -541,12 +565,17 @@ async function compressAsync(
 
   const preserveRoles = new Set(options.preserve ?? ['system']);
   const recencyWindow = options.recencyWindow ?? 4;
-  const classified = classifyAll(messages, preserveRoles, recencyWindow);
+  const recencyStart = Math.max(0, messages.length - (recencyWindow > 0 ? recencyWindow : 0));
+  const dedupAnnotations = options.dedup
+    ? analyzeDuplicates(messages, recencyStart, preserveRoles)
+    : undefined;
+  const classified = classifyAll(messages, preserveRoles, recencyWindow, dedupAnnotations);
 
   const result: Message[] = [];
   const verbatim: Record<string, Message> = {};
   let messagesCompressed = 0;
   let messagesPreserved = 0;
+  let messagesDeduped = 0;
   let i = 0;
 
   while (i < classified.length) {
@@ -555,6 +584,17 @@ async function compressAsync(
     if (preserved) {
       result.push(msg);
       messagesPreserved++;
+      i++;
+      continue;
+    }
+
+    // Dedup: replace earlier duplicate with compact reference
+    if (classified[i].dedup) {
+      const annotation = classified[i].dedup!;
+      const replacement = `[uc:dup — ${annotation.contentLength} chars, see later message]`;
+      result.push(buildCompressedMessage(msg, [msg.id], replacement, sourceVersion, verbatim, [msg]));
+      messagesCompressed++;
+      messagesDeduped++;
       i++;
       continue;
     }
@@ -629,7 +669,7 @@ async function compressAsync(
 
   return {
     messages: result,
-    compression: computeStats(messages, result, messagesCompressed, messagesPreserved, sourceVersion),
+    compression: computeStats(messages, result, messagesCompressed, messagesPreserved, sourceVersion, messagesDeduped),
     verbatim,
   };
 }

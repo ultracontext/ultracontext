@@ -22,6 +22,8 @@ export type CompressOptions = {
   tokenBudget?: number;
   /** Minimum recencyWindow when using tokenBudget. Default: 0. */
   minRecencyWindow?: number;
+  /** Replace earlier duplicate messages with a compact reference. Default: false. */
+  dedup?: boolean;
 };
 
 export type VerbatimMap = Record<string, Message>;
@@ -49,6 +51,7 @@ export type CompressResult = {
     token_ratio: number;
     messages_compressed: number;
     messages_preserved: number;
+    messages_deduped?: number;
   };
   /**
    * Original verbatim messages keyed by ID — every compressed message's
