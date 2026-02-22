@@ -53,8 +53,7 @@ Right now, we're reinventing the wheel for every car we build. Instead of tackli
 
 ## Why UltraContext
 
-- **Simple API** — Seven methods. That's it.
-- **Context compression** — Shrink conversations losslessly. Code and structure stay verbatim; prose gets summarized.
+- **Simple API** — Five methods. That's it.
 - **Automatic versioning** — Updates/deletes create versions. Nothing is lost.
 - **Time-travel** — Jump to any point by version, index, or timestamp.
 - **Schema-free** — Store any JSON. Own your data structure.
@@ -85,9 +84,6 @@ const uc = new UltraContext({ apiKey: 'uc_live_...' });
 const ctx = await uc.create();
 await uc.append(ctx.id, { role: 'user', content: 'Hello!' });
 
-// compress context — code stays verbatim, prose gets summarized
-await uc.compress(ctx.id);
-
 // use with any LLM framework
 const response = await generateText({ model, messages: ctx.data });
 ```
@@ -105,9 +101,6 @@ uc = UltraContext(api_key="uc_live_...")
 
 ctx = uc.create()
 uc.append(ctx["id"], {"role": "user", "content": "Hello!"})
-
-# compress context — code stays verbatim, prose gets summarized
-uc.compress(ctx["id"])
 
 # use with any LLM framework
 response = generate_text(model=model, messages=uc.get(ctx["id"])["data"])

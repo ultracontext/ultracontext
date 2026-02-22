@@ -7,12 +7,10 @@ import httpx
 from .exceptions import UltraContextHttpError
 from .types import (
     AppendResponse,
-    CompressResponse,
     CreateContextResponse,
     DeleteResponse,
     GetContextResponse,
     ListContextsResponse,
-    UncompressResponse,
     UpdateResponse,
 )
 
@@ -252,50 +250,6 @@ class UltraContext(_BaseClient):
 
         return self._request("DELETE", f"/contexts/{context_id}", json=body)
 
-    def compress(
-        self,
-        context_id: str,
-        *,
-        preserve: Optional[List[str]] = None,
-        mode: Optional[str] = None,
-        recency_window: Optional[int] = None,
-    ) -> CompressResponse:
-        """
-        Compress a context's messages.
-
-        Args:
-            context_id: Context ID
-            preserve: Roles to preserve verbatim (default: ['system'])
-            mode: 'lossless' or 'lossy'
-            recency_window: Number of recent messages to preserve (default: 4)
-        """
-        body: Dict[str, Any] = {}
-        if preserve is not None:
-            body["preserve"] = preserve
-        if mode is not None:
-            body["mode"] = mode
-        if recency_window is not None:
-            body["recencyWindow"] = recency_window
-        return self._request("POST", f"/contexts/{context_id}/compress", json=body or None)
-
-    def uncompress(
-        self,
-        context_id: str,
-        *,
-        version: Optional[int] = None,
-    ) -> UncompressResponse:
-        """
-        Uncompress a context back to its original messages.
-
-        Args:
-            context_id: Context ID
-            version: Version to uncompress to
-        """
-        body: Dict[str, Any] = {}
-        if version is not None:
-            body["version"] = version
-        return self._request("POST", f"/contexts/{context_id}/uncompress", json=body or None)
-
 
 class AsyncUltraContext(_BaseClient):
     """Async UltraContext API client."""
@@ -463,33 +417,3 @@ class AsyncUltraContext(_BaseClient):
             body["metadata"] = metadata
 
         return await self._request("DELETE", f"/contexts/{context_id}", json=body)
-
-    async def compress(
-        self,
-        context_id: str,
-        *,
-        preserve: Optional[List[str]] = None,
-        mode: Optional[str] = None,
-        recency_window: Optional[int] = None,
-    ) -> CompressResponse:
-        """Compress a context's messages."""
-        body: Dict[str, Any] = {}
-        if preserve is not None:
-            body["preserve"] = preserve
-        if mode is not None:
-            body["mode"] = mode
-        if recency_window is not None:
-            body["recencyWindow"] = recency_window
-        return await self._request("POST", f"/contexts/{context_id}/compress", json=body or None)
-
-    async def uncompress(
-        self,
-        context_id: str,
-        *,
-        version: Optional[int] = None,
-    ) -> UncompressResponse:
-        """Uncompress a context back to its original messages."""
-        body: Dict[str, Any] = {}
-        if version is not None:
-            body["version"] = version
-        return await self._request("POST", f"/contexts/{context_id}/uncompress", json=body or None)

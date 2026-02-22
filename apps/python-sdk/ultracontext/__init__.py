@@ -4,17 +4,12 @@ from .client import AsyncUltraContext, UltraContext
 from .exceptions import UltraContextError, UltraContextHttpError
 from .types import (
     AppendResponse,
-    CompressOptions,
-    CompressResponse,
-    CompressionInfo,
     Context,
     CreateContextResponse,
     DeleteResponse,
     GetContextResponse,
     ListContextsResponse,
     Message,
-    UncompressOptions,
-    UncompressResponse,
     UpdateResponse,
     Version,
 )
@@ -37,9 +32,4 @@ __all__ = [
     "AppendResponse",
     "UpdateResponse",
     "DeleteResponse",
-    "CompressOptions",
-    "CompressResponse",
-    "CompressionInfo",
-    "UncompressOptions",
-    "UncompressResponse",
 ]
