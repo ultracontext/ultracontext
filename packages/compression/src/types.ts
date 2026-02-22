@@ -13,7 +13,6 @@ export type CreateSummarizerOptions = {
 
 export type CompressOptions = {
   preserve?: string[];
-  mode?: 'lossless' | 'lossy';
   recencyWindow?: number;
   /** Context version at the time of compression. Flows into _uc_original.version and compression.original_version. */
   sourceVersion?: number;

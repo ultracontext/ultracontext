@@ -1,11 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import { compress } from '../src/compress.js';
-import { estimateTokens } from '../src/compress.js';
 import { uncompress } from '../src/expand.js';
 import type { Message } from '../src/types.js';
 
 function msg(overrides: Partial<Message> & { id: string; index: number }): Message {
   return { role: 'user', content: '', metadata: {}, ...overrides };
+}
+
+/** Inline token estimate matching the internal formula. */
+function estimateTokens(m: Message): number {
+  const len = typeof m.content === 'string' ? m.content.length : 0;
+  return Math.ceil(len / 3.5);
 }
 
 describe('compress', () => {
@@ -326,14 +331,6 @@ describe('compress', () => {
       expect(result.compression.token_ratio).toBe(1);
     });
 
-    it('throws on mode: lossy', () => {
-      expect(() =>
-        compress(
-          [msg({ id: '1', index: 0, role: 'user', content: 'test' })],
-          { mode: 'lossy' },
-        ),
-      ).toThrow('501');
-    });
   });
 
   describe('interleaving and grouping', () => {
@@ -1413,5 +1410,60 @@ describe('compress with tokenBudget', () => {
     const expanded = uncompress(result.messages, result.verbatim);
     expect(expanded.messages).toEqual(messages);
     expect(expanded.missing_ids).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// edge cases
+// ---------------------------------------------------------------------------
+
+describe('edge case boundaries', () => {
+  const prose = 'This is a long message about general topics that could be compressed since it has no verbatim content. '.repeat(10);
+
+  it('tokenBudget: 0 — everything exceeds budget, result has fits: false', () => {
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, role: 'user', content: prose }),
+      msg({ id: '2', index: 1, role: 'assistant', content: prose }),
+    ];
+    const result = compress(messages, { tokenBudget: 0 });
+    expect(result.fits).toBe(false);
+    expect(result.tokenCount).toBeGreaterThan(0);
+    expect(result.compression.messages_compressed).toBeGreaterThan(0);
+  });
+
+  it('minRecencyWindow > messages.length — clamps gracefully, preserves all', () => {
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, role: 'user', content: prose }),
+      msg({ id: '2', index: 1, role: 'assistant', content: prose }),
+    ];
+    const result = compress(messages, { tokenBudget: 1, minRecencyWindow: 100 });
+    // With minRw > length, binary search lo starts above hi, so all preserved
+    expect(result.compression.messages_preserved).toBe(2);
+    expect(result.compression.messages_compressed).toBe(0);
+  });
+
+  it('summarizer returning text longer than input — falls back to deterministic', async () => {
+    const growingSummarizer = async (text: string) => text + ' '.repeat(500) + 'MUCH LONGER PADDING';
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, role: 'user', content: prose }),
+    ];
+    const withGrowing = await compress(messages, { recencyWindow: 0, summarizer: growingSummarizer });
+    const deterministic = compress(messages, { recencyWindow: 0 });
+    expect(withGrowing.messages).toEqual(deterministic.messages);
+  });
+
+  it('recencyWindow >= messages.length — preserves all messages', () => {
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, role: 'user', content: prose }),
+      msg({ id: '2', index: 1, role: 'assistant', content: prose }),
+      msg({ id: '3', index: 2, role: 'user', content: prose }),
+    ];
+    const result = compress(messages, { recencyWindow: messages.length });
+    expect(result.compression.messages_compressed).toBe(0);
+    expect(result.compression.messages_preserved).toBe(messages.length);
+
+    const resultLarger = compress(messages, { recencyWindow: messages.length + 10 });
+    expect(resultLarger.compression.messages_compressed).toBe(0);
+    expect(resultLarger.compression.messages_preserved).toBe(messages.length);
   });
 });

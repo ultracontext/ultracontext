@@ -233,7 +233,7 @@ function contentLength(msg: Message): number {
 }
 
 /** Estimate token count for a single message (~3.5 chars/token). */
-export function estimateTokens(msg: Message): number {
+function estimateTokens(msg: Message): number {
   return Math.ceil(contentLength(msg) / 3.5);
 }
 
@@ -242,6 +242,60 @@ export function estimateTokens(msg: Message): number {
 // ---------------------------------------------------------------------------
 
 type Classified = { msg: Message; preserved: boolean; codeSplit?: boolean };
+
+/** Build a compressed message with _uc_original provenance metadata. */
+function buildCompressedMessage(
+  base: Message,
+  ids: string[],
+  summaryContent: string,
+  sourceVersion: number,
+  verbatim: Record<string, Message>,
+  sourceMessages: Message[],
+): Message {
+  const summaryId = makeSummaryId(ids);
+  const parents = collectParentIds(sourceMessages);
+  for (const m of sourceMessages) { verbatim[m.id] = m; }
+  return {
+    ...base,
+    content: summaryContent,
+    metadata: {
+      ...(base.metadata ?? {}),
+      _uc_original: {
+        ids,
+        summary_id: summaryId,
+        ...(parents.length > 0 ? { parent_ids: parents } : {}),
+        version: sourceVersion,
+      },
+    },
+  };
+}
+
+/** Wrap summary text with entity suffix and optional merge count. */
+function formatSummary(
+  summaryText: string,
+  rawText: string,
+  mergeCount?: number,
+): string {
+  const entities = extractEntities(rawText);
+  const entitySuffix = entities.length > 0 ? ` | entities: ${entities.join(', ')}` : '';
+  const mergeSuffix = mergeCount && mergeCount > 1 ? ` (${mergeCount} messages merged)` : '';
+  return `[summary: ${summaryText}${mergeSuffix}${entitySuffix}]`;
+}
+
+/** Collect consecutive non-preserved, non-codeSplit messages with the same role. */
+function collectGroup(
+  classified: Classified[],
+  startIdx: number,
+): { group: Classified[]; nextIdx: number } {
+  const group: Classified[] = [];
+  const role = classified[startIdx].msg.role;
+  let i = startIdx;
+  while (i < classified.length && !classified[i].preserved && !classified[i].codeSplit && classified[i].msg.role === role) {
+    group.push(classified[i]);
+    i++;
+  }
+  return { group, nextIdx: i };
+}
 
 function classifyAll(
   messages: Message[],
@@ -321,10 +375,6 @@ function compressSync(
   messages: Message[],
   options: CompressOptions = {},
 ): CompressResult {
-  if (options.mode === 'lossy') {
-    throw new Error('Lossy compression is not yet implemented (501)');
-  }
-
   const sourceVersion = options.sourceVersion ?? 0;
 
   if (messages.length === 0) {
@@ -368,9 +418,7 @@ function compressSync(
       const proseText = segments.filter(s => s.type === 'prose').map(s => s.content).join(' ');
       const codeFences = segments.filter(s => s.type === 'code').map(s => s.content);
       const summaryText = summarize(proseText);
-      const entities = extractEntities(proseText);
-      const entitySuffix = entities.length > 0 ? ` | entities: ${entities.join(', ')}` : '';
-      const compressed = `[summary: ${summaryText}${entitySuffix}]\n\n${codeFences.join('\n\n')}`;
+      const compressed = `${formatSummary(summaryText, proseText)}\n\n${codeFences.join('\n\n')}`;
 
       if (compressed.length >= content.length) {
         result.push(msg);
@@ -379,43 +427,21 @@ function compressSync(
         continue;
       }
 
-      const csIds = [msg.id];
-      const csSummaryId = makeSummaryId(csIds);
-      const csParents = collectParentIds([msg]);
-      verbatim[msg.id] = msg;
-      result.push({
-        ...msg,
-        content: compressed,
-        metadata: {
-          ...(msg.metadata ?? {}),
-          _uc_original: {
-            ids: csIds,
-            summary_id: csSummaryId,
-            ...(csParents.length > 0 ? { parent_ids: csParents } : {}),
-            version: sourceVersion,
-          },
-        },
-      });
+      result.push(buildCompressedMessage(msg, [msg.id], compressed, sourceVersion, verbatim, [msg]));
       messagesCompressed++;
       i++;
       continue;
     }
 
     // Collect consecutive non-preserved messages with the SAME role
-    const group: Array<{ msg: Message; preserved: boolean }> = [];
-    const groupRole = classified[i].msg.role;
-    while (i < classified.length && !classified[i].preserved && !classified[i].codeSplit && classified[i].msg.role === groupRole) {
-      group.push(classified[i]);
-      i++;
-    }
+    const { group, nextIdx } = collectGroup(classified, i);
+    i = nextIdx;
 
     const allContent = group.map(g => typeof g.msg.content === 'string' ? g.msg.content : '').join(' ');
     const summaryText = summarize(allContent);
-    const entities = extractEntities(allContent);
-    const entitySuffix = entities.length > 0 ? ` | entities: ${entities.join(', ')}` : '';
 
     if (group.length > 1) {
-      const summary = `[summary: ${summaryText} (${group.length} messages merged)${entitySuffix}]`;
+      const summary = formatSummary(summaryText, allContent, group.length);
       const combinedLength = group.reduce((sum, g) => sum + contentLength(g.msg), 0);
 
       if (summary.length >= combinedLength) {
@@ -424,54 +450,22 @@ function compressSync(
           messagesPreserved++;
         }
       } else {
-        const mergeIds = group.map(g => g.msg.id);
-        const mergeSummaryId = makeSummaryId(mergeIds);
-        const mergeParents = collectParentIds(group.map(g => g.msg));
-        for (const g of group) { verbatim[g.msg.id] = g.msg; }
-        const mergedMsg: Message = {
-          id: group[0].msg.id,
-          index: group[0].msg.index,
-          role: group[0].msg.role,
-          content: summary,
-          metadata: {
-            ...(group[0].msg.metadata ?? {}),
-            _uc_original: {
-              ids: mergeIds,
-              summary_id: mergeSummaryId,
-              ...(mergeParents.length > 0 ? { parent_ids: mergeParents } : {}),
-              version: sourceVersion,
-            },
-          },
-        };
-        result.push(mergedMsg);
+        const sourceMsgs = group.map(g => g.msg);
+        const mergeIds = sourceMsgs.map(m => m.id);
+        const base: Message = { id: sourceMsgs[0].id, index: sourceMsgs[0].index, role: sourceMsgs[0].role, metadata: sourceMsgs[0].metadata } as Message;
+        result.push(buildCompressedMessage(base, mergeIds, summary, sourceVersion, verbatim, sourceMsgs));
         messagesCompressed += group.length;
       }
     } else {
       const single = group[0].msg;
       const content = typeof single.content === 'string' ? single.content : '';
-      const summary = `[summary: ${summaryText}${entitySuffix}]`;
+      const summary = formatSummary(summaryText, allContent);
 
       if (summary.length >= content.length) {
         result.push(single);
         messagesPreserved++;
       } else {
-        const singleIds = [single.id];
-        const singleSummaryId = makeSummaryId(singleIds);
-        const singleParents = collectParentIds([single]);
-        verbatim[single.id] = single;
-        result.push({
-          ...single,
-          content: summary,
-          metadata: {
-            ...(single.metadata ?? {}),
-            _uc_original: {
-              ids: singleIds,
-              summary_id: singleSummaryId,
-              ...(singleParents.length > 0 ? { parent_ids: singleParents } : {}),
-              version: sourceVersion,
-            },
-          },
-        });
+        result.push(buildCompressedMessage(single, [single.id], summary, sourceVersion, verbatim, [single]));
         messagesCompressed++;
       }
     }
@@ -502,10 +496,6 @@ async function compressAsync(
   messages: Message[],
   options: CompressOptions = {},
 ): Promise<CompressResult> {
-  if (options.mode === 'lossy') {
-    throw new Error('Lossy compression is not yet implemented (501)');
-  }
-
   const sourceVersion = options.sourceVersion ?? 0;
   const userSummarizer = options.summarizer;
 
@@ -550,9 +540,7 @@ async function compressAsync(
       const proseText = segments.filter(s => s.type === 'prose').map(s => s.content).join(' ');
       const codeFences = segments.filter(s => s.type === 'code').map(s => s.content);
       const summaryText = await withFallback(proseText, userSummarizer);
-      const entities = extractEntities(proseText);
-      const entitySuffix = entities.length > 0 ? ` | entities: ${entities.join(', ')}` : '';
-      const compressed = `[summary: ${summaryText}${entitySuffix}]\n\n${codeFences.join('\n\n')}`;
+      const compressed = `${formatSummary(summaryText, proseText)}\n\n${codeFences.join('\n\n')}`;
 
       if (compressed.length >= content.length) {
         result.push(msg);
@@ -561,43 +549,21 @@ async function compressAsync(
         continue;
       }
 
-      const csIds = [msg.id];
-      const csSummaryId = makeSummaryId(csIds);
-      const csParents = collectParentIds([msg]);
-      verbatim[msg.id] = msg;
-      result.push({
-        ...msg,
-        content: compressed,
-        metadata: {
-          ...(msg.metadata ?? {}),
-          _uc_original: {
-            ids: csIds,
-            summary_id: csSummaryId,
-            ...(csParents.length > 0 ? { parent_ids: csParents } : {}),
-            version: sourceVersion,
-          },
-        },
-      });
+      result.push(buildCompressedMessage(msg, [msg.id], compressed, sourceVersion, verbatim, [msg]));
       messagesCompressed++;
       i++;
       continue;
     }
 
     // Collect consecutive non-preserved messages with the SAME role
-    const group: Array<{ msg: Message; preserved: boolean }> = [];
-    const groupRole = classified[i].msg.role;
-    while (i < classified.length && !classified[i].preserved && !classified[i].codeSplit && classified[i].msg.role === groupRole) {
-      group.push(classified[i]);
-      i++;
-    }
+    const { group, nextIdx } = collectGroup(classified, i);
+    i = nextIdx;
 
     const allContent = group.map(g => typeof g.msg.content === 'string' ? g.msg.content : '').join(' ');
     const summaryText = await withFallback(allContent, userSummarizer);
-    const entities = extractEntities(allContent);
-    const entitySuffix = entities.length > 0 ? ` | entities: ${entities.join(', ')}` : '';
 
     if (group.length > 1) {
-      const summary = `[summary: ${summaryText} (${group.length} messages merged)${entitySuffix}]`;
+      const summary = formatSummary(summaryText, allContent, group.length);
       const combinedLength = group.reduce((sum, g) => sum + contentLength(g.msg), 0);
 
       if (summary.length >= combinedLength) {
@@ -606,54 +572,22 @@ async function compressAsync(
           messagesPreserved++;
         }
       } else {
-        const mergeIds = group.map(g => g.msg.id);
-        const mergeSummaryId = makeSummaryId(mergeIds);
-        const mergeParents = collectParentIds(group.map(g => g.msg));
-        for (const g of group) { verbatim[g.msg.id] = g.msg; }
-        const mergedMsg: Message = {
-          id: group[0].msg.id,
-          index: group[0].msg.index,
-          role: group[0].msg.role,
-          content: summary,
-          metadata: {
-            ...(group[0].msg.metadata ?? {}),
-            _uc_original: {
-              ids: mergeIds,
-              summary_id: mergeSummaryId,
-              ...(mergeParents.length > 0 ? { parent_ids: mergeParents } : {}),
-              version: sourceVersion,
-            },
-          },
-        };
-        result.push(mergedMsg);
+        const sourceMsgs = group.map(g => g.msg);
+        const mergeIds = sourceMsgs.map(m => m.id);
+        const base: Message = { id: sourceMsgs[0].id, index: sourceMsgs[0].index, role: sourceMsgs[0].role, metadata: sourceMsgs[0].metadata } as Message;
+        result.push(buildCompressedMessage(base, mergeIds, summary, sourceVersion, verbatim, sourceMsgs));
         messagesCompressed += group.length;
       }
     } else {
       const single = group[0].msg;
       const content = typeof single.content === 'string' ? single.content : '';
-      const summary = `[summary: ${summaryText}${entitySuffix}]`;
+      const summary = formatSummary(summaryText, allContent);
 
       if (summary.length >= content.length) {
         result.push(single);
         messagesPreserved++;
       } else {
-        const singleIds = [single.id];
-        const singleSummaryId = makeSummaryId(singleIds);
-        const singleParents = collectParentIds([single]);
-        verbatim[single.id] = single;
-        result.push({
-          ...single,
-          content: summary,
-          metadata: {
-            ...(single.metadata ?? {}),
-            _uc_original: {
-              ids: singleIds,
-              summary_id: singleSummaryId,
-              ...(singleParents.length > 0 ? { parent_ids: singleParents } : {}),
-              version: sourceVersion,
-            },
-          },
-        });
+        result.push(buildCompressedMessage(single, [single.id], summary, sourceVersion, verbatim, [single]));
         messagesCompressed++;
       }
     }
