@@ -33,6 +33,10 @@ __pycache__/
 .vscode/
 *.swp
 
+# indexing / analysis artifacts
+.ckb/
+*.scip
+
 # package managers
 .pnp.*
 .yarn/*
