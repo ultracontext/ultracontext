@@ -49,6 +49,10 @@ function scoreSentence(sentence: string): number {
   score += (sentence.match(/\b\d+(?:\.\d+)?\s*(?:seconds?|ms|MB|GB|TB|KB|retries?|workers?|threads?|nodes?|replicas?|requests?|%)\b/gi) ?? []).length * 2;
   // Vowelless abbreviations (3+ consonants)
   score += (sentence.match(/\b[bcdfghjklmnpqrstvwxz]{3,}\b/gi) ?? []).length * 2;
+  // PASS/FAIL/ERROR/WARNING/WARN status words
+  score += (sentence.match(/\b(?:PASS|FAIL|ERROR|WARNING|WARN)\b/g) ?? []).length * 3;
+  // Grep-style file:line references (e.g. src/foo.ts:42:)
+  score += (sentence.match(/\S+\.\w+:\d+:/g) ?? []).length * 2;
   // Optimal length bonus
   if (sentence.length >= 40 && sentence.length <= 120) score += 2;
   // Filler penalty
@@ -133,6 +137,87 @@ function summarize(text: string, maxBudget?: number): string {
   return result;
 }
 
+// ---------------------------------------------------------------------------
+// Structured tool output detection and summarization
+// ---------------------------------------------------------------------------
+
+const STRUCTURAL_RE = /^(?:\S+\.\w+:\d+:|[ \t]+[-•*]|[ \t]*\w[\w ./-]*:\s|(?:PASS|FAIL|ERROR|WARNING|WARN|OK|SKIP)\b)/;
+
+function isStructuredOutput(text: string): boolean {
+  const lines = text.split('\n');
+  const nonEmpty = lines.filter(l => l.trim().length > 0);
+  if (nonEmpty.length < 6) return false;
+
+  const newlineDensity = (text.match(/\n/g) ?? []).length / text.length;
+  if (newlineDensity < 1 / 80) return false;
+
+  let structural = 0;
+  for (const line of nonEmpty) {
+    if (STRUCTURAL_RE.test(line)) structural++;
+  }
+  return structural / nonEmpty.length > 0.5;
+}
+
+function summarizeStructured(text: string, maxBudget: number): string {
+  const lines = text.split('\n');
+  const nonEmpty = lines.filter(l => l.trim().length > 0);
+
+  // Extract file paths from grep-style output (file.ext:line:)
+  const filePaths = new Set<string>();
+  for (const line of nonEmpty) {
+    const m = line.match(/^(\S+\.\w+):\d+:/);
+    if (m) filePaths.add(m[1]);
+  }
+
+  // Extract status/summary lines (PASS/FAIL counts, duration, totals)
+  const statusLines: string[] = [];
+  for (const line of nonEmpty) {
+    if (/\b(?:PASS|FAIL|ERROR|WARNING|WARN|Tests?|Total|Duration|passed|failed)\b/i.test(line)) {
+      statusLines.push(line.trim());
+    }
+  }
+
+  const parts: string[] = [];
+
+  // File paths summary
+  if (filePaths.size > 0) {
+    const allPaths = Array.from(filePaths);
+    const shown = allPaths.slice(0, 3).join(', ');
+    if (allPaths.length > 3) {
+      parts.push(`files: ${shown} +${allPaths.length - 3} more`);
+    } else {
+      parts.push(`files: ${shown}`);
+    }
+  }
+
+  // Status lines (deduplicated)
+  const seenStatus = new Set<string>();
+  for (const s of statusLines) {
+    if (!seenStatus.has(s) && seenStatus.size < 3) {
+      seenStatus.add(s);
+      parts.push(s);
+    }
+  }
+
+  // If we got meaningful structured content, use it
+  if (parts.length > 0) {
+    let result = parts.join(' | ');
+    if (result.length > maxBudget) {
+      result = result.slice(0, maxBudget - 3) + '...';
+    }
+    return result;
+  }
+
+  // Fallback: head/tail with line count
+  const head = nonEmpty.slice(0, 3).map(l => l.trim()).join(' | ');
+  const tail = nonEmpty[nonEmpty.length - 1].trim();
+  let result = `${head} | ... | ${tail} (${nonEmpty.length} lines)`;
+  if (result.length > maxBudget) {
+    result = result.slice(0, maxBudget - 3) + '...';
+  }
+  return result;
+}
+
 const COMMON_STARTERS = new Set([
   'The', 'This', 'That', 'These', 'Those', 'When', 'Where', 'What',
   'Which', 'Who', 'How', 'Why', 'Here', 'There', 'Now', 'Then',
@@ -197,7 +282,7 @@ function extractEntities(text: string): string[] {
 
 function splitCodeAndProse(text: string): Array<{ type: 'prose' | 'code'; content: string }> {
   const segments: Array<{ type: 'prose' | 'code'; content: string }> = [];
-  const fenceRe = /^```[^\n]*\n[\s\S]*?\n```/gm;
+  const fenceRe = /^[ ]{0,3}```[^\n]*\n[\s\S]*?\n\s*```/gm;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
@@ -420,7 +505,7 @@ function compressSync(
   const preserveRoles = new Set(options.preserve ?? ['system']);
   const recencyWindow = options.recencyWindow ?? 4;
   const recencyStart = Math.max(0, messages.length - (recencyWindow > 0 ? recencyWindow : 0));
-  const dedupAnnotations = options.dedup
+  const dedupAnnotations = (options.dedup ?? true)
     ? analyzeDuplicates(messages, recencyStart, preserveRoles)
     : undefined;
   const classified = classifyAll(messages, preserveRoles, recencyWindow, dedupAnnotations);
@@ -482,7 +567,9 @@ function compressSync(
 
     const allContent = group.map(g => typeof g.msg.content === 'string' ? g.msg.content : '').join(' ');
     const contentBudget = allContent.length < 600 ? 200 : 400;
-    const summaryText = summarize(allContent, contentBudget);
+    const summaryText = isStructuredOutput(allContent)
+      ? summarizeStructured(allContent, contentBudget)
+      : summarize(allContent, contentBudget);
 
     if (group.length > 1) {
       let summary = formatSummary(summaryText, allContent, group.length);
@@ -566,7 +653,7 @@ async function compressAsync(
   const preserveRoles = new Set(options.preserve ?? ['system']);
   const recencyWindow = options.recencyWindow ?? 4;
   const recencyStart = Math.max(0, messages.length - (recencyWindow > 0 ? recencyWindow : 0));
-  const dedupAnnotations = options.dedup
+  const dedupAnnotations = (options.dedup ?? true)
     ? analyzeDuplicates(messages, recencyStart, preserveRoles)
     : undefined;
   const classified = classifyAll(messages, preserveRoles, recencyWindow, dedupAnnotations);
@@ -628,7 +715,9 @@ async function compressAsync(
 
     const allContent = group.map(g => typeof g.msg.content === 'string' ? g.msg.content : '').join(' ');
     const contentBudget = allContent.length < 600 ? 200 : 400;
-    const summaryText = await withFallback(allContent, userSummarizer, contentBudget);
+    const summaryText = isStructuredOutput(allContent)
+      ? summarizeStructured(allContent, contentBudget)
+      : await withFallback(allContent, userSummarizer, contentBudget);
 
     if (group.length > 1) {
       let summary = formatSummary(summaryText, allContent, group.length);

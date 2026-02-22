@@ -22,7 +22,7 @@ export type CompressOptions = {
   tokenBudget?: number;
   /** Minimum recencyWindow when using tokenBudget. Default: 0. */
   minRecencyWindow?: number;
-  /** Replace earlier duplicate messages with a compact reference. Default: false. */
+  /** Replace earlier duplicate messages with a compact reference. Default: true. */
   dedup?: boolean;
 };
 

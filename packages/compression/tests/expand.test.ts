@@ -43,7 +43,7 @@ describe('uncompress', () => {
       msg({ id: 'a', index: 0, role: 'user', content: PROSE }),
       msg({ id: 'b', index: 1, role: 'user', content: PROSE }),
     ];
-    const compressed = compress(input, { recencyWindow: 0 });
+    const compressed = compress(input, { recencyWindow: 0, dedup: false });
     expect(compressed.messages.length).toBe(1);
 
     const expanded = uncompress(compressed.messages, compressed.verbatim);
@@ -92,7 +92,7 @@ describe('uncompress', () => {
       msg({ id: 'a', index: 0, role: 'user', content: PROSE }),
       msg({ id: 'b', index: 1, role: 'user', content: PROSE }),
     ];
-    const compressed = compress(input, { recencyWindow: 0 });
+    const compressed = compress(input, { recencyWindow: 0, dedup: false });
 
     const empty = uncompress(compressed.messages, {});
     expect(empty.missing_ids.sort()).toEqual(['a', 'b']);

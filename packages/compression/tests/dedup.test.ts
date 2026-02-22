@@ -156,14 +156,14 @@ describe('compress with dedup', () => {
     expect(result.messages[0].content).not.toMatch(/^\[uc:dup/);
   });
 
-  it('dedup omitted → no dedup', () => {
+  it('dedup omitted → dedup active (default: true)', () => {
     const messages: Message[] = [
       msg({ id: '1', index: 0, content: LONG_CONTENT }),
       msg({ id: '2', index: 1, content: LONG_CONTENT }),
     ];
     const result = compress(messages, { recencyWindow: 0 });
-    expect(result.compression.messages_deduped).toBeUndefined();
-    expect(result.messages[0].content).not.toMatch(/^\[uc:dup/);
+    expect(result.compression.messages_deduped).toBe(1);
+    expect(result.messages[0].content).toMatch(/^\[uc:dup/);
   });
 
   it('system role never deduped', () => {
