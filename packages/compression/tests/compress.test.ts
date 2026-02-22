@@ -783,7 +783,7 @@ describe('compress', () => {
       expect(output).toContain(fence);
     });
 
-    it('prose around code is summarized with entities', () => {
+    it('prose around code is summarized without entities (identifiers already in fences)', () => {
       const prose = 'The getUserProfile function in the Express middleware needs refactoring to support WebSocket connections. '.repeat(3);
       const fence = '```ts\nconst profile = getUserProfile(req);\n```';
       const content = `${prose}\n\n${fence}`;
@@ -792,11 +792,12 @@ describe('compress', () => {
       ];
       const result = compress(messages, { recencyWindow: 0 });
       const output = result.messages[0].content!;
-      expect(output).toMatch(/\[summary:.*\|.*entities:/);
-      expect(output).toContain('getUserProfile');
+      expect(output).toMatch(/\[summary:/);
+      expect(output).not.toMatch(/\| entities:/);
+      expect(output).toContain('getUserProfile'); // still present in the preserved fence
     });
 
-    it('code + short prose (< 200 chars) → fully preserved', () => {
+    it('code + short prose (< 80 chars) → fully preserved', () => {
       const content = 'Here is the code:\n\n```ts\nconst x = 1;\n```\n\nDone.';
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'assistant', content }),
@@ -806,15 +807,19 @@ describe('compress', () => {
       expect(result.messages[0].content).toBe(content);
     });
 
-    it('code-split skipped when output would be larger', () => {
-      const prose = 'We call getUserProfile fetchUserData handleAuthToken validateSession refreshCache parseConfig buildQuery formatResponse and logMetrics in TypeScript WebSocket Express middleware. Also uses auth_token user_session cache_key. ';
-      const fence = '```ts\nx()\n```';
+    it('code-split skipped when summary output would be larger than original prose', () => {
+      // Prose just above 80 chars — single sentence that can't be compressed shorter
+      // than the [summary: ] wrapper (12 chars overhead)
+      const prose = 'We call getUserProfile and fetchUserData and handleAuthToken in the TypeScript middleware layer.';
+      const fence = '```ts\nconst x = getUserProfile(req);\n```';
       const content = `${prose}\n\n${fence}`;
-      expect(prose.trim().length).toBeGreaterThanOrEqual(200);
+      expect(prose.trim().length).toBeGreaterThanOrEqual(80);
       const messages: Message[] = [
         msg({ id: '1', index: 0, role: 'assistant', content }),
       ];
       const result = compress(messages, { recencyWindow: 0 });
+      // Single sentence with identifiers → summarizer keeps it as-is → [summary: ...] wrapper
+      // makes it larger → compression skipped, message preserved
       expect(result.compression.messages_preserved).toBe(1);
       expect(result.compression.messages_compressed).toBe(0);
       expect(result.messages[0].content).toBe(content);

@@ -275,9 +275,11 @@ function formatSummary(
   summaryText: string,
   rawText: string,
   mergeCount?: number,
+  skipEntities?: boolean,
 ): string {
-  const entities = extractEntities(rawText);
-  const entitySuffix = entities.length > 0 ? ` | entities: ${entities.join(', ')}` : '';
+  const entitySuffix = skipEntities
+    ? ''
+    : (() => { const e = extractEntities(rawText); return e.length > 0 ? ` | entities: ${e.join(', ')}` : ''; })();
   const mergeSuffix = mergeCount && mergeCount > 1 ? ` (${mergeCount} messages merged)` : '';
   return `[summary: ${summaryText}${mergeSuffix}${entitySuffix}]`;
 }
@@ -327,7 +329,7 @@ function classifyAll(
       const totalProse = segments
         .filter(s => s.type === 'prose')
         .reduce((sum, s) => sum + s.content.length, 0);
-      if (totalProse >= 200) {
+      if (totalProse >= 80) {
         return { msg, preserved: false, codeSplit: true };
       }
       return { msg, preserved: true };
@@ -418,7 +420,7 @@ function compressSync(
       const proseText = segments.filter(s => s.type === 'prose').map(s => s.content).join(' ');
       const codeFences = segments.filter(s => s.type === 'code').map(s => s.content);
       const summaryText = summarize(proseText);
-      const compressed = `${formatSummary(summaryText, proseText)}\n\n${codeFences.join('\n\n')}`;
+      const compressed = `${formatSummary(summaryText, proseText, undefined, true)}\n\n${codeFences.join('\n\n')}`;
 
       if (compressed.length >= content.length) {
         result.push(msg);
@@ -540,7 +542,7 @@ async function compressAsync(
       const proseText = segments.filter(s => s.type === 'prose').map(s => s.content).join(' ');
       const codeFences = segments.filter(s => s.type === 'code').map(s => s.content);
       const summaryText = await withFallback(proseText, userSummarizer);
-      const compressed = `${formatSummary(summaryText, proseText)}\n\n${codeFences.join('\n\n')}`;
+      const compressed = `${formatSummary(summaryText, proseText, undefined, true)}\n\n${codeFences.join('\n\n')}`;
 
       if (compressed.length >= content.length) {
         result.push(msg);
