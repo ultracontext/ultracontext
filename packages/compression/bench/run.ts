@@ -39,6 +39,7 @@ function buildScenarios(): Scenario[] {
     shortConversation(),
     deepConversation(),
     structuredContent(),
+    agenticCodingSession(),
   ];
 }
 
@@ -201,6 +202,21 @@ function deepConversation(): Scenario {
     'testing approach',
     'code review process',
     'documentation standards',
+    'performance profiling',
+    'logging strategy',
+    'feature flags',
+    'data migration',
+    'API versioning',
+    'circuit breakers',
+    'message queuing',
+    'secrets management',
+    'load balancing',
+    'container orchestration',
+    'service discovery',
+    'observability',
+    'incident response',
+    'capacity planning',
+    'access control',
   ];
 
   const messages: Message[] = [
@@ -208,7 +224,7 @@ function deepConversation(): Scenario {
   ];
 
   for (let i = 0; i < 25; i++) {
-    const topic = topics[i % topics.length];
+    const topic = topics[i];
     messages.push(
       msg(
         'user',
@@ -333,6 +349,147 @@ function structuredContent(): Scenario {
   };
 }
 
+function agenticCodingSession(): Scenario {
+  // Simulates a realistic agentic coding session with repeated file reads,
+  // grep results, test output, and linter output across edit-test-fix cycles.
+
+  const authModule =
+    'import jwt from "jsonwebtoken";\nimport { Request, Response, NextFunction } from "express";\n\n' +
+    'interface JWTPayload {\n  sub: string;\n  email: string;\n  roles: string[];\n  iat: number;\n  exp: number;\n}\n\n' +
+    'export class AuthService {\n  private readonly secret: string;\n  private readonly refreshSecret: string;\n\n' +
+    '  constructor(secret: string, refreshSecret: string) {\n    this.secret = secret;\n    this.refreshSecret = refreshSecret;\n  }\n\n' +
+    '  verify(token: string): JWTPayload {\n    return jwt.verify(token, this.secret) as JWTPayload;\n  }\n\n' +
+    '  sign(payload: Omit<JWTPayload, "iat" | "exp">): string {\n    return jwt.sign(payload, this.secret, { expiresIn: "15m" });\n  }\n\n' +
+    '  signRefresh(payload: { sub: string }): string {\n    return jwt.sign(payload, this.refreshSecret, { expiresIn: "7d" });\n  }\n\n' +
+    '  middleware(req: Request, res: Response, next: NextFunction): void {\n    const header = req.headers.authorization;\n' +
+    '    if (!header?.startsWith("Bearer ")) {\n      res.status(401).json({ error: "Missing token" });\n      return;\n    }\n' +
+    '    try {\n      (req as any).user = this.verify(header.slice(7));\n      next();\n    } catch {\n' +
+    '      res.status(401).json({ error: "Invalid token" });\n    }\n  }\n}\n';
+
+  const grepResults =
+    'src/auth.ts:18:  verify(token: string): JWTPayload {\n' +
+    'src/auth.ts:22:    return jwt.verify(token, this.secret) as JWTPayload;\n' +
+    'src/middleware/validate.ts:7:  const decoded = authService.verify(req.headers.authorization!);\n' +
+    'src/middleware/validate.ts:12:  if (!decoded) throw new UnauthorizedError("Token verification failed");\n' +
+    'src/routes/admin.ts:34:    const user = auth.verify(token);\n' +
+    'src/routes/admin.ts:35:    if (!user.roles.includes("admin")) return res.status(403).json({ error: "Forbidden" });\n' +
+    'tests/auth.test.ts:14:      const payload = service.verify(token);\n' +
+    'tests/auth.test.ts:22:      expect(() => service.verify(expired)).toThrow();\n' +
+    'tests/integration/auth.integration.ts:45:    const result = authService.verify(response.body.token);\n';
+
+  const testOutput =
+    ' RUN  v1.6.0 /project\n\n' +
+    ' ✓ tests/auth.test.ts (5 tests) 42ms\n' +
+    '   ✓ AuthService > sign and verify > produces a valid JWT\n' +
+    '   ✓ AuthService > sign and verify > rejects expired tokens\n' +
+    '   ✓ AuthService > middleware > rejects missing auth header\n' +
+    '   ✓ AuthService > middleware > attaches user to request on valid token\n' +
+    '   ✗ AuthService > refresh > rotates token correctly\n' +
+    '     → expected "user1" but got undefined\n' +
+    '     at tests/auth.test.ts:48:22\n\n' +
+    ' Test Files  1 passed | 0 failed\n' +
+    ' Tests  4 passed | 1 failed\n' +
+    ' Duration  1.34s\n';
+
+  const lintOutput =
+    'src/auth.ts\n' +
+    '  18:3  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any\n' +
+    '  31:7  warning  Missing return type on function            @typescript-eslint/explicit-function-return-type\n' +
+    '  42:5  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any\n\n' +
+    'tests/auth.test.ts\n' +
+    '  8:24  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any\n' +
+    '  9:24  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any\n\n' +
+    '✖ 5 problems (0 errors, 5 warnings)\n';
+
+  return {
+    name: 'Agentic coding session',
+    messages: [
+      msg('system', 'You are a senior TypeScript developer.'),
+
+      // --- Phase 1: Initial exploration (file reads) ---
+      msg('user', 'Read the auth module and tell me what it does.'),
+      msg('assistant', 'Let me read that file.', {
+        tool_calls: [{ id: 'tc1', function: { name: 'read', arguments: '{"path":"src/auth.ts"}' } }],
+      }),
+      msg('tool', authModule),  // 1st read of auth.ts
+      msg('assistant', 'This is an AuthService class that handles JWT authentication with access and refresh tokens, plus Express middleware.'),
+
+      // --- Phase 2: Grep for usages ---
+      msg('user', 'Search the codebase for all usages of validateToken.'),
+      msg('assistant', 'Searching for validateToken references.', {
+        tool_calls: [{ id: 'tc2', function: { name: 'grep', arguments: '{"pattern":"validateToken|verify.*token","path":"src/"}' } }],
+      }),
+      msg('tool', grepResults),  // 1st grep
+      msg('assistant', 'Found 9 references across auth.ts, validate.ts middleware, admin routes, and tests.'),
+
+      // --- Phase 3: Edit and test (first cycle) ---
+      msg('user', 'Add a test for refresh token rotation.'),
+      msg('assistant', 'Let me re-read the auth module to check the method signature.', {
+        tool_calls: [{ id: 'tc3', function: { name: 'read', arguments: '{"path":"src/auth.ts"}' } }],
+      }),
+      msg('tool', authModule),  // 2nd read of auth.ts — DUPLICATE
+      msg('assistant', 'The signRefresh method takes { sub: string }. Adding the rotation test.', {
+        tool_calls: [{ id: 'tc4', function: { name: 'edit', arguments: '{"path":"tests/auth.test.ts"}' } }],
+      }),
+      msg('tool', 'File updated successfully.'),  // short — stays below dedup threshold
+
+      // --- Phase 4: Run tests (fail) ---
+      msg('user', 'Run the tests.'),
+      msg('assistant', 'Running the test suite.', {
+        tool_calls: [{ id: 'tc5', function: { name: 'exec', arguments: '{"cmd":"npx vitest run"}' } }],
+      }),
+      msg('tool', testOutput),  // 1st test output — shows failure
+
+      // --- Phase 5: Fix and re-test ---
+      msg('assistant', 'The rotation test failed — decoded payload is undefined. Let me check the verify call in the test.', {
+        tool_calls: [{ id: 'tc6', function: { name: 'read', arguments: '{"path":"src/auth.ts"}' } }],
+      }),
+      msg('tool', authModule),  // 3rd read of auth.ts — DUPLICATE
+      msg('assistant', 'Found it. The test was calling verify with the refresh token but using the access secret. Fixing.', {
+        tool_calls: [{ id: 'tc7', function: { name: 'edit', arguments: '{"path":"tests/auth.test.ts"}' } }],
+      }),
+      msg('tool', 'Updated tests/auth.test.ts'),  // short
+
+      // --- Phase 6: Lint check ---
+      msg('user', 'Run the linter before we test again.'),
+      msg('assistant', 'Running eslint.', {
+        tool_calls: [{ id: 'tc8', function: { name: 'exec', arguments: '{"cmd":"npx eslint src/ tests/"}' } }],
+      }),
+      msg('tool', lintOutput),  // 1st lint output
+
+      // --- Phase 7: Re-run tests (still failing differently) ---
+      msg('assistant', 'There are 5 warnings but no errors. Running tests again.', {
+        tool_calls: [{ id: 'tc9', function: { name: 'exec', arguments: '{"cmd":"npx vitest run"}' } }],
+      }),
+      msg('tool', testOutput),  // 2nd test output — DUPLICATE (same results)
+
+      // --- Phase 8: Another grep to find related code ---
+      msg('assistant', 'Still failing. Let me search for verify references again to check the middleware path.', {
+        tool_calls: [{ id: 'tc10', function: { name: 'grep', arguments: '{"pattern":"validateToken|verify.*token","path":"src/"}' } }],
+      }),
+      msg('tool', grepResults),  // 2nd grep — DUPLICATE
+
+      // --- Phase 9: Fix, lint, and final test ---
+      msg('assistant', 'The issue is in the middleware — it also calls verify. Let me fix the test to use the correct secret.', {
+        tool_calls: [{ id: 'tc11', function: { name: 'edit', arguments: '{"path":"tests/auth.test.ts"}' } }],
+      }),
+      msg('tool', 'File updated successfully.'),  // short
+      msg('user', 'Lint and test again.'),
+      msg('assistant', 'Running lint.', {
+        tool_calls: [{ id: 'tc12', function: { name: 'exec', arguments: '{"cmd":"npx eslint src/ tests/"}' } }],
+      }),
+      msg('tool', lintOutput),  // 2nd lint output — DUPLICATE
+
+      msg('assistant', 'Same warnings, no new issues. Running tests.', {
+        tool_calls: [{ id: 'tc13', function: { name: 'exec', arguments: '{"cmd":"npx vitest run"}' } }],
+      }),
+      msg('tool', testOutput),  // 3rd test output — DUPLICATE
+      msg('assistant', 'All 5 tests passing now. The rotation test verifies the new token contains the original subject claim.'),
+      msg('user', 'Nice, looks good.'),
+    ],
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
@@ -451,39 +608,137 @@ function run(): void {
   console.log('All scenarios passed round-trip verification.');
 
   // ---------------------------------------------------------------------------
-  // tokenBudget scenario
+  // tokenBudget scenarios
   // ---------------------------------------------------------------------------
+
+  const tokenBudget = 2000;
+  const budgetScenarios: Scenario[] = [
+    deepConversation(),
+    agenticCodingSession(),
+  ];
 
   console.log();
   console.log('tokenBudget Benchmark');
-  console.log(sep);
 
-  const deepMessages = deepConversation().messages;
-  const tokenBudget = 2000;
-  const t0 = performance.now();
-  const ctfResult: CompressResult = compress(deepMessages, { tokenBudget });
-  const t1 = performance.now();
+  const tbHeader = [
+    'Scenario'.padEnd(cols.name),
+    'Dedup'.padStart(6),
+    'Msgs'.padStart(5),
+    'Budget'.padStart(7),
+    'Tokens'.padStart(7),
+    'Fits'.padStart(5),
+    'Rw'.padStart(4),
+    'Comp'.padStart(5),
+    'Pres'.padStart(5),
+    'Ddup'.padStart(5),
+    'R/T'.padStart(cols.rt),
+    'Time'.padStart(cols.time),
+  ].join('  ');
+  const tbSep = '-'.repeat(tbHeader.length);
 
-  // Round-trip check
-  const expanded = uncompress(ctfResult.messages, ctfResult.verbatim);
-  const ctfRoundTrip =
-    JSON.stringify(deepMessages) === JSON.stringify(expanded.messages) && expanded.missing_ids.length === 0
-      ? 'PASS'
-      : 'FAIL';
+  console.log(tbSep);
+  console.log(tbHeader);
+  console.log(tbSep);
 
-  console.log(`  Input:          ${deepMessages.length} messages, ${chars(deepMessages)} chars`);
-  console.log(`  Token budget:   ${tokenBudget}`);
-  console.log(`  Fits:           ${ctfResult.fits}`);
-  console.log(`  Final rw:       ${ctfResult.recencyWindow}`);
-  console.log(`  Token count:    ${ctfResult.tokenCount}`);
-  console.log(`  Compressed:     ${ctfResult.compression.messages_compressed} msgs`);
-  console.log(`  Preserved:      ${ctfResult.compression.messages_preserved} msgs`);
-  console.log(`  Round-trip:     ${ctfRoundTrip}`);
-  console.log(`  Time:           ${(t1 - t0).toFixed(2)}ms`);
-  console.log(sep);
+  let tbFails = 0;
 
-  if (ctfRoundTrip === 'FAIL') {
-    console.error('FAIL: tokenBudget round-trip failed');
+  for (const scenario of budgetScenarios) {
+    for (const dedup of [false, true]) {
+      const t0 = performance.now();
+      const cr: CompressResult = compress(scenario.messages, { tokenBudget, dedup });
+      const t1 = performance.now();
+
+      const er = uncompress(cr.messages, cr.verbatim);
+      const rt =
+        JSON.stringify(scenario.messages) === JSON.stringify(er.messages) && er.missing_ids.length === 0
+          ? 'PASS'
+          : 'FAIL';
+      if (rt === 'FAIL') tbFails++;
+
+      console.log(
+        [
+          scenario.name.padEnd(cols.name),
+          (dedup ? 'yes' : 'no').padStart(6),
+          String(scenario.messages.length).padStart(5),
+          String(tokenBudget).padStart(7),
+          String(cr.tokenCount).padStart(7),
+          String(cr.fits).padStart(5),
+          String(cr.recencyWindow ?? '-').padStart(4),
+          String(cr.compression.messages_compressed).padStart(5),
+          String(cr.compression.messages_preserved).padStart(5),
+          String(cr.compression.messages_deduped ?? 0).padStart(5),
+          rt.padStart(cols.rt),
+          ((t1 - t0).toFixed(2) + 'ms').padStart(cols.time),
+        ].join('  '),
+      );
+    }
+  }
+
+  console.log(tbSep);
+
+  if (tbFails > 0) {
+    console.error(`FAIL: ${tbFails} tokenBudget scenario(s) failed round-trip`);
+    process.exit(1);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Dedup comparison (rw=0 and rw=4)
+  // ---------------------------------------------------------------------------
+
+  console.log();
+  console.log('Dedup Comparison (dedup: true vs baseline)');
+
+  const dedupHeader = [
+    'Scenario'.padEnd(cols.name),
+    'rw0 Base'.padStart(9),
+    'rw0 Dup'.padStart(8),
+    'rw4 Base'.padStart(9),
+    'rw4 Dup'.padStart(8),
+    'Deduped'.padStart(8),
+    'R/T'.padStart(cols.rt),
+  ].join('  ');
+  const dedupSep = '-'.repeat(dedupHeader.length);
+
+  console.log(dedupSep);
+  console.log(dedupHeader);
+  console.log(dedupSep);
+
+  const dedupScenarios = buildScenarios();
+  let dedupFails = 0;
+
+  for (const scenario of dedupScenarios) {
+    const baseRw0 = compress(scenario.messages, { recencyWindow: 0 });
+    const dedupRw0 = compress(scenario.messages, { recencyWindow: 0, dedup: true });
+    const baseRw4 = compress(scenario.messages, { recencyWindow: 4 });
+    const dedupRw4 = compress(scenario.messages, { recencyWindow: 4, dedup: true });
+
+    // Round-trip check on the rw=4 dedup result
+    const er2 = uncompress(dedupRw4.messages, dedupRw4.verbatim);
+    const rt2 =
+      JSON.stringify(scenario.messages) === JSON.stringify(er2.messages) && er2.missing_ids.length === 0
+        ? 'PASS'
+        : 'FAIL';
+    if (rt2 === 'FAIL') dedupFails++;
+
+    const deduped = dedupRw4.compression.messages_deduped ?? 0;
+
+    console.log(
+      [
+        scenario.name.padEnd(cols.name),
+        baseRw0.compression.ratio.toFixed(2).padStart(9),
+        dedupRw0.compression.ratio.toFixed(2).padStart(8),
+        baseRw4.compression.ratio.toFixed(2).padStart(9),
+        dedupRw4.compression.ratio.toFixed(2).padStart(8),
+        String(deduped).padStart(8),
+        rt2.padStart(cols.rt),
+      ].join('  '),
+    );
+  }
+
+  console.log(dedupSep);
+
+  if (dedupFails > 0) {
+    console.error(`FAIL: ${dedupFails} dedup scenario(s) failed round-trip`);
     process.exit(1);
   }
 
