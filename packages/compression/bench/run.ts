@@ -1,9 +1,11 @@
 import { compress } from '../src/compress.js';
 import { uncompress } from '../src/expand.js';
+import { createSummarizer, createEscalatingSummarizer } from '../src/summarizer.js';
 import type { CompressResult, Message } from '../src/types.js';
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { homedir } from 'node:os';
+import { detectProviders, type LlmProvider } from './llm.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -541,7 +543,7 @@ interface Result {
   timeMs: string;
 }
 
-function run(): void {
+async function run(): Promise<void> {
   const scenarios = buildScenarios();
   const results: Result[] = [];
 
@@ -741,9 +743,9 @@ function run(): void {
   let dedupFails = 0;
 
   for (const scenario of dedupScenarios) {
-    const baseRw0 = compress(scenario.messages, { recencyWindow: 0 });
+    const baseRw0 = compress(scenario.messages, { recencyWindow: 0, dedup: false });
     const dedupRw0 = compress(scenario.messages, { recencyWindow: 0, dedup: true });
-    const baseRw4 = compress(scenario.messages, { recencyWindow: 4 });
+    const baseRw4 = compress(scenario.messages, { recencyWindow: 4, dedup: false });
     const dedupRw4 = compress(scenario.messages, { recencyWindow: 4, dedup: true });
 
     // Round-trip check on the rw=4 dedup result
@@ -839,8 +841,128 @@ function run(): void {
 
   runRealSessions();
 
+  await runLlmBenchmark();
+
   console.log();
   console.log('All benchmarks passed.');
+}
+
+// ---------------------------------------------------------------------------
+// LLM summarization benchmark (opt-in via env vars)
+// ---------------------------------------------------------------------------
+
+function roundTrip(messages: Message[], cr: CompressResult): 'PASS' | 'FAIL' {
+  const er = uncompress(cr.messages, cr.verbatim);
+  return JSON.stringify(messages) === JSON.stringify(er.messages) && er.missing_ids.length === 0
+    ? 'PASS' : 'FAIL';
+}
+
+async function runLlmBenchmark(): Promise<void> {
+  const providers = await detectProviders();
+
+  if (providers.length === 0) {
+    console.log();
+    console.log('LLM Summarization Benchmark — skipped (no OPENAI_API_KEY, OLLAMA_MODEL, or ANTHROPIC_API_KEY set)');
+    return;
+  }
+
+  const scenarios = buildScenarios().filter(s => s.name !== 'Short conversation');
+
+  for (const provider of providers) {
+    console.log();
+    console.log(`LLM Summarization Benchmark — ${provider.name} (${provider.model})`);
+
+    const basicSummarizer = createSummarizer(provider.callLlm);
+    const escalatingSummarizer = createEscalatingSummarizer(provider.callLlm);
+
+    const cols = {
+      name: 24,
+      method: 14,
+      chr: 6,
+      tkr: 6,
+      comp: 5,
+      pres: 5,
+      rt: 5,
+      time: 10,
+    };
+
+    const header = [
+      'Scenario'.padEnd(cols.name),
+      'Method'.padStart(cols.method),
+      'ChR'.padStart(cols.chr),
+      'TkR'.padStart(cols.tkr),
+      'Comp'.padStart(cols.comp),
+      'Pres'.padStart(cols.pres),
+      'R/T'.padStart(cols.rt),
+      'Time'.padStart(cols.time),
+    ].join('  ');
+    const sep = '-'.repeat(header.length);
+
+    console.log(sep);
+    console.log(header);
+    console.log(sep);
+
+    let llmFails = 0;
+
+    for (const scenario of scenarios) {
+      // Deterministic baseline
+      const t0d = performance.now();
+      const detResult = compress(scenario.messages, { recencyWindow: 0 });
+      const t1d = performance.now();
+      const detRt = roundTrip(scenario.messages, detResult);
+
+      printLlmRow(scenario.name, 'deterministic', detResult, detRt, t1d - t0d, cols);
+
+      // LLM basic summarizer
+      const t0b = performance.now();
+      const llmBasicResult = await compress(scenario.messages, {
+        recencyWindow: 0,
+        summarizer: basicSummarizer,
+      });
+      const t1b = performance.now();
+      const basicRt = roundTrip(scenario.messages, llmBasicResult);
+      if (basicRt === 'FAIL') llmFails++;
+
+      printLlmRow('', 'llm-basic', llmBasicResult, basicRt, t1b - t0b, cols);
+
+      // LLM escalating summarizer
+      const t0e = performance.now();
+      const llmEscResult = await compress(scenario.messages, {
+        recencyWindow: 0,
+        summarizer: escalatingSummarizer,
+      });
+      const t1e = performance.now();
+      const escRt = roundTrip(scenario.messages, llmEscResult);
+      if (escRt === 'FAIL') llmFails++;
+
+      printLlmRow('', 'llm-escalate', llmEscResult, escRt, t1e - t0e, cols);
+      console.log(sep);
+    }
+
+    if (llmFails > 0) {
+      console.error(`  WARNING: ${llmFails} LLM scenario(s) failed round-trip`);
+    }
+  }
+}
+
+function printLlmRow(
+  name: string,
+  method: string,
+  cr: CompressResult,
+  rt: string,
+  timeMs: number,
+  cols: { name: number; method: number; chr: number; tkr: number; comp: number; pres: number; rt: number; time: number },
+): void {
+  console.log([
+    name.padEnd(cols.name),
+    method.padStart(cols.method),
+    cr.compression.ratio.toFixed(2).padStart(cols.chr),
+    cr.compression.token_ratio.toFixed(2).padStart(cols.tkr),
+    String(cr.compression.messages_compressed).padStart(cols.comp),
+    String(cr.compression.messages_preserved).padStart(cols.pres),
+    rt.padStart(cols.rt),
+    (timeMs < 1000 ? timeMs.toFixed(0) + 'ms' : (timeMs / 1000).toFixed(1) + 's').padStart(cols.time),
+  ].join('  '));
 }
 
 // ---------------------------------------------------------------------------
@@ -987,11 +1109,11 @@ function runRealSessions(): void {
     'Session'.padEnd(24),
     'Msgs'.padStart(6),
     'Orig'.padStart(10),
-    'Comp'.padStart(10),
-    'Ratio'.padStart(6),
-    'Saved'.padStart(6),
-    'P/CS/S'.padStart(12),
-    'Fences'.padStart(8),
+    'Base R'.padStart(7),
+    'Dup R'.padStart(7),
+    'Fuz R'.padStart(7),
+    'Exact'.padStart(6),
+    'Fuzzy'.padStart(6),
     'Neg'.padStart(4),
     'R/T'.padStart(5),
     'Time'.padStart(8),
@@ -1002,47 +1124,64 @@ function runRealSessions(): void {
   console.log(rrHeader);
   console.log(rrSep);
 
-  let totOrig = 0, totComp = 0, totMsgs = 0;
+  let totOrig = 0, totBase = 0, totDedup = 0, totFuzzy = 0, totMsgs = 0;
   let totAFOrig = 0, totAFComp = 0, totNeg = 0;
+  let totExact = 0, totFuzzyCount = 0;
+  let totPreserved = 0, totCodeSplit = 0, totSummarized = 0;
   let rtFails = 0;
 
   for (const session of sessions) {
     try {
       const messages = loadClaudeSession(session.path);
       const t0 = performance.now();
-      const cr = compress(messages, { recencyWindow: 4 });
+      const crBase  = compress(messages, { recencyWindow: 4, dedup: false });
+      const crDedup = compress(messages, { recencyWindow: 4 });           // dedup defaults true
+      const crFuzzy = compress(messages, { recencyWindow: 4, fuzzyDedup: true });
       const t1 = performance.now();
 
-      // Round-trip
-      const er = uncompress(cr.messages, cr.verbatim);
+      // Round-trip on most aggressive config
+      const er = uncompress(crFuzzy.messages, crFuzzy.verbatim);
       const rtOk = JSON.stringify(messages) === JSON.stringify(er.messages) && er.missing_ids.length === 0;
       if (!rtOk) rtFails++;
 
-      const origC = chars(messages);
-      const compC = chars(cr.messages);
-      totOrig += origC;
-      totComp += compC;
-      totMsgs += messages.length;
+      const origC  = chars(messages);
+      const baseC  = chars(crBase.messages);
+      const dedupC = chars(crDedup.messages);
+      const fuzzyC = chars(crFuzzy.messages);
+      totOrig  += origC;
+      totBase  += baseC;
+      totDedup += dedupC;
+      totFuzzy += fuzzyC;
+      totMsgs  += messages.length;
 
-      // Classify compressed messages
+      // Dedup counts
+      const exact = crDedup.compression.messages_deduped ?? 0;
+      const fuzzy = crFuzzy.compression.messages_fuzzy_deduped ?? 0;
+      totExact      += exact;
+      totFuzzyCount += fuzzy;
+
+      // Classify compressed messages (on fuzzy result for aggregate)
       let preserved = 0, codeSplit = 0, summarized = 0;
-      for (const m of cr.messages) {
+      for (const m of crFuzzy.messages) {
         if (!m.metadata?._uc_original) preserved++;
         else if ((m.content ?? '').includes('```')) codeSplit++;
         else summarized++;
       }
+      totPreserved  += preserved;
+      totCodeSplit  += codeSplit;
+      totSummarized += summarized;
 
-      // Assistant fence integrity
+      // Assistant fence integrity (on fuzzy result)
       const afOrig = messages.filter(m => m.role === 'assistant')
         .reduce((s, m) => s + ((m.content ?? '').match(fenceRe) ?? []).length, 0);
-      const afComp = cr.messages.filter(m => m.role === 'assistant')
+      const afComp = crFuzzy.messages.filter(m => m.role === 'assistant')
         .reduce((s, m) => s + ((m.content ?? '').match(fenceRe) ?? []).length, 0);
       totAFOrig += afOrig;
       totAFComp += afComp;
 
-      // Negative savings (merged-message-aware)
+      // Negative savings (merged-message-aware, on fuzzy result)
       let negatives = 0;
-      for (const m of cr.messages) {
+      for (const m of crFuzzy.messages) {
         const meta = m.metadata?._uc_original as { ids?: string[] } | undefined;
         if (!meta) continue;
         const ids = meta.ids ?? [m.id];
@@ -1054,23 +1193,19 @@ function runRealSessions(): void {
       }
       totNeg += negatives;
 
-      // Role counts
-      const roleCounts: Record<string, number> = {};
-      for (const m of messages) roleCounts[m.role ?? '?'] = (roleCounts[m.role ?? '?'] ?? 0) + 1;
-      const roleStr = Object.entries(roleCounts).map(([r, n]) => `${r[0]}${n}`).join(' ');
-
-      const savedPct = origC > 0 ? ((1 - compC / origC) * 100).toFixed(1) + '%' : '0%';
-      const fenceStr = afOrig > 0 ? `${afComp}/${afOrig}` : '-';
+      const baseR  = origC > 0 ? (origC / baseC).toFixed(2)  : '-';
+      const dedupR = origC > 0 ? (origC / dedupC).toFixed(2) : '-';
+      const fuzzyR = origC > 0 ? (origC / fuzzyC).toFixed(2) : '-';
 
       console.log([
         session.label.slice(0, 24).padEnd(24),
         String(messages.length).padStart(6),
         origC.toLocaleString().padStart(10),
-        compC.toLocaleString().padStart(10),
-        (origC / compC).toFixed(2).padStart(6),
-        savedPct.padStart(6),
-        `${preserved}/${codeSplit}/${summarized}`.padStart(12),
-        fenceStr.padStart(8),
+        baseR.padStart(7),
+        dedupR.padStart(7),
+        fuzzyR.padStart(7),
+        String(exact).padStart(6),
+        String(fuzzy).padStart(6),
         String(negatives).padStart(4),
         (rtOk ? 'PASS' : 'FAIL').padStart(5),
         ((t1 - t0).toFixed(0) + 'ms').padStart(8),
@@ -1083,11 +1218,14 @@ function runRealSessions(): void {
   console.log(rrSep);
 
   // Aggregate
-  const aggRatio = totComp > 0 ? (totOrig / totComp).toFixed(2) : '-';
-  const aggSaved = totOrig > 0 ? ((1 - totComp / totOrig) * 100).toFixed(1) + '%' : '-';
+  const aggBaseR  = totBase  > 0 ? (totOrig / totBase).toFixed(2)  : '-';
+  const aggDedupR = totDedup > 0 ? (totOrig / totDedup).toFixed(2) : '-';
+  const aggFuzzyR = totFuzzy > 0 ? (totOrig / totFuzzy).toFixed(2) : '-';
   const afOk = totAFComp >= totAFOrig;
 
-  console.log(`  Aggregate: ${totMsgs.toLocaleString()} msgs  ${totOrig.toLocaleString()} → ${totComp.toLocaleString()} chars  ${aggRatio}x  ${aggSaved} saved`);
+  console.log(`  Aggregate: ${totMsgs.toLocaleString()} msgs  ${totOrig.toLocaleString()} chars`);
+  console.log(`  Ratios: base ${aggBaseR}x → dedup ${aggDedupR}x → fuzzy ${aggFuzzyR}x`);
+  console.log(`  Deduped: ${totExact} exact, ${totFuzzyCount} fuzzy  |  P/CS/S: ${totPreserved}/${totCodeSplit}/${totSummarized}`);
   console.log(`  Asst fences: ${totAFComp}/${totAFOrig} ${afOk ? '✓' : '✗ LOSS'}  Negatives: ${totNeg}${totNeg === 0 ? ' ✓' : ' ✗'}`);
 
   if (rtFails > 0) {
@@ -1095,4 +1233,4 @@ function runRealSessions(): void {
   }
 }
 
-run();
+run().catch((err) => { console.error(err); process.exit(1); });
