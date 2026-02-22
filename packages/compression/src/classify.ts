@@ -6,7 +6,7 @@ export type ClassifyResult = {
 
 // -- Head 1: Structural Pattern Detector (SPD) --
 
-const CODE_FENCE_RE   = /^```[\w]*\n[\s\S]*?\n```/m;
+const CODE_FENCE_RE   = /^[ ]{0,3}```[\w]*\n[\s\S]*?\n\s*```/m;
 const INDENT_CODE_RE  = /^( {4}|\t).+\n( {4}|\t).+/m;
 const LATEX_RE        = /\$\$[\s\S]+?\$\$|\$[^$\n]+?\$/;
 const UNICODE_MATH_RE = /[∀∃∈∉⊆⊇∪∩∧∨¬→↔∑∏∫√∞≈≠≤≥±×÷]/;
