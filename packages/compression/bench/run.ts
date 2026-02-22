@@ -1,6 +1,9 @@
 import { compress } from '../src/compress.js';
 import { uncompress } from '../src/expand.js';
 import type { CompressResult, Message } from '../src/types.js';
+import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
+import { join, basename } from 'node:path';
+import { homedir } from 'node:os';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -366,6 +369,37 @@ function agenticCodingSession(): Scenario {
     '    try {\n      (req as any).user = this.verify(header.slice(7));\n      next();\n    } catch {\n' +
     '      res.status(401).json({ error: "Invalid token" });\n    }\n  }\n}\n';
 
+  // Near-duplicate: method renamed verify → validateToken, comment added
+  const authModuleV2 =
+    'import jwt from "jsonwebtoken";\nimport { Request, Response, NextFunction } from "express";\n\n' +
+    'interface JWTPayload {\n  sub: string;\n  email: string;\n  roles: string[];\n  iat: number;\n  exp: number;\n}\n\n' +
+    'export class AuthService {\n  private readonly secret: string;\n  private readonly refreshSecret: string;\n\n' +
+    '  constructor(secret: string, refreshSecret: string) {\n    this.secret = secret;\n    this.refreshSecret = refreshSecret;\n  }\n\n' +
+    '  // Validates token and returns decoded payload\n' +
+    '  validateToken(token: string): JWTPayload {\n    return jwt.verify(token, this.secret) as JWTPayload;\n  }\n\n' +
+    '  sign(payload: Omit<JWTPayload, "iat" | "exp">): string {\n    return jwt.sign(payload, this.secret, { expiresIn: "15m" });\n  }\n\n' +
+    '  signRefresh(payload: { sub: string }): string {\n    return jwt.sign(payload, this.refreshSecret, { expiresIn: "7d" });\n  }\n\n' +
+    '  middleware(req: Request, res: Response, next: NextFunction): void {\n    const header = req.headers.authorization;\n' +
+    '    if (!header?.startsWith("Bearer ")) {\n      res.status(401).json({ error: "Missing token" });\n      return;\n    }\n' +
+    '    try {\n      (req as any).user = this.validateToken(header.slice(7));\n      next();\n    } catch {\n' +
+    '      res.status(401).json({ error: "Invalid token" });\n    }\n  }\n}\n';
+
+  // Near-duplicate V3: added revokeToken method, updated expiresIn
+  const authModuleV3 =
+    'import jwt from "jsonwebtoken";\nimport { Request, Response, NextFunction } from "express";\n\n' +
+    'interface JWTPayload {\n  sub: string;\n  email: string;\n  roles: string[];\n  iat: number;\n  exp: number;\n}\n\n' +
+    'export class AuthService {\n  private readonly secret: string;\n  private readonly refreshSecret: string;\n\n' +
+    '  constructor(secret: string, refreshSecret: string) {\n    this.secret = secret;\n    this.refreshSecret = refreshSecret;\n  }\n\n' +
+    '  // Validates token and returns decoded payload\n' +
+    '  validateToken(token: string): JWTPayload {\n    return jwt.verify(token, this.secret) as JWTPayload;\n  }\n\n' +
+    '  sign(payload: Omit<JWTPayload, "iat" | "exp">): string {\n    return jwt.sign(payload, this.secret, { expiresIn: "30m" });\n  }\n\n' +
+    '  signRefresh(payload: { sub: string }): string {\n    return jwt.sign(payload, this.refreshSecret, { expiresIn: "7d" });\n  }\n\n' +
+    '  async revokeToken(token: string): Promise<void> {\n    // Add token to blocklist\n  }\n\n' +
+    '  middleware(req: Request, res: Response, next: NextFunction): void {\n    const header = req.headers.authorization;\n' +
+    '    if (!header?.startsWith("Bearer ")) {\n      res.status(401).json({ error: "Missing token" });\n      return;\n    }\n' +
+    '    try {\n      (req as any).user = this.validateToken(header.slice(7));\n      next();\n    } catch {\n' +
+    '      res.status(401).json({ error: "Invalid token" });\n    }\n  }\n}\n';
+
   const grepResults =
     'src/auth.ts:18:  verify(token: string): JWTPayload {\n' +
     'src/auth.ts:22:    return jwt.verify(token, this.secret) as JWTPayload;\n' +
@@ -427,7 +461,7 @@ function agenticCodingSession(): Scenario {
       msg('assistant', 'Let me re-read the auth module to check the method signature.', {
         tool_calls: [{ id: 'tc3', function: { name: 'read', arguments: '{"path":"src/auth.ts"}' } }],
       }),
-      msg('tool', authModule),  // 2nd read of auth.ts — DUPLICATE
+      msg('tool', authModuleV2),  // 2nd read of auth.ts — NEAR-DUPLICATE (method renamed)
       msg('assistant', 'The signRefresh method takes { sub: string }. Adding the rotation test.', {
         tool_calls: [{ id: 'tc4', function: { name: 'edit', arguments: '{"path":"tests/auth.test.ts"}' } }],
       }),
@@ -444,7 +478,7 @@ function agenticCodingSession(): Scenario {
       msg('assistant', 'The rotation test failed — decoded payload is undefined. Let me check the verify call in the test.', {
         tool_calls: [{ id: 'tc6', function: { name: 'read', arguments: '{"path":"src/auth.ts"}' } }],
       }),
-      msg('tool', authModule),  // 3rd read of auth.ts — DUPLICATE
+      msg('tool', authModuleV3),  // 3rd read of auth.ts — NEAR-DUPLICATE (method added)
       msg('assistant', 'Found it. The test was calling verify with the refresh token but using the access secret. Fixing.', {
         tool_calls: [{ id: 'tc7', function: { name: 'edit', arguments: '{"path":"tests/auth.test.ts"}' } }],
       }),
@@ -742,8 +776,323 @@ function run(): void {
     process.exit(1);
   }
 
+  // ---------------------------------------------------------------------------
+  // Fuzzy dedup benchmark
+  // ---------------------------------------------------------------------------
+
+  console.log();
+  console.log('Fuzzy Dedup Benchmark (fuzzyDedup: true)');
+
+  const fuzzyHeader = [
+    'Scenario'.padEnd(cols.name),
+    'Msgs'.padStart(5),
+    'Exact'.padStart(6),
+    'Fuzzy'.padStart(6),
+    'Ratio'.padStart(6),
+    'R/T'.padStart(cols.rt),
+    'Time'.padStart(cols.time),
+  ].join('  ');
+  const fuzzySep = '-'.repeat(fuzzyHeader.length);
+
+  console.log(fuzzySep);
+  console.log(fuzzyHeader);
+  console.log(fuzzySep);
+
+  const fuzzyScenarios = buildScenarios();
+  let fuzzyFails = 0;
+
+  for (const scenario of fuzzyScenarios) {
+    const t0 = performance.now();
+    const cr = compress(scenario.messages, { recencyWindow: 0, fuzzyDedup: true });
+    const t1 = performance.now();
+
+    const er = uncompress(cr.messages, cr.verbatim);
+    const rt =
+      JSON.stringify(scenario.messages) === JSON.stringify(er.messages) && er.missing_ids.length === 0
+        ? 'PASS'
+        : 'FAIL';
+    if (rt === 'FAIL') fuzzyFails++;
+
+    console.log(
+      [
+        scenario.name.padEnd(cols.name),
+        String(scenario.messages.length).padStart(5),
+        String(cr.compression.messages_deduped ?? 0).padStart(6),
+        String(cr.compression.messages_fuzzy_deduped ?? 0).padStart(6),
+        cr.compression.ratio.toFixed(2).padStart(6),
+        rt.padStart(cols.rt),
+        ((t1 - t0).toFixed(2) + 'ms').padStart(cols.time),
+      ].join('  '),
+    );
+  }
+
+  console.log(fuzzySep);
+
+  if (fuzzyFails > 0) {
+    console.error(`FAIL: ${fuzzyFails} fuzzy dedup scenario(s) failed round-trip`);
+    process.exit(1);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Real Claude Code sessions (if available locally)
+  // ---------------------------------------------------------------------------
+
+  runRealSessions();
+
   console.log();
   console.log('All benchmarks passed.');
+}
+
+// ---------------------------------------------------------------------------
+// Real session support — convert Claude Code JSONL transcripts to Message[]
+// ---------------------------------------------------------------------------
+
+interface ContentBlock {
+  type: string;
+  text?: string;
+  thinking?: string;
+  name?: string;
+  input?: Record<string, unknown>;
+  id?: string;
+  tool_use_id?: string;
+  content?: string | ContentBlock[];
+}
+
+function flattenContent(content: string | ContentBlock[]): string {
+  if (typeof content === 'string') return content;
+  const parts: string[] = [];
+  for (const block of content) {
+    switch (block.type) {
+      case 'text':
+        if (block.text) parts.push(block.text);
+        break;
+      case 'thinking':
+        break; // skip chain-of-thought
+      case 'tool_use':
+        parts.push(`[tool_call: ${block.name}(${JSON.stringify(block.input ?? {}).slice(0, 200)})]`);
+        break;
+      case 'tool_result': {
+        const rc = block.content;
+        if (typeof rc === 'string') parts.push(rc);
+        else if (Array.isArray(rc)) {
+          for (const rb of rc) { if (rb.text) parts.push(rb.text); }
+        }
+        break;
+      }
+      default:
+        if (block.text) parts.push(block.text);
+    }
+  }
+  return parts.join('\n');
+}
+
+function loadClaudeSession(jsonlPath: string): Message[] {
+  const raw = readFileSync(jsonlPath, 'utf-8');
+  const lines = raw.trim().split('\n').map(line => JSON.parse(line));
+  const messages: Message[] = [];
+  let index = 0;
+
+  for (const line of lines) {
+    if (line.type !== 'user' && line.type !== 'assistant') continue;
+    if (!line.message) continue;
+    const content = flattenContent(line.message.content);
+    if (!content.trim()) continue;
+
+    let role: string;
+    if (line.type === 'user') {
+      const blocks = line.message.content;
+      role = (Array.isArray(blocks) && blocks.every((b: ContentBlock) => b.type === 'tool_result'))
+        ? 'tool' : 'user';
+    } else {
+      role = 'assistant';
+    }
+
+    const m: Message = { id: line.uuid ?? `msg-${index + 1}`, index, role, content };
+
+    if (line.type === 'assistant' && Array.isArray(line.message.content)) {
+      const toolUses = (line.message.content as ContentBlock[]).filter(
+        (b: ContentBlock) => b.type === 'tool_use',
+      );
+      if (toolUses.length > 0) {
+        m.tool_calls = toolUses.map((t: ContentBlock) => ({
+          id: t.id,
+          type: 'function',
+          function: { name: t.name, arguments: JSON.stringify(t.input ?? {}) },
+        }));
+      }
+    }
+
+    messages.push(m);
+    index++;
+  }
+  return messages;
+}
+
+function discoverClaudeSessions(limit: number): { path: string; label: string; size: number }[] {
+  const claudeDir = join(homedir(), '.claude', 'projects');
+  if (!existsSync(claudeDir)) return [];
+
+  const results: { path: string; label: string; size: number }[] = [];
+
+  for (const dir of readdirSync(claudeDir)) {
+    const dirPath = join(claudeDir, dir);
+    try {
+      if (!statSync(dirPath).isDirectory()) continue;
+    } catch { continue; }
+
+    for (const file of readdirSync(dirPath)) {
+      if (!file.endsWith('.jsonl')) continue;
+      const filePath = join(dirPath, file);
+      const size = statSync(filePath).size;
+      // Convert dir name back to readable project path
+      const project = dir.replace(/-/g, '/').slice(1).split('/').slice(-2).join('/');
+      results.push({ path: filePath, label: project, size });
+    }
+  }
+
+  return results.sort((a, b) => b.size - a.size).slice(0, limit);
+}
+
+interface RealResult {
+  label: string;
+  msgCount: number;
+  roles: string;
+  originalChars: number;
+  compressedChars: number;
+  ratio: string;
+  saved: string;
+  preserved: number;
+  codeSplit: number;
+  summarized: number;
+  asstFences: string;
+  negatives: number;
+  roundTrip: 'PASS' | 'FAIL';
+  timeMs: string;
+}
+
+function runRealSessions(): void {
+  const sessions = discoverClaudeSessions(10);
+  if (sessions.length === 0) {
+    console.log();
+    console.log('Real Session Benchmark — skipped (no Claude Code sessions found in ~/.claude/projects/)');
+    return;
+  }
+
+  console.log();
+  console.log(`Real Session Benchmark (${sessions.length} sessions from ~/.claude/projects/)`);
+
+  const fenceRe = /```[\s\S]*?```/g;
+
+  const rrHeader = [
+    'Session'.padEnd(24),
+    'Msgs'.padStart(6),
+    'Orig'.padStart(10),
+    'Comp'.padStart(10),
+    'Ratio'.padStart(6),
+    'Saved'.padStart(6),
+    'P/CS/S'.padStart(12),
+    'Fences'.padStart(8),
+    'Neg'.padStart(4),
+    'R/T'.padStart(5),
+    'Time'.padStart(8),
+  ].join('  ');
+  const rrSep = '-'.repeat(rrHeader.length);
+
+  console.log(rrSep);
+  console.log(rrHeader);
+  console.log(rrSep);
+
+  let totOrig = 0, totComp = 0, totMsgs = 0;
+  let totAFOrig = 0, totAFComp = 0, totNeg = 0;
+  let rtFails = 0;
+
+  for (const session of sessions) {
+    try {
+      const messages = loadClaudeSession(session.path);
+      const t0 = performance.now();
+      const cr = compress(messages, { recencyWindow: 4 });
+      const t1 = performance.now();
+
+      // Round-trip
+      const er = uncompress(cr.messages, cr.verbatim);
+      const rtOk = JSON.stringify(messages) === JSON.stringify(er.messages) && er.missing_ids.length === 0;
+      if (!rtOk) rtFails++;
+
+      const origC = chars(messages);
+      const compC = chars(cr.messages);
+      totOrig += origC;
+      totComp += compC;
+      totMsgs += messages.length;
+
+      // Classify compressed messages
+      let preserved = 0, codeSplit = 0, summarized = 0;
+      for (const m of cr.messages) {
+        if (!m.metadata?._uc_original) preserved++;
+        else if ((m.content ?? '').includes('```')) codeSplit++;
+        else summarized++;
+      }
+
+      // Assistant fence integrity
+      const afOrig = messages.filter(m => m.role === 'assistant')
+        .reduce((s, m) => s + ((m.content ?? '').match(fenceRe) ?? []).length, 0);
+      const afComp = cr.messages.filter(m => m.role === 'assistant')
+        .reduce((s, m) => s + ((m.content ?? '').match(fenceRe) ?? []).length, 0);
+      totAFOrig += afOrig;
+      totAFComp += afComp;
+
+      // Negative savings (merged-message-aware)
+      let negatives = 0;
+      for (const m of cr.messages) {
+        const meta = m.metadata?._uc_original as { ids?: string[] } | undefined;
+        if (!meta) continue;
+        const ids = meta.ids ?? [m.id];
+        const combinedLen = ids.reduce((sum, id) => {
+          const orig = messages.find(o => o.id === id);
+          return sum + (orig?.content?.length ?? 0);
+        }, 0);
+        if ((m.content ?? '').length > combinedLen) negatives++;
+      }
+      totNeg += negatives;
+
+      // Role counts
+      const roleCounts: Record<string, number> = {};
+      for (const m of messages) roleCounts[m.role ?? '?'] = (roleCounts[m.role ?? '?'] ?? 0) + 1;
+      const roleStr = Object.entries(roleCounts).map(([r, n]) => `${r[0]}${n}`).join(' ');
+
+      const savedPct = origC > 0 ? ((1 - compC / origC) * 100).toFixed(1) + '%' : '0%';
+      const fenceStr = afOrig > 0 ? `${afComp}/${afOrig}` : '-';
+
+      console.log([
+        session.label.slice(0, 24).padEnd(24),
+        String(messages.length).padStart(6),
+        origC.toLocaleString().padStart(10),
+        compC.toLocaleString().padStart(10),
+        (origC / compC).toFixed(2).padStart(6),
+        savedPct.padStart(6),
+        `${preserved}/${codeSplit}/${summarized}`.padStart(12),
+        fenceStr.padStart(8),
+        String(negatives).padStart(4),
+        (rtOk ? 'PASS' : 'FAIL').padStart(5),
+        ((t1 - t0).toFixed(0) + 'ms').padStart(8),
+      ].join('  '));
+    } catch (err) {
+      console.log(`  ${session.label.padEnd(24)}  ERROR: ${(err as Error).message.slice(0, 60)}`);
+    }
+  }
+
+  console.log(rrSep);
+
+  // Aggregate
+  const aggRatio = totComp > 0 ? (totOrig / totComp).toFixed(2) : '-';
+  const aggSaved = totOrig > 0 ? ((1 - totComp / totOrig) * 100).toFixed(1) + '%' : '-';
+  const afOk = totAFComp >= totAFOrig;
+
+  console.log(`  Aggregate: ${totMsgs.toLocaleString()} msgs  ${totOrig.toLocaleString()} → ${totComp.toLocaleString()} chars  ${aggRatio}x  ${aggSaved} saved`);
+  console.log(`  Asst fences: ${totAFComp}/${totAFOrig} ${afOk ? '✓' : '✗ LOSS'}  Negatives: ${totNeg}${totNeg === 0 ? ' ✓' : ' ✗'}`);
+
+  if (rtFails > 0) {
+    console.log(`  WARNING: ${rtFails} session(s) failed round-trip verification`);
+  }
 }
 
 run();

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { compress } from '../src/compress.js';
 import { uncompress } from '../src/expand.js';
-import { analyzeDuplicates } from '../src/dedup.js';
+import { analyzeDuplicates, analyzeFuzzyDuplicates } from '../src/dedup.js';
 import type { Message } from '../src/types.js';
 
 function msg(overrides: Partial<Message> & { id: string; index: number }): Message {
@@ -396,5 +396,276 @@ describe('compress with dedup', () => {
     expect(result.messages[0].content).toBe(LONG_CONTENT);
     expect(result.messages[1].content).toBe(LONG_CONTENT);
     expect(result.compression.messages_deduped).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fuzzy dedup tests
+// ---------------------------------------------------------------------------
+
+// Multi-line content for fuzzy dedup (needs lines for fingerprint bucketing + Jaccard)
+const MULTILINE_FILE = [
+  'import jwt from "jsonwebtoken";',
+  'import { Request, Response } from "express";',
+  '',
+  'interface JWTPayload {',
+  '  sub: string;',
+  '  email: string;',
+  '  roles: string[];',
+  '  iat: number;',
+  '  exp: number;',
+  '}',
+  '',
+  'export class AuthService {',
+  '  private readonly secret: string;',
+  '',
+  '  constructor(secret: string) {',
+  '    this.secret = secret;',
+  '  }',
+  '',
+  '  verify(token: string): JWTPayload {',
+  '    return jwt.verify(token, this.secret) as JWTPayload;',
+  '  }',
+  '',
+  '  sign(payload: Omit<JWTPayload, "iat" | "exp">): string {',
+  '    return jwt.sign(payload, this.secret, { expiresIn: "15m" });',
+  '  }',
+  '}',
+].join('\n');
+
+// ~90% similar: 2 lines changed (method renamed, comment added)
+const MULTILINE_FILE_V2 = [
+  'import jwt from "jsonwebtoken";',
+  'import { Request, Response } from "express";',
+  '',
+  'interface JWTPayload {',
+  '  sub: string;',
+  '  email: string;',
+  '  roles: string[];',
+  '  iat: number;',
+  '  exp: number;',
+  '}',
+  '',
+  'export class AuthService {',
+  '  private readonly secret: string;',
+  '',
+  '  constructor(secret: string) {',
+  '    this.secret = secret;',
+  '  }',
+  '',
+  '  // Validates a JWT token and returns the decoded payload',
+  '  validateToken(token: string): JWTPayload {',
+  '    return jwt.verify(token, this.secret) as JWTPayload;',
+  '  }',
+  '',
+  '  sign(payload: Omit<JWTPayload, "iat" | "exp">): string {',
+  '    return jwt.sign(payload, this.secret, { expiresIn: "15m" });',
+  '  }',
+  '}',
+].join('\n');
+
+// ~55% Jaccard with MULTILINE_FILE: shares first 4 lines for bucketing
+// but has significant body changes (6-7 lines changed out of ~21)
+const MULTILINE_FILE_MODERATE = [
+  'import jwt from "jsonwebtoken";',
+  'import { Request, Response } from "express";',
+  '',
+  'interface JWTPayload {',
+  '  sub: string;',
+  '  email: string;',
+  '  roles: string[];',
+  '  iat: number;',
+  '  exp: number;',
+  '}',
+  '',
+  'export class AuthService {',
+  '  private readonly secret: string;',
+  '  private readonly tokenStore: Map<string, boolean>;',
+  '',
+  '  constructor(secret: string, tokenStore: Map<string, boolean>) {',
+  '    this.secret = secret;',
+  '    this.tokenStore = tokenStore;',
+  '  }',
+  '',
+  '  validateAndDecode(token: string): JWTPayload {',
+  '    if (this.tokenStore.has(token)) throw new Error("Token revoked");',
+  '    return jwt.verify(token, this.secret) as JWTPayload;',
+  '  }',
+  '',
+  '  issueToken(payload: Omit<JWTPayload, "iat" | "exp">): string {',
+  '    return jwt.sign(payload, this.secret, { expiresIn: "30m" });',
+  '  }',
+  '}',
+].join('\n');
+
+// Truly different file — shares fewer than 3 of first 5 lines, won't be bucketed together
+const MULTILINE_FILE_DIFFERENT = [
+  'import crypto from "node:crypto";',
+  'import { EventEmitter } from "node:events";',
+  '',
+  'interface SessionData {',
+  '  userId: string;',
+  '  permissions: string[];',
+  '  createdAt: number;',
+  '  expiresAt: number;',
+  '}',
+  '',
+  'export class SessionManager {',
+  '  private readonly store: Map<string, SessionData>;',
+  '',
+  '  constructor() {',
+  '    this.store = new Map();',
+  '  }',
+  '',
+  '  createSession(userId: string, permissions: string[]): string {',
+  '    const id = crypto.randomUUID();',
+  '    this.store.set(id, { userId, permissions, createdAt: Date.now(), expiresAt: Date.now() + 3600000 });',
+  '    return id;',
+  '  }',
+  '',
+  '  getSession(id: string): SessionData | undefined {',
+  '    return this.store.get(id);',
+  '  }',
+  '}',
+].join('\n');
+
+describe('analyzeFuzzyDuplicates', () => {
+  it('near-duplicate detected (90% overlap)', () => {
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, content: MULTILINE_FILE }),
+      msg({ id: '2', index: 1, content: 'something else entirely that is different from the file content.' }),
+      msg({ id: '3', index: 2, content: MULTILINE_FILE_V2 }),
+    ];
+    const result = analyzeFuzzyDuplicates(messages, messages.length, new Set(['system']), new Map(), 0.85);
+    expect(result.size).toBe(1);
+    expect(result.has(0)).toBe(true);
+    expect(result.get(0)!.duplicateOfIndex).toBe(2);
+    expect(result.get(0)!.similarity).toBeGreaterThanOrEqual(0.85);
+    expect(result.get(0)!.similarity).toBeLessThan(1);
+  });
+
+  it('below threshold not deduped (70% overlap)', () => {
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, content: MULTILINE_FILE }),
+      msg({ id: '2', index: 1, content: MULTILINE_FILE_DIFFERENT }),
+    ];
+    const result = analyzeFuzzyDuplicates(messages, messages.length, new Set(['system']), new Map(), 0.85);
+    expect(result.size).toBe(0);
+  });
+
+  it('exact match still uses exact dedup (skipped by fuzzy)', () => {
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, content: MULTILINE_FILE }),
+      msg({ id: '2', index: 1, content: MULTILINE_FILE }),
+    ];
+    // Simulate that index 0 is already in exactAnnotations
+    const exactAnnotations = new Map<number, { duplicateOfIndex: number; contentLength: number }>();
+    exactAnnotations.set(0, { duplicateOfIndex: 1, contentLength: MULTILINE_FILE.length });
+    const result = analyzeFuzzyDuplicates(messages, messages.length, new Set(['system']), exactAnnotations, 0.85);
+    // Index 0 is already exact-deduped, index 1 is the only remaining eligible → no pair
+    expect(result.size).toBe(0);
+  });
+
+  it('short messages skipped (<200 chars)', () => {
+    const shortA = 'line one\nline two\nline three\nline four\nline five\nline six';
+    const shortB = 'line one\nline two\nline three\nline four\nline five\nline seven';
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, content: shortA }),
+      msg({ id: '2', index: 1, content: shortB }),
+    ];
+    const result = analyzeFuzzyDuplicates(messages, messages.length, new Set(['system']), new Map(), 0.85);
+    expect(result.size).toBe(0);
+  });
+
+  it('custom threshold catches looser matches', () => {
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, content: MULTILINE_FILE }),
+      msg({ id: '2', index: 1, content: MULTILINE_FILE_MODERATE }),
+    ];
+    // Default 0.85 won't match these (~50% similar), but 0.4 will
+    const noMatch = analyzeFuzzyDuplicates(messages, messages.length, new Set(['system']), new Map(), 0.85);
+    expect(noMatch.size).toBe(0);
+    const match = analyzeFuzzyDuplicates(messages, messages.length, new Set(['system']), new Map(), 0.4);
+    expect(match.size).toBe(1);
+  });
+});
+
+describe('compress with fuzzy dedup', () => {
+  it('near-duplicate → earlier replaced with [uc:near-dup ...]', () => {
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, content: MULTILINE_FILE }),
+      msg({ id: '2', index: 1, content: 'something different in between that has enough length to avoid the short message threshold check.  Extra padding here.' }),
+      msg({ id: '3', index: 2, content: MULTILINE_FILE_V2 }),
+    ];
+    const result = compress(messages, { recencyWindow: 0, fuzzyDedup: true });
+    expect(result.messages[0].content).toMatch(/^\[uc:near-dup/);
+    expect(result.messages[0].content).toContain('% match');
+    expect(result.compression.messages_fuzzy_deduped).toBe(1);
+    // Exact dedup count should be 0 (these aren't identical)
+    expect(result.compression.messages_deduped).toBeUndefined();
+  });
+
+  it('fuzzy dedup off by default', () => {
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, content: MULTILINE_FILE }),
+      msg({ id: '2', index: 1, content: 'filler message with enough length to pass the threshold check that is required for dedup eligibility in the system. Extra padding here.' }),
+      msg({ id: '3', index: 2, content: MULTILINE_FILE_V2 }),
+    ];
+    const result = compress(messages, { recencyWindow: 0 });
+    // Without fuzzyDedup: true, near-duplicates should NOT be caught
+    expect(result.messages[0].content).not.toMatch(/^\[uc:near-dup/);
+    expect(result.compression.messages_fuzzy_deduped).toBeUndefined();
+  });
+
+  it('exact match still uses [uc:dup], not [uc:near-dup]', () => {
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, content: MULTILINE_FILE }),
+      msg({ id: '2', index: 1, content: MULTILINE_FILE }),
+    ];
+    const result = compress(messages, { recencyWindow: 0, fuzzyDedup: true });
+    expect(result.messages[0].content).toMatch(/^\[uc:dup/);
+    expect(result.messages[0].content).not.toMatch(/^\[uc:near-dup/);
+    expect(result.compression.messages_deduped).toBe(1);
+  });
+
+  it('custom fuzzyThreshold catches looser matches', () => {
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, content: MULTILINE_FILE }),
+      msg({ id: '2', index: 1, content: MULTILINE_FILE_MODERATE }),
+    ];
+    // Default 0.85 won't catch these, but 0.4 will
+    const noMatch = compress(messages, { recencyWindow: 0, fuzzyDedup: true });
+    expect(noMatch.messages[0].content).not.toMatch(/^\[uc:near-dup/);
+    const match = compress(messages, { recencyWindow: 0, fuzzyDedup: true, fuzzyThreshold: 0.4 });
+    expect(match.messages[0].content).toMatch(/^\[uc:near-dup/);
+    expect(match.compression.messages_fuzzy_deduped).toBe(1);
+  });
+
+  it('recency window respected — near-dup in window kept, earlier replaced', () => {
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, content: MULTILINE_FILE }),
+      msg({ id: '2', index: 1, content: 'filler message that passes the threshold.' }),
+      msg({ id: '3', index: 2, content: MULTILINE_FILE_V2 }),
+    ];
+    // recencyWindow: 1 → only last message preserved by recency
+    const result = compress(messages, { recencyWindow: 1, fuzzyDedup: true });
+    // Earlier occurrence should be fuzzy-deduped
+    expect(result.messages[0].content).toMatch(/^\[uc:near-dup/);
+    // Last message (in recency window) preserved
+    expect(result.messages[2].content).toBe(MULTILINE_FILE_V2);
+  });
+
+  it('round-trip: compress(fuzzyDedup) → uncompress → original content restored', () => {
+    const messages: Message[] = [
+      msg({ id: 'sys', index: 0, role: 'system', content: 'System prompt.' }),
+      msg({ id: 'u1', index: 1, content: MULTILINE_FILE }),
+      msg({ id: 'a1', index: 2, role: 'assistant', content: 'Short reply.' }),
+      msg({ id: 'u2', index: 3, content: MULTILINE_FILE_V2 }),
+    ];
+    const compressed = compress(messages, { recencyWindow: 0, fuzzyDedup: true });
+    expect(compressed.compression.messages_fuzzy_deduped).toBeGreaterThanOrEqual(1);
+    const expanded = uncompress(compressed.messages, compressed.verbatim);
+    expect(expanded.messages).toEqual(messages);
+    expect(expanded.missing_ids).toEqual([]);
   });
 });

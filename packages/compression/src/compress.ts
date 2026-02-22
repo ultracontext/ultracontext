@@ -1,5 +1,5 @@
 import { classifyMessage } from './classify.js';
-import { analyzeDuplicates, type DedupAnnotation } from './dedup.js';
+import { analyzeDuplicates, analyzeFuzzyDuplicates, type DedupAnnotation } from './dedup.js';
 import type { CompressOptions, CompressResult, Message, Summarizer } from './types.js';
 
 /**
@@ -458,6 +458,7 @@ function computeStats(
   messagesPreserved: number,
   sourceVersion: number,
   messagesDeduped?: number,
+  messagesFuzzyDeduped?: number,
 ): CompressResult['compression'] {
   const originalTotalChars = originalMessages.reduce((sum, m) => sum + contentLength(m), 0);
   const compressedTotalChars = resultMessages.reduce((sum, m) => sum + contentLength(m), 0);
@@ -475,6 +476,7 @@ function computeStats(
     messages_compressed: messagesCompressed,
     messages_preserved: messagesPreserved,
     ...(messagesDeduped && messagesDeduped > 0 ? { messages_deduped: messagesDeduped } : {}),
+    ...(messagesFuzzyDeduped && messagesFuzzyDeduped > 0 ? { messages_fuzzy_deduped: messagesFuzzyDeduped } : {}),
   };
 }
 
@@ -505,9 +507,24 @@ function compressSync(
   const preserveRoles = new Set(options.preserve ?? ['system']);
   const recencyWindow = options.recencyWindow ?? 4;
   const recencyStart = Math.max(0, messages.length - (recencyWindow > 0 ? recencyWindow : 0));
-  const dedupAnnotations = (options.dedup ?? true)
+  let dedupAnnotations = (options.dedup ?? true)
     ? analyzeDuplicates(messages, recencyStart, preserveRoles)
     : undefined;
+
+  if (options.fuzzyDedup) {
+    const fuzzyAnnotations = analyzeFuzzyDuplicates(
+      messages, recencyStart, preserveRoles,
+      dedupAnnotations ?? new Map(),
+      options.fuzzyThreshold ?? 0.85,
+    );
+    if (fuzzyAnnotations.size > 0) {
+      if (!dedupAnnotations) dedupAnnotations = new Map();
+      for (const [idx, ann] of fuzzyAnnotations) {
+        dedupAnnotations.set(idx, ann);
+      }
+    }
+  }
+
   const classified = classifyAll(messages, preserveRoles, recencyWindow, dedupAnnotations);
 
   const result: Message[] = [];
@@ -515,6 +532,7 @@ function compressSync(
   let messagesCompressed = 0;
   let messagesPreserved = 0;
   let messagesDeduped = 0;
+  let messagesFuzzyDeduped = 0;
   let i = 0;
 
   while (i < classified.length) {
@@ -527,13 +545,19 @@ function compressSync(
       continue;
     }
 
-    // Dedup: replace earlier duplicate with compact reference
+    // Dedup: replace earlier duplicate/near-duplicate with compact reference
     if (classified[i].dedup) {
       const annotation = classified[i].dedup!;
-      const replacement = `[uc:dup — ${annotation.contentLength} chars, see later message]`;
-      result.push(buildCompressedMessage(msg, [msg.id], replacement, sourceVersion, verbatim, [msg]));
+      const tag = annotation.similarity != null
+        ? `[uc:near-dup — ${annotation.contentLength} chars, ~${Math.round(annotation.similarity * 100)}% match, see later message]`
+        : `[uc:dup — ${annotation.contentLength} chars, see later message]`;
+      result.push(buildCompressedMessage(msg, [msg.id], tag, sourceVersion, verbatim, [msg]));
       messagesCompressed++;
-      messagesDeduped++;
+      if (annotation.similarity != null) {
+        messagesFuzzyDeduped++;
+      } else {
+        messagesDeduped++;
+      }
       i++;
       continue;
     }
@@ -610,7 +634,7 @@ function compressSync(
 
   return {
     messages: result,
-    compression: computeStats(messages, result, messagesCompressed, messagesPreserved, sourceVersion, messagesDeduped),
+    compression: computeStats(messages, result, messagesCompressed, messagesPreserved, sourceVersion, messagesDeduped, messagesFuzzyDeduped),
     verbatim,
   };
 }
@@ -653,9 +677,24 @@ async function compressAsync(
   const preserveRoles = new Set(options.preserve ?? ['system']);
   const recencyWindow = options.recencyWindow ?? 4;
   const recencyStart = Math.max(0, messages.length - (recencyWindow > 0 ? recencyWindow : 0));
-  const dedupAnnotations = (options.dedup ?? true)
+  let dedupAnnotations = (options.dedup ?? true)
     ? analyzeDuplicates(messages, recencyStart, preserveRoles)
     : undefined;
+
+  if (options.fuzzyDedup) {
+    const fuzzyAnnotations = analyzeFuzzyDuplicates(
+      messages, recencyStart, preserveRoles,
+      dedupAnnotations ?? new Map(),
+      options.fuzzyThreshold ?? 0.85,
+    );
+    if (fuzzyAnnotations.size > 0) {
+      if (!dedupAnnotations) dedupAnnotations = new Map();
+      for (const [idx, ann] of fuzzyAnnotations) {
+        dedupAnnotations.set(idx, ann);
+      }
+    }
+  }
+
   const classified = classifyAll(messages, preserveRoles, recencyWindow, dedupAnnotations);
 
   const result: Message[] = [];
@@ -663,6 +702,7 @@ async function compressAsync(
   let messagesCompressed = 0;
   let messagesPreserved = 0;
   let messagesDeduped = 0;
+  let messagesFuzzyDeduped = 0;
   let i = 0;
 
   while (i < classified.length) {
@@ -675,13 +715,19 @@ async function compressAsync(
       continue;
     }
 
-    // Dedup: replace earlier duplicate with compact reference
+    // Dedup: replace earlier duplicate/near-duplicate with compact reference
     if (classified[i].dedup) {
       const annotation = classified[i].dedup!;
-      const replacement = `[uc:dup — ${annotation.contentLength} chars, see later message]`;
-      result.push(buildCompressedMessage(msg, [msg.id], replacement, sourceVersion, verbatim, [msg]));
+      const tag = annotation.similarity != null
+        ? `[uc:near-dup — ${annotation.contentLength} chars, ~${Math.round(annotation.similarity * 100)}% match, see later message]`
+        : `[uc:dup — ${annotation.contentLength} chars, see later message]`;
+      result.push(buildCompressedMessage(msg, [msg.id], tag, sourceVersion, verbatim, [msg]));
       messagesCompressed++;
-      messagesDeduped++;
+      if (annotation.similarity != null) {
+        messagesFuzzyDeduped++;
+      } else {
+        messagesDeduped++;
+      }
       i++;
       continue;
     }
@@ -758,7 +804,7 @@ async function compressAsync(
 
   return {
     messages: result,
-    compression: computeStats(messages, result, messagesCompressed, messagesPreserved, sourceVersion, messagesDeduped),
+    compression: computeStats(messages, result, messagesCompressed, messagesPreserved, sourceVersion, messagesDeduped, messagesFuzzyDeduped),
     verbatim,
   };
 }

@@ -24,6 +24,10 @@ export type CompressOptions = {
   minRecencyWindow?: number;
   /** Replace earlier duplicate messages with a compact reference. Default: true. */
   dedup?: boolean;
+  /** Detect near-duplicate messages using line-level similarity. Default: false. */
+  fuzzyDedup?: boolean;
+  /** Similarity threshold for fuzzy dedup (0-1). Default: 0.85. */
+  fuzzyThreshold?: number;
 };
 
 export type VerbatimMap = Record<string, Message>;
@@ -52,6 +56,7 @@ export type CompressResult = {
     messages_compressed: number;
     messages_preserved: number;
     messages_deduped?: number;
+    messages_fuzzy_deduped?: number;
   };
   /**
    * Original verbatim messages keyed by ID — every compressed message's
