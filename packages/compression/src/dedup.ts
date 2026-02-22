@@ -89,9 +89,11 @@ export function analyzeDuplicates(
  * Scan messages for near-duplicate content using line-level Jaccard similarity.
  * Returns a map of message indices to their fuzzy-dedup annotations.
  *
- * Uses two pre-filters to avoid O(n^2) full comparison:
+ * Complexity: O(n^2) in the worst case (all messages land in one fingerprint
+ * bucket), but effectively O(n * k) in practice due to two pre-filters:
  * 1. Length-ratio filter: skip pairs where min/max length ratio < 0.7
  * 2. Line-fingerprint bucketing: group by first 5 non-empty normalized lines
+ *    (requires >= 3 shared lines to be in the same bucket)
  */
 export function analyzeFuzzyDuplicates(
   messages: Message[],

@@ -123,7 +123,7 @@ When a `summarizer` is provided, each message goes through a three-level fallbac
 
 #### Token budget
 
-Use `tokenBudget` to automatically find the least compression needed to fit a token limit. The engine binary-searches `recencyWindow` internally.
+Use `tokenBudget` to automatically find the least compression needed to fit a token limit. The engine binary-searches `recencyWindow` internally. Token counts are estimated at ~3.5 characters per token — a reasonable average across models, but not exact. For precise budgeting, use `tokenBudget` as an approximate guide and verify with your model's tokenizer.
 
 ```ts
 const result = compress(messages, {

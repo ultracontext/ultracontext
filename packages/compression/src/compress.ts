@@ -94,13 +94,14 @@ function summarize(text: string, maxBudget?: number): string {
     globalIdx += sentences.length;
   }
 
+  const budget = maxBudget ?? 400;
+
   if (allSentences.length === 0) {
     return text.slice(0, budget).trim();
   }
 
   // Greedy budget packing: primary sentences first, then fill with others
   // Skip filler (negative score) and deduplicate by text
-  const budget = maxBudget ?? 400;
   const selected: Scored[] = [];
   const seenText = new Set<string>();
   let usedChars = 0;
@@ -941,6 +942,19 @@ export function compress(
   messages: Message[],
   options: CompressOptions = {},
 ): CompressResult | Promise<CompressResult> {
+  if (!Array.isArray(messages)) {
+    throw new TypeError('compress(): messages must be an array');
+  }
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    if (m == null || typeof m !== 'object') {
+      throw new TypeError(`compress(): messages[${i}] must be an object`);
+    }
+    if (m.id == null) {
+      throw new TypeError(`compress(): messages[${i}] is missing required field "id"`);
+    }
+  }
+
   const hasSummarizer = !!options.summarizer;
   const hasBudget = options.tokenBudget != null;
 

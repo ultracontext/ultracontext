@@ -1690,4 +1690,43 @@ describe('structured tool output summarization', () => {
     // Structured output should bypass the LLM summarizer
     expect(calls.length).toBe(0);
   });
+
+  describe('input validation', () => {
+    it('throws on non-array messages', () => {
+      expect(() => compress(null as any)).toThrow('messages must be an array');
+      expect(() => compress('hello' as any)).toThrow('messages must be an array');
+      expect(() => compress(42 as any)).toThrow('messages must be an array');
+    });
+
+    it('throws on null/non-object message entries', () => {
+      expect(() => compress([null as any])).toThrow('messages[0] must be an object');
+      expect(() => compress([42 as any])).toThrow('messages[0] must be an object');
+    });
+
+    it('throws on message missing id', () => {
+      expect(() => compress([{ role: 'user', content: 'hi' } as any])).toThrow('missing required field "id"');
+    });
+
+    it('accepts valid empty array', () => {
+      const result = compress([]);
+      expect(result.messages).toEqual([]);
+      expect(result.compression.ratio).toBe(1);
+    });
+  });
+
+  describe('summarizer edge cases', () => {
+    it('handles text with no extractable sentences', () => {
+      // Text that has no sentence-ending punctuation — triggers the
+      // early-return path in summarize() that previously had a TDZ bug.
+      const weirdText = Array.from({ length: 20 }, (_, i) => `item_${i}`).join('\n');
+      const messages: Message[] = [
+        msg({ id: '1', index: 0, role: 'assistant', content: weirdText }),
+      ];
+      const result = compress(messages, { recencyWindow: 0 });
+      expect(result.messages.length).toBe(1);
+      // Should not throw, and round-trip should work
+      const rt = uncompress(result.messages, result.verbatim);
+      expect(rt.messages).toEqual(messages);
+    });
+  });
 });
