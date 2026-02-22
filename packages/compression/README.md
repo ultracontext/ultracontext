@@ -34,6 +34,7 @@ Context is the RAM of LLMs. As it grows, model attention spreads thin (**context
 
 - **Lossless round-trip** — `compress` then `uncompress` restores byte-identical originals
 - **Code-aware** — Fences, SQL, JSON, API keys, URLs, and file paths stay verbatim
+- **Deduplication** — Exact and fuzzy duplicate detection eliminates repeated content
 - **LLM-powered** — Plug in any summarizer (Claude, GPT, Ollama, etc.) for higher-quality summaries
 - **Budget-driven** — `tokenBudget` option automatically finds the right compression level
 - **Zero dependencies** — Pure TypeScript, no crypto, no network calls
@@ -90,12 +91,14 @@ const result = await compress(messages, {
   },
 });
 
-result.messages;                        // compressed message array
-result.verbatim;                        // original messages keyed by ID
-result.compression.ratio;               // char compression ratio (>1 = savings)
-result.compression.token_ratio;         // token compression ratio (>1 = savings)
-result.compression.messages_compressed; // how many were compressed
-result.compression.messages_preserved;  // how many were kept as-is
+result.messages;                              // compressed message array
+result.verbatim;                              // original messages keyed by ID
+result.compression.ratio;                     // char compression ratio (>1 = savings)
+result.compression.token_ratio;               // token compression ratio (>1 = savings)
+result.compression.messages_compressed;       // how many were compressed
+result.compression.messages_preserved;        // how many were kept as-is
+result.compression.messages_deduped;          // exact duplicates replaced (when dedup: true)
+result.compression.messages_fuzzy_deduped;    // near-duplicates replaced (when fuzzyDedup: true)
 ```
 
 | Option | Type | Default | Description |
@@ -106,6 +109,9 @@ result.compression.messages_preserved;  // how many were kept as-is
 | `summarizer` | `Summarizer` | — | LLM-powered summarizer. When provided, `compress()` returns a `Promise` |
 | `tokenBudget` | `number` | — | Target token count. When set, binary-searches `recencyWindow` to fit |
 | `minRecencyWindow` | `number` | `0` | Floor for `recencyWindow` when using `tokenBudget` |
+| `dedup` | `boolean` | `true` | Replace earlier exact-duplicate messages with a compact reference |
+| `fuzzyDedup` | `boolean` | `false` | Detect near-duplicate messages using line-level similarity |
+| `fuzzyThreshold` | `number` | `0.85` | Similarity threshold for fuzzy dedup (0–1) |
 
 #### Summarizer fallback
 
@@ -219,6 +225,56 @@ const result = await compress(messages, { summarizer });
 | `preserveTerms` | `string[]` | — | Domain-specific terms appended to the built-in preserve list |
 
 Note: `mode` is not accepted — the escalating summarizer manages both modes internally.
+
+<br />
+
+## Deduplication
+
+Long-running conversations — especially agentic coding sessions — often contain repeated content: the same file read multiple times, identical grep results, duplicate test output. Dedup detects these repetitions and replaces earlier occurrences with a compact reference, keeping only the latest copy.
+
+### Exact dedup (on by default)
+
+```ts
+const result = compress(messages, { dedup: true }); // default
+```
+
+Messages with identical content are detected via hash grouping. Earlier occurrences are replaced with:
+
+```
+[uc:dup — 1842 chars, see later message]
+```
+
+Originals are stored in the verbatim map — `uncompress()` restores them.
+
+### Fuzzy dedup (opt-in)
+
+```ts
+const result = compress(messages, { fuzzyDedup: true });
+```
+
+Detects near-duplicates using line-level Jaccard similarity. Useful when the same file is read across edit cycles — the content evolves slightly but remains largely the same.
+
+```
+[uc:near-dup — 1842 chars, ~92% match, see later message]
+```
+
+The algorithm:
+1. **Fingerprint bucketing** — groups candidates by their first 5 non-empty normalized lines (requires 3+ shared)
+2. **Length-ratio pre-filter** — skips pairs where `min/max < 0.7`
+3. **Line-level Jaccard** — `|A ∩ B| / |A ∪ B|` using multiset frequency maps of normalized lines
+4. **Union-find grouping** — transitively connected duplicates share a single canonical copy
+
+Tune the threshold to control sensitivity:
+
+```ts
+// Strict (default) — only very similar content
+compress(messages, { fuzzyDedup: true, fuzzyThreshold: 0.85 });
+
+// Relaxed — catch more variants
+compress(messages, { fuzzyDedup: true, fuzzyThreshold: 0.6 });
+```
+
+Both exact and fuzzy dedup are fully lossless — originals are always in the verbatim map.
 
 <br />
 
@@ -365,6 +421,7 @@ The classifier automatically preserves content that should never be summarized:
 | Short messages | `< 120 chars` | Yes |
 | Tool calls | Messages with `tool_calls` array | Yes |
 | System messages | `role: 'system'` (default) | Yes |
+| Duplicates | Repeated content (exact or fuzzy) | **Replaced with reference** |
 | Long prose | General discussion, explanations | **Compressed** |
 
 Code-mixed messages get split: prose is summarized, code fences stay verbatim.
@@ -416,9 +473,34 @@ npm test
 # type check
 npx tsc --noEmit
 
-# benchmark
+# benchmark (deterministic — no API keys needed)
 npm run bench
 ```
+
+### LLM benchmark
+
+The benchmark runner includes an opt-in LLM section that compares deterministic compression against real LLM-powered summarization. Set one or more environment variables to enable it:
+
+| Variable | Provider | Default model |
+|---|---|---|
+| `OPENAI_API_KEY` | OpenAI | `gpt-4.1-mini` (override: `OPENAI_MODEL`) |
+| `ANTHROPIC_API_KEY` | Anthropic | `claude-haiku-4-5-20251001` (override: `ANTHROPIC_MODEL`) |
+| `OLLAMA_MODEL` | Ollama | `llama3.2` (host override: `OLLAMA_HOST`) |
+
+```bash
+# Run with OpenAI
+OPENAI_API_KEY=sk-... npm run bench
+
+# Run with Ollama (local)
+OLLAMA_MODEL=llama3.2 npm run bench
+
+# Run with multiple providers
+OPENAI_API_KEY=sk-... ANTHROPIC_API_KEY=sk-ant-... npm run bench
+```
+
+Each scenario runs three methods side-by-side: `deterministic`, `llm-basic` (`createSummarizer`), and `llm-escalate` (`createEscalatingSummarizer`). All methods verify round-trip integrity.
+
+The LLM providers require their respective SDKs to be installed (`openai`, `@anthropic-ai/sdk`). Missing SDKs are detected at runtime and print a skip message — no crash, no hard dependency.
 
 <br />
 
