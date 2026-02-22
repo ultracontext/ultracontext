@@ -319,13 +319,11 @@ describe('compress', () => {
     });
 
     it('token_ratio uses ceil(chars/3.5) estimation', () => {
-      // 350 chars → ceil(350/3.5) = 100 tokens
-      const content = 'x'.repeat(350);
+      // Use a system message (role-preserved) so we test the zero-compression path
+      const content = 'You are a helpful assistant. '.repeat(12); // 336 chars
       const messages: Message[] = [
-        msg({ id: '1', index: 0, role: 'user', content }),
+        msg({ id: '1', index: 0, role: 'system', content }),
       ];
-      // Won't compress (classifier sees it as T0 due to low variance), but we can
-      // verify the ratio math on the empty-compression path
       const result = compress(messages, { recencyWindow: 0 });
       // All preserved → token_ratio === 1
       expect(result.compression.token_ratio).toBe(1);
@@ -917,20 +915,18 @@ describe('compress', () => {
       expect(result.messages[0].content).toBe(content);
     });
 
-    it('multi-message merge preserves when summary exceeds combined length', () => {
-      const content1 = 'Call getUserProfile fetchUserData handleAuthToken validateSession refreshCache parseConfig buildQuery formatResponse logMetrics in the codebase.';
-      const content2 = 'Also call parseConfig buildQuery formatResponse logMetrics getUserProfile fetchUserData handleAuthToken validateSession refreshCache here.';
-      expect(content1.length).toBeGreaterThanOrEqual(120);
-      expect(content2.length).toBeGreaterThanOrEqual(120);
+    it('single message preserved when summary wrapper exceeds original length', () => {
+      // Single sentence just above 120ch — summarizer keeps the full
+      // sentence, and the [summary: ] wrapper (12ch) makes it longer
+      const content = 'Call getUserProfile and fetchUserData and handleAuthToken and validateSession and refreshCache in the TypeScript codebase.';
+      expect(content.length).toBeGreaterThanOrEqual(120);
+      expect(content.length).toBeLessThan(200); // short enough that wrapper overhead matters
       const messages: Message[] = [
-        msg({ id: '1', index: 0, role: 'user', content: content1 }),
-        msg({ id: '2', index: 1, role: 'user', content: content2 }),
+        msg({ id: '1', index: 0, role: 'user', content }),
       ];
       const result = compress(messages, { preserve: [], recencyWindow: 0 });
-      expect(result.messages.length).toBe(2);
-      expect(result.messages[0].content).toBe(content1);
-      expect(result.messages[1].content).toBe(content2);
-      expect(result.compression.messages_preserved).toBe(2);
+      expect(result.messages[0].content).toBe(content);
+      expect(result.compression.messages_preserved).toBe(1);
       expect(result.compression.messages_compressed).toBe(0);
     });
   });

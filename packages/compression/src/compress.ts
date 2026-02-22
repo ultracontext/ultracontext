@@ -55,7 +55,7 @@ function scoreSentence(sentence: string): number {
   return score;
 }
 
-function summarize(text: string): string {
+function summarize(text: string, maxBudget?: number): string {
   const paragraphs = text.split(/\n\n+/).filter(p => p.trim().length > 0);
 
   type Scored = { text: string; score: number; origIdx: number; primary: boolean };
@@ -90,12 +90,12 @@ function summarize(text: string): string {
   }
 
   if (allSentences.length === 0) {
-    return text.slice(0, 400).trim();
+    return text.slice(0, budget).trim();
   }
 
   // Greedy budget packing: primary sentences first, then fill with others
   // Skip filler (negative score) and deduplicate by text
-  const budget = 400;
+  const budget = maxBudget ?? 400;
   const selected: Scored[] = [];
   const seenText = new Set<string>();
   let usedChars = 0;
@@ -118,16 +118,16 @@ function summarize(text: string): string {
   // If nothing fits (all filler or all too long), take the highest-scored and truncate
   if (selected.length === 0) {
     const best = allSentences.slice().sort((a, b) => b.score - a.score)[0];
-    const truncated = best.text.slice(0, 400).trim();
-    return truncated.length > 397 ? truncated.slice(0, 397) + '...' : truncated;
+    const truncated = best.text.slice(0, budget).trim();
+    return truncated.length > budget - 3 ? truncated.slice(0, budget - 3) + '...' : truncated;
   }
 
   // Re-sort by original position to preserve reading order
   selected.sort((a, b) => a.origIdx - b.origIdx);
 
   const result = selected.map(s => s.text).join(' ... ');
-  if (result.length > 400) {
-    return result.slice(0, 397) + '...';
+  if (result.length > budget) {
+    return result.slice(0, budget - 3) + '...';
   }
   return result;
 }
@@ -299,6 +299,15 @@ function collectGroup(
   return { group, nextIdx: i };
 }
 
+// Hard T0 reasons: genuinely structural content that can't be summarized.
+// Soft T0 reasons (file_path, url, version_number, etc.): incidental
+// references in prose — entities capture them, prose is still compressible.
+const HARD_T0_REASONS = new Set([
+  'code_fence', 'indented_code', 'json_structure', 'yaml_structure',
+  'high_special_char_ratio', 'high_line_length_variance', 'api_key',
+  'latex_math', 'unicode_math', 'sql_content', 'verse_pattern',
+]);
+
 function classifyAll(
   messages: Message[],
   preserveRoles: Set<string>,
@@ -334,8 +343,15 @@ function classifyAll(
       }
       return { msg, preserved: true };
     }
-    if (content && classifyMessage(content).decision === 'T0') {
-      return { msg, preserved: true };
+    if (content) {
+      const cls = classifyMessage(content);
+      if (cls.decision === 'T0') {
+        const hasHardReason = cls.reasons.some(r => HARD_T0_REASONS.has(r));
+        if (hasHardReason) {
+          return { msg, preserved: true };
+        }
+        // Soft T0 only — allow compression, entities will capture references
+      }
     }
     if (content && isValidJson(content)) {
       return { msg, preserved: true };
@@ -419,7 +435,8 @@ function compressSync(
       const segments = splitCodeAndProse(content);
       const proseText = segments.filter(s => s.type === 'prose').map(s => s.content).join(' ');
       const codeFences = segments.filter(s => s.type === 'code').map(s => s.content);
-      const summaryText = summarize(proseText);
+      const proseBudget = proseText.length < 600 ? 200 : 400;
+      const summaryText = summarize(proseText, proseBudget);
       const compressed = `${formatSummary(summaryText, proseText, undefined, true)}\n\n${codeFences.join('\n\n')}`;
 
       if (compressed.length >= content.length) {
@@ -440,11 +457,15 @@ function compressSync(
     i = nextIdx;
 
     const allContent = group.map(g => typeof g.msg.content === 'string' ? g.msg.content : '').join(' ');
-    const summaryText = summarize(allContent);
+    const contentBudget = allContent.length < 600 ? 200 : 400;
+    const summaryText = summarize(allContent, contentBudget);
 
     if (group.length > 1) {
-      const summary = formatSummary(summaryText, allContent, group.length);
+      let summary = formatSummary(summaryText, allContent, group.length);
       const combinedLength = group.reduce((sum, g) => sum + contentLength(g.msg), 0);
+      if (summary.length >= combinedLength) {
+        summary = formatSummary(summaryText, allContent, group.length, true);
+      }
 
       if (summary.length >= combinedLength) {
         for (const g of group) {
@@ -461,7 +482,10 @@ function compressSync(
     } else {
       const single = group[0].msg;
       const content = typeof single.content === 'string' ? single.content : '';
-      const summary = formatSummary(summaryText, allContent);
+      let summary = formatSummary(summaryText, allContent);
+      if (summary.length >= content.length) {
+        summary = formatSummary(summaryText, allContent, undefined, true);
+      }
 
       if (summary.length >= content.length) {
         result.push(single);
@@ -484,14 +508,14 @@ function compressSync(
 // Async compression (internal, LLM summarizer support)
 // ---------------------------------------------------------------------------
 
-async function withFallback(text: string, userSummarizer?: Summarizer): Promise<string> {
+async function withFallback(text: string, userSummarizer?: Summarizer, maxBudget?: number): Promise<string> {
   if (userSummarizer) {
     try {
       const result = await userSummarizer(text);
       if (typeof result === 'string' && result.length > 0 && result.length < text.length) return result;
     } catch { /* fall through to deterministic */ }
   }
-  return summarize(text);
+  return summarize(text, maxBudget);
 }
 
 async function compressAsync(
@@ -541,7 +565,8 @@ async function compressAsync(
       const segments = splitCodeAndProse(content);
       const proseText = segments.filter(s => s.type === 'prose').map(s => s.content).join(' ');
       const codeFences = segments.filter(s => s.type === 'code').map(s => s.content);
-      const summaryText = await withFallback(proseText, userSummarizer);
+      const proseBudget = proseText.length < 600 ? 200 : 400;
+      const summaryText = await withFallback(proseText, userSummarizer, proseBudget);
       const compressed = `${formatSummary(summaryText, proseText, undefined, true)}\n\n${codeFences.join('\n\n')}`;
 
       if (compressed.length >= content.length) {
@@ -562,11 +587,15 @@ async function compressAsync(
     i = nextIdx;
 
     const allContent = group.map(g => typeof g.msg.content === 'string' ? g.msg.content : '').join(' ');
-    const summaryText = await withFallback(allContent, userSummarizer);
+    const contentBudget = allContent.length < 600 ? 200 : 400;
+    const summaryText = await withFallback(allContent, userSummarizer, contentBudget);
 
     if (group.length > 1) {
-      const summary = formatSummary(summaryText, allContent, group.length);
+      let summary = formatSummary(summaryText, allContent, group.length);
       const combinedLength = group.reduce((sum, g) => sum + contentLength(g.msg), 0);
+      if (summary.length >= combinedLength) {
+        summary = formatSummary(summaryText, allContent, group.length, true);
+      }
 
       if (summary.length >= combinedLength) {
         for (const g of group) {
@@ -583,7 +612,10 @@ async function compressAsync(
     } else {
       const single = group[0].msg;
       const content = typeof single.content === 'string' ? single.content : '';
-      const summary = formatSummary(summaryText, allContent);
+      let summary = formatSummary(summaryText, allContent);
+      if (summary.length >= content.length) {
+        summary = formatSummary(summaryText, allContent, undefined, true);
+      }
 
       if (summary.length >= content.length) {
         result.push(single);
