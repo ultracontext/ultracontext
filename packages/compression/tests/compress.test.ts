@@ -2046,3 +2046,110 @@ describe('dedup tag includes keep-target ID', () => {
     expect(result.messages[2].content).not.toMatch(/^\[uc:dup/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Custom tokenCounter
+// ---------------------------------------------------------------------------
+
+describe('compress with custom tokenCounter', () => {
+  const LONG = 'This is a long message that exceeds the compression threshold and contains enough prose to compress. '.repeat(5);
+
+  it('tokenCount reflects custom counter with fixed value', () => {
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, content: LONG }),
+      msg({ id: '2', index: 1, content: LONG }),
+      msg({ id: '3', index: 2, content: LONG }),
+    ];
+    const fixedValue = 42;
+    const result = compress(messages, {
+      tokenBudget: 100000,
+      tokenCounter: () => fixedValue,
+      dedup: false,
+    });
+    expect(result.tokenCount).toBe(messages.length * fixedValue);
+  });
+
+  it('binary search uses custom counter to fit budget', () => {
+    const messages: Message[] = Array.from({ length: 10 }, (_, i) =>
+      msg({ id: String(i), index: i, content: LONG }),
+    );
+    // Each message = 100 tokens with this counter
+    const perMsg = 100;
+    const budget = perMsg * 5;
+    const result = compress(messages, {
+      tokenBudget: budget,
+      tokenCounter: () => perMsg,
+      dedup: false,
+    });
+    expect(result.tokenCount).toBeLessThanOrEqual(budget);
+    expect(result.fits).toBe(true);
+  });
+
+  it('forceConverge uses custom counter for delta math', () => {
+    // JSON content > 512 chars is preserved by classifier but eligible for forceConverge truncation
+    const bigJson = JSON.stringify({ data: Array.from({ length: 50 }, (_, i) => ({ id: i, value: `item_${i}` })) });
+    const messages: Message[] = [
+      msg({ id: '0', index: 0, role: 'user', content: bigJson }),
+      msg({ id: '1', index: 1, role: 'assistant', content: bigJson }),
+      msg({ id: '2', index: 2, role: 'user', content: bigJson }),
+      msg({ id: '3', index: 3, role: 'assistant', content: 'recent message' }),
+    ];
+    // Heavy counter: 1 token per char
+    const heavyCounter = (m: Message) => typeof m.content === 'string' ? m.content.length : 0;
+    const without = compress(messages, {
+      tokenBudget: 1,
+      tokenCounter: heavyCounter,
+      dedup: false,
+      minRecencyWindow: 1,
+    });
+    const withForce = compress(messages, {
+      tokenBudget: 1,
+      tokenCounter: heavyCounter,
+      dedup: false,
+      forceConverge: true,
+      minRecencyWindow: 1,
+    });
+    expect(without.fits).toBe(false);
+    // forceConverge truncates using the custom counter → lower tokenCount
+    expect(withForce.tokenCount!).toBeLessThan(without.tokenCount!);
+  });
+
+  it('token_ratio uses custom counter', () => {
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, content: LONG }),
+      msg({ id: '2', index: 1, content: LONG }),
+    ];
+    // Content-length-based counter with a different ratio than default
+    const customCounter = (m: Message) => {
+      const len = typeof m.content === 'string' ? m.content.length : 0;
+      return Math.ceil(len / 2);
+    };
+    const defaultResult = compress(messages, { recencyWindow: 0, dedup: false });
+    const customResult = compress(messages, {
+      recencyWindow: 0,
+      tokenCounter: customCounter,
+      dedup: false,
+    });
+    // Both compress, but token_ratio differs because the counter differs
+    expect(customResult.compression.token_ratio).toBeGreaterThan(1);
+    expect(customResult.compression.token_ratio).not.toBe(defaultResult.compression.token_ratio);
+  });
+
+  it('default behavior unchanged when tokenCounter is omitted', () => {
+    const messages: Message[] = [
+      msg({ id: '1', index: 0, content: LONG }),
+      msg({ id: '2', index: 1, content: LONG }),
+    ];
+    const withDefault = compress(messages, { tokenBudget: 10000, dedup: false });
+    const withExplicit = compress(messages, {
+      tokenBudget: 10000,
+      dedup: false,
+      tokenCounter: (m) => {
+        const len = typeof m.content === 'string' ? m.content.length : 0;
+        return Math.ceil(len / 3.5);
+      },
+    });
+    expect(withDefault.tokenCount).toBe(withExplicit.tokenCount);
+    expect(withDefault.fits).toBe(withExplicit.fits);
+  });
+});

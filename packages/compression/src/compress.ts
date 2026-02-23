@@ -319,8 +319,8 @@ function contentLength(msg: Message): number {
   return typeof msg.content === 'string' ? msg.content.length : 0;
 }
 
-/** Estimate token count for a single message (~3.5 chars/token). */
-function estimateTokens(msg: Message): number {
+/** Default token counter: ~3.5 chars/token heuristic. */
+export function defaultTokenCounter(msg: Message): number {
   return Math.ceil(contentLength(msg) / 3.5);
 }
 
@@ -460,6 +460,7 @@ function computeStats(
   messagesCompressed: number,
   messagesPreserved: number,
   sourceVersion: number,
+  counter: (msg: Message) => number,
   messagesDeduped?: number,
   messagesFuzzyDeduped?: number,
 ): CompressResult['compression'] {
@@ -468,8 +469,8 @@ function computeStats(
   const totalCompressed = messagesCompressed + (messagesDeduped ?? 0);
   const ratio = compressedTotalChars > 0 ? originalTotalChars / compressedTotalChars : 1;
 
-  const originalTotalTokens = originalMessages.reduce((sum, m) => sum + estimateTokens(m), 0);
-  const compressedTotalTokens = resultMessages.reduce((sum, m) => sum + estimateTokens(m), 0);
+  const originalTotalTokens = sumTokens(originalMessages, counter);
+  const compressedTotalTokens = sumTokens(resultMessages, counter);
   const tokenRatio = compressedTotalTokens > 0 ? originalTotalTokens / compressedTotalTokens : 1;
 
   return {
@@ -492,6 +493,7 @@ function compressSync(
   options: CompressOptions = {},
 ): CompressResult {
   const sourceVersion = options.sourceVersion ?? 0;
+  const counter = options.tokenCounter ?? defaultTokenCounter;
 
   if (messages.length === 0) {
     return {
@@ -640,7 +642,7 @@ function compressSync(
 
   return {
     messages: result,
-    compression: computeStats(messages, result, messagesCompressed, messagesPreserved, sourceVersion, messagesDeduped, messagesFuzzyDeduped),
+    compression: computeStats(messages, result, messagesCompressed, messagesPreserved, sourceVersion, counter, messagesDeduped, messagesFuzzyDeduped),
     verbatim,
   };
 }
@@ -664,6 +666,7 @@ async function compressAsync(
   options: CompressOptions = {},
 ): Promise<CompressResult> {
   const sourceVersion = options.sourceVersion ?? 0;
+  const counter = options.tokenCounter ?? defaultTokenCounter;
   const userSummarizer = options.summarizer;
 
   if (messages.length === 0) {
@@ -813,7 +816,7 @@ async function compressAsync(
 
   return {
     messages: result,
-    compression: computeStats(messages, result, messagesCompressed, messagesPreserved, sourceVersion, messagesDeduped, messagesFuzzyDeduped),
+    compression: computeStats(messages, result, messagesCompressed, messagesPreserved, sourceVersion, counter, messagesDeduped, messagesFuzzyDeduped),
     verbatim,
   };
 }
@@ -822,16 +825,17 @@ async function compressAsync(
 // Token budget helpers (absorbed from compressToFit)
 // ---------------------------------------------------------------------------
 
-function estimateTokensTotal(messages: Message[]): number {
-  return messages.reduce((sum, m) => sum + estimateTokens(m), 0);
+function sumTokens(messages: Message[], counter: (msg: Message) => number): number {
+  return messages.reduce((sum, m) => sum + counter(m), 0);
 }
 
 function budgetFastPath(
   messages: Message[],
   tokenBudget: number,
   sourceVersion: number,
+  counter: (msg: Message) => number,
 ): CompressResult | undefined {
-  const totalTokens = estimateTokensTotal(messages);
+  const totalTokens = sumTokens(messages, counter);
   if (totalTokens <= tokenBudget) {
     return {
       messages,
@@ -851,8 +855,8 @@ function budgetFastPath(
   return undefined;
 }
 
-function addBudgetFields(cr: CompressResult, tokenBudget: number, recencyWindow: number): CompressResult {
-  const tokens = estimateTokensTotal(cr.messages);
+function addBudgetFields(cr: CompressResult, tokenBudget: number, recencyWindow: number, counter: (msg: Message) => number): CompressResult {
+  const tokens = sumTokens(cr.messages, counter);
   return { ...cr, fits: tokens <= tokenBudget, tokenCount: tokens, recencyWindow };
 }
 
@@ -865,6 +869,7 @@ function forceConvergePass(
   tokenBudget: number,
   preserveRoles: Set<string>,
   sourceVersion: number,
+  counter: (msg: Message) => number,
 ): CompressResult {
   if (cr.fits) return cr;
 
@@ -899,7 +904,7 @@ function forceConvergePass(
     const truncated = content.slice(0, 512);
     const tag = `[truncated — ${content.length} chars: ${truncated}]`;
 
-    const oldTokens = estimateTokens(m);
+    const oldTokens = counter(m);
 
     // If already compressed (has _uc_original), just replace content in-place
     const hasOriginal = !!(m.metadata?._uc_original);
@@ -922,7 +927,7 @@ function forceConvergePass(
       };
     }
 
-    const newTokens = estimateTokens(messages[cand.idx]);
+    const newTokens = counter(messages[cand.idx]);
     tokenCount -= (oldTokens - newTokens);
   }
 
@@ -937,8 +942,9 @@ function compressSyncWithBudget(
 ): CompressResult {
   const minRw = options.minRecencyWindow ?? 0;
   const sourceVersion = options.sourceVersion ?? 0;
+  const counter = options.tokenCounter ?? defaultTokenCounter;
 
-  const fast = budgetFastPath(messages, tokenBudget, sourceVersion);
+  const fast = budgetFastPath(messages, tokenBudget, sourceVersion, counter);
   if (fast) return fast;
 
   let lo = minRw;
@@ -949,7 +955,7 @@ function compressSyncWithBudget(
   while (lo < hi) {
     const mid = Math.ceil((lo + hi) / 2);
     const cr = compressSync(messages, { ...options, recencyWindow: mid, summarizer: undefined, tokenBudget: undefined });
-    lastResult = addBudgetFields(cr, tokenBudget, mid);
+    lastResult = addBudgetFields(cr, tokenBudget, mid, counter);
     lastRw = mid;
 
     if (lastResult.fits) {
@@ -964,12 +970,12 @@ function compressSyncWithBudget(
     result = lastResult;
   } else {
     const cr = compressSync(messages, { ...options, recencyWindow: lo, summarizer: undefined, tokenBudget: undefined });
-    result = addBudgetFields(cr, tokenBudget, lo);
+    result = addBudgetFields(cr, tokenBudget, lo, counter);
   }
 
   if (!result.fits && options.forceConverge) {
     const preserveRoles = new Set(options.preserve ?? ['system']);
-    result = forceConvergePass(result, tokenBudget, preserveRoles, sourceVersion);
+    result = forceConvergePass(result, tokenBudget, preserveRoles, sourceVersion, counter);
   }
 
   return result;
@@ -982,8 +988,9 @@ async function compressAsyncWithBudget(
 ): Promise<CompressResult> {
   const minRw = options.minRecencyWindow ?? 0;
   const sourceVersion = options.sourceVersion ?? 0;
+  const counter = options.tokenCounter ?? defaultTokenCounter;
 
-  const fast = budgetFastPath(messages, tokenBudget, sourceVersion);
+  const fast = budgetFastPath(messages, tokenBudget, sourceVersion, counter);
   if (fast) return fast;
 
   let lo = minRw;
@@ -994,7 +1001,7 @@ async function compressAsyncWithBudget(
   while (lo < hi) {
     const mid = Math.ceil((lo + hi) / 2);
     const cr = await compressAsync(messages, { ...options, recencyWindow: mid, tokenBudget: undefined });
-    lastResult = addBudgetFields(cr, tokenBudget, mid);
+    lastResult = addBudgetFields(cr, tokenBudget, mid, counter);
     lastRw = mid;
 
     if (lastResult.fits) {
@@ -1009,12 +1016,12 @@ async function compressAsyncWithBudget(
     result = lastResult;
   } else {
     const cr = await compressAsync(messages, { ...options, recencyWindow: lo, tokenBudget: undefined });
-    result = addBudgetFields(cr, tokenBudget, lo);
+    result = addBudgetFields(cr, tokenBudget, lo, counter);
   }
 
   if (!result.fits && options.forceConverge) {
     const preserveRoles = new Set(options.preserve ?? ['system']);
-    result = forceConvergePass(result, tokenBudget, preserveRoles, sourceVersion);
+    result = forceConvergePass(result, tokenBudget, preserveRoles, sourceVersion, counter);
   }
 
   return result;

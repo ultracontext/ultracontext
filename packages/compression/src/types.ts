@@ -32,6 +32,8 @@ export type CompressOptions = {
   embedSummaryId?: boolean;
   /** Hard-truncate non-recency messages when binary search bottoms out and budget still exceeded. Default: false. */
   forceConverge?: boolean;
+  /** Custom token counter per message. Default: ceil(content.length / 3.5). */
+  tokenCounter?: (msg: Message) => number;
 };
 
 export type VerbatimMap = Record<string, Message>;
