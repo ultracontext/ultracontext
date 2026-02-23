@@ -112,6 +112,9 @@ result.compression.messages_fuzzy_deduped;    // near-duplicates replaced (when 
 | `dedup` | `boolean` | `true` | Replace earlier exact-duplicate messages with a compact reference |
 | `fuzzyDedup` | `boolean` | `false` | Detect near-duplicate messages using line-level similarity |
 | `fuzzyThreshold` | `number` | `0.85` | Similarity threshold for fuzzy dedup (0–1) |
+| `embedSummaryId` | `boolean` | `false` | Embed `summary_id` in compressed content for downstream reference |
+| `forceConverge` | `boolean` | `false` | Hard-truncate non-recency messages when binary search bottoms out and budget still exceeded |
+| `tokenCounter` | `(msg: Message) => number` | `defaultTokenCounter` | Custom token counter per message. Default: `ceil(content.length / 3.5)` |
 
 #### Summarizer fallback
 
@@ -123,22 +126,47 @@ When a `summarizer` is provided, each message goes through a three-level fallbac
 
 #### Token budget
 
-Use `tokenBudget` to automatically find the least compression needed to fit a token limit. The engine binary-searches `recencyWindow` internally. Token counts are estimated at ~3.5 characters per token — a reasonable average across models, but not exact. For precise budgeting, use `tokenBudget` as an approximate guide and verify with your model's tokenizer.
+Use `tokenBudget` to automatically find the least compression needed to fit a token limit. The engine binary-searches `recencyWindow` internally.
+
+By default, tokens are estimated at ~3.5 characters per token. For accurate budgeting, pass a `tokenCounter` that uses your model's tokenizer — the counter is used for all budget decisions, binary search iterations, force-converge deltas, and `token_ratio` stats.
 
 ```ts
+import { compress, defaultTokenCounter } from '@ultracontext/compression';
+
 const result = compress(messages, {
   tokenBudget: 4000,
   minRecencyWindow: 2,
 });
 
 result.fits;       // true if result fits within budget
-result.tokenCount; // estimated token count
+result.tokenCount; // token count (via tokenCounter)
+
+// Plug in a real tokenizer
+import { encode } from 'gpt-tokenizer';
+
+const result = compress(messages, {
+  tokenBudget: 4000,
+  tokenCounter: (msg) => {
+    const text = typeof msg.content === 'string' ? msg.content : '';
+    return encode(text).length;
+  },
+});
 
 // With LLM summarizer for tighter fits
 const result = await compress(messages, {
   tokenBudget: 4000,
   summarizer: mySummarizer,
 });
+```
+
+When `forceConverge` is enabled, the engine hard-truncates non-recency messages to 512 characters if the binary search bottoms out and the budget is still exceeded. This mirrors LCM's Level 3 `DeterministicTruncate` — no LLM involved, guaranteed convergence.
+
+```ts
+const result = compress(messages, {
+  tokenBudget: 4000,
+  forceConverge: true,
+});
+// result.fits is guaranteed true (unless only system/recency messages remain)
 ```
 
 ### uncompress
