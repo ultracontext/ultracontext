@@ -1,83 +1,133 @@
 <p align="center">
   <a href="https://ultracontext.ai">
-    <img src="https://ultracontext.ai/og-node.png" alt="UltraContext" />
+    <img src="https://ultracontext.ai/gh-cover.png" alt="UltraContext" />
   </a>
 </p>
 
-<h3 align="center">The context API for AI agents.</h3>
+<h3 align="center">The Context Hub for AI agents.</h3>
 
 <p align="center">
-  <a href="https://ultracontext.ai/docs/quickstart/nodejs">Quickstart</a>
-  ·
   <a href="https://ultracontext.ai/docs">Documentation</a>
   ·
   <a href="https://ultracontext.ai/docs/api-reference/introduction">API Reference</a>
+  ·
+  <a href="https://ultracontext.ai/docs/changelog">Changelog</a>
 </p>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/ultracontext">
     <img src="https://img.shields.io/npm/v/ultracontext" alt="npm version" />
   </a>
+  <a href="https://pypi.org/project/ultracontext/">
+    <img src="https://img.shields.io/pypi/v/ultracontext" alt="PyPI version" />
+  </a>
   <a href="https://github.com/ultracontext/ultracontext/blob/main/LICENSE">
     <img src="https://img.shields.io/github/license/ultracontext/ultracontext" alt="license" />
   </a>
+  <a href="https://github.com/ultracontext/ultracontext">
+    <img src="https://img.shields.io/github/stars/ultracontext/ultracontext.svg?style=social&label=Star" alt="GitHub stars" />
+  </a>
 </p>
 
-<br />
+<div align="center">
+  <a href="https://twitter.com/ultracontext">
+    <img src="https://img.shields.io/badge/Follow%20on%20X-000000?style=for-the-badge&logo=x&logoColor=white" alt="Follow on X" />
+  </a>
+</div>
 
-<p align="center">Guides</p>
-<p align="center">
-  <a href="https://ultracontext.ai/docs/guides/store-retrieve-contexts">Store & Retrieve</a>
-  ·
-  <a href="https://ultracontext.ai/docs/guides/edit-contexts">Edit Contexts</a>
-  ·
-  <a href="https://ultracontext.ai/docs/guides/fork-clone-contexts">Fork & Clone</a>
-  ·
-  <a href="https://ultracontext.ai/docs/guides/view-context-history">View History</a>
-</p>
+<div align="center">
 
-<br />
+## All agents. All machines. One Hub.
 
-UltraContext is the simplest way to control what your agents see.
+</div>
+<img src="https://ultracontext.ai/ultracontext-hub.gif" alt="How it works" />
 
-Replace messages, compact/offload context, replay decisions and roll back mistakes — with a single API call. Versioned context out of the box. Full history. Zero complexity.
+## Introduction
 
-<br />
+Agents now do our work. Today, most of our knowledge and key decisions live inside context windows. But they are spread across many agents, computers, and teams.
 
-## Why Context Matters
+Not anymore.
 
-Context is the RAM of LLMs — everything they can see.
+## UltraContext Features
 
-As context grows, model attention spreads thin — this is known as **context rot**. We should aim to provide the smallest set of high-signal tokens that get the job done.
-
-Right now, we're reinventing the wheel for every car we build. Instead of tackling interesting problems, we catch ourselves spending most of our time gluing context together.
-
-**It's time to simplify.**
-
-<br />
-
-## Why UltraContext
-
-- **Simple API** — Five methods. That's it.
-- **Automatic versioning** — Updates/deletes create versions. Nothing is lost.
-- **Time-travel** — Jump to any point by version, index, or timestamp.
-- **Schema-free** — Store any JSON. Own your data structure.
-- **Framework-agnostic** — Works with any LLM framework.
-- **Fast** — Globally distributed. Low latency.
-
-Just plug & play.
-
-<br />
+- **Auto-ingest** — Captures contexts from your agents in realtime.
+- **Realtime access** — Immediately see contexts created on any machine, by any agent, whenever you want.
+- **Collaborate** — Share contexts across your team. See what everyone sees, instantly and without any friction.
+- **Switch between agents** — Pick up where one agent left off with another.
+- **Open source** — Own your data. Self-host when you need to.
+- **Plug and play** — Install and run with a single line of code.
+- **Fork & clone** — Continue contexts while preserving the full history.
+- **Customizable** — Add your own agents and extend behavior with the context API ([Docs here](https://ultracontext.ai/docs/api-reference/introduction)).
 
 ## Install
+
+Requires **Node >= 22**.
+
+```bash
+npm install -g ultracontext
+```
+
+That's it. The setup wizard runs automatically — walks you through API key, sync preferences, and launches the dashboard.
+
+Already installed? Run `ultracontext config` to reconfigure.
+
+## Quick Start
+
+```bash
+ultracontext              # start daemon + open dashboard
+ultracontext config       # run setup wizard
+ultracontext start        # start daemon only
+ultracontext stop         # stop daemon
+ultracontext status       # check if daemon is running
+ultracontext tui          # open dashboard only
+```
+
+The default ultracontext command does everything: checks the daemon, starts it if needed, and opens the TUI dashboard.
+
+## How it works
+
+1. A daemon runs in the background, watching your agents.
+2. Contexts are ingested in realtime with the Context API.
+3. Your Context Hub gets updated.
+
+We use a git-like context engineering API under the hood to interact with the agent's contexts. You can use it to add your own custom agents, tweak behavior and more. ([Docs here](https://ultracontext.ai/docs/))
+
+When you open an existing session from the hub, it forks the context, so the original context is always preserved by default and automatically versioned so you can keep track of it later using metadata.
+
+There is a local caching layer that prevents duplicate context creations and appends.
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=ultracontext/ultracontext&type=date&legend=top-left)](https://www.star-history.com/#ultracontext/ultracontext&type=date&legend=top-left)
+
+## Everything we built so far
+
+- Daemon - Runs in the background, watching your agents.
+- TUI - Terminal UI for the daemon.
+- [Context API](https://ultracontext.ai/docs/) - Git-like context engineering API.
+- [Context API SDKs](https://ultracontext.ai/docs/quickstart/nodejs) - Node and Python SDKs.
+
+<div align="center">
+
+# The Context API
+
+</div>
+
+The Context API is the simplest way to control what your agents see. Replace messages, compact/offload long context, replay decisions and roll back mistakes with a single API call. Versioned context out of the box. Full history. Zero complexity. You can use the API standalone to build your own agents or to tweak behavior of existing ones in ultracontext. ([Docs here](https://ultracontext.ai/docs/api-reference/introduction))
+
+## Context API SDKs
+
+| SDK | Install | Source |
+|-----|---------|--------|
+| JavaScript/TypeScript | `npm install ultracontext` | [apps/js-sdk](./apps/js-sdk) |
+| Python | `pip install ultracontext` | [apps/python-sdk](./apps/python-sdk) |
+
+
+### JavaScript/TypeScript
 
 ```bash
 npm install ultracontext
 ```
-
-<br />
-
-## Quick Start
 
 ```js
 import { UltraContext } from 'ultracontext';
@@ -91,43 +141,25 @@ await uc.append(ctx.id, { role: 'user', content: 'Hello!' });
 const response = await generateText({ model, messages: ctx.data });
 ```
 
-Get an API key from the [UltraContext Dashboard](https://ultracontext.ai/dashboard).
+### Python
 
-<br />
-
-## API
-
-```js
-// create - new context or fork from existing
-const ctx = await uc.create();
-const fork = await uc.create({ from: 'ctx_abc123' });
-
-// get - retrieve context (supports version, index, timestamp)
-const { data } = await uc.get('ctx_abc123');
-const { data } = await uc.get('ctx_abc123', { version: 2 });
-const { data } = await uc.get('ctx_abc123', { at: 5 });
-const { data, versions } = await uc.get('ctx_abc123', { history: true });
-
-// append - add messages (schema-free)
-await uc.append(ctx.id, { role: 'user', content: 'Hi' });
-await uc.append(ctx.id, [{ role: 'user', content: 'Hi' }, { foo: 'bar' }]);
-
-// update - modify by id or index (auto-versions)
-await uc.update(ctx.id, { id: 'msg_xyz', content: 'Fixed!' });
-await uc.update(ctx.id, { index: -1, content: 'Fix last message' });
-
-// delete - remove by id or index (auto-versions)
-await uc.delete(ctx.id, 'msg_xyz');
-await uc.delete(ctx.id, -1);
+```bash
+pip install ultracontext
 ```
 
-<br />
+```python
+from ultracontext import UltraContext
 
-## Star History
+uc = UltraContext(api_key="uc_live_...")
 
-[![Star History Chart](https://api.star-history.com/svg?repos=ultracontext/ultracontext&type=date&legend=top-left)](https://www.star-history.com/#ultracontext/ultracontext&type=date&legend=top-left)
+ctx = uc.create()
+uc.append(ctx["id"], {"role": "user", "content": "Hello!"})
 
-<br />
+# use with any LLM framework
+response = generate_text(model=model, messages=uc.get(ctx["id"])["data"])
+```
+
+Get an API key from the [UltraContext Dashboard](https://ultracontext.ai/dashboard).
 
 ## Documentation
 
@@ -136,11 +168,3 @@ await uc.delete(ctx.id, -1);
 - [API Reference](https://ultracontext.ai/docs/api-reference/introduction) — Full endpoint documentation
 
 ---
-
-<p align="center">
-  <a href="https://ultracontext.ai">Website</a>
-  ·
-  <a href="https://ultracontext.ai/docs">Docs</a>
-  ·
-  <a href="https://github.com/ultracontext/ultracontext/issues">Issues</a>
-</p>

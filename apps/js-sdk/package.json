@@ -1,18 +1,22 @@
 {
     "name": "ultracontext",
-    "description": "JavaScript/TypeScript SDK for the UltraContext API",
+    "description": "JavaScript/TypeScript SDK + CLI for the UltraContext API",
     "type": "module",
+    "version": "1.1.0",
     "engines": {
-        "node": ">=18"
+        "node": ">=22.12.0"
+    },
+    "bin": {
+        "ultracontext": "ultracontext.mjs"
     },
     "scripts": {
-        "build": "tsc",
-        "dev": "tsc --watch",
-        "prepare": "pnpm run build"
+        "build": "tsdown",
+        "dev": "tsdown --watch",
+        "prepack": "pnpm run build",
+        "postinstall": "node postinstall.mjs"
     },
-    "version": "1.0.2",
-    "main": "./dist/index.js",
-    "types": "./dist/index.d.ts",
+    "main": "./dist/index.mjs",
+    "types": "./dist/index.d.mts",
     "repository": {
         "type": "git",
         "url": "git+https://github.com/ultracontext/ultracontext.git",
@@ -38,19 +42,34 @@
         "rollback",
         "chat",
         "conversation",
-        "typescript"
+        "typescript",
+        "cli",
+        "daemon",
+        "tui"
     ],
     "exports": {
         ".": {
-            "types": "./dist/index.d.ts",
-            "import": "./dist/index.js",
-            "default": "./dist/index.js"
+            "types": "./dist/index.d.mts",
+            "import": "./dist/index.mjs",
+            "default": "./dist/index.mjs"
         }
     },
     "files": [
-        "dist"
+        "dist/",
+        "ultracontext.mjs",
+        "postinstall.mjs",
+        "assets/"
     ],
+    "dependencies": {
+        "@mishieck/ink-titled-box": "^0.4.2",
+        "fast-glob": "^3.3.3",
+        "figlet": "^1.10.0",
+        "ink": "^6.7.0",
+        "react": "^19.2.4",
+        "ws": "^8.18.3"
+    },
     "devDependencies": {
+        "tsdown": "^0.20.3",
         "typescript": "^5.9.3"
     },
     "packageManager": "pnpm@10.28.1"
