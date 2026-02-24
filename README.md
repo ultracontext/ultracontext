@@ -24,14 +24,17 @@
   <a href="https://github.com/ultracontext/ultracontext/blob/main/LICENSE">
     <img src="https://img.shields.io/github/license/ultracontext/ultracontext" alt="license" />
   </a>
-  <a href="https://github.com/ultracontext/ultracontext">
-    <img src="https://img.shields.io/github/stars/ultracontext/ultracontext.svg?style=social&label=Star" alt="GitHub stars" />
+  <a href="https://ultracontext.ai">
+    <img src="https://img.shields.io/badge/Visit-ultracontext.ai-4B6EF5" alt="Visit ultracontext.ai" />
   </a>
 </p>
 
 <div align="center">
   <a href="https://twitter.com/ultracontext">
     <img src="https://img.shields.io/badge/Follow%20on%20X-000000?style=for-the-badge&logo=x&logoColor=white" alt="Follow on X" />
+  </a>
+  <a href="https://discord.com/invite/4HjcS6KwhW">
+    <img src="https://img.shields.io/badge/Join%20our%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join our Discord" />
   </a>
 </div>
 
@@ -40,8 +43,6 @@
 ## All agents. All machines. One Hub.
 
 </div>
-
-<img src="https://ultracontext.ai/ultracontext-hub.gif" alt="How it works" />
 
 ![ultracontext-gif](https://github.com/user-attachments/assets/be73afe5-161d-4fa3-8f4d-c4987fe63cb4)
 
@@ -103,6 +104,7 @@ There is a local caching layer that prevents duplicate context creations and app
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=ultracontext/ultracontext&type=date&legend=top-left)](https://www.star-history.com/#ultracontext/ultracontext&type=date&legend=top-left)
+
 
 ## Everything we built so far
 
