@@ -43,8 +43,6 @@
 
 <img src="https://ultracontext.ai/ultracontext-hub.gif" alt="How it works" />
 
-![](https://ultracontext.ai/ultracontext-hub.gif)
-
 ## Introduction
 
 Agents now do our work. Today, most of our knowledge and key decisions live inside context windows. But they are spread across many agents, computers, and teams.
