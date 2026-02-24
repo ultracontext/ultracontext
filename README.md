@@ -40,7 +40,10 @@
 ## All agents. All machines. One Hub.
 
 </div>
+
 <img src="https://ultracontext.ai/ultracontext-hub.gif" alt="How it works" />
+
+![](https://ultracontext.ai/ultracontext-hub.gif)
 
 ## Introduction
 
