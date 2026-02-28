@@ -40,7 +40,7 @@
 
 <div align="center">
 
-## All agents. All context.
+## All agents. One context.
 
 </div>
 
