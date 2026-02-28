@@ -40,7 +40,7 @@
 
 <div align="center">
 
-## All agents. All machines. One Hub.
+## All agents. All context.
 
 </div>
 
