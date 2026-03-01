@@ -182,7 +182,3 @@ response = generate_text(model=model, messages=uc.get(ctx["id"])["data"])
 - [Quickstart](https://ultracontext.ai/docs/quickstart/nodejs) — Get running in 2 minutes
 - [Guides](https://ultracontext.ai/docs/guides/store-retrieve-contexts) — Practical patterns for common use cases
 - [API Reference](https://ultracontext.ai/docs/api-reference/introduction) — Full endpoint documentation
-
-## Star History
-
-[Star History Chart](https://www.star-history.com/#ultracontext/ultracontext&type=date&legend=top-left)
