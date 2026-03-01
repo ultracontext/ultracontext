@@ -15,6 +15,18 @@ export function handleContextsViewInput({ input, key, actions, snapshot }) {
       actions.scrollDetail(1);
       return true;
     }
+    if (input === "j") {
+      actions.scrollDetailLine(1);
+      return true;
+    }
+    if (input === "k") {
+      actions.scrollDetailLine(-1);
+      return true;
+    }
+    if (input === "r") {
+      actions.refreshDetail();
+      return true;
+    }
     return true;
   }
 

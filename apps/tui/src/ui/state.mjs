@@ -22,7 +22,7 @@ export function footerHelpText({ bootstrapActive, resumeTargetPickerActive, deta
     return "Controls: ↑/↓ navigate, Enter focus/open, ← back, q/Ctrl+C quit.";
   }
   if (selectedTab === "contexts" && detailViewActive) {
-    return "Detail: ↑/↓ scroll messages, Esc/← back to list.";
+    return "Detail: ↑/↓ messages, j/k lines, r refresh, Esc/← back.";
   }
   if (selectedTab === "contexts") {
     return "Contexts: ↑/↓ select, Enter open, r refresh, ← back, q/Ctrl+C quit.";

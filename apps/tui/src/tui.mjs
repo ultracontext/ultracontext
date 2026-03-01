@@ -194,6 +194,7 @@ const ui = {
     contextMeta: null,
     messages: [],
     scrollOffset: 0,
+    lineOffset: 0,
     loading: false,
     error: null,
   },
@@ -1604,6 +1605,7 @@ async function openContextDetail() {
   ui.detailView.contextMeta = context.metadata ?? {};
   ui.detailView.messages = [];
   ui.detailView.scrollOffset = 0;
+  ui.detailView.lineOffset = 0;
   ui.detailView.loading = true;
   ui.detailView.error = null;
   renderDashboard();
@@ -1626,22 +1628,45 @@ function closeContextDetail() {
   ui.detailView.contextMeta = null;
   ui.detailView.messages = [];
   ui.detailView.scrollOffset = 0;
+  ui.detailView.lineOffset = 0;
   ui.detailView.loading = false;
   ui.detailView.error = null;
   renderDashboard();
 }
 
+async function refreshContextDetail() {
+  if (!ui.detailView.active || !ui.detailView.contextId || ui.detailView.loading) return;
+  ui.detailView.loading = true;
+  ui.detailView.error = null;
+  renderDashboard();
+
+  try {
+    const detail = await runtime.uc.get(ui.detailView.contextId);
+    ui.detailView.messages = Array.isArray(detail.data) ? detail.data : [];
+  } catch (error) {
+    ui.detailView.error = error?.message ?? "Failed to refresh";
+  } finally {
+    ui.detailView.loading = false;
+    renderDashboard();
+  }
+}
+
+// message-level scroll (↑/↓) — resets line offset
 function scrollContextDetail(delta) {
   const total = ui.detailView.messages.length;
   if (total === 0) return;
   const next = ui.detailView.scrollOffset + delta;
-  if (next < 0) {
-    ui.detailView.scrollOffset = total - 1;
-  } else if (next >= total) {
-    ui.detailView.scrollOffset = 0;
-  } else {
-    ui.detailView.scrollOffset = next;
-  }
+  if (next < 0) ui.detailView.scrollOffset = total - 1;
+  else if (next >= total) ui.detailView.scrollOffset = 0;
+  else ui.detailView.scrollOffset = next;
+  ui.detailView.lineOffset = 0;
+  renderDashboard();
+}
+
+// line-level fine scroll (j/k) within current view
+function scrollContextDetailLine(delta) {
+  if (ui.detailView.messages.length === 0) return;
+  ui.detailView.lineOffset = Math.max(0, ui.detailView.lineOffset + delta);
   renderDashboard();
 }
 
@@ -1733,6 +1758,7 @@ function buildUiSnapshot() {
       contextMeta: ui.detailView.contextMeta,
       messages: ui.detailView.messages,
       scrollOffset: ui.detailView.scrollOffset,
+      lineOffset: ui.detailView.lineOffset,
       loading: ui.detailView.loading,
       error: ui.detailView.error,
     },
@@ -1857,6 +1883,12 @@ async function tuiMain() {
       },
       scrollDetail: (delta) => {
         scrollContextDetail(delta);
+      },
+      scrollDetailLine: (delta) => {
+        scrollContextDetailLine(delta);
+      },
+      refreshDetail: () => {
+        void refreshContextDetail();
       },
     },
   });

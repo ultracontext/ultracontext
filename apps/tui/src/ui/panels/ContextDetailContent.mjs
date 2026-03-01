@@ -1,7 +1,7 @@
 import React from "react";
 import { Box, Text } from "ink";
 
-import { compact, contextBadge, fitToWidth, padElements } from "../format.mjs";
+import { compact, contextBadge, padElements } from "../format.mjs";
 
 // ── role helpers ─────────────────────────────────────────────────
 
@@ -18,13 +18,15 @@ function normalizeRole(msg) {
   return "system";
 }
 
+// ── extract full message text (no truncation) ───────────────────
+
 function messageText(msg) {
   const content = msg?.content;
-  if (typeof content === "string") return content.replace(/\s+/g, " ").trim();
+  if (typeof content === "string") return content;
   if (content && typeof content === "object") {
-    if (typeof content.message === "string") return content.message.replace(/\s+/g, " ").trim();
-    if (typeof content.text === "string") return content.text.replace(/\s+/g, " ").trim();
-    return JSON.stringify(content);
+    if (typeof content.message === "string") return content.message;
+    if (typeof content.text === "string") return content.text;
+    return JSON.stringify(content, null, 2);
   }
   return "";
 }
@@ -39,9 +41,9 @@ function messageTimestamp(msg) {
   return `${hh}:${mm}`;
 }
 
-// ── wrap text into lines of maxWidth ────────────────────────────
+// ── wrap a single line respecting maxWidth ──────────────────────
 
-function wrapText(text, maxWidth) {
+function wrapLine(text, maxWidth) {
   if (!text) return [""];
   const width = Math.max(maxWidth, 10);
   const lines = [];
@@ -64,7 +66,7 @@ function buildMessageLines(messages, maxWidth) {
     const msg = messages[i];
     const role = normalizeRole(msg);
     const ts = messageTimestamp(msg);
-    const text = messageText(msg);
+    const fullText = messageText(msg);
     const color = roleColor(role);
 
     // separator: ── role · HH:MM ──────────
@@ -72,13 +74,14 @@ function buildMessageLines(messages, maxWidth) {
     const labelPart = `── ${label} `;
     const fillLen = Math.max(separatorWidth - labelPart.length, 0);
     const fill = "─".repeat(fillLen);
+    lines.push({ type: "separator", color, label: `${labelPart}${fill}`, msgIndex: i });
 
-    lines.push({ type: "separator", role, color, label: `${labelPart}${fill}`, msgIndex: i });
-
-    // text lines (wrapped)
-    const wrapped = wrapText(text || "(empty)", maxWidth);
-    for (const line of wrapped) {
-      lines.push({ type: "text", color: "white", text: line, msgIndex: i });
+    // split by real newlines, wrap each, preserve structure
+    const rawLines = (fullText || "(empty)").split(/\r?\n/);
+    for (const rawLine of rawLines) {
+      for (const wrapped of wrapLine(rawLine, maxWidth)) {
+        lines.push({ type: "text", text: wrapped, msgIndex: i });
+      }
     }
 
     // blank line between messages
@@ -96,74 +99,85 @@ export function ContextDetailContent({ snapshot, maxRows, maxCols }) {
   const dv = snapshot.detailView;
   const textWidth = Math.max((maxCols ?? 60) - 2, 20);
   const rows = [];
+  const totalMsgs = dv.messages.length;
 
-  // header: source badge + context id + scroll hint
   const source = dv.contextMeta?.source ?? "unknown";
   const badge = contextBadge(source);
-  const totalMsgs = dv.messages.length;
-  const scrollPos = totalMsgs > 0 ? `${dv.scrollOffset + 1}/${totalMsgs}` : "0/0";
 
-  rows.push(
-    React.createElement(
-      Text,
-      { key: "detail-header", wrap: "truncate-end" },
-      React.createElement(Text, { color: badge.color, bold: true }, `[${badge.text}]`),
-      React.createElement(Text, { color: "gray" }, ` ${compact(dv.contextId ?? "", 36)}  `),
-      React.createElement(Text, { color: "cyan" }, scrollPos),
-      React.createElement(Text, { color: "gray" }, "  ↑/↓ scroll  Esc/← back")
-    )
-  );
+  // header placeholder (filled after scroll info is known)
+  const headerIdx = 0;
+  rows.push(null);
   rows.push(React.createElement(Text, { key: "detail-spacer" }, " "));
 
   // loading state
   if (dv.loading) {
+    rows[headerIdx] = renderHeader({ badge, dv, scrollInfo: "loading..." });
     rows.push(React.createElement(Text, { key: "detail-loading", color: "yellow" }, "Loading messages..."));
     return React.createElement(Box, { flexDirection: "column" }, ...padElements(rows, maxRows, "dtl"));
   }
 
   // error state
   if (dv.error) {
+    rows[headerIdx] = renderHeader({ badge, dv, scrollInfo: "error" });
     rows.push(React.createElement(Text, { key: "detail-error", color: "red" }, `Error: ${dv.error}`));
     return React.createElement(Box, { flexDirection: "column" }, ...padElements(rows, maxRows, "dtl"));
   }
 
   // empty state
   if (totalMsgs === 0) {
+    rows[headerIdx] = renderHeader({ badge, dv, scrollInfo: "empty" });
     rows.push(React.createElement(Text, { key: "detail-empty", color: "gray" }, "No messages in this context."));
     return React.createElement(Box, { flexDirection: "column" }, ...padElements(rows, maxRows, "dtl"));
   }
 
-  // build visual lines for all messages
+  // build all visual lines
   const allLines = buildMessageLines(dv.messages, textWidth);
+  const availableRows = Math.max(maxRows - rows.length, 1);
 
-  // find the first visual line of the current scroll-offset message
-  const targetMsgIndex = dv.scrollOffset;
-  let startLine = 0;
+  // two-level scroll: ↑/↓ by message (scrollOffset), j/k by line (lineOffset)
+  const targetMsg = Math.max(0, Math.min(dv.scrollOffset, totalMsgs - 1));
+  let msgStartLine = 0;
   for (let i = 0; i < allLines.length; i++) {
-    if (allLines[i].msgIndex === targetMsgIndex) {
-      startLine = i;
+    if (allLines[i].msgIndex === targetMsg) {
+      msgStartLine = i;
       break;
     }
   }
 
-  // render visible lines
-  const availableRows = Math.max(maxRows - rows.length, 1);
-  const visibleLines = allLines.slice(startLine, startLine + availableRows);
+  // apply fine line offset, clamped
+  const maxScroll = Math.max(allLines.length - availableRows, 0);
+  const startLine = Math.max(0, Math.min(msgStartLine + (dv.lineOffset ?? 0), maxScroll));
 
+  // header with scroll info
+  const msgLabel = `msg ${targetMsg + 1}/${totalMsgs}`;
+  const pct = allLines.length > 0 ? Math.min(Math.round(((startLine + availableRows) / allLines.length) * 100), 100) : 100;
+  rows[headerIdx] = renderHeader({ badge, dv, scrollInfo: `${msgLabel}  ${pct}%` });
+
+  // render visible slice
+  const visibleLines = allLines.slice(startLine, startLine + availableRows);
   for (let i = 0; i < visibleLines.length; i++) {
     const line = visibleLines[i];
     if (line.type === "separator") {
-      rows.push(
-        React.createElement(Text, { key: `dtl-sep-${i}`, color: line.color, bold: true }, line.label)
-      );
+      rows.push(React.createElement(Text, { key: `dtl-l-${i}`, color: line.color, bold: true }, line.label));
     } else if (line.type === "text") {
-      rows.push(
-        React.createElement(Text, { key: `dtl-txt-${i}`, color: line.color }, line.text)
-      );
+      rows.push(React.createElement(Text, { key: `dtl-l-${i}` }, line.text));
     } else {
-      rows.push(React.createElement(Text, { key: `dtl-blk-${i}` }, " "));
+      rows.push(React.createElement(Text, { key: `dtl-l-${i}` }, " "));
     }
   }
 
   return React.createElement(Box, { flexDirection: "column" }, ...padElements(rows, maxRows, "dtl"));
+}
+
+// ── header helper ───────────────────────────────────────────────
+
+function renderHeader({ badge, dv, scrollInfo }) {
+  return React.createElement(
+    Text,
+    { key: "detail-header", wrap: "truncate-end" },
+    React.createElement(Text, { color: badge.color, bold: true }, `[${badge.text}]`),
+    React.createElement(Text, { color: "gray" }, ` ${compact(dv.contextId ?? "", 36)}  `),
+    React.createElement(Text, { color: "cyan" }, scrollInfo),
+    React.createElement(Text, { color: "gray" }, "  ↑/↓ msg  j/k line  r refresh  Esc back")
+  );
 }

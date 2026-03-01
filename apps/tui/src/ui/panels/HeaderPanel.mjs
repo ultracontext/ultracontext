@@ -39,7 +39,7 @@ export function HeaderPanel({ snapshot, stdoutColumns }) {
   const clientsOnline = Array.isArray(snapshot.onlineClients) ? snapshot.onlineClients.length : 0;
   const dashboardTail = [
     `live ${formatTime(snapshot.now)}`,
-    `engineer ${snapshot.cfg.engineerId}`,
+    `☻ ${snapshot.cfg.engineerId}`,
     `clients ${clientsOnline}`,
     `uptime ${formatUptime(Date.now() - Number(snapshot.stats.startedAt ?? 0))}`,
   ].join(" │ ");
