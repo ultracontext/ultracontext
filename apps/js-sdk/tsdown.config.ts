@@ -29,9 +29,6 @@ export default defineConfig([
       "ws",
       "fast-glob",
       "ultracontext",
-      "@ultracontext/protocol",
-      "@ultracontext/daemon",
-      "@ultracontext/tui",
     ],
   },
 ]);

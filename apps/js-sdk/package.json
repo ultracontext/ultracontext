@@ -2,7 +2,7 @@
     "name": "ultracontext",
     "description": "JavaScript/TypeScript SDK + CLI for the UltraContext API",
     "type": "module",
-    "version": "1.1.4",
+    "version": "1.1.5",
     "engines": {
         "node": ">=22.12.0"
     },
@@ -62,9 +62,6 @@
     ],
     "dependencies": {
         "@mishieck/ink-titled-box": "^0.4.2",
-        "@ultracontext/daemon": "workspace:*",
-        "@ultracontext/protocol": "workspace:*",
-        "@ultracontext/tui": "workspace:*",
         "fast-glob": "^3.3.3",
         "figlet": "^1.10.0",
         "ink": "^6.7.0",
@@ -72,6 +69,9 @@
         "ws": "^8.18.3"
     },
     "devDependencies": {
+        "@ultracontext/daemon": "workspace:*",
+        "@ultracontext/protocol": "workspace:*",
+        "@ultracontext/tui": "workspace:*",
         "tsdown": "^0.20.3",
         "typescript": "^5.9.3"
     },

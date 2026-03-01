@@ -88,7 +88,7 @@ export async function getOrderedNodes(storage: StorageAdapter, headId: string) {
     const contextNodes = await storage.findNonContextNodes(headId);
 
     if (contextNodes.length === 0) return [];
-    return orderNodes(contextNodes as Array<{ public_id: string; prev_id: string | null; created_at: string }>);
+    return orderNodes(contextNodes);
 }
 
 export async function getVersions(storage: StorageAdapter, rootId: string): Promise<VersionInfo[]> {
