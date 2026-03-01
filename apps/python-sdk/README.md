@@ -44,29 +44,11 @@ Auto-capture and share your agents' context everywhere. Realtime. Open source.
 
 ![ultracontext-gif](https://github.com/user-attachments/assets/be73afe5-161d-4fa3-8f4d-c4987fe63cb4)
 
-## Why Context Matters
+Everyone is shipping with agents. Few are shipping with agents together. 
 
-Context is the RAM of LLMs — everything they can see.
+Multiple people, multiple agents, multiple machines. Our contexts are spread everywhere. There's no standard for context engineering. No infrastructure to build on. No fundamental building blocks to agree on. So we decided to make it.
 
-As context grows, model attention spreads thin — this is why they hallucinate. We should aim to provide the smallest set of high-signal tokens that get the job done.
-
-Right now, we're reinventing the wheel for every car we build. Instead of solving bigger problems with AI, we currently spend most of our time gluing context together.
-
-**It's time to simplify.**
-
-## Why UltraContext
-
-**Context is all you need.**
-
-The right primitive is context. It's the only thing models actually consume. It's all they see. It's all that matters. Build on that and every decision compounds correctly.
-
-It turns out that there is no standard for context engineering. So we decided to make it. Our goal: **make shipping agents insanely simple by providing the best context infrastructure in the world.**
-
-Time to ship.
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=ultracontext/ultracontext-node&type=date&legend=top-left)](https://www.star-history.com/#ultracontext/ultracontext-node&type=date&legend=top-left)
+UltraContext is context infrastructure. The API gives you git-like primitives for context engineering. The Hub lets you auto-capture, share, and collaborate across agents in realtime.
 
 ## Install
 
@@ -79,6 +61,10 @@ npm install -g ultracontext
 ## The Hub
 
 **All agents. One context.**
+
+The Hub lets you auto-capture, share, and collaborate across agents in realtime.
+
+### Features
 
 - **Auto-capture** — Ingests your agents' context in realtime. Zero config.
 - **Switch between agents** — Pick up where one agent left off with another.
@@ -113,12 +99,16 @@ Add your own agents and extend behavior with the Context API. ([Docs here](https
 
 **Context engineering built like Git.**
 
+The API gives you git-like primitives for context engineering, without the complexity.
+
+### Features
+
 - **Five methods** — Create, get, append, update, delete. That's it.
 - **Automatic versioning** — Every change creates a new version. Full history out of the box.
 - **Time-travel** — Jump to any point in your context history.
 - **Framework-agnostic** — Works with any LLM framework. No vendor lock-in.
 
-The simplest way to control what your agents see. Replace messages, compact long context, replay decisions and roll back mistakes — all with a single API call. Versioned context out of the box. Full history. Zero complexity.
+The simplest way to control what your agents see. Replace messages, compact long context, replay decisions and roll back mistakes — all with a single API call.
 
 Use the API standalone to build your own agents, or to extend existing ones in UltraContext.
 
@@ -176,13 +166,13 @@ response = generate_text(model=model, messages=uc.get(ctx["id"])["data"])
   <a href="https://ultracontext.ai/docs/guides/view-context-history">View History</a>
 </p>
 
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=ultracontext/ultracontext-node&type=date&legend=top-left)](https://www.star-history.com/#ultracontext/ultracontext-node&type=date&legend=top-left)
+
 
 ## Documentation
 
 - [Quickstart](https://ultracontext.ai/docs/quickstart/nodejs) — Get running in 2 minutes
 - [Guides](https://ultracontext.ai/docs/guides/store-retrieve-contexts) — Practical patterns for common use cases
 - [API Reference](https://ultracontext.ai/docs/api-reference/introduction) — Full endpoint documentation
-
-## Star History
-
-[Star History Chart](https://www.star-history.com/#ultracontext/ultracontext&type=date&legend=top-left)
