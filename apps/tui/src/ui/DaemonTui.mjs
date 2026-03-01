@@ -142,6 +142,7 @@ export function DaemonTui({ snapshot, actions }) {
   const footerLeft = footerHelpText({
     bootstrapActive,
     resumeTargetPickerActive,
+    detailViewActive: Boolean(snapshot.detailView?.active),
     selectedTab: snapshot.selectedTab,
     focusMode,
   });

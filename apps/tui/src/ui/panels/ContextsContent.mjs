@@ -3,8 +3,14 @@ import { Box, Text } from "ink";
 
 import { UC_BLUE_LIGHT } from "../constants.mjs";
 import { compact, contextBadge, formatContextDate, padElements } from "../format.mjs";
+import { ContextDetailContent } from "./ContextDetailContent.mjs";
 
-export function ContextsContent({ snapshot, viewFocused, maxRows }) {
+export function ContextsContent({ snapshot, viewFocused, maxRows, maxCols }) {
+  // detail view takes over the panel
+  if (snapshot.detailView?.active) {
+    return React.createElement(ContextDetailContent, { snapshot, maxRows, maxCols });
+  }
+
   const contexts = snapshot.resume.contexts;
   const total = contexts.length;
   const selected = Math.max(Math.min(snapshot.resume.selectedIndex, Math.max(total - 1, 0)), 0);

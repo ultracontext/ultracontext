@@ -54,6 +54,7 @@ const RESUME_TARGET_OPTIONS = [
   { id: "claude", label: "Claude Code" },
   { id: "codex", label: "Codex" },
 ];
+const INSPECT_OPTION = { id: "inspect", label: "Inspect messages" };
 const PERSISTED_CONFIG_FIELDS = [
   "soundEnabled",
   "startupSoundEnabled",
@@ -186,6 +187,15 @@ const ui = {
     summaryPath: "",
     command: "",
     commandPath: "",
+  },
+  detailView: {
+    active: false,
+    contextId: null,
+    contextMeta: null,
+    messages: [],
+    scrollOffset: 0,
+    loading: false,
+    error: null,
   },
   resumeTargetPicker: {
     active: false,
@@ -900,6 +910,7 @@ function resumeTargetOptionsForSource(source) {
     if (b.id === recommended && a.id !== recommended) return 1;
     return 0;
   });
+  ordered.push(INSPECT_OPTION);
   return ordered;
 }
 
@@ -1581,6 +1592,77 @@ async function toggleSelectedConfig() {
   }
 }
 
+// ── detail view actions ─────────────────────────────────────────
+
+async function openContextDetail() {
+  if (ui.detailView.loading) return;
+  const context = ui.resume.contexts[ui.resume.selectedIndex];
+  if (!context) return;
+
+  ui.detailView.active = true;
+  ui.detailView.contextId = context.id;
+  ui.detailView.contextMeta = context.metadata ?? {};
+  ui.detailView.messages = [];
+  ui.detailView.scrollOffset = 0;
+  ui.detailView.loading = true;
+  ui.detailView.error = null;
+  renderDashboard();
+
+  try {
+    const detail = await runtime.uc.get(context.id);
+    const messages = Array.isArray(detail.data) ? detail.data : [];
+    ui.detailView.messages = messages;
+  } catch (error) {
+    ui.detailView.error = error?.message ?? "Failed to load context";
+  } finally {
+    ui.detailView.loading = false;
+    renderDashboard();
+  }
+}
+
+function closeContextDetail() {
+  ui.detailView.active = false;
+  ui.detailView.contextId = null;
+  ui.detailView.contextMeta = null;
+  ui.detailView.messages = [];
+  ui.detailView.scrollOffset = 0;
+  ui.detailView.loading = false;
+  ui.detailView.error = null;
+  renderDashboard();
+}
+
+function scrollContextDetail(delta) {
+  const total = ui.detailView.messages.length;
+  if (total === 0) return;
+  const next = ui.detailView.scrollOffset + delta;
+  if (next < 0) {
+    ui.detailView.scrollOffset = total - 1;
+  } else if (next >= total) {
+    ui.detailView.scrollOffset = 0;
+  } else {
+    ui.detailView.scrollOffset = next;
+  }
+  renderDashboard();
+}
+
+// ── enter context (picker or detail based on source) ────────────
+
+function enterContext() {
+  const context = ui.resume.contexts[ui.resume.selectedIndex];
+  if (!context) {
+    ui.resume.notice = "No context selected";
+    renderDashboard();
+    return;
+  }
+
+  const source = resumeContextSource(context);
+  if (isCodingContextSource(source)) {
+    openResumeTargetPicker();
+  } else {
+    void openContextDetail();
+  }
+}
+
 function setSelectedTabByIndex(nextIndex) {
   const normalized = (nextIndex + MENU_TABS.length) % MENU_TABS.length;
   ui.selectedTab = MENU_TABS[normalized].id;
@@ -1644,6 +1726,15 @@ function buildUiSnapshot() {
     resume: {
       ...ui.resume,
       contexts: ui.resume.contexts,
+    },
+    detailView: {
+      active: ui.detailView.active,
+      contextId: ui.detailView.contextId,
+      contextMeta: ui.detailView.contextMeta,
+      messages: ui.detailView.messages,
+      scrollOffset: ui.detailView.scrollOffset,
+      loading: ui.detailView.loading,
+      error: ui.detailView.error,
     },
     resumeTargetPicker: {
       active: ui.resumeTargetPicker.active,
@@ -1745,10 +1836,27 @@ async function tuiMain() {
       },
       chooseResumeTarget: (index) => {
         const target = resumeTargetPickerSelectionByIndex(index);
+        if (target === "inspect") {
+          closeResumeTargetPicker();
+          void openContextDetail();
+          return;
+        }
         void resumeSelectedContext({ targetAgentOverride: target });
       },
       cancelResumeTarget: () => {
         closeResumeTargetPicker();
+      },
+      enterContext: () => {
+        enterContext();
+      },
+      openDetail: () => {
+        void openContextDetail();
+      },
+      closeDetail: () => {
+        closeContextDetail();
+      },
+      scrollDetail: (delta) => {
+        scrollContextDetail(delta);
       },
     },
   });

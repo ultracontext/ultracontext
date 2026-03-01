@@ -46,7 +46,7 @@ export function ResumeTargetPanel({ snapshot, width }) {
       );
     }),
     React.createElement(Box, { height: 1 }),
-    React.createElement(Text, { color: "gray" }, "Choose: ↑/↓, 1/2 or Enter"),
+    React.createElement(Text, { color: "gray" }, `Choose: ↑/↓, ${options.map((_, i) => i + 1).join("/")} or Enter`),
     React.createElement(Text, { color: "gray" }, "Cancel: Esc or ←")
   );
 }

@@ -1,5 +1,6 @@
 export { BootstrapPanel } from "./BootstrapPanel.mjs";
 export { ConfigsContent } from "./ConfigsContent.mjs";
+export { ContextDetailContent } from "./ContextDetailContent.mjs";
 export { ContextsContent } from "./ContextsContent.mjs";
 export { HeaderPanel } from "./HeaderPanel.mjs";
 export { LogsContent } from "./LogsContent.mjs";

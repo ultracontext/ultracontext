@@ -11,7 +11,7 @@ export function selectedTabTitle(tabId) {
   return MENU_TABS.find((tab) => tab.id === tabId)?.label ?? "View";
 }
 
-export function footerHelpText({ bootstrapActive, resumeTargetPickerActive, selectedTab, focusMode }) {
+export function footerHelpText({ bootstrapActive, resumeTargetPickerActive, detailViewActive, selectedTab, focusMode }) {
   if (bootstrapActive) {
     return "Bootstrap: choose initial mode (↑/↓, 1/2/3, Enter) or q to quit.";
   }
@@ -21,8 +21,11 @@ export function footerHelpText({ bootstrapActive, resumeTargetPickerActive, sele
   if (focusMode !== "view") {
     return "Controls: ↑/↓ navigate, Enter focus/open, ← back, q/Ctrl+C quit.";
   }
+  if (selectedTab === "contexts" && detailViewActive) {
+    return "Detail: ↑/↓ scroll messages, Esc/← back to list.";
+  }
   if (selectedTab === "contexts") {
-    return "Contexts: auto-refresh on, r refresh now, ↑/↓ select context, Enter/Space adapt, ← back, q/Ctrl+C quit.";
+    return "Contexts: ↑/↓ select, Enter open, r refresh, ← back, q/Ctrl+C quit.";
   }
   if (selectedTab === "configs") {
     return "Controls: ↑/↓ select config, Enter/→ apply, ← back, q/Ctrl+C quit.";

@@ -7,7 +7,7 @@ export function handleResumeTargetInput({ input, key, actions, snapshot }) {
     actions.moveResumeTarget?.(1);
     return;
   }
-  if (input === "1" || input === "2") {
+  if (input === "1" || input === "2" || input === "3") {
     actions.chooseResumeTarget?.(Number(input) - 1);
     return;
   }
