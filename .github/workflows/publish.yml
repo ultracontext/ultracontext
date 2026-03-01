@@ -1,0 +1,65 @@
+name: Publish
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  # publish JS SDK + CLI to npm
+  publish-js:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - run: pnpm install --frozen-lockfile
+
+      # set version from release tag (v1.2.0 → 1.2.0)
+      - name: Set version
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          cd apps/js-sdk
+          npm version $VERSION --no-git-tag-version
+
+      - name: Build
+        run: pnpm --filter ultracontext run build
+
+      - name: Publish
+        run: cd apps/js-sdk && npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # publish Python SDK to PyPI
+  publish-python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: pip install hatchling build twine
+
+      # set version from release tag
+      - name: Set version
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          cd apps/python-sdk
+          sed -i "s/^version = .*/version = \"$VERSION\"/" pyproject.toml
+
+      - name: Build
+        run: cd apps/python-sdk && python -m build
+
+      - name: Publish
+        run: cd apps/python-sdk && twine upload dist/*
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
