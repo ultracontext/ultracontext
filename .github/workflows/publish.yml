@@ -25,7 +25,7 @@ jobs:
         run: |
           VERSION=${GITHUB_REF_NAME#v}
           cd apps/js-sdk
-          npm version $VERSION --no-git-tag-version
+          npm version $VERSION --no-git-tag-version --allow-same-version
 
       - name: Build
         run: pnpm --filter ultracontext run build
