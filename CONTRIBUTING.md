@@ -60,7 +60,7 @@ refactor(tui): simplify layout logic
 
 1. Open an issue first for large changes — let's discuss the approach before writing code.
 2. Keep PRs focused — one feature or fix per PR.
-3. Target the `dev` branch, not `main`.
+3. Target `main`.
 
 ## Need help?
 
