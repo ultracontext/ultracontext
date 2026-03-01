@@ -36,7 +36,9 @@
   </a>
 </div>
 
-## All agents. One context.
+---
+
+<h2 align="center">All agents. One context.</h2>
 
 Auto-capture and share your agents' context everywhere. Realtime. Open source.
 
@@ -56,18 +58,15 @@ Right now, we're reinventing the wheel for every car we build. Instead of solvin
 
 **Context is all you need.**
 
-The right primitive is context.
-It's the only thing models actually consume.
-It's all they see.
-It's all that matters.
+The right primitive is context. It's the only thing models actually consume. It's all they see. It's all that matters. Build on that and every decision compounds correctly.
 
-Build on that and every decision compounds correctly.
-
-It turns out that there is no standard for context engineering. So we decided to make it.
-
-Our goal: **make shipping agents insanely simple by providing the best context infrastructure in the world.**
+It turns out that there is no standard for context engineering. So we decided to make it. Our goal: **make shipping agents insanely simple by providing the best context infrastructure in the world.**
 
 Time to ship.
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=ultracontext/ultracontext-node&type=date&legend=top-left)](https://www.star-history.com/#ultracontext/ultracontext-node&type=date&legend=top-left)
 
 ## Install
 
@@ -166,7 +165,7 @@ uc.append(ctx["id"], {"role": "user", "content": "Hello!"})
 response = generate_text(model=model, messages=uc.get(ctx["id"])["data"])
 ```
 
-<p align="center">📚 Guides</p>
+<p align="center">📚 Context API Guides</p>
 <p align="center">
   <a href="https://ultracontext.ai/docs/guides/store-retrieve-contexts">Store & Retrieve</a>
   ·
