@@ -109,16 +109,4 @@ The daemon and TUI load environment variables from `.env` files in this order:
 ultracontext update
 ```
 
-By default this updates to the npm `latest` dist-tag. You can also pass a specific tag/version:
-
-```bash bash
-ultracontext update --tag beta
-ultracontext update --tag 1.2.3
-```
-
-Advanced options:
-
-```bash bash
-ultracontext update --manager npm
-ultracontext update --no-restart
-```
+Updates to the latest version. The package manager is auto-detected from your install.
