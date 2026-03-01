@@ -48,7 +48,7 @@ Everyone is shipping with agents. Few are shipping with agents together.
 
 Multiple people, multiple agents, multiple machines. Our contexts are spread everywhere. There's no standard for context engineering. No infrastructure to build on. No fundamental building blocks to agree on. So we decided to make it.
 
-UltraContext is context infrastructure. The API gives you git-like primitives for context engineering. The Hub lets you auto-capture, share, and collaborate across agents in realtime.
+UltraContext is the context infrastructure. The API gives you git-like primitives for context engineering. The Hub lets you auto-capture, share, and collaborate across agents in realtime.
 
 ## Install
 
