@@ -80,6 +80,7 @@ ultracontext start        # start daemon only
 ultracontext stop         # stop daemon
 ultracontext status       # check if daemon is running
 ultracontext tui          # open dashboard only
+ultracontext update       # update CLI globally (npm/pnpm/bun)
 ```
 
 The default ultracontext command does everything: checks the daemon, starts it if needed, and opens the TUI dashboard.
