@@ -1,11 +1,11 @@
 import type { Context, MiddlewareHandler } from 'hono';
 
-import type { ApiDb } from '../db';
+import type { StorageAdapter } from '../storage/types';
 import type { ApiConfig, Auth } from './api';
 
 export type AppVariables = {
     auth: Auth;
-    db: ApiDb;
+    storage: StorageAdapter;
     config: ApiConfig;
 };
 

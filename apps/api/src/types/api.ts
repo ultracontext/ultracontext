@@ -26,9 +26,19 @@ export type ListResponse<T> = {
 // APP CONFIGURATION TYPES
 // =============================================================================
 
-export type ApiConfig = {
-    DATABASE_URL: string;
-    ULTRACONTEXT_ADMIN_KEY: string;
-};
+export type DatabaseProvider = 'postgres' | 'supabase';
+
+export type ApiConfig =
+    | {
+          DATABASE_PROVIDER: 'postgres';
+          DATABASE_URL: string;
+          ULTRACONTEXT_ADMIN_KEY: string;
+      }
+    | {
+          DATABASE_PROVIDER: 'supabase';
+          SUPABASE_URL: string;
+          SUPABASE_SERVICE_ROLE_KEY: string;
+          ULTRACONTEXT_ADMIN_KEY: string;
+      };
 
 export type Auth = { apiKeyId: number; projectId: number };

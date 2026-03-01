@@ -1,12 +1,14 @@
 # UltraContext API
 
-HTTP API backed by PostgreSQL.
+HTTP API backed by PostgreSQL or Supabase.
 
 ## Requirements
 
 - Node.js 20+
 - pnpm
-- PostgreSQL database (local `apps/postgres` or managed)
+- Database backend:
+  - PostgreSQL (local `apps/postgres` or managed), or
+  - Supabase project (service role key)
 
 ## Setup
 
@@ -17,9 +19,14 @@ cp .env.example .env.local
 
 Fill `.env.local`:
 
-- `DATABASE_URL`
+- `DATABASE_PROVIDER` (`postgres` or `supabase`)
 - `ULTRACONTEXT_ADMIN_KEY`
 - `UC_TEST_API_KEY` (optional for manual tests)
+
+Provider-specific vars:
+
+- if `DATABASE_PROVIDER=postgres`: set `DATABASE_URL`
+- if `DATABASE_PROVIDER=supabase`: set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`
 
 ## Database schema
 

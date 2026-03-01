@@ -1,45 +1,47 @@
-import { and, desc, eq, isNull } from 'drizzle-orm';
-
-import { nodes, type ApiDb } from '../db';
+import type { StorageAdapter } from '../storage/types';
 import { buildNodeInsertRecords, findHead, findTail, getOrderedNodes, getVersions } from '../domain/context-chain';
 import { generatePublicId } from '../domain/public-ids';
 import type { HttpApp } from '../types/http';
 import { firstRow } from '../utils/first-row';
 import { isPlainObject, parseUpdateRequestBody } from '../utils/request-parsing';
 
-async function rollbackHead(db: ApiDb, projectId: number, headId: string) {
+// -- rollback helpers ---------------------------------------------------------
+
+async function rollbackHead(storage: StorageAdapter, projectId: number, headId: string) {
     try {
-        await db.delete(nodes).where(and(eq(nodes.project_id, projectId), eq(nodes.context_id, headId)));
+        await storage.deleteNodesByContextId(projectId, headId);
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`Rollback failed for children of head ${headId}: ${message}`);
     }
 
     try {
-        await db.delete(nodes).where(and(eq(nodes.project_id, projectId), eq(nodes.public_id, headId)));
+        await storage.deleteNodeByPublicId(projectId, headId);
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`Rollback failed for head ${headId}: ${message}`);
     }
 }
 
-async function rollbackRootContext(db: ApiDb, projectId: number, rootId: string, headId: string) {
-    await rollbackHead(db, projectId, headId);
+async function rollbackRootContext(storage: StorageAdapter, projectId: number, rootId: string, headId: string) {
+    await rollbackHead(storage, projectId, headId);
 
     try {
-        await db.delete(nodes).where(and(eq(nodes.project_id, projectId), eq(nodes.context_id, rootId)));
+        await storage.deleteNodesByContextId(projectId, rootId);
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`Rollback failed for branches of root ${rootId}: ${message}`);
     }
 
     try {
-        await db.delete(nodes).where(and(eq(nodes.project_id, projectId), eq(nodes.public_id, rootId)));
+        await storage.deleteNodeByPublicId(projectId, rootId);
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`Rollback failed for root ${rootId}: ${message}`);
     }
 }
+
+// -- routes -------------------------------------------------------------------
 
 export function registerContextRoutes(app: HttpApp) {
     app.post('/contexts', async (c) => {
@@ -47,7 +49,7 @@ export function registerContextRoutes(app: HttpApp) {
         const body = await c.req.json().catch(() => ({}));
         const { from, version, at, before, metadata } = body;
 
-        const db = c.get('db');
+        const storage = c.get('storage');
 
         let beforeTs: number | undefined;
         if (before !== undefined) {
@@ -61,17 +63,11 @@ export function registerContextRoutes(app: HttpApp) {
 
         let sourceNodes: any[] = [];
         if (from) {
-            const sourceCtx = firstRow(
-                await db
-                    .select({ public_id: nodes.public_id })
-                    .from(nodes)
-                    .where(and(eq(nodes.public_id, from), eq(nodes.type, 'context'), isNull(nodes.context_id)))
-                    .limit(1)
-            );
+            const sourceCtx = await storage.findRootContextByPublicId(from);
             if (!sourceCtx) return c.json({ error: 'Source context not found' }, 404);
 
             let sourceHead;
-            const versions = await getVersions(db, from);
+            const versions = await getVersions(storage, from);
 
             if (version !== undefined) {
                 const versionNum = parseInt(String(version));
@@ -84,11 +80,11 @@ export function registerContextRoutes(app: HttpApp) {
                 if (!targetVersion) return c.json({ error: 'No version found before timestamp' }, 404);
                 sourceHead = { public_id: targetVersion.head_id };
             } else {
-                sourceHead = await findHead(db, from);
+                sourceHead = await findHead(storage, from);
             }
 
             if (sourceHead) {
-                sourceNodes = await getOrderedNodes(db, sourceHead.public_id);
+                sourceNodes = await getOrderedNodes(storage, sourceHead.public_id);
 
                 if (beforeTs !== undefined) {
                     sourceNodes = sourceNodes.filter((n: any) => new Date(n.created_at).getTime() <= beforeTs);
@@ -104,30 +100,24 @@ export function registerContextRoutes(app: HttpApp) {
             }
         }
 
+        // create root node
         const rootId = generatePublicId('context');
-        const root = firstRow(
-            await db
-                .insert(nodes)
-                .values({
-                    public_id: rootId,
-                    project_id: projectId,
-                    type: 'context',
-                    context_id: null,
-                    parent_id: from ?? null,
-                    content: {},
-                    metadata: (metadata ?? {}) as Record<string, unknown>,
-                })
-                .returning({
-                    public_id: nodes.public_id,
-                    metadata: nodes.metadata,
-                    created_at: nodes.created_at,
-                })
-        );
+        const rootRows = await storage.insertNodes({
+            public_id: rootId,
+            project_id: projectId,
+            type: 'context',
+            context_id: null,
+            parent_id: from ?? null,
+            content: {},
+            metadata: (metadata ?? {}) as Record<string, unknown>,
+        });
+        const root = firstRow(rootRows);
         if (!root) return c.json({ error: 'Failed to create context' }, 500);
 
+        // create initial head
         const headId = generatePublicId('context');
         try {
-            await db.insert(nodes).values({
+            await storage.insertNodes({
                 public_id: headId,
                 project_id: projectId,
                 type: 'context',
@@ -138,7 +128,7 @@ export function registerContextRoutes(app: HttpApp) {
             });
         } catch {
             try {
-                await db.delete(nodes).where(and(eq(nodes.project_id, projectId), eq(nodes.public_id, rootId)));
+                await storage.deleteNodeByPublicId(projectId, rootId);
             } catch (rollbackError) {
                 const message = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
                 console.error(`Rollback failed for root ${rootId}: ${message}`);
@@ -146,6 +136,7 @@ export function registerContextRoutes(app: HttpApp) {
             return c.json({ error: 'Failed to create context' }, 500);
         }
 
+        // copy source nodes if forking
         if (sourceNodes.length > 0) {
             const nodeInputs = sourceNodes.map((n: any) => ({
                 type: 'message',
@@ -155,9 +146,9 @@ export function registerContextRoutes(app: HttpApp) {
             }));
             const insertRecords = buildNodeInsertRecords(nodeInputs, projectId, headId, null);
             try {
-                await db.insert(nodes).values(insertRecords);
+                await storage.insertNodes(insertRecords);
             } catch {
-                await rollbackRootContext(db, projectId, rootId, headId);
+                await rollbackRootContext(storage, projectId, rootId, headId);
                 return c.json({ error: 'Failed to copy source context' }, 500);
             }
         }
@@ -168,18 +159,9 @@ export function registerContextRoutes(app: HttpApp) {
     app.get('/contexts', async (c) => {
         const { projectId } = c.get('auth');
         const limit = parseInt(c.req.query('limit') ?? '20');
-        const db = c.get('db');
+        const storage = c.get('storage');
 
-        const data = await db
-            .select({
-                public_id: nodes.public_id,
-                metadata: nodes.metadata,
-                created_at: nodes.created_at,
-            })
-            .from(nodes)
-            .where(and(eq(nodes.project_id, projectId), eq(nodes.type, 'context'), isNull(nodes.context_id)))
-            .orderBy(desc(nodes.created_at))
-            .limit(limit);
+        const data = await storage.listRootContexts(projectId, limit);
 
         return c.json({
             data: data.map((n: any) => ({
@@ -194,24 +176,18 @@ export function registerContextRoutes(app: HttpApp) {
         const { projectId } = c.get('auth');
         const contextPublicId = c.req.param('id');
         const body = await c.req.json();
-        const db = c.get('db');
+        const storage = c.get('storage');
 
-        const root = firstRow(
-            await db
-                .select({ public_id: nodes.public_id })
-                .from(nodes)
-                .where(and(eq(nodes.project_id, projectId), eq(nodes.public_id, contextPublicId), eq(nodes.type, 'context'), isNull(nodes.context_id)))
-                .limit(1)
-        );
+        const root = await storage.findRootContext(projectId, contextPublicId);
         if (!root) return c.json({ error: 'Context not found' }, 404);
 
-        const head = await findHead(db, root.public_id);
+        const head = await findHead(storage, root.public_id);
         if (!head) return c.json({ error: 'HEAD not found' }, 500);
 
         const messages = Array.isArray(body) ? body : [body];
-        const existingNodes = await getOrderedNodes(db, head.public_id);
+        const existingNodes = await getOrderedNodes(storage, head.public_id);
         const existingCount = existingNodes.length;
-        const tailPublicId = await findTail(db, head.public_id);
+        const tailPublicId = await findTail(storage, head.public_id);
 
         const nodeInputs = messages.map((msg) => {
             const { metadata, ...content } = msg;
@@ -219,24 +195,17 @@ export function registerContextRoutes(app: HttpApp) {
         });
         const insertRecords = buildNodeInsertRecords(nodeInputs, projectId, head.public_id, tailPublicId);
 
-        let createdNodes: Array<{ public_id: string; content: unknown; metadata: unknown }>;
+        let createdNodes: Array<{ public_id?: string; content?: unknown; metadata?: unknown }>;
         try {
-            createdNodes = await db
-                .insert(nodes)
-                .values(insertRecords)
-                .returning({
-                    public_id: nodes.public_id,
-                    content: nodes.content,
-                    metadata: nodes.metadata,
-                });
+            createdNodes = await storage.insertNodes(insertRecords);
         } catch {
             return c.json({ error: 'Failed to append messages' }, 500);
         }
 
-        const versions = await getVersions(db, root.public_id);
+        const versions = await getVersions(storage, root.public_id);
         const currentVersion = versions.length - 1;
 
-        const result = createdNodes.map((node: { public_id: string; content: unknown; metadata: unknown }, i: number) => ({
+        const result = createdNodes.map((node, i: number) => ({
             ...(node.content as object),
             id: node.public_id,
             index: existingCount + i,
@@ -258,18 +227,12 @@ export function registerContextRoutes(app: HttpApp) {
             if (isNaN(beforeTs)) return c.json({ error: 'Invalid timestamp format' }, 400);
         }
 
-        const db = c.get('db');
+        const storage = c.get('storage');
 
-        const root = firstRow(
-            await db
-                .select({ public_id: nodes.public_id })
-                .from(nodes)
-                .where(and(eq(nodes.project_id, projectId), eq(nodes.public_id, contextPublicId), eq(nodes.type, 'context'), isNull(nodes.context_id)))
-                .limit(1)
-        );
+        const root = await storage.findRootContext(projectId, contextPublicId);
         if (!root) return c.json({ error: 'Context not found' }, 404);
 
-        const versions = await getVersions(db, root.public_id);
+        const versions = await getVersions(storage, root.public_id);
         const versionParam = c.req.query('version');
         let head;
         let currentVersion: number;
@@ -287,13 +250,13 @@ export function registerContextRoutes(app: HttpApp) {
             head = { public_id: targetVersion.head_id };
             currentVersion = targetVersion.version;
         } else {
-            head = await findHead(db, root.public_id);
+            head = await findHead(storage, root.public_id);
             currentVersion = versions.length - 1;
         }
 
         if (!head) return c.json({ data: [], version: 0 });
 
-        let orderedNodes = await getOrderedNodes(db, head.public_id);
+        let orderedNodes = await getOrderedNodes(storage, head.public_id);
         if (beforeTs !== undefined) {
             orderedNodes = orderedNodes.filter((n: any) => new Date(n.created_at).getTime() <= beforeTs);
         }
@@ -340,7 +303,7 @@ export function registerContextRoutes(app: HttpApp) {
 
         if (body === null) return c.json({ error: 'Invalid JSON body' }, 400);
 
-        const db = c.get('db');
+        const storage = c.get('storage');
         const parsed = parseUpdateRequestBody(body);
         if ('error' in parsed) return c.json({ error: parsed.error }, 400);
 
@@ -358,19 +321,13 @@ export function registerContextRoutes(app: HttpApp) {
             }
         }
 
-        const root = firstRow(
-            await db
-                .select({ public_id: nodes.public_id })
-                .from(nodes)
-                .where(and(eq(nodes.project_id, projectId), eq(nodes.public_id, contextPublicId), eq(nodes.type, 'context'), isNull(nodes.context_id)))
-                .limit(1)
-        );
+        const root = await storage.findRootContext(projectId, contextPublicId);
         if (!root) return c.json({ error: 'Context not found' }, 404);
 
-        const currentHead = await findHead(db, root.public_id);
+        const currentHead = await findHead(storage, root.public_id);
         if (!currentHead) return c.json({ error: 'HEAD not found' }, 500);
 
-        const orderedNodes = await getOrderedNodes(db, currentHead.public_id);
+        const orderedNodes = await getOrderedNodes(storage, currentHead.public_id);
         const nodeIds = new Set(orderedNodes.map((n: any) => n.public_id));
 
         const resolvedUpdates: Array<{ id: string; [key: string]: unknown }> = [];
@@ -391,9 +348,10 @@ export function registerContextRoutes(app: HttpApp) {
         const updateMap = new Map(resolvedUpdates.map((u) => [u.id, u]));
         const affectedIds = resolvedUpdates.map((u) => u.id);
 
+        // create new version head
         const newHeadId = generatePublicId('context');
         try {
-            await db.insert(nodes).values({
+            await storage.insertNodes({
                 public_id: newHeadId,
                 project_id: projectId,
                 type: 'context',
@@ -407,6 +365,7 @@ export function registerContextRoutes(app: HttpApp) {
             return c.json({ error: message }, 500);
         }
 
+        // build updated node copies
         const newNodes = orderedNodes.map((n: any) => {
             const update = updateMap.get(n.public_id);
             const { id: _id, ...changes } = update ?? { id: null };
@@ -427,13 +386,13 @@ export function registerContextRoutes(app: HttpApp) {
         }
 
         try {
-            await db.insert(nodes).values(newNodes);
+            await storage.insertNodes(newNodes);
         } catch {
-            await rollbackHead(db, projectId, newHeadId);
+            await rollbackHead(storage, projectId, newHeadId);
             return c.json({ error: 'Failed to update messages' }, 500);
         }
 
-        const versions = await getVersions(db, root.public_id);
+        const versions = await getVersions(storage, root.public_id);
         const currentVersion = versions.length - 1;
         const result = newNodes.map((n, index: number) => ({
             ...(n.content as object),
@@ -452,7 +411,7 @@ export function registerContextRoutes(app: HttpApp) {
 
         if (!isPlainObject(body)) return c.json({ error: 'Request body must be a JSON object' }, 400);
 
-        const db = c.get('db');
+        const storage = c.get('storage');
         const { ids, metadata: userMetadata } = body;
         if (ids === undefined || ids === null) return c.json({ error: 'ids is required' }, 400);
         if (userMetadata !== undefined && !isPlainObject(userMetadata)) {
@@ -467,19 +426,13 @@ export function registerContextRoutes(app: HttpApp) {
             }
         }
 
-        const root = firstRow(
-            await db
-                .select({ public_id: nodes.public_id })
-                .from(nodes)
-                .where(and(eq(nodes.project_id, projectId), eq(nodes.public_id, contextPublicId), eq(nodes.type, 'context'), isNull(nodes.context_id)))
-                .limit(1)
-        );
+        const root = await storage.findRootContext(projectId, contextPublicId);
         if (!root) return c.json({ error: 'Context not found' }, 404);
 
-        const currentHead = await findHead(db, root.public_id);
+        const currentHead = await findHead(storage, root.public_id);
         if (!currentHead) return c.json({ error: 'HEAD not found' }, 500);
 
-        const orderedNodes = await getOrderedNodes(db, currentHead.public_id);
+        const orderedNodes = await getOrderedNodes(storage, currentHead.public_id);
         const nodeIds = new Set(orderedNodes.map((n: any) => n.public_id));
 
         const idsToDelete: string[] = [];
@@ -496,9 +449,10 @@ export function registerContextRoutes(app: HttpApp) {
         }
         const deleteSet = new Set(idsToDelete);
 
+        // create new version head
         const newHeadId = generatePublicId('context');
         try {
-            await db.insert(nodes).values({
+            await storage.insertNodes({
                 public_id: newHeadId,
                 project_id: projectId,
                 type: 'context',
@@ -512,6 +466,7 @@ export function registerContextRoutes(app: HttpApp) {
             return c.json({ error: message }, 500);
         }
 
+        // build filtered node copies
         const filtered = orderedNodes.filter((n: any) => !deleteSet.has(n.public_id));
         const newNodes = filtered.map((n: any) => ({
             public_id: generatePublicId('msg'),
@@ -530,14 +485,14 @@ export function registerContextRoutes(app: HttpApp) {
 
         if (newNodes.length > 0) {
             try {
-                await db.insert(nodes).values(newNodes);
+                await storage.insertNodes(newNodes);
             } catch {
-                await rollbackHead(db, projectId, newHeadId);
+                await rollbackHead(storage, projectId, newHeadId);
                 return c.json({ error: 'Failed to delete messages' }, 500);
             }
         }
 
-        const versions = await getVersions(db, root.public_id);
+        const versions = await getVersions(storage, root.public_id);
         const currentVersion = versions.length - 1;
         const result = newNodes.map((n, index: number) => ({
             ...(n.content as object),

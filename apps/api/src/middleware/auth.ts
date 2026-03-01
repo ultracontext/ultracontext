@@ -1,7 +1,4 @@
-import { eq } from 'drizzle-orm';
-
 import { KEY_PREFIX_LEN } from '../constants';
-import { api_keys } from '../db';
 import { hashKey } from '../domain/api-keys';
 import type { HttpApp, HttpContext, HttpMiddleware } from '../types/http';
 
@@ -34,19 +31,9 @@ function bearerAuthMiddleware(verify: (token: string, c: HttpContext) => Promise
 async function verifyToken(token: string, c: HttpContext) {
     const prefix = token.slice(0, KEY_PREFIX_LEN);
     const hash = await hashKey(token);
-    const db = c.get('db');
+    const storage = c.get('storage');
 
-    const tokenRows = await db
-        .select({
-            id: api_keys.id,
-            project_id: api_keys.project_id,
-            key_hash: api_keys.key_hash,
-        })
-        .from(api_keys)
-        .where(eq(api_keys.key_prefix, prefix))
-        .limit(1);
-
-    const tokenRow = tokenRows[0] as { id: number; project_id: number; key_hash: string } | undefined;
+    const tokenRow = await storage.findApiKeyByPrefix(prefix);
     if (!tokenRow || hash !== tokenRow.key_hash) return false;
 
     c.set('auth', { apiKeyId: tokenRow.id, projectId: tokenRow.project_id });

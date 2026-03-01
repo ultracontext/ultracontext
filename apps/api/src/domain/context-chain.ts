@@ -1,6 +1,4 @@
-import { and, asc, eq, ne } from 'drizzle-orm';
-
-import { nodes, type ApiDb } from '../db';
+import type { StorageAdapter } from '../storage/types';
 import { generatePublicId } from './public-ids';
 
 export type NodeInsertInput = {
@@ -20,6 +18,8 @@ export type VersionInfo = {
 };
 
 type BranchNode = { public_id: string; prev_id: string | null; created_at: string };
+
+// -- pure functions (no DB) ---------------------------------------------------
 
 export function orderNodes<T extends { public_id: string; prev_id: string | null; created_at: string }>(items: T[]): T[] {
     if (items.length === 0) return [];
@@ -60,11 +60,10 @@ export function buildNodeInsertRecords(nodesToInsert: NodeInsertInput[], project
     }));
 }
 
-export async function findTail(db: ApiDb, contextPublicId: string): Promise<string | null> {
-    const contextNodes = await db
-        .select({ public_id: nodes.public_id, prev_id: nodes.prev_id })
-        .from(nodes)
-        .where(eq(nodes.context_id, contextPublicId));
+// -- storage-backed functions -------------------------------------------------
+
+export async function findTail(storage: StorageAdapter, contextPublicId: string): Promise<string | null> {
+    const contextNodes = await storage.findNodesByContextId(contextPublicId);
 
     if (contextNodes.length === 0) return null;
 
@@ -74,11 +73,8 @@ export async function findTail(db: ApiDb, contextPublicId: string): Promise<stri
     return tail?.public_id ?? null;
 }
 
-export async function findHead(db: ApiDb, rootId: string): Promise<BranchNode | null> {
-    const branches = await db
-        .select({ public_id: nodes.public_id, prev_id: nodes.prev_id, created_at: nodes.created_at })
-        .from(nodes)
-        .where(and(eq(nodes.context_id, rootId), eq(nodes.type, 'context')));
+export async function findHead(storage: StorageAdapter, rootId: string): Promise<BranchNode | null> {
+    const branches = await storage.findContextBranches(rootId);
 
     if (branches.length === 0) return null;
 
@@ -88,19 +84,15 @@ export async function findHead(db: ApiDb, rootId: string): Promise<BranchNode | 
     return heads.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0] ?? null;
 }
 
-export async function getOrderedNodes(db: ApiDb, headId: string) {
-    const contextNodes = await db.select().from(nodes).where(and(eq(nodes.context_id, headId), ne(nodes.type, 'context')));
+export async function getOrderedNodes(storage: StorageAdapter, headId: string) {
+    const contextNodes = await storage.findNonContextNodes(headId);
 
     if (contextNodes.length === 0) return [];
     return orderNodes(contextNodes as Array<{ public_id: string; prev_id: string | null; created_at: string }>);
 }
 
-export async function getVersions(db: ApiDb, rootId: string): Promise<VersionInfo[]> {
-    const versions = await db
-        .select({ public_id: nodes.public_id, created_at: nodes.created_at, metadata: nodes.metadata })
-        .from(nodes)
-        .where(and(eq(nodes.context_id, rootId), eq(nodes.type, 'context')))
-        .orderBy(asc(nodes.created_at));
+export async function getVersions(storage: StorageAdapter, rootId: string): Promise<VersionInfo[]> {
+    const versions = await storage.findVersions(rootId);
 
     return versions.map((head, index: number) => {
         const meta = (head.metadata as Record<string, unknown>) ?? {};

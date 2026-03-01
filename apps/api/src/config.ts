@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import dotenv from 'dotenv';
 
-import type { ApiConfig } from './types';
+import type { ApiConfig, DatabaseProvider } from './types';
 
 let cachedConfig: ApiConfig | null = null;
 
@@ -30,19 +30,41 @@ function loadEnv() {
     dotenv.config({ path: APP_ENV_PATH, override: true });
 }
 
-function requireEnv(name: keyof ApiConfig): string {
+function requireEnv(name: string): string {
     const value = process.env[name];
     if (!value) throw new Error(`Missing required env var: ${name}`);
     return value;
+}
+
+function requireDatabaseProvider(): DatabaseProvider {
+    const value = String(process.env.DATABASE_PROVIDER ?? '').trim().toLowerCase();
+    if (value === 'postgres' || value === 'supabase') {
+        return value;
+    }
+    throw new Error('Missing or invalid env var: DATABASE_PROVIDER (expected "postgres" or "supabase")');
 }
 
 export function getApiConfig(): ApiConfig {
     if (cachedConfig) return cachedConfig;
     loadEnv();
 
+    const provider = requireDatabaseProvider();
+    const adminKey = requireEnv('ULTRACONTEXT_ADMIN_KEY');
+
+    if (provider === 'postgres') {
+        cachedConfig = {
+            DATABASE_PROVIDER: 'postgres',
+            DATABASE_URL: requireEnv('DATABASE_URL'),
+            ULTRACONTEXT_ADMIN_KEY: adminKey,
+        };
+        return cachedConfig;
+    }
+
     cachedConfig = {
-        DATABASE_URL: requireEnv('DATABASE_URL'),
-        ULTRACONTEXT_ADMIN_KEY: requireEnv('ULTRACONTEXT_ADMIN_KEY'),
+        DATABASE_PROVIDER: 'supabase',
+        SUPABASE_URL: requireEnv('SUPABASE_URL'),
+        SUPABASE_SERVICE_ROLE_KEY: requireEnv('SUPABASE_SERVICE_ROLE_KEY'),
+        ULTRACONTEXT_ADMIN_KEY: adminKey,
     };
 
     return cachedConfig;

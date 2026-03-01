@@ -1,12 +1,14 @@
 import { getApiConfig } from '../config';
-import { createDbClient } from '../db';
+import { createStorageAdapter } from '../storage';
 import type { HttpMiddleware } from '../types/http';
 
 const apiConfig = getApiConfig();
 
+// singleton — reused across requests
+const storage = createStorageAdapter(apiConfig);
+
 export const databaseMiddleware: HttpMiddleware = async (c, next) => {
-    const db = createDbClient(apiConfig.DATABASE_URL);
-    c.set('db', db);
+    c.set('storage', storage);
     c.set('config', apiConfig);
     await next();
 };
