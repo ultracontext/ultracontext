@@ -241,10 +241,10 @@ export function parseOpenClawLine({ line, filePath }) {
   if (!parsed || typeof parsed !== "object") return null;
 
   const type = String(parsed.type ?? "").toLowerCase();
+  // note: parsed.id is the per-event ID, NOT the session ID
   const sessionId =
     parsed.session_id ??
     parsed.sessionId ??
-    parsed.id ??
     parsed.message?.session_id ??
     parsed.message?.sessionId ??
     extractSessionIdFromPath(filePath);
