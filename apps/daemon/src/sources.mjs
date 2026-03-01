@@ -7,37 +7,118 @@ function normalizeKind(kind, fallback = "system") {
   return fallback;
 }
 
-function toMessage(raw) {
+function toMessage(raw, maxLen = 12000) {
   if (!raw) return "";
-  if (typeof raw === "string") return truncateString(raw, 3000);
-  if (typeof raw === "object") return truncateString(JSON.stringify(raw), 3000);
-  return truncateString(String(raw), 3000);
+  if (typeof raw === "string") return truncateString(raw, maxLen);
+  if (typeof raw === "object") return truncateString(JSON.stringify(raw), maxLen);
+  return truncateString(String(raw), maxLen);
 }
 
 function normalizeWhitespace(value) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
+// preserve newlines, just trim lines and collapse 3+ blank lines → 2
+function preserveText(value) {
+  return String(value ?? "")
+    .split("\n")
+    .map((l) => l.trimEnd())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+// format a tool_use block into a readable string
+function formatToolUse(item) {
+  const name = item.name ?? "unknown";
+  const input = item.input ?? {};
+
+  if (name === "Write" || name === "write") {
+    const content = preserveText(input.content ?? input.file_text ?? "");
+    return `[Write] ${input.file_path ?? input.path ?? ""}\n${content}`;
+  }
+
+  if (name === "Edit" || name === "edit") {
+    const parts = [`[Edit] ${input.file_path ?? input.path ?? ""}`];
+    if (input.old_string) parts.push(`- ${preserveText(input.old_string)}`);
+    if (input.new_string) parts.push(`+ ${preserveText(input.new_string)}`);
+    return parts.join("\n");
+  }
+
+  if (name === "Read" || name === "read") {
+    return `[Read] ${input.file_path ?? input.path ?? ""}`;
+  }
+
+  if (name === "Bash" || name === "bash") {
+    return `[Bash] ${preserveText(input.command ?? "")}`;
+  }
+
+  if (name === "Grep" || name === "grep") {
+    const path = input.path ? ` in ${input.path}` : "";
+    return `[Grep] ${input.pattern ?? ""}${path}`;
+  }
+
+  if (name === "Glob" || name === "glob") {
+    const path = input.path ? ` in ${input.path}` : "";
+    return `[Glob] ${input.pattern ?? ""}${path}`;
+  }
+
+  // generic fallback — tool name + compact JSON of input
+  const compact = JSON.stringify(input);
+  return `[${name}] ${compact.length > 500 ? compact.slice(0, 500) + "..." : compact}`;
+}
+
+// format a tool_result block into a readable string
+function formatToolResult(item) {
+  const content = item.content ?? "";
+  if (typeof content === "string") {
+    const text = preserveText(content);
+    return text ? `[result] ${truncateString(text, 1000)}` : "[result] ok";
+  }
+
+  // content can be array of text blocks
+  if (Array.isArray(content)) {
+    const parts = content
+      .filter((c) => c?.type === "text" && typeof c.text === "string")
+      .map((c) => c.text);
+    const text = preserveText(parts.join("\n"));
+    return text ? `[result] ${truncateString(text, 1000)}` : "[result] ok";
+  }
+
+  return "[result] ok";
+}
+
 function extractClaudeTextContent(content) {
   if (!content) return "";
-  if (typeof content === "string") return normalizeWhitespace(content);
+  if (typeof content === "string") return preserveText(content);
 
   if (Array.isArray(content)) {
-    const textParts = [];
+    const parts = [];
     for (const item of content) {
       if (!item || typeof item !== "object") continue;
-      // Keep only explicit natural-language text. Skip tool_use/tool_result/thinking noise.
+
+      // natural-language text
       if (item.type === "text" && typeof item.text === "string") {
-        const chunk = normalizeWhitespace(item.text);
-        if (chunk) textParts.push(chunk);
+        const chunk = preserveText(item.text);
+        if (chunk) parts.push(chunk);
+      }
+
+      // tool calls — include formatted
+      if (item.type === "tool_use") {
+        parts.push(formatToolUse(item));
+      }
+
+      // tool results — include summarized
+      if (item.type === "tool_result") {
+        parts.push(formatToolResult(item));
       }
     }
-    return textParts.join("\n");
+    return parts.join("\n\n");
   }
 
   if (typeof content === "object") {
-    if (typeof content.text === "string") return normalizeWhitespace(content.text);
-    if (typeof content.content === "string") return normalizeWhitespace(content.content);
+    if (typeof content.text === "string") return preserveText(content.text);
+    if (typeof content.content === "string") return preserveText(content.content);
   }
 
   return "";
