@@ -1,0 +1,76 @@
+---
+title: 'Introduction'
+description: 'The Context Hub for AI Agents'
+---
+
+<img
+    src='/images/context-hub-hero.svg'
+    alt='Context Hub'
+/>
+
+**All agents. One context.**
+
+The Context Hub automatically syncs all your agents' contexts to a single place in real time. Every agent, every machine, every team member.
+
+Anyone on your team can access any agent session from anywhere. Fork a session started by a colleague on another machine. Resume a Claude Code conversation with Codex. Switch agents, switch machines — the context follows.
+
+## Components
+
+| Component | What it does |
+|-----------|-------------|
+| **Ingestor** | Background daemon that monitors agent session files, parses events, and syncs them to the Context API |
+| **Interface** | Terminal dashboard that shows sync status, logs, and lets you manage everything |
+
+## How it works
+
+```
+Claude Code        Codex        OpenClaw
+      |              |              |
+      v              v              v
++--------------------------------------------+
+|                Ingestor                    |
+|                                            |
+|    watch -> parse -> dedup -> process      |
+|                                            |
++--------------------------------------------+
+      |                             |
+      | WebSocket                   | HTTPS
+      v                             v
++----------------+       +-------------------+
+|   Interface    |       |   Context API     |
++----------------+       +-------------------+
+```
+
+You interact with both through a single CLI:
+
+```bash bash
+ultracontext          # start ingestor + open TUI
+ultracontext start    # start ingestor only
+ultracontext tui      # open TUI only
+ultracontext stop     # stop ingestor
+ultracontext status   # check if ingestor is running
+ultracontext update   # update CLI globally
+```
+
+## Supported agents
+
+| Agent | Session files |
+|-------|-------------|
+| **Claude Code** | `~/.claude/projects/**/*.jsonl` |
+| **Codex** | `~/.codex/sessions/**/*.jsonl` |
+| **OpenClaw** | `~/.openclaw/agents/*/sessions/**/*.jsonl` |
+
+## What happens when you run it
+
+1. The ingestor starts as a detached background process (logs to `~/.ultracontext/daemon.log`)
+2. New events are parsed, deduplicated, and ingested using the Context API
+3. You can view everything on the interface
+
+<CardGroup cols={2}>
+    <Card title='Quickstart' icon='rocket' href='/context-hub/quickstart'>
+        Install and run in 2 minutes.
+    </Card>
+    <Card title='Configuration' icon='gear' href='/context-hub/configuration'>
+        All environment variables and config options.
+    </Card>
+</CardGroup>

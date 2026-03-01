@@ -6,7 +6,7 @@
     "colors": {
         "primary": "#000000",
         "light": "#ffffff",
-        "dark": "#2960e7"
+        "dark": "#292929"
     },
     "appearance": {
         "default": "dark"
@@ -19,21 +19,31 @@
                 "icon": "book-open-cover",
                 "groups": [
                     {
-                        "group": "Documentation",
-                        "pages": ["index"]
-                    },
-                    {
-                        "group": "Quickstart",
-                        "pages": ["quickstart/nodejs", "quickstart/python"]
-                    },
-                    {
-                        "group": "Guides",
+                        "group": "Context API",
                         "pages": [
-                            "guides/store-retrieve-contexts",
-                            "guides/edit-contexts",
-                            "guides/view-context-history",
-                            "guides/fork-clone-contexts"
+                            "index",
+                            {
+                                "group": "Quickstart",
+                                "pages": ["quickstart/nodejs", "quickstart/python"]
+                            },
+                            {
+                                "group": "Fundamentals",
+                                "pages": [
+                                    "guides/store-retrieve-contexts",
+                                    "guides/edit-contexts",
+                                    "guides/view-context-history",
+                                    "guides/fork-clone-contexts"
+                                ]
+                            },
+                            {
+                                "group": "Advanced",
+                                "pages": ["guides/self-hosting"]
+                            }
                         ]
+                    },
+                    {
+                        "group": "Context Hub",
+                        "pages": ["context-hub/introduction", "context-hub/quickstart", "context-hub/configuration"]
                     }
                 ]
             },
@@ -62,12 +72,7 @@
             {
                 "anchor": "Changelog",
                 "icon": "clock-rotate-left",
-                "groups": [
-                    {
-                        "group": "Updates",
-                        "pages": ["changelog"]
-                    }
-                ]
+                "href": "https://ultracontext.ai/changelog"
             }
         ]
     },

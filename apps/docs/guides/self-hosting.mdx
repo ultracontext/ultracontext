@@ -1,0 +1,179 @@
+---
+title: 'Self-hosting'
+description: 'Run the Context API on your own infrastructure'
+---
+
+You can self-host the Context API instead of using the managed service at ultracontext.ai.
+
+## Prerequisites
+
+- **Node.js >= 22**
+- **PostgreSQL** (direct or via Supabase)
+- **Docker** (optional, for local Postgres)
+
+## Quick start with Docker
+
+The monorepo includes a Docker Compose setup for local PostgreSQL:
+
+<CodeGroup>
+```bash npm
+git clone https://github.com/ultracontext/ultracontext.git
+cd ultracontext
+
+# start PostgreSQL
+npm run ultracontext:db:up
+
+# apply schema
+npm run ultracontext:db:migrate
+
+# start the API
+npm run ultracontext:api
+```
+
+```bash yarn
+git clone https://github.com/ultracontext/ultracontext.git
+cd ultracontext
+
+# start PostgreSQL
+yarn ultracontext:db:up
+
+# apply schema
+yarn ultracontext:db:migrate
+
+# start the API
+yarn ultracontext:api
+```
+
+```bash pnpm
+git clone https://github.com/ultracontext/ultracontext.git
+cd ultracontext
+
+# start PostgreSQL
+pnpm ultracontext:db:up
+
+# apply schema
+pnpm ultracontext:db:migrate
+
+# start the API
+pnpm ultracontext:api
+```
+
+```bash bun
+git clone https://github.com/ultracontext/ultracontext.git
+cd ultracontext
+
+# start PostgreSQL
+bun run ultracontext:db:up
+
+# apply schema
+bun run ultracontext:db:migrate
+
+# start the API
+bun run ultracontext:api
+```
+</CodeGroup>
+
+## Database schema
+
+Create these tables in your PostgreSQL database:
+
+```sql SQL
+create table projects (
+  id bigserial primary key,
+  name text not null,
+  created_at timestamptz not null default now(),
+  public_id text
+);
+
+create table api_keys (
+  id bigserial primary key,
+  project_id bigint not null,
+  key_prefix text not null,
+  key_hash text not null,
+  name text,
+  last_used_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create table nodes (
+  id bigserial primary key,
+  public_id text not null,
+  project_id bigint not null,
+  type text not null,
+  content jsonb not null default '{}'::jsonb,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  parent_id text,
+  prev_id text,
+  context_id text
+);
+```
+
+## Storage adapters
+
+The Context API uses a **storage adapter pattern** to abstract database operations. You can choose between two backends:
+
+- **Direct PostgreSQL** — Drizzle ORM with a direct connection
+- **Supabase** — Supabase REST client for managed PostgreSQL
+
+Both produce identical API behavior.
+
+| | Direct PostgreSQL | Supabase |
+|---|---|---|
+| **Best for** | Self-hosted, full control | Managed hosting, quick setup |
+| **Connection** | Direct TCP | REST API (HTTPS) |
+| **Latency** | Lower | Slightly higher (HTTP overhead) |
+| **Setup** | Manage your own PostgreSQL | Create a Supabase project |
+| **Scaling** | Manual | Handled by Supabase |
+| **Open source** | Yes | Yes |
+
+### Direct PostgreSQL
+
+```bash .env
+DATABASE_PROVIDER=postgres
+DATABASE_URL=postgresql://user:password@host:5432/ultracontext
+ULTRACONTEXT_ADMIN_KEY=your_admin_key
+```
+
+Best for self-hosted deployments where you manage your own database. Lower latency via direct TCP connection.
+
+### Supabase
+
+```bash .env
+DATABASE_PROVIDER=supabase
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=eyJhbGci...
+ULTRACONTEXT_ADMIN_KEY=your_admin_key
+```
+
+Best for managed hosting and quick setup. Scaling handled by Supabase.
+
+<Warning>Use the **service role key**, not the anon key. The service role key bypasses Row Level Security, which the API needs to manage data across projects.</Warning>
+
+<Steps>
+  <Step title="Create a Supabase project">
+    Go to [supabase.com](https://supabase.com) and create a new project.
+  </Step>
+  <Step title="Create the tables">
+    Run the SQL schema above in the Supabase SQL editor.
+  </Step>
+  <Step title="Get your credentials">
+    In your Supabase dashboard, go to **Settings > API**. Copy:
+    - **Project URL** — your `SUPABASE_URL`
+    - **service_role key** — your `SUPABASE_SERVICE_ROLE_KEY`
+  </Step>
+  <Step title="Set environment variables">
+    Add the Supabase env vars shown above to your `.env` file.
+  </Step>
+</Steps>
+
+## Environment variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `DATABASE_PROVIDER` | Yes | Storage provider: `postgres` or `supabase` |
+| `DATABASE_URL` | If using PostgreSQL | PostgreSQL connection string |
+| `SUPABASE_URL` | If using Supabase | Supabase project URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | If using Supabase | Supabase service role key |
+| `ULTRACONTEXT_ADMIN_KEY` | Yes | Admin key for key management endpoints |
+| `PORT` | No | API server port (default: 8787) |

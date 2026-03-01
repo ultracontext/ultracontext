@@ -1,0 +1,124 @@
+---
+title: 'Configuration'
+description: 'All environment variables and config options for Context Hub'
+---
+
+Context Hub reads configuration from environment variables, `~/.ultracontext/config.json`, and a local SQLite store. Environment variables take precedence.
+
+## Config file
+
+```bash bash
+~/.ultracontext/config.json
+```
+
+Created automatically by the setup wizard (`ultracontext config`) or on first daemon start. Override the path with `ULTRACONTEXT_CONFIG_FILE`.
+
+Persisted fields:
+
+```json JSON
+{
+    "apiKey": "uc_live_...",
+    "bootstrapMode": "new_only",
+    "claudeIncludeSubagents": false
+}
+```
+
+## Core
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ULTRACONTEXT_API_KEY` | -- | **Required.** Your UltraContext API key (`uc_live_...` or `uc_test_...`) |
+| `ULTRACONTEXT_BASE_URL` | `https://api.ultracontext.ai` | API base URL. Change for self-hosted deployments |
+| `ULTRACONTEXT_CONFIG_FILE` | `~/.ultracontext/config.json` | Path to the runtime config file |
+
+## Daemon
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DAEMON_ENGINEER_ID` | `$USER` | Identifier for the engineer. Used in context metadata |
+| `DAEMON_HOST` | `os.hostname()` | Machine identifier. Used in context metadata |
+| `DAEMON_POLL_MS` | `1500` | Polling interval in milliseconds |
+| `DAEMON_LOG_LEVEL` | `info` | Log level: `error`, `warn`, `info`, `debug` |
+| `DAEMON_VERBOSE` | `false` | Enable verbose formatted logs (also via `--verbose` flag) |
+| `DAEMON_LOG_APPENDS` | `true` | Log each append event |
+| `DAEMON_BOOTSTRAP_MODE` | `prompt` | Bootstrap mode: `new_only`, `last_24h`, `all`, `prompt` |
+| `DAEMON_BOOTSTRAP_RESET` | `false` | Reset bootstrap state on next start |
+| `DAEMON_ENABLE_DAILY_CONTEXT` | `false` | Also append events to daily aggregate contexts |
+| `DAEMON_MAX_READ_BYTES` | `524288` | Max bytes read per file per cycle (512KB) |
+| `DAEMON_DEDUPE_TTL_SEC` | `2592000` | Deduplication TTL in seconds (30 days) |
+| `DAEMON_STORE_CLEANUP_CYCLES` | `20` | Run expired entry cleanup every N poll cycles |
+
+## Storage
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ULTRACONTEXT_DB_FILE` | `~/.ultracontext/daemon.db` | Path to local SQLite database (offsets, dedupe, config cache) |
+| `ULTRACONTEXT_LOCK_FILE` | `~/.ultracontext/daemon.lock` | Lock file to prevent duplicate daemon instances |
+| `ULTRACONTEXT_DAEMON_LOG_FILE` | `~/.ultracontext/daemon.log` | Daemon log output file (background mode) |
+
+## WebSocket (daemon-TUI communication)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ULTRACONTEXT_DAEMON_WS_HOST` | `127.0.0.1` | WebSocket server host |
+| `ULTRACONTEXT_DAEMON_WS_PORT` | auto | WebSocket server port |
+| `ULTRACONTEXT_DAEMON_INFO_FILE` | `~/.ultracontext/daemon.info` | File where daemon writes its WS connection info for TUI discovery |
+
+## Source globs
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CLAUDE_GLOB` | `~/.claude/projects/**/*.jsonl` | Glob pattern for Claude Code session files |
+| `CODEX_GLOB` | `~/.codex/sessions/**/*.jsonl` | Glob pattern for Codex session files |
+| `OPENCLAW_GLOB` | `~/.openclaw/agents/*/sessions/**/*.jsonl` | Glob pattern for OpenClaw session files |
+
+## Source toggles
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `INGEST_CLAUDE` | `true` | Enable Claude Code source |
+| `INGEST_CODEX` | `true` | Enable Codex source |
+| `INGEST_OPENCLAW` | `true` | Enable OpenClaw source |
+| `CLAUDE_INCLUDE_SUBAGENTS` | `false` | Include Claude Code subagent sessions (`**/subagents/**`) |
+
+## TUI
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TUI_REFRESH_MS` | `1200` | UI refresh interval in milliseconds |
+| `TUI_RECENT_LIMIT` | `240` | Max recent log entries to display |
+| `TUI_SOUND_ENABLED` | `true` | Enable all TUI sounds |
+| `TUI_STARTUP_SOUND_ENABLED` | `true` | Play startup sound |
+| `TUI_CONTEXT_SOUND_ENABLED` | `true` | Play sound on new context creation |
+| `TUI_STARTUP_SOUND_FILE` | bundled | Custom startup sound file path |
+| `TUI_CONTEXT_SOUND_FILE` | bundled | Custom context creation sound file path |
+
+## Dotenv
+
+The daemon and TUI load environment variables from `.env` files in this order:
+
+1. Monorepo root `.env` (when running from source)
+2. `apps/daemon/.env` or `apps/tui/.env` (fallback)
+3. Custom path via `DOTENV_CONFIG_PATH`
+
+<Info>When installed globally via `npm install -g ultracontext`, use `~/.ultracontext/config.json` for the API key and bootstrap mode. Environment variables still work for all other settings.</Info>
+
+## Updating
+
+```bash bash
+ultracontext update
+```
+
+By default this updates to the npm `latest` dist-tag. You can also pass a specific tag/version:
+
+```bash bash
+ultracontext update --tag beta
+ultracontext update --tag 1.2.3
+```
+
+Advanced options:
+
+```bash bash
+ultracontext update --manager npm
+ultracontext update --no-restart
+```

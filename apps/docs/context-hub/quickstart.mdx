@@ -1,0 +1,106 @@
+---
+title: 'Quickstart'
+description: 'Get Context Hub running in 2 minutes'
+---
+
+## Prerequisites
+
+- **Node.js >= 22**
+- **A Context API key** -- [Get yours](https://ultracontext.ai) or [self-host](/guides/self-hosting)
+
+## 1. Install
+
+```bash npm
+npm install -g ultracontext
+```
+
+The setup wizard runs automatically on first launch -- it walks you through API key, sync preferences, and launches the dashboard.
+
+## 2. Run
+
+```bash bash
+ultracontext
+```
+
+That's it. This single command:
+
+1. Checks if the daemon is running
+2. Starts it in the background if needed
+3. Opens the TUI dashboard
+
+<Tip>If you already installed and need to reconfigure, run `ultracontext config` to re-run the setup wizard.</Tip>
+
+## 3. Verify
+
+<img src="https://ultracontext.ai/ultracontext-hub.gif" alt="Context Hub in action" />
+
+You should see the TUI dashboard with:
+
+- Daemon status showing **online**
+- Source stats for Claude Code, Codex, and OpenClaw
+- Live logs as sessions are discovered and synced
+
+Start a coding session with Claude Code or Codex. Within a few seconds, the TUI should show events being parsed and contexts being created.
+
+## CLI commands
+
+```bash bash
+ultracontext              # start daemon + open dashboard
+ultracontext config       # run setup wizard
+ultracontext start        # start daemon only (background)
+ultracontext stop         # stop daemon
+ultracontext status       # check if daemon is running
+ultracontext tui          # open dashboard only
+ultracontext update       # update CLI globally (defaults to latest)
+ultracontext version      # print version
+ultracontext help         # show help
+```
+
+## Setup wizard
+
+On first run (or via `ultracontext config`), the wizard guides you through:
+
+<Steps>
+    <Step title="Mode">
+        Choose between **Login (ultracontext.ai)** or **Self-host**.
+    </Step>
+    <Step title="API key">
+        Paste your `uc_live_...` or `uc_test_...` key. Saved to `~/.ultracontext/config.json`.
+    </Step>
+    <Step title="Bootstrap mode">
+        Choose how to handle existing session files:
+        - **New only** (recommended) -- Only sync events created after first start
+        - **Last 24h** -- Sync events from the past 24 hours
+        - **All** -- Sync everything
+    </Step>
+    <Step title="Launch">
+        Optionally open the TUI dashboard right away.
+    </Step>
+</Steps>
+
+## What happens behind the scenes
+
+1. The ingestor starts as a detached background process (logs to `~/.ultracontext/daemon.log`)
+2. New events are parsed, deduplicated, and ingested using the Context API
+3. You can view everything on the interface
+
+<Info>The daemon uses a local SQLite database at `~/.ultracontext/daemon.db` for offset tracking, deduplication, and config caching.</Info>
+
+## Next steps
+
+<CardGroup cols={2}>
+    <Card
+        title='Introduction'
+        icon='book-open'
+        href='/context-hub/introduction'
+    >
+        All agents. One context.
+    </Card>
+    <Card
+        title='Configuration'
+        icon='gear'
+        href='/context-hub/configuration'
+    >
+        All environment variables and config options.
+    </Card>
+</CardGroup>
