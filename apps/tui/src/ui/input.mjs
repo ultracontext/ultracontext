@@ -3,6 +3,7 @@ import {
   buildMoveMenuIndex,
   handleMenuInput,
   handleResumeTargetInput,
+  handleUpdatePromptInput,
   handleViewInput,
   isQuitInput,
 } from "./input-handlers/index.mjs";
@@ -19,11 +20,18 @@ export function createInputHandler({
   setMenuIndex,
   moveMenuIndex,
   bootstrapActive,
+  updatePromptActive,
   resumeTargetPickerActive,
 }) {
   return (input, key) => {
     if (isQuitInput(input, key)) {
       actions.stop();
+      return;
+    }
+
+    // update prompt has highest priority
+    if (updatePromptActive) {
+      handleUpdatePromptInput({ input, key, actions, snapshot });
       return;
     }
     if (bootstrapActive) {

@@ -7,3 +7,4 @@ export { LogsContent } from "./LogsContent.mjs";
 export { MainPanels } from "./MainPanels.mjs";
 export { ResumeTargetPanel } from "./ResumeTargetPanel.mjs";
 export { RightPanel } from "./RightPanel.mjs";
+export { UpdatePromptPanel } from "./UpdatePromptPanel.mjs";

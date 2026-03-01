@@ -11,7 +11,10 @@ export function selectedTabTitle(tabId) {
   return MENU_TABS.find((tab) => tab.id === tabId)?.label ?? "View";
 }
 
-export function footerHelpText({ bootstrapActive, resumeTargetPickerActive, detailViewActive, selectedTab, focusMode }) {
+export function footerHelpText({ updatePromptActive, bootstrapActive, resumeTargetPickerActive, detailViewActive, selectedTab, focusMode }) {
+  if (updatePromptActive) {
+    return "Update: ↑/↓ select, 1/2, Enter to confirm, q to quit.";
+  }
   if (bootstrapActive) {
     return "Bootstrap: choose initial mode (↑/↓, 1/2/3, Enter) or q to quit.";
   }

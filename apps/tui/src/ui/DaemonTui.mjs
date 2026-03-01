@@ -7,7 +7,7 @@ import { buildMoveMenuIndex, createInputHandler } from "./input.mjs";
 import { fitToWidth } from "./format.mjs";
 import { footerHelpText, selectedTabIndexFromId } from "./state.mjs";
 import { NarrowWidthPanel } from "./components/index.mjs";
-import { BootstrapPanel, HeaderPanel, MainPanels, ResumeTargetPanel } from "./panels/index.mjs";
+import { BootstrapPanel, HeaderPanel, MainPanels, ResumeTargetPanel, UpdatePromptPanel } from "./panels/index.mjs";
 
 const FOOTER_QUIPS = [
   "Who is John Galt?",
@@ -89,6 +89,7 @@ export function DaemonTui({ snapshot, actions }) {
   const layout = computeTuiLayout(stdoutColumns, stdoutRows);
   const selectedTabIndex = selectedTabIndexFromId(snapshot.selectedTab);
 
+  const updatePromptActive = Boolean(snapshot.updatePrompt?.active);
   const bootstrapActive = Boolean(snapshot.bootstrap?.active);
   const resumeTargetPickerActive = Boolean(snapshot.resumeTargetPicker?.active);
   const [focusMode, setFocusMode] = React.useState("menu");
@@ -119,6 +120,7 @@ export function DaemonTui({ snapshot, actions }) {
       setMenuIndex,
       moveMenuIndex,
       bootstrapActive,
+      updatePromptActive,
       resumeTargetPickerActive,
     })
   );
@@ -133,13 +135,16 @@ export function DaemonTui({ snapshot, actions }) {
     });
   }
 
-  const bodyContent = bootstrapActive
-    ? React.createElement(BootstrapPanel, { snapshot, width: layout.contentWidth })
-    : resumeTargetPickerActive
-      ? React.createElement(ResumeTargetPanel, { snapshot, width: layout.contentWidth })
-      : React.createElement(MainPanels, { snapshot, layout, focusMode, menuIndex, clients });
+  const bodyContent = updatePromptActive
+    ? React.createElement(UpdatePromptPanel, { snapshot, width: layout.contentWidth })
+    : bootstrapActive
+      ? React.createElement(BootstrapPanel, { snapshot, width: layout.contentWidth })
+      : resumeTargetPickerActive
+        ? React.createElement(ResumeTargetPanel, { snapshot, width: layout.contentWidth })
+        : React.createElement(MainPanels, { snapshot, layout, focusMode, menuIndex, clients });
 
   const footerLeft = footerHelpText({
+    updatePromptActive,
     bootstrapActive,
     resumeTargetPickerActive,
     detailViewActive: Boolean(snapshot.detailView?.active),
@@ -157,7 +162,12 @@ export function DaemonTui({ snapshot, actions }) {
   return React.createElement(
     Box,
     { flexDirection: "column" },
-    React.createElement(Box, { width: layout.containerWidth }, renderMainFrameTop(layout.containerWidth, "UltraContext v1.1")),
+    React.createElement(Box, { width: layout.containerWidth }, renderMainFrameTop(
+      layout.containerWidth,
+      snapshot.updateAvailable
+        ? `UltraContext v${snapshot.currentVersion} ↑`
+        : `UltraContext v${snapshot.currentVersion}`
+    )),
     React.createElement(
       Box,
       {

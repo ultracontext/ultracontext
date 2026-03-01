@@ -166,8 +166,96 @@ const CONFIG_TOGGLES = [
   },
 ];
 
+// ── update check helpers ─────────────────────────────────────────
+
+const UPDATE_CHECK_INTERVAL = 3 * 60 * 60 * 1000; // 3h
+
+function readTuiVersion() {
+  try {
+    const pkgPath = path.resolve(APP_ROOT, "package.json");
+    const pkg = JSON.parse(fsSync.readFileSync(pkgPath, "utf8"));
+    return pkg.version ?? "unknown";
+  } catch { return "unknown"; }
+}
+
+function getUpdateCheckPath() {
+  return path.join(os.homedir(), ".ultracontext", "update-check.json");
+}
+
+function readUpdateCache() {
+  try { return JSON.parse(fsSync.readFileSync(getUpdateCheckPath(), "utf8")); }
+  catch { return null; }
+}
+
+function writeUpdateCache(data) {
+  try { fsSync.writeFileSync(getUpdateCheckPath(), JSON.stringify(data)); }
+  catch { /* best effort */ }
+}
+
+async function fetchLatestVersion() {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3000);
+  try {
+    const res = await fetch("https://registry.npmjs.org/ultracontext/latest", { signal: controller.signal });
+    const data = await res.json();
+    return data.version ?? null;
+  } catch { return null; }
+  finally { clearTimeout(timeout); }
+}
+
+function isNewerVersion(latest, current) {
+  const l = latest.split(".").map(Number);
+  const c = current.split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    if ((l[i] ?? 0) > (c[i] ?? 0)) return true;
+    if ((l[i] ?? 0) < (c[i] ?? 0)) return false;
+  }
+  return false;
+}
+
+async function checkForUpdateSilent() {
+  const current = readTuiVersion();
+  if (current === "unknown") return;
+
+  const notifyUpdate = (latest) => {
+    ui.updateAvailable = latest;
+    ui.updatePrompt.active = true;
+    ui.updatePrompt.selectedIndex = 0;
+    ui.updatePrompt.latestVersion = latest;
+    renderDashboard();
+  };
+
+  // use cache if fresh
+  const cache = readUpdateCache();
+  if (cache?.lastCheck && Date.now() - cache.lastCheck < UPDATE_CHECK_INTERVAL) {
+    if (cache.latestVersion && isNewerVersion(cache.latestVersion, current)) {
+      notifyUpdate(cache.latestVersion);
+    }
+    return;
+  }
+
+  // fetch from registry
+  const latest = await fetchLatestVersion();
+  writeUpdateCache({ lastCheck: Date.now(), latestVersion: latest });
+  if (latest && isNewerVersion(latest, current)) {
+    notifyUpdate(latest);
+  }
+}
+
+const UPDATE_PROMPT_OPTIONS = [
+  { id: "install", label: "Install now" },
+  { id: "skip", label: "Skip" },
+];
+
 const ui = {
   daemonOnline: false,
+  currentVersion: readTuiVersion(),
+  updateAvailable: "",
+  updatePrompt: {
+    active: false,
+    selectedIndex: 0,
+    latestVersion: "",
+  },
   recentLogs: [],
   onlineClients: [],
   sourceStats: new Map(),
@@ -1593,6 +1681,35 @@ async function toggleSelectedConfig() {
   }
 }
 
+// ── update prompt actions ────────────────────────────────────────
+
+function moveUpdatePrompt(delta) {
+  const total = UPDATE_PROMPT_OPTIONS.length;
+  ui.updatePrompt.selectedIndex = (ui.updatePrompt.selectedIndex + delta + total) % total;
+  renderDashboard();
+}
+
+function chooseUpdatePrompt(index) {
+  const safeIndex = Math.max(Math.min(index, UPDATE_PROMPT_OPTIONS.length - 1), 0);
+  const choice = UPDATE_PROMPT_OPTIONS[safeIndex]?.id;
+
+  // dismiss prompt
+  ui.updatePrompt.active = false;
+  renderDashboard();
+
+  if (choice === "install") {
+    // stop TUI and run update in a new terminal tab
+    const command = "ultracontext update";
+    const opened = resumeOpenTerminalTab(command);
+    if (opened.ok) {
+      ui.resume.notice = `Update started in new tab. Restart TUI after update.`;
+    } else {
+      ui.resume.notice = `Run manually: ultracontext update`;
+    }
+    renderDashboard();
+  }
+}
+
 // ── detail view actions ─────────────────────────────────────────
 
 async function openContextDetail() {
@@ -1723,6 +1840,14 @@ function buildUiSnapshot() {
 
   return {
     now: Date.now(),
+    currentVersion: ui.currentVersion,
+    updateAvailable: ui.updateAvailable,
+    updatePrompt: {
+      active: ui.updatePrompt.active,
+      selectedIndex: ui.updatePrompt.selectedIndex,
+      latestVersion: ui.updatePrompt.latestVersion,
+      options: UPDATE_PROMPT_OPTIONS,
+    },
     cfg: {
       engineerId: cfg.engineerId,
       host: cfg.host,
@@ -1838,6 +1963,12 @@ async function tuiMain() {
       stop: () => runtime.stop?.("user"),
       moveBootstrap: () => {},
       chooseBootstrap: () => {},
+      moveUpdatePrompt: (delta) => {
+        moveUpdatePrompt(delta);
+      },
+      chooseUpdatePrompt: (index) => {
+        chooseUpdatePrompt(index);
+      },
       moveTab: moveTabAndRefresh,
       selectTab: selectTabAndRefreshByIndex,
       moveConfig: (delta) => {
@@ -1897,6 +2028,7 @@ async function tuiMain() {
   renderDashboard();
   void loadResumeContexts();
   void runtime.daemonClient.start();
+  void checkForUpdateSilent();
 
   runtime.renderTimer = setInterval(() => {
     renderDashboard();

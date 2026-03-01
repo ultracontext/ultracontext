@@ -1,56 +1,44 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-This repository is a small monorepo organized under `apps/` and `packages/`:
-- `apps/daemon`: Node.js daemon that ingests local agent activity (`src/*.mjs`), stores local runtime state in SQLite, and exposes local WS state for TUI.
-- `apps/tui`: terminal UI client for daemon state (`src/index.mjs`), connects to daemon via local WebSocket.
-- `apps/js-sdk`: TypeScript SDK (`src/index.ts`, build output in `dist/`).
-- `apps/python-sdk`: Python SDK package (`ultracontext/`).
-- `packages/protocol`: shared daemon/TUI protocol helpers and message contracts.
-
-Keep changes scoped to the relevant app and update that app’s README when behavior changes.
+This repository is a `pnpm` monorepo (`pnpm-workspace.yaml`) with apps in `apps/*` and shared packages in `packages/*`.
+- `apps/api`: Context API (Hono + Drizzle, TypeScript)
+- `apps/daemon`: background ingestion service (Node ESM)
+- `apps/tui`: terminal dashboard (Ink/React)
+- `apps/js-sdk`: JavaScript/TypeScript SDK + CLI (`ultracontext`)
+- `apps/python-sdk`: Python SDK
+- `apps/postgres`: local PostgreSQL + schema (`init.sql`)
+- `apps/docs`: Mintlify docs
+- `packages/protocol`: shared protocol types/utilities
 
 ## Build, Test, and Development Commands
-- `pnpm ultracontext:start`: start daemon in background (default flow).
-- `pnpm ultracontext:start:verbose`: run daemon in foreground with verbose logs.
-- `pnpm ultracontext:status`: daemon status.
-- `pnpm ultracontext:stop`: stop daemon.
-- `pnpm ultracontext:tui`: launch TUI client.
-- `cd apps/daemon && pnpm run dev`: run daemon in watch mode.
-- `cd apps/daemon && pnpm run check`: syntax-check daemon modules.
-- `cd apps/tui && pnpm run check`: syntax-check TUI entrypoint.
-- `cd apps/js-sdk && pnpm run build`: compile TypeScript to `dist/`.
-- `cd apps/python-sdk && python -m pip install -e '.[dev]'`: install SDK with dev tools.
-- `cd apps/python-sdk && mypy ultracontext`: run strict Python type checks.
-- `pnpm run check`: run monorepo checks.
+- `pnpm install`: install workspace dependencies.
+- `pnpm ultracontext:db:up` / `pnpm ultracontext:db:down`: start/stop local Postgres.
+- `pnpm ultracontext:db:migrate`: apply DB schema from `apps/postgres/init.sql`.
+- `pnpm ultracontext:api`: run API locally (`apps/api`).
+- `pnpm dev:daemon` and `pnpm dev:tui`: run Hub components in watch mode.
+- `pnpm --filter ultracontext run build`: build JS SDK package.
+- `pnpm check`: run package-level checks where defined.
 
 ## Coding Style & Naming Conventions
-Follow existing style per package:
-- `apps/daemon` and `apps/tui`: ESM `.mjs`, mostly 2-space indentation, `camelCase` functions.
-- `apps/js-sdk`: TypeScript with explicit exported types, 4-space indentation, `PascalCase` for types/classes.
-- `apps/python-sdk`: PEP 8 style, 4-space indentation, `snake_case` modules/functions.
-
-Name commits and symbols clearly by domain (`daemon`, `tui`, `js-sdk`, `python-sdk`).
+No single repo-wide formatter config is checked in, so match the local style of the package/file you edit.
+- `apps/api` TypeScript commonly uses 4-space indentation and single quotes.
+- `apps/daemon`, `apps/tui`, and `apps/js-sdk` commonly use 2-space indentation and double quotes.
+- Keep naming consistent with surrounding code: API modules are mostly kebab-case (for example `context-chain.ts`), while TUI React components use PascalCase (for example `DaemonTui.mjs`).
 
 ## Testing Guidelines
-There is no committed first-party test suite yet. Minimum validation before PR:
-- Run package checks (`pnpm run check`, `pnpm --filter ultracontext-daemon run check`, `pnpm --filter ultracontext-tui run check`, `pnpm --filter ultracontext run build`, `mypy ultracontext`).
-- Manually verify affected runtime flow (daemon ingestion, TUI rendering, SDK request path).
-
-When adding tests, keep them package-local and use explicit names like `test_<feature>.py` or `<feature>.test.ts`.
+- API tests use Node’s built-in runner: `pnpm --filter ultracontext-api run test` (or `test:watch`).
+- Python SDK dev tooling is defined in `apps/python-sdk/pyproject.toml` (`pytest`, `pytest-asyncio`, `mypy`).
+- Add tests with `*.test.*` or `*.spec.*` naming near changed code or in a `tests/` folder.
+- No explicit coverage gate is configured; include meaningful tests for every bug fix/behavior change.
 
 ## Commit & Pull Request Guidelines
-Use Conventional Commit style seen in history, for example:
-- `feat(ultracontext): ...`
-- `refactor(daemon): ...`
-- `docs: ...`
-
-For PRs, include:
-- concise summary and touched app(s),
-- linked issue (if applicable),
-- env/config changes (for example `ULTRACONTEXT_API_KEY`, `ULTRACONTEXT_DB_FILE`, `ULTRACONTEXT_DAEMON_INFO_FILE`),
-- terminal screenshots or short recordings for TUI-visible changes,
-- commands you ran to verify behavior.
+- Follow Conventional Commits (for example `feat(api): add fork endpoint`, `fix(cli): handle missing env`).
+- For large changes, open an issue first to align on approach.
+- Keep PRs focused to one feature/fix and target `main`.
+- In PR descriptions, include scope, affected packages, and commands run locally (for example `pnpm check`, package tests).
 
 ## Security & Configuration Tips
-Never commit secrets. Use `apps/daemon/.env.example` as a template, and keep local credentials in untracked `.env` files.
+- Copy `.env.example` to `.env` (root), plus app-specific env examples as needed.
+- Do not commit secrets; `.env*` files are ignored except documented examples.
+- If local Postgres state drifts across versions, use `pnpm ultracontext:db:reset`.
