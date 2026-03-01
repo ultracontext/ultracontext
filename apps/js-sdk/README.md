@@ -4,13 +4,11 @@
   </a>
 </p>
 
-<h3 align="center">The Context Hub for AI agents.</h3>
+<h3 align="center">Context infrastructure for AI agents.</h3>
 
 <p align="center">
-  <a href="https://ultracontext.ai/docs">Documentation</a>
-  ·
-  <a href="https://ultracontext.ai/docs/api-reference/introduction">API Reference</a>
-  ·
+  <a href="https://ultracontext.ai/docs">Documentation</a> ·
+  <a href="https://ultracontext.ai/docs/api-reference/introduction">API Reference</a> ·
   <a href="https://ultracontext.ai/docs/changelog">Changelog</a>
 </p>
 
@@ -24,8 +22,8 @@
   <a href="https://github.com/ultracontext/ultracontext/blob/main/LICENSE">
     <img src="https://img.shields.io/github/license/ultracontext/ultracontext" alt="license" />
   </a>
-  <a href="https://github.com/ultracontext/ultracontext">
-    <img src="https://img.shields.io/github/stars/ultracontext/ultracontext.svg?style=social&label=Star" alt="GitHub stars" />
+  <a href="https://ultracontext.ai">
+    <img src="https://img.shields.io/badge/Visit-ultracontext.ai-4B6EF5" alt="Visit ultracontext.ai" />
   </a>
 </p>
 
@@ -33,95 +31,102 @@
   <a href="https://twitter.com/ultracontext">
     <img src="https://img.shields.io/badge/Follow%20on%20X-000000?style=for-the-badge&logo=x&logoColor=white" alt="Follow on X" />
   </a>
+  <a href="https://discord.com/invite/4HjcS6KwhW">
+    <img src="https://img.shields.io/badge/Join%20our%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join our Discord" />
+  </a>
 </div>
 
-<div align="center">
+---
 
-## All agents. All machines. One Hub.
+<h2 align="center">All agents. One context.</h2>
 
-</div>
-<img src="https://ultracontext.ai/ultracontext-hub.gif" alt="How it works" />
+Auto-capture and share your agents' context everywhere. Realtime. Open source.
 
-## Introduction
+![ultracontext-gif](https://github.com/user-attachments/assets/be73afe5-161d-4fa3-8f4d-c4987fe63cb4)
 
-Agents now do our work. Today, most of our knowledge and key decisions live inside context windows. But they are spread across many agents, computers, and teams.
+## Why Context Matters
 
-Not anymore.
+Context is the RAM of LLMs — everything they can see.
 
-## UltraContext Features
+As context grows, model attention spreads thin — this is why they hallucinate. We should aim to provide the smallest set of high-signal tokens that get the job done.
 
-- **Auto-ingest** — Captures contexts from your agents in realtime.
-- **Realtime access** — Immediately see contexts created on any machine, by any agent, whenever you want.
-- **Collaborate** — Share contexts across your team. See what everyone sees, instantly and without any friction.
-- **Switch between agents** — Pick up where one agent left off with another.
-- **Open source** — Own your data. Self-host when you need to.
-- **Plug and play** — Install and run with a single line of code.
-- **Fork & clone** — Continue contexts while preserving the full history.
-- **Customizable** — Add your own agents and extend behavior with the context API ([Docs here](https://ultracontext.ai/docs/api-reference/introduction)).
+Right now, we're reinventing the wheel for every car we build. Instead of solving bigger problems with AI, we currently spend most of our time gluing context together.
+
+**It's time to simplify.**
+
+## Why UltraContext
+
+**Context is all you need.**
+
+The right primitive is context. It's the only thing models actually consume. It's all they see. It's all that matters. Build on that and every decision compounds correctly.
+
+It turns out that there is no standard for context engineering. So we decided to make it. Our goal: **make shipping agents insanely simple by providing the best context infrastructure in the world.**
+
+Time to ship.
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=ultracontext/ultracontext-node&type=date&legend=top-left)](https://www.star-history.com/#ultracontext/ultracontext-node&type=date&legend=top-left)
 
 ## Install
 
-Requires **Node >= 22**.
+Requires Node >= 22.
 
 ```bash
 npm install -g ultracontext
 ```
 
-That's it. The setup wizard runs automatically — walks you through API key, sync preferences, and launches the dashboard.
+## The Hub
 
-Already installed? Run `ultracontext config` to reconfigure.
+**All agents. One context.**
 
-## Quick Start
+- **Auto-capture** — Ingests your agents' context in realtime. Zero config.
+- **Switch between agents** — Pick up where one agent left off with another.
+- **Collaborate** — Share contexts across your team. See what everyone sees. Realtime.
+- **Fork & clone** — Continue contexts while preserving the full history.
+- **Own your data** — Open source. Your contexts. Your rules.
 
-```bash
-ultracontext              # start daemon + open dashboard
-ultracontext config       # run setup wizard
-ultracontext start        # start daemon only
-ultracontext stop         # stop daemon
-ultracontext status       # check if daemon is running
-ultracontext tui          # open dashboard only
-ultracontext update       # update CLI globally (npm/pnpm/bun)
-```
-
-The default ultracontext command does everything: checks the daemon, starts it if needed, and opens the TUI dashboard.
-
-## How it works
+### How it works
 
 1. A daemon runs in the background, watching your agents.
-2. Contexts are ingested in realtime with the Context API.
-3. Your Context Hub gets updated.
+2. Contexts are ingested in realtime.
+3. Your dashboard gets updated.
 
-We use a git-like context engineering API under the hood to interact with the agent's contexts. You can use it to add your own custom agents, tweak behavior and more. ([Docs here](https://ultracontext.ai/docs/))
+### Quick Start
 
-When you open an existing session from the hub, it forks the context, so the original context is always preserved by default and automatically versioned so you can keep track of it later using metadata.
+```bash
+ultracontext          # start daemon + open dashboard
+ultracontext config   # run setup wizard
+ultracontext start    # start daemon only
+ultracontext stop     # stop daemon
+ultracontext status   # check if daemon is running
+ultracontext tui      # open dashboard only
+```
 
-There is a local caching layer that prevents duplicate context creations and appends.
+The default `ultracontext` command does everything: checks the daemon, starts it if needed, and opens the dashboard.
 
-## Star History
+When you open an existing session, it forks the context — the original is always preserved and automatically versioned. A local caching layer prevents duplicate context creations and appends.
 
-[![Star History Chart](https://api.star-history.com/svg?repos=ultracontext/ultracontext&type=date&legend=top-left)](https://www.star-history.com/#ultracontext/ultracontext&type=date&legend=top-left)
+Add your own agents and extend behavior with the Context API. ([Docs here](https://ultracontext.ai/docs/))
 
-## Everything we built so far
+## The API
 
-- Daemon - Runs in the background, watching your agents.
-- TUI - Terminal UI for the daemon.
-- [Context API](https://ultracontext.ai/docs/) - Git-like context engineering API.
-- [Context API SDKs](https://ultracontext.ai/docs/quickstart/nodejs) - Node and Python SDKs.
+**Context engineering built like Git.**
 
-<div align="center">
+- **Five methods** — Create, get, append, update, delete. That's it.
+- **Automatic versioning** — Every change creates a new version. Full history out of the box.
+- **Time-travel** — Jump to any point in your context history.
+- **Framework-agnostic** — Works with any LLM framework. No vendor lock-in.
 
-# The Context API
+The simplest way to control what your agents see. Replace messages, compact long context, replay decisions and roll back mistakes — all with a single API call. Versioned context out of the box. Full history. Zero complexity.
 
-</div>
+Use the API standalone to build your own agents, or to extend existing ones in UltraContext.
 
-The Context API is the simplest way to control what your agents see. Replace messages, compact/offload long context, replay decisions and roll back mistakes with a single API call. Versioned context out of the box. Full history. Zero complexity. You can use the API standalone to build your own agents or to tweak behavior of existing ones in ultracontext. ([Docs here](https://ultracontext.ai/docs/api-reference/introduction))
 
-## Context API SDKs
-
-| SDK | Install | Source |
-|-----|---------|--------|
-| JavaScript/TypeScript | `npm install ultracontext` | [apps/js-sdk](./apps/js-sdk) |
-| Python | `pip install ultracontext` | [apps/python-sdk](./apps/python-sdk) |
+| SDK                   | Install                    | Source                               |
+| --------------------- | -------------------------- | ------------------------------------ |
+| JavaScript/TypeScript | `npm install ultracontext` | [apps/js-sdk](./apps/js-sdk)         |
+| Python                | `pip install ultracontext` | [apps/python-sdk](./apps/python-sdk) |
 
 
 ### JavaScript/TypeScript
@@ -130,7 +135,7 @@ The Context API is the simplest way to control what your agents see. Replace mes
 npm install ultracontext
 ```
 
-```js
+```typescript
 import { UltraContext } from 'ultracontext';
 
 const uc = new UltraContext({ apiKey: 'uc_live_...' });
@@ -160,7 +165,17 @@ uc.append(ctx["id"], {"role": "user", "content": "Hello!"})
 response = generate_text(model=model, messages=uc.get(ctx["id"])["data"])
 ```
 
-Get an API key from the [UltraContext Dashboard](https://ultracontext.ai/dashboard).
+<p align="center">📚 Context API Guides</p>
+<p align="center">
+  <a href="https://ultracontext.ai/docs/guides/store-retrieve-contexts">Store & Retrieve</a>
+  ·
+  <a href="https://ultracontext.ai/docs/guides/edit-contexts">Edit Contexts</a>
+  ·
+  <a href="https://ultracontext.ai/docs/guides/fork-clone-contexts">Fork & Clone</a>
+  ·
+  <a href="https://ultracontext.ai/docs/guides/view-context-history">View History</a>
+</p>
+
 
 ## Documentation
 
@@ -168,4 +183,6 @@ Get an API key from the [UltraContext Dashboard](https://ultracontext.ai/dashboa
 - [Guides](https://ultracontext.ai/docs/guides/store-retrieve-contexts) — Practical patterns for common use cases
 - [API Reference](https://ultracontext.ai/docs/api-reference/introduction) — Full endpoint documentation
 
----
+## Star History
+
+[Star History Chart](https://www.star-history.com/#ultracontext/ultracontext&type=date&legend=top-left)
