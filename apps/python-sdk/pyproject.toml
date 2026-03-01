@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ultracontext"
-version = "1.0.3"
+version = "1.1.2"
 description = "The context API for AI agents"
 readme = "README.md"
 license = "Apache-2.0"

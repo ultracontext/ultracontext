@@ -15,11 +15,8 @@ export default defineConfig([
   {
     entry: {
       "cli/entry": "src/cli/entry.mjs",
-      "cli/daemon/launcher": "src/cli/daemon/launcher.mjs",
-      "cli/daemon/ctl": "src/cli/daemon/ctl.mjs",
-      "cli/daemon/index": "src/cli/daemon/index.mjs",
       "cli/onboarding": "src/cli/onboarding.mjs",
-      "cli/tui/index": "src/cli/tui/index.mjs",
+      "cli/sdk-daemon": "src/cli/sdk-daemon.mjs",
     },
     outDir: "dist",
     format: "esm",
@@ -32,6 +29,9 @@ export default defineConfig([
       "ws",
       "fast-glob",
       "ultracontext",
+      "@ultracontext/protocol",
+      "@ultracontext/daemon",
+      "@ultracontext/tui",
     ],
   },
 ]);

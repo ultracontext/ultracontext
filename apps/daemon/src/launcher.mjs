@@ -1,5 +1,4 @@
-import "./env.mjs";
-
+// daemon launcher — spawns daemon in background, exported as launchDaemon()
 import fs from "node:fs/promises";
 import fsSync from "node:fs";
 import path from "node:path";
@@ -13,6 +12,21 @@ import { resolveLockPath } from "./lock.mjs";
 import { expandHome } from "./utils.mjs";
 
 const DEFAULT_LOG_FILE = "~/.ultracontext/daemon.log";
+
+// ── ANSI helpers ────────────────────────────────────────────────
+
+const isTTY = process.stdout.isTTY;
+const esc = (code) => (isTTY ? `\x1b[${code}m` : "");
+const reset = esc(0);
+const bold = esc(1);
+const dim = esc(2);
+const blue = esc("38;2;47;111;179");
+const cyan = esc("38;2;126;195;255");
+const green = esc("38;2;80;200;120");
+const red = esc("38;2;220;80;80");
+const gray = esc("38;5;245");
+
+// ── process helpers ─────────────────────────────────────────────
 
 function isPidAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 1) return false;
@@ -39,12 +53,8 @@ async function readJsonFile(filePath) {
 async function readLogTail(logPath, lines = 12) {
   try {
     const raw = await fs.readFile(logPath, "utf8");
-    const allLines = raw
-      .split("\n")
-      .map((line) => line.trimEnd())
-      .filter(Boolean);
-    if (allLines.length === 0) return [];
-    return allLines.slice(-Math.max(lines, 1));
+    const allLines = raw.split("\n").map((l) => l.trimEnd()).filter(Boolean);
+    return allLines.length === 0 ? [] : allLines.slice(-Math.max(lines, 1));
   } catch {
     return [];
   }
@@ -54,25 +64,11 @@ function resolveDaemonLogFile(env = process.env) {
   return expandHome(env.ULTRACONTEXT_DAEMON_LOG_FILE ?? DEFAULT_LOG_FILE);
 }
 
-function printBranding() {
-  const lines = [
-    "+------------------------------------------+",
-    "|             UltraContext Daemon          |",
-    "+------------------------------------------+",
-  ];
-  for (const line of lines) console.log(line);
-}
-
 async function resolveRunningProcess(lockPath) {
   const lock = await readJsonFile(lockPath);
   const lockPid = Number.parseInt(String(lock?.pid ?? ""), 10);
   if (isPidAlive(lockPid)) {
-    return {
-      pid: lockPid,
-      startedAt: String(lock?.startedAt ?? ""),
-      engineerId: String(lock?.engineerId ?? ""),
-      host: String(lock?.host ?? ""),
-    };
+    return { pid: lockPid, startedAt: String(lock?.startedAt ?? ""), engineerId: String(lock?.engineerId ?? ""), host: String(lock?.host ?? "") };
   }
   return null;
 }
@@ -90,74 +86,76 @@ async function resolveWritableLogPath(preferredPath) {
   }
 }
 
-async function main() {
-  const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+// ── exported entry point ────────────────────────────────────────
+
+export async function launchDaemon({ entryPath, diagnosticsHint } = {}) {
+  const resolvedEntry = entryPath ?? fileURLToPath(new URL("./index.mjs", import.meta.url));
+  const hint = diagnosticsHint ?? "pnpm --filter @ultracontext/daemon run start:verbose";
+
   const lockPath = path.resolve(resolveLockPath(process.env));
   const infoPath = path.resolve(resolveDaemonWsInfoFile(process.env));
   const preferredLogPath = resolveDaemonLogFile(process.env);
 
-  printBranding();
+  console.log("");
+  console.log(`  ${blue}${bold}UltraContext${reset} ${dim}Daemon${reset}`);
+  console.log("");
 
+  // already running
   const running = await resolveRunningProcess(lockPath);
   if (running) {
-    console.log(`Daemon is already running (PID ${running.pid}).`);
-    console.log(`lock: ${lockPath}`);
-    console.log(`info: ${infoPath}`);
+    console.log(`  ${cyan}●${reset} ${bold}Already running${reset}  ${gray}PID ${running.pid}${reset}`);
+    console.log("");
     process.exit(2);
     return;
   }
 
+  // spawn daemon
   const logPath = await resolveWritableLogPath(preferredLogPath);
   const outFd = fsSync.openSync(logPath, "a");
   const errFd = fsSync.openSync(logPath, "a");
 
   let child;
   try {
-    child = spawn(process.execPath, ["src/index.mjs", "--daemon"], {
-      cwd: appRoot,
+    child = spawn(process.execPath, [resolvedEntry, "--daemon"], {
       env: process.env,
       detached: true,
       stdio: ["ignore", outFd, errFd],
     });
     child.unref();
   } finally {
-    try {
-      fsSync.closeSync(outFd);
-    } catch {
-      // ignore
-    }
-    try {
-      fsSync.closeSync(errFd);
-    } catch {
-      // ignore
-    }
+    try { fsSync.closeSync(outFd); } catch { /* ignore */ }
+    try { fsSync.closeSync(errFd); } catch { /* ignore */ }
   }
 
   await new Promise((resolve) => setTimeout(resolve, 350));
+
+  // failed
   if (!isPidAlive(child.pid)) {
-    console.error("Failed to start daemon in the background.");
+    console.log(`  ${red}✕${reset} ${bold}Failed to start${reset}`);
     const tail = await readLogTail(logPath);
     if (tail.length > 0) {
-      console.error("Last daemon log lines:");
-      for (const line of tail) {
-        console.error(`  ${line}`);
-      }
+      console.log("");
+      for (const line of tail) console.error(`    ${gray}${line}${reset}`);
     }
-    console.error("Run `pnpm --filter ultracontext-daemon run start:verbose` for diagnostics.");
+    console.log("");
+    console.log(`  ${dim}Try: ${hint}${reset}`);
+    console.log("");
     process.exit(1);
     return;
   }
 
-  console.log("Daemon started in the background successfully.");
-  console.log(`pid:  ${child.pid}`);
-  console.log(`log:  ${logPath}`);
-  console.log(`info: ${infoPath}`);
-  console.log("verbose: pnpm --filter ultracontext-daemon run start:verbose");
-  console.log("stop:    pnpm --filter ultracontext-daemon run stop");
+  // success
+  console.log(`  ${green}✓${reset} ${bold}Started${reset}  ${gray}PID ${child.pid}${reset}`);
+  console.log(`    ${gray}${logPath}${reset}`);
+  console.log("");
 }
 
-main().catch((error) => {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error(`Failed to start launcher: ${message}`);
-  process.exit(1);
-});
+// auto-exec when run directly
+const isDirectRun = process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/.*\//, ""));
+if (isDirectRun) {
+  launchDaemon().catch((error) => {
+    console.error(`  ${red}✕${reset} ${error instanceof Error ? error.message : String(error)}`);
+    console.error("");
+    process.exit(1);
+  });
+}

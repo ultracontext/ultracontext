@@ -275,6 +275,31 @@ function runUpdate(rawArgs) {
   }
 }
 
+// ── launch helpers ──────────────────────────────────────────────
+
+async function launchDaemonSDK() {
+  const { launchDaemon } = await import("@ultracontext/daemon/launcher");
+  await launchDaemon({
+    entryPath: fileURLToPath(new URL("./sdk-daemon.mjs", import.meta.url)),
+    diagnosticsHint: "DAEMON_VERBOSE=1 ultracontext start",
+  });
+}
+
+async function runCtlSDK() {
+  const { runCtl } = await import("@ultracontext/daemon/ctl");
+  await runCtl();
+}
+
+async function launchTuiSDK() {
+  const { tuiBoot } = await import("@ultracontext/tui/tui");
+  await tuiBoot({
+    assetsRoot: path.resolve(__dirname, "..", ".."),
+    offlineNotice: "Daemon offline. Run: ultracontext start",
+  });
+}
+
+// ── main ────────────────────────────────────────────────────────
+
 async function run() {
   // load saved key, then onboard if still missing
   let onboardResult = null;
@@ -285,31 +310,31 @@ async function run() {
 
   switch (command) {
     case "start":
-      await import("./daemon/launcher.mjs");
-      if (onboardResult?.launchTui) await import("./tui/index.mjs");
+      await launchDaemonSDK();
+      if (onboardResult?.launchTui) await launchTuiSDK();
       break;
 
     case "stop":
       process.argv[2] = "stop";
-      await import("./daemon/ctl.mjs");
+      await runCtlSDK();
       break;
 
     case "status":
       process.argv[2] = "status";
-      await import("./daemon/ctl.mjs");
+      await runCtlSDK();
       break;
 
     case "config": {
       const configResult = await runOnboarding();
       if (configResult?.launchTui) {
-        if (!isDaemonRunning()) await import("./daemon/launcher.mjs");
-        await import("./tui/index.mjs");
+        if (!isDaemonRunning()) await launchDaemonSDK();
+        await launchTuiSDK();
       }
       break;
     }
 
     case "tui":
-      await import("./tui/index.mjs");
+      await launchTuiSDK();
       break;
 
     case "version":
@@ -324,8 +349,8 @@ async function run() {
 
     // default: ensure daemon running, then open TUI
     case "": {
-      if (!isDaemonRunning()) await import("./daemon/launcher.mjs");
-      await import("./tui/index.mjs");
+      if (!isDaemonRunning()) await launchDaemonSDK();
+      await launchTuiSDK();
       break;
     }
 

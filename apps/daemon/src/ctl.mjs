@@ -1,5 +1,4 @@
-import "./env.mjs";
-
+// daemon ctl — status/stop commands, exported as runCtl()
 import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
@@ -31,11 +30,7 @@ async function readJsonFile(filePath) {
 }
 
 async function removeFileIfExists(filePath) {
-  try {
-    await fs.unlink(filePath);
-  } catch {
-    // ignore
-  }
+  try { await fs.unlink(filePath); } catch { /* ignore */ }
 }
 
 function pickPid(lock, info) {
@@ -46,21 +41,41 @@ function pickPid(lock, info) {
   return 0;
 }
 
+// ── ANSI helpers ────────────────────────────────────────────────
+
+const isTTY = process.stdout.isTTY;
+const esc = (code) => (isTTY ? `\x1b[${code}m` : "");
+const r = esc(0);
+const b = esc(1);
+const d = esc(2);
+const blue = esc("38;2;47;111;179");
+const green = esc("38;2;80;200;120");
+const red = esc("38;2;220;80;80");
+const gray = esc("38;5;245");
+
+// ── commands ────────────────────────────────────────────────────
+
 async function status({ lockPath, infoPath }) {
   const lock = await readJsonFile(lockPath);
   const info = await readJsonFile(infoPath);
   const pid = pickPid(lock, info);
 
+  console.log("");
+  console.log(`  ${blue}${b}UltraContext${r} ${d}Daemon${r}`);
+  console.log("");
+
   if (!isPidAlive(pid)) {
-    console.log("UltraContext daemon: offline");
+    console.log(`  ${gray}○${r} ${d}Offline${r}`);
+    console.log("");
     return 0;
   }
 
   const port = Number.parseInt(String(info?.port ?? ""), 10);
-  console.log("UltraContext daemon: online");
-  console.log(`pid:  ${pid}`);
-  if (Number.isInteger(port) && port > 0) console.log(`port: ${port}`);
-  if (info?.startedAt) console.log(`since: ${info.startedAt}`);
+  const portStr = Number.isInteger(port) && port > 0 ? `  ${gray}Port ${port}${r}` : "";
+  const sinceStr = info?.startedAt ? `  ${gray}Since ${info.startedAt}${r}` : "";
+  console.log(`  ${green}●${r} ${b}Online${r}  ${gray}PID ${pid}${r}${portStr}`);
+  if (sinceStr) console.log(`  ${sinceStr}`);
+  console.log("");
   return 0;
 }
 
@@ -69,10 +84,15 @@ async function stop({ lockPath, infoPath }) {
   const info = await readJsonFile(infoPath);
   const pid = pickPid(lock, info);
 
+  console.log("");
+  console.log(`  ${blue}${b}UltraContext${r} ${d}Daemon${r}`);
+  console.log("");
+
   if (!isPidAlive(pid)) {
     await removeFileIfExists(lockPath);
     await removeFileIfExists(infoPath);
-    console.log("Daemon was already stopped.");
+    console.log(`  ${gray}○${r} ${d}Already stopped${r}`);
+    console.log("");
     return 0;
   }
 
@@ -85,17 +105,21 @@ async function stop({ lockPath, infoPath }) {
   }
 
   if (isPidAlive(pid)) {
-    console.error(`Could not stop daemon (PID ${pid}) before timeout.`);
+    console.error(`  ${red}✕${r} ${b}Timed out${r}  ${gray}PID ${pid} still running${r}`);
+    console.error("");
     return 1;
   }
 
   await removeFileIfExists(lockPath);
   await removeFileIfExists(infoPath);
-  console.log(`Daemon stopped (PID ${pid}).`);
+  console.log(`  ${green}✓${r} ${b}Stopped${r}  ${gray}PID ${pid}${r}`);
+  console.log("");
   return 0;
 }
 
-async function main() {
+// ── exported entry point ────────────────────────────────────────
+
+export async function runCtl() {
   const cmd = String(process.argv[2] ?? "status").trim().toLowerCase();
   const lockPath = path.resolve(resolveLockPath(process.env));
   const infoPath = path.resolve(resolveDaemonWsInfoFile(process.env));
@@ -113,12 +137,15 @@ async function main() {
   }
 
   console.error(`Invalid command: ${cmd}`);
-  console.error("Use: node src/ctl.mjs [status|stop]");
+  console.error("Use: ultracontext [status|stop]");
   process.exit(1);
 }
 
-main().catch((error) => {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error(`Daemon control failed: ${message}`);
-  process.exit(1);
-});
+// auto-exec when run directly
+const isDirectRun = process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/.*\//, ""));
+if (isDirectRun) {
+  runCtl().catch((error) => {
+    console.error(`Daemon control failed: ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  });
+}

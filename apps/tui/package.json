@@ -1,8 +1,14 @@
 {
-  "name": "ultracontext-tui",
+  "name": "@ultracontext/tui",
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "exports": {
+    "./tui": "./src/tui.mjs",
+    "./ui/hero-art": "./src/ui/hero-art.mjs",
+    "./ui/constants": "./src/ui/constants.mjs",
+    "./Spinner": "./src/Spinner.mjs"
+  },
   "scripts": {
     "start": "node src/index.mjs",
     "dev": "node --watch src/index.mjs",

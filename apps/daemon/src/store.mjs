@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 
 import { expandHome } from "./utils.mjs";
 
@@ -32,9 +31,9 @@ export function createStore({ dbPath = resolveDbPath(process.env) } = {}) {
   const resolvedPath = path.resolve(dbPath);
   ensureParentDir(resolvedPath);
 
-  const db = new Database(resolvedPath);
-  db.pragma("journal_mode = WAL");
-  db.pragma("synchronous = NORMAL");
+  const db = new DatabaseSync(resolvedPath);
+  db.exec("PRAGMA journal_mode = WAL");
+  db.exec("PRAGMA synchronous = NORMAL");
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS seen_events (
@@ -130,12 +129,20 @@ export function createStore({ dbPath = resolveDbPath(process.env) } = {}) {
     `),
   };
 
-  const markEventSeenTxn = db.transaction((eventHash, ttlSeconds) => {
-    stmt.deleteSeenIfExpired.run(eventHash);
-    const expiresAt = Math.floor(Date.now() / 1000) + Math.max(parseNumber(ttlSeconds, 60), 1);
-    const result = stmt.markSeen.run(eventHash, expiresAt);
-    return result.changes === 1;
-  });
+  // manual transaction wrapper (node:sqlite has no .transaction() helper)
+  function markEventSeenTxn(eventHash, ttlSeconds) {
+    db.exec("BEGIN");
+    try {
+      stmt.deleteSeenIfExpired.run(eventHash);
+      const expiresAt = Math.floor(Date.now() / 1000) + Math.max(parseNumber(ttlSeconds, 60), 1);
+      const result = stmt.markSeen.run(eventHash, expiresAt);
+      db.exec("COMMIT");
+      return result.changes === 1;
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+  }
 
   return {
     dbPath: resolvedPath,

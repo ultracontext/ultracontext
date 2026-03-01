@@ -1,5 +1,4 @@
-import "./env.mjs";
-
+// tui core — exported as tuiBoot(), no env.mjs import (caller handles that)
 import fs from "node:fs/promises";
 import fsSync from "node:fs";
 import os from "node:os";
@@ -14,7 +13,7 @@ import {
   normalizeBootstrapMode,
   resolveDaemonWsHost,
   resolveDaemonWsInfoFile,
-} from "../protocol/index.mjs";
+} from "@ultracontext/protocol";
 
 import {
   hasLocalClaudeSession,
@@ -26,13 +25,20 @@ import { MENU_TABS, createInkUiController } from "./ui.mjs";
 import { boolFromEnv, expandHome, toInt } from "./utils.mjs";
 import { createDaemonWsClient } from "./ws-client.mjs";
 
-// resolve asset paths relative to package root (3 levels up from src/cli/tui/)
-const __tui_dirname = path.dirname(fileURLToPath(import.meta.url));
-const PKG_ROOT = path.resolve(__tui_dirname, "..", "..", "..");
-const DEFAULT_STARTUP_SOUND_FILE = path.join(PKG_ROOT, "assets", "sounds", "hello_mf.mp3");
-const DEFAULT_CONTEXT_SOUND_FILE = path.join(PKG_ROOT, "assets", "sounds", "quack.mp3");
 const DEFAULT_RUNTIME_CONFIG_FILE = "~/.ultracontext/config.json";
-const OFFLINE_NOTICE = "Daemon offline. Run: ultracontext start";
+
+// ── exported boot function ──────────────────────────────────────
+
+export async function tuiBoot({
+  assetsRoot,
+  offlineNotice,
+  onFatalError,
+} = {}) {
+
+const APP_ROOT = assetsRoot ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const DEFAULT_STARTUP_SOUND_FILE = path.join(APP_ROOT, "assets", "sounds", "hello_mf.mp3");
+const DEFAULT_CONTEXT_SOUND_FILE = path.join(APP_ROOT, "assets", "sounds", "quack.mp3");
+const OFFLINE_NOTICE = offlineNotice ?? "Daemon offline. Run: pnpm --filter @ultracontext/daemon run start";
 
 const CONFIG_BOOTSTRAP_MODES = [
   { id: "prompt", label: "Ask on startup" },
@@ -1810,25 +1816,14 @@ tuiMain().catch(async (error) => {
   runtime.stop = null;
   runtime.uc = null;
 
-  const isTTY = process.stderr.isTTY;
-  const esc = (code) => (isTTY ? `\x1b[${code}m` : "");
-  const r = esc(0);
-  const b = esc(1);
-  const d = esc(2);
-  const red = esc("38;2;220;80;80");
-  const cyan = esc("38;2;126;195;255");
-  const gray = esc("38;5;245");
+  if (onFatalError) {
+    onFatalError(error);
+    return;
+  }
 
   const message = error instanceof Error ? error.message : String(error);
-  const is401 = message.includes("401");
-
-  console.error("");
-  if (is401) {
-    console.error(`  ${red}✕${r} ${b}Invalid API key${r}`);
-    console.error(`    ${gray}Run ${cyan}ultracontext config${r} ${gray}to set up a new key${r}`);
-  } else {
-    console.error(`  ${red}✕${r} ${b}${message}${r}`);
-  }
-  console.error("");
+  console.error(`[error] UltraContext TUI failed: ${message}`);
   process.exit(1);
 });
+
+} // end tuiBoot

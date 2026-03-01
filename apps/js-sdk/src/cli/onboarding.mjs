@@ -7,9 +7,9 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
-import { heroArtForWidth } from "./tui/ui/hero-art.mjs";
-import { UC_BRAND_BLUE, UC_BLUE_LIGHT } from "./tui/ui/constants.mjs";
-import Spinner from "./tui/Spinner.mjs";
+import { heroArtForWidth } from "@ultracontext/tui/ui/hero-art";
+import { UC_BRAND_BLUE, UC_BLUE_LIGHT } from "@ultracontext/tui/ui/constants";
+import Spinner from "@ultracontext/tui/Spinner";
 
 // ── config helpers ──────────────────────────────────────────────
 

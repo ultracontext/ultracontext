@@ -2,7 +2,7 @@
     "name": "ultracontext",
     "description": "JavaScript/TypeScript SDK + CLI for the UltraContext API",
     "type": "module",
-    "version": "1.1.0",
+    "version": "1.1.2",
     "engines": {
         "node": ">=22.12.0"
     },
@@ -62,6 +62,9 @@
     ],
     "dependencies": {
         "@mishieck/ink-titled-box": "^0.4.2",
+        "@ultracontext/daemon": "workspace:*",
+        "@ultracontext/protocol": "workspace:*",
+        "@ultracontext/tui": "workspace:*",
         "fast-glob": "^3.3.3",
         "figlet": "^1.10.0",
         "ink": "^6.7.0",
