@@ -237,6 +237,19 @@ function runGlobalUpdate(manager, tag) {
   }
 }
 
+// ── ANSI helpers ────────────────────────────────────────────────
+
+const isTTY = process.stdout.isTTY;
+const esc = (code) => (isTTY ? `\x1b[${code}m` : "");
+const r = esc(0);
+const b = esc(1);
+const d = esc(2);
+const blue = esc("38;2;47;111;179");
+const green = esc("38;2;80;200;120");
+const red = esc("38;2;220;80;80");
+const cyan = esc("36");
+const gray = esc("38;5;245");
+
 function runUpdate(rawArgs) {
   const opts = parseUpdateOptions(rawArgs);
   if (opts.help) {
@@ -251,27 +264,110 @@ function runUpdate(rawArgs) {
     );
   }
 
+  const previousVersion = readVersion();
+
+  console.log("");
+  console.log(`  ${blue}${b}UltraContext${r} ${d}Update${r}`);
+  console.log("");
+
+  // stop daemon before update
   const wasRunning = isDaemonRunning();
   if (wasRunning && opts.restart) {
-    console.log("Stopping daemon before update...");
+    console.log(`  ${gray}○${r} ${d}Stopping daemon...${r}`);
     const stopCode = runCliSubcommand("stop");
     if (stopCode !== 0) {
       throw new Error(`Failed to stop daemon before update (exit ${stopCode}).`);
     }
   }
 
-  console.log(`Updating ${PACKAGE_NAME} via ${manager} (${PACKAGE_NAME}@${opts.tag})...`);
+  // run update
+  console.log(`  ${gray}↓${r} ${d}Updating via ${manager}${r} ${gray}(${PACKAGE_NAME}@${opts.tag})${r}`);
   runGlobalUpdate(manager, opts.tag);
-  console.log("Update completed.");
 
+  // read new version after update
+  const newVersion = readVersion();
+  console.log("");
+  console.log(`  ${green}✓${r} ${b}Updated${r}  ${gray}${previousVersion} → ${newVersion}${r}`);
+
+  // restart daemon
   if (wasRunning && opts.restart) {
-    console.log("Restarting daemon...");
+    console.log(`  ${green}●${r} ${d}Restarting daemon...${r}`);
     const startCode = runCliSubcommand("start");
     if (startCode !== 0) {
       throw new Error(`Update succeeded but daemon restart failed (exit ${startCode}).`);
     }
   } else if (wasRunning) {
-    console.log("Daemon was running before update. Restart manually with: ultracontext start");
+    console.log(`  ${gray}○${r} ${d}Daemon was stopped. Run:${r} ${cyan}ultracontext start${r}`);
+  }
+
+  console.log("");
+}
+
+// ── update check ────────────────────────────────────────────────
+
+const UPDATE_CHECK_INTERVAL = 3 * 60 * 60 * 1000; // 3h
+const SKIP_UPDATE_CHECK = new Set(["version", "v", "update", "upgrade", "help", "h", "stop", "status"]);
+
+function getUpdateCheckPath() {
+  const home = process.env.HOME || process.env.USERPROFILE || "~";
+  return path.join(home, ".ultracontext", "update-check.json");
+}
+
+function readUpdateCache() {
+  try { return JSON.parse(fs.readFileSync(getUpdateCheckPath(), "utf8")); }
+  catch { return null; }
+}
+
+function writeUpdateCache(data) {
+  try { fs.writeFileSync(getUpdateCheckPath(), JSON.stringify(data)); }
+  catch { /* best effort */ }
+}
+
+async function fetchLatestVersion() {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3000);
+  try {
+    const res = await fetch("https://registry.npmjs.org/ultracontext/latest", { signal: controller.signal });
+    const data = await res.json();
+    return data.version ?? null;
+  } catch { return null; }
+  finally { clearTimeout(timeout); }
+}
+
+function isNewer(latest, current) {
+  const l = latest.split(".").map(Number);
+  const c = current.split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    if ((l[i] ?? 0) > (c[i] ?? 0)) return true;
+    if ((l[i] ?? 0) < (c[i] ?? 0)) return false;
+  }
+  return false;
+}
+
+function printUpdateNotice(current, latest) {
+  console.log(`\n  ${blue}${b}UltraContext${r} ${d}Update available${r}`);
+  console.log(`  ${gray}${current}${r} → ${green}${b}${latest}${r}`);
+  console.log(`  Run ${cyan}ultracontext update${r} to upgrade.\n`);
+}
+
+async function checkForUpdate() {
+  const current = readVersion();
+  if (current === "unknown") return;
+
+  // use cache if fresh
+  const cache = readUpdateCache();
+  if (cache?.lastCheck && Date.now() - cache.lastCheck < UPDATE_CHECK_INTERVAL) {
+    if (cache.latestVersion && isNewer(cache.latestVersion, current)) {
+      printUpdateNotice(current, cache.latestVersion);
+    }
+    return;
+  }
+
+  // fetch from registry
+  const latest = await fetchLatestVersion();
+  writeUpdateCache({ lastCheck: Date.now(), latestVersion: latest });
+  if (latest && isNewer(latest, current)) {
+    printUpdateNotice(current, latest);
   }
 }
 
@@ -301,6 +397,9 @@ async function launchTuiSDK() {
 // ── main ────────────────────────────────────────────────────────
 
 async function run() {
+  // check for updates (silent on error, cached 24h)
+  if (!SKIP_UPDATE_CHECK.has(command)) await checkForUpdate();
+
   // load saved key, then onboard if still missing
   let onboardResult = null;
   if (NEEDS_KEY.has(command)) {
