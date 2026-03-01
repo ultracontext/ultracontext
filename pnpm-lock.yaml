@@ -65,15 +65,6 @@ importers:
       '@mishieck/ink-titled-box':
         specifier: ^0.4.2
         version: 0.4.2(ink@6.7.0(react@19.2.4))(react@19.2.4)(typescript@5.9.3)
-      '@ultracontext/daemon':
-        specifier: workspace:*
-        version: link:../daemon
-      '@ultracontext/protocol':
-        specifier: workspace:*
-        version: link:../../packages/protocol
-      '@ultracontext/tui':
-        specifier: workspace:*
-        version: link:../tui
       fast-glob:
         specifier: ^3.3.3
         version: 3.3.3
@@ -90,6 +81,15 @@ importers:
         specifier: ^8.18.3
         version: 8.19.0
     devDependencies:
+      '@ultracontext/daemon':
+        specifier: workspace:*
+        version: link:../daemon
+      '@ultracontext/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      '@ultracontext/tui':
+        specifier: workspace:*
+        version: link:../tui
       tsdown:
         specifier: ^0.20.3
         version: 0.20.3(typescript@5.9.3)
