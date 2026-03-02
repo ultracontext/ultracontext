@@ -4,8 +4,8 @@
   "packageManager": "pnpm@10.28.1",
   "scripts": {
     "check": "pnpm -r --if-present run check",
-    "dev:daemon": "pnpm --filter ultracontext-daemon run dev",
-    "dev:tui": "pnpm --filter ultracontext-tui run dev",
+    "dev:daemon": "pnpm --filter @ultracontext/daemon run dev",
+    "dev:tui": "pnpm --filter @ultracontext/tui run dev",
     "ultracontext:api": "pnpm --filter ultracontext-api run dev",
     "ultracontext:db:up": "cd apps/postgres && docker compose up -d",
     "ultracontext:db:down": "cd apps/postgres && docker compose down",
@@ -13,10 +13,10 @@
     "ultracontext:db:migrate": "bash ./apps/postgres/scripts/ultracontext-db-migrate.sh",
     "ultracontext:key:local": "bash ./apps/api/scripts/ultracontext-dev-key.sh",
     "ultracontext:migrate": "pnpm run ultracontext:db:migrate",
-    "ultracontext:start": "pnpm --filter ultracontext-daemon run start",
-    "ultracontext:start:verbose": "pnpm --filter ultracontext-daemon run start:verbose",
-    "ultracontext:tui": "pnpm --filter ultracontext-tui run start",
-    "ultracontext:status": "pnpm --filter ultracontext-daemon run status",
-    "ultracontext:stop": "pnpm --filter ultracontext-daemon run stop"
+    "ultracontext:start": "pnpm --filter @ultracontext/daemon run start",
+    "ultracontext:start:verbose": "pnpm --filter @ultracontext/daemon run start:verbose",
+    "ultracontext:tui": "pnpm --filter @ultracontext/tui run start",
+    "ultracontext:status": "pnpm --filter @ultracontext/daemon run status",
+    "ultracontext:stop": "pnpm --filter @ultracontext/daemon run stop"
   }
 }
