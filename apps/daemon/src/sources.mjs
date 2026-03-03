@@ -30,42 +30,39 @@ function preserveText(value) {
 
 // format a tool_use block into a readable string
 function formatToolUse(item) {
-  const name = item.name ?? "unknown";
+  const name = (item.name ?? "unknown").toLowerCase();
   const input = item.input ?? {};
+  const filePath = input.file_path ?? input.path ?? "";
 
-  if (name === "Write" || name === "write") {
+  if (name === "write") {
     const content = preserveText(input.content ?? input.file_text ?? "");
-    return `[Write] ${input.file_path ?? input.path ?? ""}\n${content}`;
+    return `[Write] ${filePath}\n${content}`;
   }
 
-  if (name === "Edit" || name === "edit") {
-    const parts = [`[Edit] ${input.file_path ?? input.path ?? ""}`];
+  if (name === "edit") {
+    const parts = [`[Edit] ${filePath}`];
     if (input.old_string) parts.push(`- ${preserveText(input.old_string)}`);
     if (input.new_string) parts.push(`+ ${preserveText(input.new_string)}`);
     return parts.join("\n");
   }
 
-  if (name === "Read" || name === "read") {
-    return `[Read] ${input.file_path ?? input.path ?? ""}`;
+  if (name === "read") {
+    return `[Read] ${filePath}`;
   }
 
-  if (name === "Bash" || name === "bash") {
+  if (name === "bash") {
     return `[Bash] ${preserveText(input.command ?? "")}`;
   }
 
-  if (name === "Grep" || name === "grep") {
-    const path = input.path ? ` in ${input.path}` : "";
-    return `[Grep] ${input.pattern ?? ""}${path}`;
-  }
-
-  if (name === "Glob" || name === "glob") {
-    const path = input.path ? ` in ${input.path}` : "";
-    return `[Glob] ${input.pattern ?? ""}${path}`;
+  // grep and glob share the same shape
+  if (name === "grep" || name === "glob") {
+    const loc = filePath ? ` in ${filePath}` : "";
+    return `[${item.name}] ${input.pattern ?? ""}${loc}`;
   }
 
   // generic fallback — tool name + compact JSON of input
   const compact = JSON.stringify(input);
-  return `[${name}] ${compact.length > 500 ? compact.slice(0, 500) + "..." : compact}`;
+  return `[${item.name ?? name}] ${compact.length > 500 ? compact.slice(0, 500) + "..." : compact}`;
 }
 
 // format a tool_result block into a readable string
@@ -76,12 +73,13 @@ function formatToolResult(item) {
     return text ? `[result] ${truncateString(text, 1000)}` : "[result] ok";
   }
 
-  // content can be array of text blocks
+  // content can be array of text blocks — process each part then join once
   if (Array.isArray(content)) {
-    const parts = content
+    const text = content
       .filter((c) => c?.type === "text" && typeof c.text === "string")
-      .map((c) => c.text);
-    const text = preserveText(parts.join("\n"));
+      .map((c) => preserveText(c.text))
+      .filter(Boolean)
+      .join("\n");
     return text ? `[result] ${truncateString(text, 1000)}` : "[result] ok";
   }
 
