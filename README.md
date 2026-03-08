@@ -57,18 +57,19 @@ For example:
 
 Open source. Framework-agnostic. Customizable via the git-like Context API.
 
-Our goal is to create the best context infrastructure out there to make you more productive with agents so you can ship world-class products with your teammates at inference speed. Either Humans or not
-
 ## How it works
 
 **1. Work normally.**
-Use Claude Code, Codex, Cursor — whatever you want. The CLI runs a daemon in the background, capturing context in realtime.
+
+Use Claude Code, Codex, Cursor — whatever you want. The CLI runs the daemon in the background, capturing context in realtime.
 
 **2. Context flows to the API.**
+
 Every session is automatically captured, versioned, and stored. Nothing is ever lost.
 
-**3. Any agent picks it up.**
-Add the MCP server to any agent — it gets full awareness of what every other agent did. Or fork a session and continue sessions locally while preserving the original one.
+**3. Access you context.**
+
+Add the MCP server to any agent — it gets full awareness of what every other agent did. Or fork a session with the UI to continue sessions locally
 
 ## Install
 
