@@ -45,33 +45,30 @@
 
 ![ultracontext-gif](https://github.com/user-attachments/assets/be73afe5-161d-4fa3-8f4d-c4987fe63cb4)
 
-What Claude Code knows, Codex doesn't. What your teammate built yesterday, what they're building right now — your agent has no idea.
+What Claude Code knows, Codex doesn't. What your teammate is shipping right now? Your agent has no idea.
 
-UltraContext captures every agent's context in realtime and makes it available to all of them. Continue a session in a different agent, or just ask.
+UltraContext captures every agent's context in realtime and makes it available to all of them. It's like having a personal context engineer everywhere. Continue a session in a different agent, or just ask what's happeming.
 
-You can ask questions like:
+For example:
 
+- *"Codex, grab the last plan Claude Code made and implement it."*
 - *"What's the team building today?"*
 - *"What is Alex working on in Codex right now?"*
-- *"Codex, grab the last plan Claude Code made and implement it."*
-- *"What did my agents ship this week?"*
-
-Your agent already has the answer.
 
 Open source. Framework-agnostic. Customizable via the git-like Context API.
 
-Our goal is to create the infrastructure on which the first billion-dollar company will be built entirely by agents. And to make it open source.
+Our goal is to create the best context infrastructure out there to make you more productive with agents so you can ship world-class products with your teammates at inference speed. Either Humans or not
 
 ## How it works
 
 **1. Work normally.**
-Use Claude Code, Codex, Cursor — whatever you want. The daemon runs in the background, capturing context in realtime.
+Use Claude Code, Codex, Cursor — whatever you want. The CLI runs a daemon in the background, capturing context in realtime.
 
 **2. Context flows to the API.**
 Every session is automatically captured, versioned, and stored. Nothing is ever lost.
 
 **3. Any agent picks it up.**
-Add the MCP server to any agent — it gets full awareness of what every other agent did. Or fork a session and continue it in a different tool.
+Add the MCP server to any agent — it gets full awareness of what every other agent did. Or fork a session and continue sessions locally while preserving the original one.
 
 ## Install
 
