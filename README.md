@@ -69,17 +69,11 @@ Open source. Framework-agnostic. Customizable via the git-like Context API.
 
 ## How it works
 
-**1. Work normally.**
+1. **Start the daemon.** It captures all your agents' context in realtime.
 
-Use Claude Code, Codex, Cursor — whatever you want. The CLI runs the daemon in the background, capturing context in realtime.
+2. **Add the MCP server.** Any agent gets full awareness of every other agent.
 
-**2. Context flows to the API.**
-
-Every session is automatically captured, versioned, and stored. Nothing is ever lost.
-
-**3. Ask or continue.**
-
-Add the MCP server to query what any agent did. Or fork a session and keep building from where it stopped.
+3. **That's it.** Ask questions, continue sessions, fork — your context is everywhere.
 
 ## Install
 
