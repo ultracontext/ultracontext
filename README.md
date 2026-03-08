@@ -7,7 +7,7 @@
 <h3 align="center">Same context. Everywhere.</h3>
 
 <p align="center">
-  Start on Claude Code. Pickup on Codex.<br/>
+  Start on Claude Code. Continue on Codex.<br/>
   Open source, realtime and invisible context infrastructure for the ones shipping at inference speed.
 </p>
 
