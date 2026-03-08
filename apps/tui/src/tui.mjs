@@ -104,7 +104,7 @@ const cfg = {
   baseUrl: (process.env.ULTRACONTEXT_BASE_URL ?? "https://api.ultracontext.ai").trim(),
   daemonWsHost: resolveDaemonWsHost(process.env),
   daemonWsInfoFile: resolveDaemonWsInfoFile(process.env),
-  engineerId: process.env.DAEMON_ENGINEER_ID ?? process.env.USER ?? "unknown-engineer",
+  userId: process.env.DAEMON_USER_ID ?? process.env.USER ?? "unknown-user",
   host: (process.env.DAEMON_HOST || os.hostname() || "unknown-host").trim(),
   uiRefreshMs: toInt(process.env.TUI_REFRESH_MS, 1200),
   resumeAutoRefreshMs: Math.max(toInt(process.env.RESUME_AUTO_REFRESH_MS, 3500), 0),
@@ -404,14 +404,14 @@ function applyRemoteRuntimeSnapshot(snapshot) {
   }
 
   const host = String(snapshot.host ?? cfg.host);
-  const engineerId = String(snapshot.engineerId ?? cfg.engineerId);
+  const userId = String(snapshot.userId ?? cfg.userId);
   const ts = Number(snapshot.ts ?? Date.now());
   const clientCountRaw = Number(snapshot.clients ?? 1);
   const clientCount = Number.isFinite(clientCountRaw) && clientCountRaw > 0 ? Math.floor(clientCountRaw) : 1;
 
   ui.onlineClients = Array.from({ length: clientCount }, () => ({
     host,
-    engineerId,
+    userId,
     ts,
   }));
 
@@ -941,9 +941,7 @@ function resumeFilterContexts(contexts) {
   return contexts.filter((ctx) => {
     const md = ctx?.metadata ?? {};
     const source = String(md.source ?? "").toLowerCase();
-    const kind = String(md.context_kind ?? "");
     if (cfg.resumeSourceFilter !== "all" && source && source !== cfg.resumeSourceFilter) return false;
-    if (kind && kind !== "session") return false;
     return true;
   });
 }
@@ -1020,7 +1018,7 @@ function resumeSummaryMarkdown({ context, messages }) {
     `Context ID: ${context.id}`,
     `Created at: ${resumeFormatDate(context.created_at)}`,
     `Source: ${context.metadata?.source ?? "-"}`,
-    `Engineer: ${context.metadata?.engineer_id ?? "-"}`,
+    `User: ${context.metadata?.user_id ?? "-"}`,
     `Session ID: ${context.metadata?.session_id ?? "-"}`,
     "",
     "## Snapshot",
@@ -1849,7 +1847,7 @@ function buildUiSnapshot() {
       options: UPDATE_PROMPT_OPTIONS,
     },
     cfg: {
-      engineerId: cfg.engineerId,
+      userId: cfg.userId,
       host: cfg.host,
       daemonWsHost: cfg.daemonWsHost,
       daemonWsInfoFile: cfg.daemonWsInfoFile,

@@ -1,0 +1,111 @@
+---
+title: 'MCP Server'
+description: 'Share context between AI agents via Model Context Protocol'
+---
+
+The MCP Server gives any MCP-compatible agent (Claude Code, Codex, etc.) access to contexts stored in the Context API -- whether ingested automatically via the [CLI](/fundamentals/cli) or created programmatically via the [SDKs](/sdk) and REST API.
+
+Ask Claude Code what Codex did last, filter sessions by project, machine, or time range.
+
+## Prerequisites
+
+- **Node.js >= 22**
+- **A Context API key** configured in `~/.ultracontext/config.json` (set up by `ultracontext config`)
+- **CLI** running to ingest sessions (see [CLI](/fundamentals/cli))
+
+## Setup
+
+### Claude Code
+
+```bash bash
+claude mcp add ultracontext -- npx tsx /path/to/ultracontext/apps/mcp-server/src/stdio.ts
+```
+
+### Codex
+
+Add to `~/.codex/config.toml`:
+
+```toml TOML
+[mcp_servers.ultracontext]
+command = "npx"
+args = ["tsx", "/path/to/ultracontext/apps/mcp-server/src/stdio.ts"]
+```
+
+<Info>The MCP server reads your API key from `~/.ultracontext/config.json` automatically -- the same config file used by the CLI.</Info>
+
+## Tools
+
+The MCP server exposes three tools:
+
+### `list_contexts`
+
+List recent agent contexts with optional filters.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `source` | string | Agent source: `claude`, `codex`, or `openclaw` |
+| `user_id` | string | User identifier |
+| `host` | string | Machine hostname |
+| `project_path` | string | Project directory path |
+| `session_id` | string | Session identifier |
+| `after` | string | ISO 8601 timestamp -- only contexts after this time |
+| `before` | string | ISO 8601 timestamp -- only contexts before this time |
+| `limit` | number | Max results (default 10) |
+
+### `get_context_messages`
+
+Retrieve all messages from a specific context.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `context_id` | string | Context public ID (required) |
+
+### `get_recent_activity`
+
+Shortcut for "what happened last?" -- fetches the latest context and returns its most recent messages.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `source` | string | Agent source: `claude`, `codex`, or `openclaw` |
+| `message_limit` | number | Max messages to return (default 10) |
+
+## Examples
+
+Once set up, you can ask your agent natural language questions:
+
+- *"What did Codex do last?"*
+- *"Show me Claude Code sessions in /Users/alice/Code/myapp"*
+- *"What happened on my Mac mini today?"*
+- *"List all sessions from the last 24 hours"*
+
+## Remote mode (HTTP)
+
+The Context API has a built-in MCP endpoint at `/mcp`. Any MCP-compatible client that supports Streamable HTTP can connect directly -- no separate server needed.
+
+```bash bash
+curl -X POST https://api.ultracontext.ai/mcp \
+  -H "Authorization: Bearer uc_live_..." \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"tools/list","id":1}'
+```
+
+Self-hosted APIs include the MCP endpoint automatically. The same Bearer token used for the REST API authenticates MCP requests.
+
+### Standalone HTTP server
+
+For cases where you need a dedicated MCP server (e.g. running on a different port or machine), you can run the standalone HTTP transport:
+
+```bash bash
+ULTRACONTEXT_API_KEY=uc_live_... npx tsx apps/mcp-server/src/http.ts
+```
+
+This starts an HTTP server on port 3100 (configurable via `MCP_PORT`) with the MCP endpoint at `/mcp` and a health check at `/health`.
+
+<CardGroup cols={2}>
+    <Card title='CLI' icon='terminal' href='/fundamentals/cli'>
+        Set up automatic session ingestion.
+    </Card>
+    <Card title='API Reference' icon='square-terminal' href='/api-reference/introduction'>
+        Full Context API documentation.
+    </Card>
+</CardGroup>

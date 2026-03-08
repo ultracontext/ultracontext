@@ -20,7 +20,7 @@ import {
 import { acquireFileLock, resolveLockPath } from "./lock.mjs";
 import { redact } from "./redact.mjs";
 import { parseClaudeCodeLine, parseCodexLine, parseOpenClawLine } from "./sources.mjs";
-import { boolFromEnv, expandHome, sha256, toInt } from "./utils.mjs";
+import { boolFromEnv, expandHome, extractProjectPathFromFile, sha256, toInt } from "./utils.mjs";
 import { createWsServer } from "./ws-server.mjs";
 
 const LOG_LEVELS = { error: 0, warn: 1, info: 2, debug: 3 };
@@ -79,7 +79,7 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
   const cfg = {
     apiKey: normalizeApiKey(process.env.ULTRACONTEXT_API_KEY),
     baseUrl: (process.env.ULTRACONTEXT_BASE_URL ?? "https://api.ultracontext.ai").trim(),
-    engineerId: process.env.DAEMON_ENGINEER_ID ?? process.env.USER ?? "unknown-engineer",
+    userId: process.env.DAEMON_USER_ID ?? process.env.USER ?? "unknown-user",
     host: (process.env.DAEMON_HOST || os.hostname() || "unknown-host").trim(),
     pollMs: toInt(process.env.DAEMON_POLL_MS, 1500),
     logLevel: process.env.DAEMON_LOG_LEVEL ?? "info",
@@ -95,7 +95,6 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
     wsInfoFile: resolveDaemonWsInfoFile(process.env),
     dedupeTtlSec: toInt(process.env.DAEMON_DEDUPE_TTL_SEC, 60 * 60 * 24 * 30),
     maxReadBytes: toInt(process.env.DAEMON_MAX_READ_BYTES, 512 * 1024),
-    enableDailyContext: boolFromEnv(process.env.DAEMON_ENABLE_DAILY_CONTEXT, false),
     bootstrapMode: normalizeBootstrapModeWithPrompt(process.env.DAEMON_BOOTSTRAP_MODE ?? "prompt") || "prompt",
     bootstrapReset: boolFromEnv(process.env.DAEMON_BOOTSTRAP_RESET, false),
     claudeIncludeSubagents: boolFromEnv(process.env.CLAUDE_INCLUDE_SUBAGENTS, false),
@@ -214,8 +213,7 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
 
   function pushRecentLog(level, message, data) {
     let line = String(message ?? "");
-    if (line.startsWith("Appended event to session context")) line = "context append (session)";
-    if (line.startsWith("Appended event to daily context")) line = "context append (daily)";
+    if (line.startsWith("Appended event to session context")) line = "context append";
     if (line.startsWith("Context created")) line = "Context created";
     if (line.startsWith("Context created without metadata fallback")) line = "Context created (fallback)";
     if (line.startsWith("UltraContext daemon started")) line = "Daemon started";
@@ -298,13 +296,6 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
     return details;
   }
 
-  function parseBool(value, fallback = false) {
-    if (value === null || value === undefined) return fallback;
-    const normalized = String(value).trim().toLowerCase();
-    if (["1", "true", "yes", "on"].includes(normalized)) return true;
-    if (["0", "false", "no", "off"].includes(normalized)) return false;
-    return fallback;
-  }
 
   // ── config persistence ──
 
@@ -428,7 +419,7 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
   function buildDaemonRuntimeSnapshot() {
     return {
       ts: Date.now(), mode: "daemon", running: Boolean(runtime.daemonRunning),
-      pid: process.pid, host: cfg.host, engineerId: cfg.engineerId,
+      pid: process.pid, host: cfg.host, userId: cfg.userId,
       stats: { ...stats },
       sourceStats: state.sourceOrder.map((name) => ({ name, ...ensureSourceStats(name) })),
     };
@@ -471,7 +462,7 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
 
   function bootstrapStateStoreKey(sources) {
     return createBootstrapStateKey({
-      host: cfg.host, engineerId: cfg.engineerId,
+      host: cfg.host, userId: cfg.userId,
       sourceNames: sources.map((s) => s.name),
     });
   }
@@ -489,8 +480,8 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
 
   function offsetStoreKey(sourceName, fileId) { return `offset:${sourceName}:${fileId}`; }
   function seenEventStoreKey(sourceName, eventId) { return `seen:${sourceName}:${eventId}`; }
-  function sessionContextStoreKey(sourceName, sessionId) { return `ctx:session:${sourceName}:${cfg.host}:${cfg.engineerId}:${sessionId}`; }
-  function dailyContextStoreKey(sourceName, dayKey) { return `ctx:daily:${sourceName}:${cfg.host}:${cfg.engineerId}:${dayKey}`; }
+  function sessionContextStoreKey(sourceName, sessionId) { return `ctx:session:${sourceName}:${cfg.host}:${cfg.userId}:${sessionId}`; }
+
 
   async function primeOffsetsToEof(store, source, shouldStop = () => false) {
     if (shouldStop()) return;
@@ -594,14 +585,12 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
       runtime.wsServer?.broadcastEvent({
         action: "created", source: sourceName,
         sessionId: String(metadata?.session_id ?? ""),
-        contextKind: String(metadata?.context_kind ?? "session"),
         contextId: created.id,
       });
       if (cfg.logAppends) {
         log("info", "Context created", {
           source: sourceName, context_id: created.id,
-          kind: metadata?.context_kind ?? "session",
-          session_id: metadata?.session_id ?? "", day: metadata?.day ?? "",
+          session_id: metadata?.session_id ?? "",
         });
       }
       return created.id;
@@ -619,12 +608,11 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
         runtime.wsServer?.broadcastEvent({
           action: "created", source: sourceName,
           sessionId: String(metadata?.session_id ?? ""),
-          contextKind: String(metadata?.context_kind ?? "session"),
           contextId: created.id,
         });
         if (cfg.logAppends) {
           log("warn", "Context created without metadata fallback", {
-            source: sourceName, context_id: created.id, kind: metadata?.context_kind ?? "session",
+            source: sourceName, context_id: created.id,
           });
         }
         return created.id;
@@ -633,61 +621,39 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
     }
   }
 
-  function toDayKey(timestamp) {
-    if (timestamp === undefined || timestamp === null) return new Date().toISOString().slice(0, 10);
-    if (typeof timestamp === "number" || /^\d+$/.test(String(timestamp))) {
-      const asNum = Number(timestamp);
-      const ms = asNum > 1e12 ? asNum : asNum * 1000;
-      const d = new Date(ms);
-      if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 10);
-    }
-    const d = new Date(String(timestamp));
-    if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 10);
-    return new Date().toISOString().slice(0, 10);
-  }
-
   async function appendToUltraContext({ store, uc, sourceName, normalized, eventId, filePath, lineOffset }) {
-    const dayKey = toDayKey(normalized.timestamp);
+
+    // enrich context metadata with project path + first event timestamp
+    const contextMeta = {
+      source: sourceName, host: cfg.host, user_id: cfg.userId,
+      session_id: normalized.sessionId,
+      started_at: normalized.timestamp,
+    };
+    const projectPath = extractProjectPathFromFile(filePath);
+    if (projectPath) contextMeta.project_path = projectPath;
+
     const sessionContextId = await getOrCreateContext(store, uc,
       sessionContextStoreKey(sourceName, normalized.sessionId),
-      { source: sourceName, host: cfg.host, engineer_id: cfg.engineerId, session_id: normalized.sessionId, context_kind: "session" },
-      sourceName,
+      contextMeta, sourceName,
     );
 
     const safeRaw = redact(normalized.raw);
     const payload = {
       role: normalized.kind,
       content: { message: normalized.message, event_type: normalized.eventType, timestamp: normalized.timestamp, raw: safeRaw },
-      metadata: { source: sourceName, host: cfg.host, engineer_id: cfg.engineerId, session_id: normalized.sessionId, event_id: eventId, file_path: filePath, file_offset: lineOffset, day: dayKey },
+      metadata: { source: sourceName, host: cfg.host, user_id: cfg.userId, session_id: normalized.sessionId, event_id: eventId, file_path: filePath, file_offset: lineOffset },
     };
 
     await uc.append(sessionContextId, payload);
     bumpStat("appended");
     bumpSourceStat(sourceName, "appended");
-    runtime.wsServer?.broadcastEvent({ action: "appended", source: sourceName, sessionId: normalized.sessionId, contextKind: "session", contextId: sessionContextId });
+    runtime.wsServer?.broadcastEvent({ action: "appended", source: sourceName, sessionId: normalized.sessionId, contextId: sessionContextId });
     noteSourceActivity(sourceName, { lastEventType: normalized.eventType, lastSessionId: normalized.sessionId, lastAt: Date.now() });
 
     if (cfg.logAppends) {
       log("info", "Appended event to session context", {
         source: sourceName, session_id: normalized.sessionId, context_id: sessionContextId,
         event_type: normalized.eventType, role: normalized.kind, event_id: eventId,
-      });
-    }
-
-    if (!cfg.enableDailyContext) return;
-
-    const dailyContextId = await getOrCreateContext(store, uc,
-      dailyContextStoreKey(sourceName, dayKey),
-      { source: sourceName, host: cfg.host, engineer_id: cfg.engineerId, day: dayKey, context_kind: "daily" },
-      sourceName,
-    );
-    await uc.append(dailyContextId, payload);
-    bumpStat("appended");
-    bumpSourceStat(sourceName, "appended");
-    if (cfg.logAppends) {
-      log("info", "Appended event to daily context", {
-        source: sourceName, day: dayKey, context_id: dailyContextId,
-        event_type: normalized.eventType, session_id: normalized.sessionId, event_id: eventId,
       });
     }
   }
@@ -753,7 +719,7 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
         bumpSourceStat(source.name, "parsedEvents");
         noteSourceActivity(source.name, { lastEventType: normalized.eventType, lastSessionId: normalized.sessionId, lastAt: Date.now() });
 
-        const eventId = sha256(`${source.name}|${cfg.host}|${cfg.engineerId}|${normalized.sessionId}|${fileId}|${lineOffset}|${sha256(line)}`);
+        const eventId = sha256(`${source.name}|${cfg.host}|${cfg.userId}|${normalized.sessionId}|${fileId}|${lineOffset}|${sha256(line)}`);
         const isNew = markEventSeen(store, source.name, eventId);
         if (!isNew) { bumpStat("deduped"); bumpSourceStat(source.name, "deduped"); continue; }
 
@@ -809,7 +775,7 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
       if (!key) throw new Error("config key is required");
 
       if (key === "claudeIncludeSubagents") {
-        cfg.claudeIncludeSubagents = parseBool(value, cfg.claudeIncludeSubagents);
+        cfg.claudeIncludeSubagents = boolFromEnv(value, cfg.claudeIncludeSubagents);
         applyRuntimeSources(buildSources());
         await persistDaemonConfigEverywhere();
         log("info", "Config updated via TUI", { key, value: cfg.claudeIncludeSubagents ? "on" : "off" });
@@ -827,7 +793,7 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
       }
 
       if (key === "bootstrapReset") {
-        cfg.bootstrapReset = parseBool(value, false);
+        cfg.bootstrapReset = boolFromEnv(value, false);
         if (cfg.bootstrapReset) await resetBootstrapState();
         await persistDaemonConfigEverywhere();
         log("info", "Config updated via TUI", { key, value: cfg.bootstrapReset ? "on" : "off" });
@@ -909,7 +875,7 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
     if (sources.length === 0) throw new Error("No sources enabled. Set INGEST_CODEX=true and/or INGEST_CLAUDE=true");
     applyRuntimeSources(sources);
 
-    runtime.lockHandle = await acquireFileLock({ lockPath: cfg.lockFile, engineerId: cfg.engineerId, host: cfg.host });
+    runtime.lockHandle = await acquireFileLock({ lockPath: cfg.lockFile, userId: cfg.userId, host: cfg.host });
 
     const uc = new UltraContext({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl });
     runtime.uc = uc;
@@ -932,7 +898,7 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
     const wsInfo = await wsServer.start();
 
     log("info", "UltraContext daemon started", {
-      engineer_id: cfg.engineerId, host: cfg.host, poll_ms: cfg.pollMs, mode: "headless",
+      user_id: cfg.userId, host: cfg.host, poll_ms: cfg.pollMs, mode: "headless",
       ws_host: wsInfo.host, ws_port: wsInfo.port, ws_info_file: cfg.wsInfoFile, db_file: cfg.dbFile,
       sources: sources.map((s) => ({ name: s.name, globs: s.globs })),
     });

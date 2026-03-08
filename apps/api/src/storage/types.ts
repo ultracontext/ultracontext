@@ -38,6 +38,18 @@ export type ProjectRow = {
     id: number;
 };
 
+// -- Metadata filters for listing contexts ------------------------------------
+
+export type ContextFilters = {
+    source?: string;
+    user_id?: string;
+    host?: string;
+    project_path?: string;
+    session_id?: string;
+    after?: string;
+    before?: string;
+};
+
 // -- Storage adapter interface ------------------------------------------------
 
 export interface StorageAdapter {
@@ -48,7 +60,7 @@ export interface StorageAdapter {
     findNonContextNodes(contextId: string): Promise<NodeRow[]>;
     findRootContext(projectId: number, publicId: string): Promise<Pick<NodeRow, 'public_id'> | null>;
     findRootContextByPublicId(publicId: string): Promise<Pick<NodeRow, 'public_id'> | null>;
-    listRootContexts(projectId: number, limit: number): Promise<Pick<NodeRow, 'public_id' | 'metadata' | 'created_at'>[]>;
+    listRootContexts(projectId: number, limit: number, filters?: ContextFilters): Promise<Pick<NodeRow, 'public_id' | 'metadata' | 'created_at'>[]>;
 
     // nodes — mutations
     insertNodes(values: NodeInsertRow | NodeInsertRow[]): Promise<Partial<NodeRow>[]>;

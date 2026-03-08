@@ -336,6 +336,58 @@ result = uc.get(limit=10)
 
 </CodeGroup>
 
+### Filter by metadata
+
+Filter contexts by metadata fields stored at creation time. All filters are optional and can be combined.
+
+<CodeGroup>
+```typescript TypeScript
+// by source
+const { data } = await uc.get({ source: 'claude' });
+
+// by project
+const { data } = await uc.get({ project_path: '/Users/alice/Code/myapp' });
+
+// by machine
+const { data } = await uc.get({ host: 'Mac-mini.local' });
+
+// by time range
+const { data } = await uc.get({ after: '2026-03-01T00:00:00Z', before: '2026-03-08T00:00:00Z' });
+
+// combine filters
+const { data } = await uc.get({ source: 'codex', host: 'Mac-mini.local', limit: 5 });
+```
+
+```python Python
+# by source
+result = uc.get(source="claude")
+
+# by project
+result = uc.get(project_path="/Users/alice/Code/myapp")
+
+# by machine
+result = uc.get(host="Mac-mini.local")
+
+# by time range
+result = uc.get(after="2026-03-01T00:00:00Z", before="2026-03-08T00:00:00Z")
+
+# combine filters
+result = uc.get(source="codex", host="Mac-mini.local", limit=5)
+```
+</CodeGroup>
+
+| Filter | Description |
+|--------|-------------|
+| `source` | Agent source (`claude`, `codex`, `openclaw`) |
+| `user_id` | User identifier |
+| `host` | Machine hostname |
+| `project_path` | Project directory path |
+| `session_id` | Session identifier |
+| `after` | Only contexts created after this ISO 8601 timestamp |
+| `before` | Only contexts created before this ISO 8601 timestamp |
+
+<Info>Metadata filters use a GIN index on the `metadata` JSONB column for fast lookups.</Info>
+
 ## Examples
 
 ### Resume Chats

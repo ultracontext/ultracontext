@@ -1,75 +1,69 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## Architecture
 
-UltraContext = git-like version control for AI agent context. pnpm monorepo with three layers:
+UltraContext — version control for AI agent context. pnpm monorepo.
 
-1. **Context API** (`apps/api`) — REST API. Hono + Drizzle ORM + PostgreSQL. TypeScript.
-2. **Context Hub** — local experience:
-   - `apps/daemon` — background ingestion of agent sessions (Claude Code, Codex, OpenClaw). Node ESM + WebSocket server.
-   - `apps/tui` — terminal dashboard. Ink/React 19 + WebSocket client.
-3. **SDKs** — `apps/js-sdk` (TypeScript, published as `ultracontext` on npm, bundles CLI + daemon + TUI) and `apps/python-sdk` (httpx, published on PyPI).
+### Context API (`apps/api`)
 
-Shared code lives in `packages/protocol` (WS message types, env resolution, constants).
+REST API. Hono + TypeScript. Two entrypoints via `createApp(options?)`:
 
-### Storage adapter pattern
+| Entrypoint | Runtime | Config | Storage | Cache |
+|---|---|---|---|---|
+| `server.ts` | Node.js | dotenv → `getApiConfig()` | Drizzle or Supabase | — |
+| `worker.ts` | CF Workers | env bindings → `buildApiConfig(env)` | Supabase only | KV (optional) |
 
-`apps/api/src/storage/` — pluggable backend via `StorageAdapter` interface. Drizzle (default, postgres.js driver) or Supabase. Selected by `DATABASE_PROVIDER` env var.
+Key internals:
+- **Storage** (`src/storage/`) — `StorageAdapter` interface. Drizzle (postgres.js) or Supabase. Selected by `DATABASE_PROVIDER`.
+- **Auth** (`src/middleware/auth.ts`) — Bearer token. Prefix lookup + hash verification. Optional `KeyCache` for caching (KV on Workers).
+- **Cache** (`src/cache/`) — `KeyCache` interface + `KvKeyCache` (CF KV). Injected via `AppOptions.keyCache`.
+- **Config** (`src/config.ts`) — `buildApiConfig(env)` takes any plain object. `getApiConfig()` loads dotenv first.
+- **Schema** (`apps/postgres/init.sql`) — tables: `projects`, `api_keys`, `nodes`. JSONB for `content`/`metadata`.
 
-### Database schema
+### Context Hub
 
-`apps/postgres/init.sql` — three tables: `projects`, `api_keys`, `nodes`. Nodes use JSONB for `content` and `metadata`, linked by `context_id`, `parent_id`, `prev_id`.
+- `apps/daemon` — background ingestion of agent sessions. Node ESM + WebSocket server.
+- `apps/tui` — terminal dashboard. Ink/React 19 + WebSocket client.
 
-### Auth
+### SDKs
 
-Bearer token scheme. Token prefix (first 8 chars) used for lookup, full token hashed for verification. Two levels: API key (project-scoped) + admin key (system-wide).
+- `apps/js-sdk` — published as `ultracontext` on npm. Bundles CLI + daemon + TUI.
+- `apps/python-sdk` — httpx, published on PyPI.
+
+### Shared
+
+`packages/protocol` — WS message types, env resolution, constants.
 
 ## Commands
 
 ```bash
-# Dependencies
-pnpm install
-
-# Database
-pnpm ultracontext:db:up          # start local Postgres (port 5433)
-pnpm ultracontext:db:down        # stop
-pnpm ultracontext:db:reset       # reset with volumes
-pnpm ultracontext:db:migrate     # apply schema from init.sql
-
-# API
-pnpm ultracontext:api            # run API locally (port 8787)
-
-# Hub (watch mode)
-pnpm dev:daemon
-pnpm dev:tui
-
-# Build JS SDK
-pnpm --filter ultracontext run build
-
-# Tests
-pnpm --filter ultracontext-api run test        # API: Node built-in test runner
-pnpm --filter ultracontext-api run test:watch   # API: watch mode
-# Python SDK: pytest, pytest-asyncio, mypy (see pyproject.toml)
-
-# Checks
-pnpm check                       # run all package-level checks
+pnpm install                                    # deps
+pnpm ultracontext:db:up                         # start local Postgres (5433)
+pnpm ultracontext:db:down                       # stop
+pnpm ultracontext:db:reset                      # reset with volumes
+pnpm ultracontext:db:migrate                    # apply schema
+pnpm ultracontext:api                           # run API (port 8787)
+pnpm dev:daemon                                 # daemon watch mode
+pnpm dev:tui                                    # TUI watch mode
+pnpm --filter ultracontext run build            # build JS SDK
+pnpm --filter ultracontext-api run test         # API tests (node --test)
+pnpm --filter ultracontext-api run test:watch   # API tests watch
+pnpm check                                      # all package checks
 ```
 
-## Coding Style
+## Style
 
-No repo-wide formatter. Match the local style of whatever package you edit:
+No repo-wide formatter. Match local style:
 
-| Package | Indent | Quotes | File naming |
-|---------|--------|--------|-------------|
-| `apps/api` (TS) | 4 spaces | single | kebab-case (`context-chain.ts`) |
-| `apps/daemon`, `apps/tui`, `apps/js-sdk` | 2 spaces | double | PascalCase for React components, kebab-case otherwise |
+| Package | Indent | Quotes | Files |
+|---|---|---|---|
+| `apps/api` | 4 spaces | single | kebab-case |
+| `apps/daemon`, `apps/tui`, `apps/js-sdk` | 2 spaces | double | kebab-case, PascalCase for React |
 
 ## Conventions
 
-- **Commits**: Conventional Commits with scope — `feat(api): ...`, `fix(tui): ...`
-- **Tests**: `*.test.*` or `*.spec.*`, near changed code or in `tests/`
-- **Env**: copy `.env.example` to `.env` at root + per-app. Never commit secrets.
-- **PRs**: focused on one feature/fix, target `main`, include scope and affected packages
-- **Docs** (`apps/docs`): Mintlify MDX, YAML frontmatter required, second-person voice, test code examples before publishing
+- **Commits**: Conventional Commits — `feat(api):`, `fix(tui):`
+- **Tests**: `*.test.*` / `*.spec.*`, near changed code or `tests/`
+- **Env**: `.env.example` → `.env`. Never commit secrets.
+- **PRs**: one feature/fix, target `main`, include scope
+- **Docs** (`apps/docs`): Mintlify MDX, YAML frontmatter, second-person voice

@@ -1,14 +1,13 @@
-import { getApiConfig } from '../config';
-import { createStorageAdapter } from '../storage';
+import type { ApiConfig } from '../types/api';
+import type { StorageAdapter } from '../storage/types';
 import type { HttpMiddleware } from '../types/http';
 
-const apiConfig = getApiConfig();
+// -- factory: injects storage + config into request context -------------------
 
-// singleton — reused across requests
-const storage = createStorageAdapter(apiConfig);
-
-export const databaseMiddleware: HttpMiddleware = async (c, next) => {
-    c.set('storage', storage);
-    c.set('config', apiConfig);
-    await next();
-};
+export function databaseMiddleware(storage: StorageAdapter, config: ApiConfig): HttpMiddleware {
+    return async (c, next) => {
+        c.set('storage', storage);
+        c.set('config', config);
+        await next();
+    };
+}

@@ -73,7 +73,7 @@ export function ContextsContent({ snapshot, viewFocused, maxRows, maxCols }) {
       const rowColor = viewFocused && rowSelected ? UC_BLUE_LIGHT : "white";
       const sourceInfo = contextBadge(md.source || "unknown");
       const createdAt = formatContextDate(ctx?.created_at);
-      const engineer = compact(md.engineer_id ?? "-", 12);
+      const user = compact(md.user_id ?? "-", 12);
       const sessionId = compact(md.session_id ?? "-", 28);
       rows.push(
         React.createElement(
@@ -81,7 +81,7 @@ export function ContextsContent({ snapshot, viewFocused, maxRows, maxCols }) {
           { key: `contexts-row-${i}`, color: rowColor },
           `${marker} `,
           React.createElement(Text, { color: sourceInfo.color, bold: true }, `[${sourceInfo.text}]`),
-          ` ${createdAt} ${engineer} ${sessionId}`
+          ` ${createdAt} ${user} ${sessionId}`
         )
       );
     }

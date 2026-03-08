@@ -34,7 +34,7 @@ function sparklineFromLag(history) {
 }
 
 function clientLabel(client) {
-  return `${compact(client.engineerId ?? "-", 12)}@${compact(client.host ?? "-", 20)}`;
+  return `${compact(client.userId ?? "-", 12)}@${compact(client.host ?? "-", 20)}`;
 }
 
 function compactClientLine(client, lagMs, sparkline, maxCols) {
@@ -51,7 +51,7 @@ export function ClientsPanel({ clients, now, height, width }) {
   const list = (Array.isArray(clients) ? clients : [])
     .map((client) => ({
       ...client,
-      id: `${String(client?.engineerId ?? "-")}@${String(client?.host ?? "-")}`,
+      id: `${String(client?.userId ?? "-")}@${String(client?.host ?? "-")}`,
       lagMs: Math.max(nowTs - Number(client?.ts ?? nowTs), 0),
     }))
     .sort((a, b) => a.lagMs - b.lagMs);

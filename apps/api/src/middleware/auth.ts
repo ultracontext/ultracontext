@@ -1,6 +1,9 @@
+import type { KeyCache } from '../cache/types';
 import { KEY_PREFIX_LEN } from '../constants';
 import { hashKey } from '../domain/api-keys';
 import type { HttpApp, HttpContext, HttpMiddleware } from '../types/http';
+
+// -- helpers ------------------------------------------------------------------
 
 function readBearerToken(c: HttpContext): string | null {
     const authorization = c.req.header('authorization');
@@ -28,16 +31,40 @@ function bearerAuthMiddleware(verify: (token: string, c: HttpContext) => Promise
     };
 }
 
-async function verifyToken(token: string, c: HttpContext) {
-    const prefix = token.slice(0, KEY_PREFIX_LEN);
-    const hash = await hashKey(token);
-    const storage = c.get('storage');
+// -- token verification -------------------------------------------------------
 
-    const tokenRow = await storage.findApiKeyByPrefix(prefix);
-    if (!tokenRow || hash !== tokenRow.key_hash) return false;
+function createTokenVerifier(keyCache?: KeyCache) {
+    return async function verifyToken(token: string, c: HttpContext) {
+        const prefix = token.slice(0, KEY_PREFIX_LEN);
+        const hash = await hashKey(token);
 
-    c.set('auth', { apiKeyId: tokenRow.id, projectId: tokenRow.project_id });
-    return true;
+        // check cache first
+        if (keyCache) {
+            const cached = await keyCache.get(prefix);
+            if (cached && cached.keyHash === hash) {
+                c.set('auth', { apiKeyId: cached.apiKeyId, projectId: cached.projectId });
+                return true;
+            }
+        }
+
+        // fallback to storage
+        const storage = c.get('storage');
+        const tokenRow = await storage.findApiKeyByPrefix(prefix);
+        if (!tokenRow || hash !== tokenRow.key_hash) return false;
+
+        c.set('auth', { apiKeyId: tokenRow.id, projectId: tokenRow.project_id });
+
+        // populate cache on success
+        if (keyCache) {
+            await keyCache.put(prefix, {
+                keyHash: hash,
+                apiKeyId: tokenRow.id,
+                projectId: tokenRow.project_id,
+            });
+        }
+
+        return true;
+    };
 }
 
 async function verifyAdminToken(token: string, c: HttpContext) {
@@ -46,7 +73,16 @@ async function verifyAdminToken(token: string, c: HttpContext) {
     return token === expected;
 }
 
-export function registerAuthMiddleware(app: HttpApp) {
+// -- registration -------------------------------------------------------------
+
+export type AuthOptions = {
+    keyCache?: KeyCache;
+};
+
+export function registerAuthMiddleware(app: HttpApp, options?: AuthOptions) {
+    const verifyToken = createTokenVerifier(options?.keyCache);
+
     app.use('/contexts/*', bearerAuthMiddleware(verifyToken));
+    app.use('/mcp', bearerAuthMiddleware(verifyToken));
     app.use('/v1/keys', bearerAuthMiddleware(verifyAdminToken));
 }

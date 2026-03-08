@@ -1,0 +1,67 @@
+---
+title: 'Quickstart'
+description: 'Sync and share agent context in 2 minutes'
+---
+
+## Prerequisites
+
+- **Node.js >= 22**
+- **A Context API key** -- [Get yours](https://ultracontext.ai) or [self-host](/guides/self-hosting)
+
+## 1. Install
+
+```bash bash
+npm install -g ultracontext
+```
+
+## 2. Run
+
+```bash bash
+ultracontext
+```
+
+The setup wizard asks for your API key and bootstrap mode. After that, the daemon starts syncing agent sessions in the background and opens the terminal dashboard.
+
+<Tip>The CLI watches session files from Claude Code, Codex, and OpenClaw automatically. No extra configuration needed.</Tip>
+
+## 3. Add MCP Server
+
+Give your agents access to context from other agents.
+
+### Claude Code
+
+```bash bash
+claude mcp add ultracontext -- npx tsx /path/to/ultracontext/apps/mcp-server/src/stdio.ts
+```
+
+### Codex
+
+Add to `~/.codex/config.toml`:
+
+```toml TOML
+[mcp_servers.ultracontext]
+command = "npx"
+args = ["tsx", "/path/to/ultracontext/apps/mcp-server/src/stdio.ts"]
+```
+
+<Info>The MCP server reads your API key from `~/.ultracontext/config.json` automatically -- the same config file used by the CLI.</Info>
+
+## 4. Try it
+
+Ask your agent:
+
+- *"What did Codex do last?"*
+- *"Show me Claude Code sessions in /Users/alice/Code/myapp"*
+- *"What happened on my Mac mini today?"*
+- *"List all sessions from the last 24 hours"*
+
+## Next steps
+
+<CardGroup cols={2}>
+    <Card title='CLI reference' icon='terminal' href='/fundamentals/cli'>
+        Commands, metadata, configuration.
+    </Card>
+    <Card title='MCP Server reference' icon='plug' href='/fundamentals/mcp-server'>
+        Tools, filters, remote mode.
+    </Card>
+</CardGroup>

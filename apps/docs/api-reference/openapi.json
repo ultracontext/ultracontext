@@ -101,17 +101,17 @@
           {
             "lang": "typescript",
             "label": "TypeScript",
-            "source": "// List all contexts\nconst { data } = await uc.get()\n\n// With limit\nconst { data } = await uc.get({ limit: 10 })"
+            "source": "// List all contexts\nconst { data } = await uc.get()\n\n// With limit\nconst { data } = await uc.get({ limit: 10 })\n\n// Filter by source\nconst { data } = await uc.get({ source: 'claude' })\n\n// Filter by project\nconst { data } = await uc.get({ project_path: '/Users/alice/Code/myapp' })\n\n// Combine filters\nconst { data } = await uc.get({ source: 'codex', host: 'Mac-mini.local', after: '2026-03-01T00:00:00Z' })"
           },
           {
             "lang": "python",
             "label": "Python",
-            "source": "# List all contexts\nresult = uc.get()\n\n# With limit\nresult = uc.get(limit=10)"
+            "source": "# List all contexts\nresult = uc.get()\n\n# With limit\nresult = uc.get(limit=10)\n\n# Filter by source\nresult = uc.get(source='claude')\n\n# Filter by project\nresult = uc.get(project_path='/Users/alice/Code/myapp')\n\n# Combine filters\nresult = uc.get(source='codex', host='Mac-mini.local', after='2026-03-01T00:00:00Z')"
           },
           {
             "lang": "bash",
             "label": "cURL",
-            "source": "curl https://api.ultracontext.ai/contexts \\\n  -H \"Authorization: Bearer $API_KEY\"\n\n# With limit\ncurl \"https://api.ultracontext.ai/contexts?limit=10\" \\\n  -H \"Authorization: Bearer $API_KEY\""
+            "source": "curl https://api.ultracontext.ai/contexts \\\n  -H \"Authorization: Bearer $API_KEY\"\n\n# With limit\ncurl \"https://api.ultracontext.ai/contexts?limit=10\" \\\n  -H \"Authorization: Bearer $API_KEY\"\n\n# Filter by source + project\ncurl \"https://api.ultracontext.ai/contexts?source=claude&project_path=/Users/alice/Code/myapp\" \\\n  -H \"Authorization: Bearer $API_KEY\"\n\n# Time range\ncurl \"https://api.ultracontext.ai/contexts?after=2026-03-01T00:00:00Z&before=2026-03-08T00:00:00Z\" \\\n  -H \"Authorization: Bearer $API_KEY\""
           }
         ],
         "parameters": [
@@ -122,6 +122,64 @@
             "schema": {
               "type": "integer",
               "default": 20
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "description": "Filter by agent source (e.g. `claude`, `codex`, `openclaw`)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "description": "Filter by user identifier",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "host",
+            "in": "query",
+            "description": "Filter by machine hostname",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "project_path",
+            "in": "query",
+            "description": "Filter by project directory path (e.g. `/Users/alice/Code/myapp`)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "query",
+            "description": "Filter by session identifier",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "Only contexts created after this ISO 8601 timestamp",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "description": "Only contexts created before this ISO 8601 timestamp",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
             }
           }
         ],
@@ -140,6 +198,92 @@
                       }
                     }
                   }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mcp": {
+      "post": {
+        "summary": "MCP endpoint",
+        "description": "Built-in Model Context Protocol endpoint. Accepts JSON-RPC requests over Streamable HTTP. Exposes `list_contexts`, `get_context_messages`, and `get_recent_activity` tools.",
+        "operationId": "mcpEndpoint",
+        "x-mint": {
+          "content": "<Info>This endpoint speaks [MCP Streamable HTTP](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http). Use any MCP-compatible client to connect.</Info>"
+        },
+        "x-codeSamples": [
+          {
+            "lang": "bash",
+            "label": "cURL",
+            "source": "# List available tools\ncurl -X POST https://api.ultracontext.ai/mcp \\\n  -H \"Authorization: Bearer $API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"id\":1}'\n\n# Call a tool\ncurl -X POST https://api.ultracontext.ai/mcp \\\n  -H \"Authorization: Bearer $API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"params\":{\"name\":\"list_contexts\",\"arguments\":{\"limit\":5}},\"id\":2}'"
+          }
+        ],
+        "requestBody": {
+          "description": "JSON-RPC 2.0 request (MCP protocol)",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["jsonrpc", "method", "id"],
+                "properties": {
+                  "jsonrpc": {
+                    "type": "string",
+                    "enum": ["2.0"]
+                  },
+                  "method": {
+                    "type": "string",
+                    "description": "MCP method (e.g. `tools/list`, `tools/call`)"
+                  },
+                  "params": {
+                    "type": "object",
+                    "description": "Method parameters"
+                  },
+                  "id": {
+                    "description": "Request identifier",
+                    "oneOf": [
+                      { "type": "string" },
+                      { "type": "integer" }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "JSON-RPC 2.0 response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "jsonrpc": {
+                      "type": "string"
+                    },
+                    "result": {
+                      "type": "object"
+                    },
+                    "id": {
+                      "description": "Matching request identifier",
+                      "oneOf": [
+                        { "type": "string" },
+                        { "type": "integer" }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }

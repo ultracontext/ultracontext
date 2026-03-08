@@ -57,10 +57,10 @@ export function resolveDaemonWsPortFile(env = process.env) {
   return resolveDaemonWsInfoFile(env);
 }
 
-export function createBootstrapStateKey({ host, engineerId, sourceNames }) {
+export function createBootstrapStateKey({ host, userId, sourceNames }) {
   const names = Array.isArray(sourceNames) ? sourceNames.map((name) => String(name ?? "").trim()).filter(Boolean) : [];
   const namesKey = names.sort().join(",");
-  return `uc:daemon:bootstrap:${VERSION}:${norm(host)}:${norm(engineerId)}:${namesKey}`;
+  return `uc:daemon:bootstrap:${VERSION}:${norm(host)}:${norm(userId)}:${namesKey}`;
 }
 
 export function normalizeBootstrapMode(raw, { allowPrompt = false } = {}) {
