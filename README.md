@@ -59,11 +59,10 @@ Open source. Framework-agnostic. Customizable via the git-like Context API.
 
 ## Features
 
-|                            |                                                                          |
-| -------------------------- | ------------------------------------------------------------------------ |
-| **CLI**                    | Auto-ingest Claude Code, Codex, and OpenClaw sessions with a terminal dashboard. |
-| **MCP Server**             | Share context everywhere. Built into the API, or run standalone via stdio. |
-| **Context API**            | Git-like context engineering API. Store, version, and retrieve agent context with zero complexity. |
+| CLI | Auto-ingest Claude Code, Codex, and OpenClaw sessions with a terminal dashboard. |
+| --- | --- |
+| MCP Server | Share context everywhere. Built into the API, or run standalone via stdio. |
+| Context API | Git-like context engineering API. Store, version, and retrieve agent context with zero complexity. |
 
 ---
 
