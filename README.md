@@ -42,6 +42,8 @@
 
 ---
 
+![ultracontext-gif](https://github.com/user-attachments/assets/be73afe5-161d-4fa3-8f4d-c4987fe63cb4)
+
 ## Install
 
 Requires Node >= 22.
