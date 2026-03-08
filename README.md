@@ -45,9 +45,38 @@
 
 ![ultracontext-gif](https://github.com/user-attachments/assets/be73afe5-161d-4fa3-8f4d-c4987fe63cb4)
 
-Your agents don't share context. What you build in Claude Code stays in Claude Code. Switch to Codex, Cursor, or any other agent — and you start from zero.
+UltraContext is a unified context layer for AI agents. It automatically carries the work you started on one agent to another — unlocking seamless collaboration between humans and agents.
 
-UltraContext fixes that. It runs in the background, auto-captures your agents' context, and makes it available everywhere. Switch agents, switch machines — the context follows.
+Start working with Cursor on computer 1. Pick up where you left off with Claude Code on computer 2. No re-explaining. No context lost.
+
+It's invisible, open source infrastructure meant to be used alone or to extend the productivity of your team. Your agents get real-time context of what everyone is doing — so you ship faster without being bottlenecked by human communication. The agents just understand the big picture.
+
+Framework-agnostic. Customizable via the git-like Context API. Works everywhere.
+
+## How it works
+
+**1. Work normally.** Use Claude Code, Codex, Cursor — whatever you want. The UltraContext daemon runs in the background, listening to your agent sessions and ingesting context in realtime. You change nothing about how you work.
+
+```bash
+ultracontext start    # that's it. daemon is running.
+```
+
+**2. Context flows to the API.** Every session is automatically captured, versioned, and stored. Nothing is ever lost. Access it programmatically or let your tools consume it.
+
+**3. Any agent picks it up via MCP.** Your agents connect to UltraContext's MCP server and get full context from every other agent — automatically. No config, no copy-pasting, no re-explaining. Just add the MCP server and every agent knows what every other agent did.
+
+```json
+{
+  "mcpServers": {
+    "ultracontext": {
+      "command": "npx",
+      "args": ["-y", "ultracontext-mcp-server"]
+    }
+  }
+}
+```
+
+That's it. Install, forget, and your agents share context forever.
 
 ## Install
 
@@ -72,16 +101,6 @@ ultracontext stop     # stop daemon
 ultracontext status   # check if daemon is running
 ultracontext tui      # open dashboard only
 ```
-
-## What it does
-
-- **Auto-capture** — Ingests your agents' context in realtime. Zero config.
-- **Switch between agents** — Start on Claude Code, pickup on Codex. No re-explaining.
-- **Collaborate** — Share contexts across your team. See what everyone sees. Realtime.
-- **Fork & clone** — Branch contexts while preserving the full history.
-- **Own your data** — Open source. Your contexts. Your rules.
-
-When you open an existing session, it forks the context — the original is always preserved and automatically versioned. A local caching layer prevents duplicate context creations and appends.
 
 ## Context API
 
