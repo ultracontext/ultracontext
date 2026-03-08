@@ -70,30 +70,9 @@ Our goal is to create the infrastructure on which the first billion-dollar compa
 ultracontext start    # that's it. daemon is running.
 ```
 
-**2. Context flows to the API.** Every session, every decision, every piece of work — automatically captured, versioned, and stored. Nothing is ever lost.
+**2. Context flows to the API.** Every session is automatically captured, versioned, and stored. Nothing is ever lost.
 
-**3. Use it.**
-
-You have two options:
-
-**Query via MCP.** Add UltraContext's MCP server to any agent. It gets realtime awareness of what every other agent is doing — across tools, machines, and team members. Just ask.
-
-```json
-{
-  "mcpServers": {
-    "ultracontext": {
-      "command": "npx",
-      "args": ["-y", "ultracontext-mcp-server"]
-    }
-  }
-}
-```
-
-**Fork and continue.** Pull any session to your local machine, fork it, and keep working in the agent of your choice. The original is preserved, you get a full copy with history.
-
-```bash
-ultracontext tui      # browse sessions, fork, and resume in any agent
-```
+**3. Any agent picks it up.** Add the MCP server to any agent — it gets full awareness of what every other agent did. Or fork a session and continue it in a different tool.
 
 ## Install
 
