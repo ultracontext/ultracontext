@@ -4,10 +4,11 @@
   </a>
 </p>
 
-<h3 align="center">Same context everywhere.</h3>
+<h3 align="center">Same context. Everywhere.</h3>
 
 <p align="center">
-  Start on Claude Code. Pick up on Codex. Open source, realtime infrastructure for the ones shipping at inference speed.
+  Start on Claude Code. Pickup on Codex.<br/>
+  Open source, realtime and invisible context infrastructure for the ones shipping at inference speed.
 </p>
 
 <p align="center">
@@ -44,6 +45,10 @@
 
 ![ultracontext-gif](https://github.com/user-attachments/assets/be73afe5-161d-4fa3-8f4d-c4987fe63cb4)
 
+Your agents don't share context. What you build in Claude Code stays in Claude Code. Switch to Codex, Cursor, or any other agent — and you start from zero.
+
+UltraContext fixes that. It runs in the background, auto-captures your agents' context, and makes it available everywhere. Switch agents, switch machines — the context follows.
+
 ## Install
 
 Requires Node >= 22.
@@ -52,40 +57,70 @@ Requires Node >= 22.
 npm install -g ultracontext
 ```
 
-## How it works
-
-1. **A daemon watches your agents** — auto-captures context from Claude Code, Codex, and OpenClaw in realtime. Zero config.
-2. **Contexts sync everywhere** — available across agents, machines, and teammates via the Context API.
-3. **Agents query each other** — the MCP Server lets any agent read contexts from other agents directly.
-
-## CLI
+## Quick Start
 
 ```bash
 ultracontext          # start daemon + open dashboard
+```
+
+That's it. The daemon watches your agents, ingests context in realtime, and the dashboard shows everything.
+
+```bash
 ultracontext config   # run setup wizard
 ultracontext start    # start daemon only
 ultracontext stop     # stop daemon
+ultracontext status   # check if daemon is running
 ultracontext tui      # open dashboard only
 ```
 
-## SDK
+## What it does
 
-| SDK | Install | Source |
-|-----|---------|--------|
-| JavaScript/TypeScript | `npm install ultracontext` | [apps/js-sdk](./apps/js-sdk) |
-| Python | `pip install ultracontext` | [apps/python-sdk](./apps/python-sdk) |
+- **Auto-capture** — Ingests your agents' context in realtime. Zero config.
+- **Switch between agents** — Start on Claude Code, pickup on Codex. No re-explaining.
+- **Collaborate** — Share contexts across your team. See what everyone sees. Realtime.
+- **Fork & clone** — Branch contexts while preserving the full history.
+- **Own your data** — Open source. Your contexts. Your rules.
+
+When you open an existing session, it forks the context — the original is always preserved and automatically versioned. A local caching layer prevents duplicate context creations and appends.
+
+## Context API
+
+For builders who want to go deeper. Git-like primitives for context engineering.
+
+- **Five methods** — Create, get, append, update, delete. That's it.
+- **Automatic versioning** — Every change creates a new version. Full history out of the box.
+- **Time-travel** — Jump to any point in your context history.
+- **Framework-agnostic** — Works with any LLM framework. No vendor lock-in.
+
+Use the API standalone to build your own agents, or extend existing ones in UltraContext.
+
+| SDK                   | Install                    | Source                               |
+| --------------------- | -------------------------- | ------------------------------------ |
+| JavaScript/TypeScript | `npm install ultracontext` | [apps/js-sdk](./apps/js-sdk)         |
+| Python                | `pip install ultracontext` | [apps/python-sdk](./apps/python-sdk) |
+
+### JavaScript/TypeScript
+
+```bash
+npm install ultracontext
+```
 
 ```typescript
 import { UltraContext } from 'ultracontext';
 
 const uc = new UltraContext({ apiKey: 'uc_live_...' });
 
-// create a context and append messages
 const ctx = await uc.create();
 await uc.append(ctx.id, { role: 'user', content: 'Hello!' });
 
-// list contexts filtered by source
-const { data } = await uc.get({ source: 'claude', limit: 5 });
+// use with any LLM framework
+const response = await generateText({ model, messages: ctx.data });
+```
+
+### Python
+
+```bash
+pip install ultracontext
 ```
 
 ```python
@@ -96,50 +131,27 @@ uc = UltraContext(api_key="uc_live_...")
 ctx = uc.create()
 uc.append(ctx["id"], {"role": "user", "content": "Hello!"})
 
-results = uc.get(source="claude", limit=5)
+# use with any LLM framework
+response = generate_text(model=model, messages=uc.get(ctx["id"])["data"])
 ```
 
-## MCP Server
+<p align="center">📚 Context API Guides</p>
+<p align="center">
+  <a href="https://ultracontext.ai/docs/guides/store-retrieve-contexts">Store & Retrieve</a>
+  ·
+  <a href="https://ultracontext.ai/docs/guides/edit-contexts">Edit Contexts</a>
+  ·
+  <a href="https://ultracontext.ai/docs/guides/fork-clone-contexts">Fork & Clone</a>
+  ·
+  <a href="https://ultracontext.ai/docs/guides/view-context-history">View History</a>
+</p>
 
-Let your agents query contexts from other agents. Add to your Claude Code config:
+## Star History
 
-```json
-{
-  "mcpServers": {
-    "ultracontext": {
-      "command": "npx",
-      "args": ["-y", "ultracontext-mcp-server"]
-    }
-  }
-}
-```
-
-Or connect to a hosted API:
-
-```json
-{
-  "mcpServers": {
-    "ultracontext": {
-      "type": "streamable-http",
-      "url": "https://api.ultracontext.ai/mcp",
-      "headers": {
-        "Authorization": "Bearer uc_live_..."
-      }
-    }
-  }
-}
-```
-
-## Self-host
-
-Run the Context API on your own infrastructure — Node.js or Cloudflare Workers.
-
-See the [self-hosting guide](https://ultracontext.ai/docs/guides/self-hosting).
+[![Star History Chart](https://api.star-history.com/svg?repos=ultracontext/ultracontext-node&type=date&legend=top-left)](https://www.star-history.com/#ultracontext/ultracontext-node&type=date&legend=top-left)
 
 ## Documentation
 
 - [Quickstart](https://ultracontext.ai/docs/quickstart) — Get running in 2 minutes
-- [SDK Reference](https://ultracontext.ai/docs/sdk) — JavaScript & Python
-- [API Reference](https://ultracontext.ai/docs/api-reference/introduction) — Full endpoint docs
-- [MCP Server](https://ultracontext.ai/docs/fundamentals/mcp-server) — Setup & usage
-- [Self-hosting](https://ultracontext.ai/docs/guides/self-hosting) — Deploy your own
+- [Guides](https://ultracontext.ai/docs/guides/store-retrieve-contexts) — Practical patterns for common use cases
+- [API Reference](https://ultracontext.ai/docs/api-reference/introduction) — Full endpoint documentation
