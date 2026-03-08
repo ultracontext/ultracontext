@@ -68,7 +68,7 @@ async function resolveRunningProcess(lockPath) {
   const lock = await readJsonFile(lockPath);
   const lockPid = Number.parseInt(String(lock?.pid ?? ""), 10);
   if (isPidAlive(lockPid)) {
-    return { pid: lockPid, startedAt: String(lock?.startedAt ?? ""), engineerId: String(lock?.engineerId ?? ""), host: String(lock?.host ?? "") };
+    return { pid: lockPid, startedAt: String(lock?.startedAt ?? ""), userId: String(lock?.userId ?? ""), host: String(lock?.host ?? "") };
   }
   return null;
 }

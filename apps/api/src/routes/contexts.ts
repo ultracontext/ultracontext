@@ -1,4 +1,4 @@
-import type { StorageAdapter, NodeRow } from '../storage/types';
+import type { StorageAdapter, NodeRow, ContextFilters } from '../storage/types';
 import { buildNodeInsertRecords, findHead, findTail, getOrderedNodes, getVersions } from '../domain/context-chain';
 import { generatePublicId } from '../domain/public-ids';
 import type { HttpApp } from '../types/http';
@@ -161,7 +161,30 @@ export function registerContextRoutes(app: HttpApp) {
         const limit = parseInt(c.req.query('limit') ?? '20');
         const storage = c.get('storage');
 
-        const data = await storage.listRootContexts(projectId, limit);
+        // metadata + timestamp filters
+        const filters: ContextFilters = {};
+        const source = c.req.query('source');
+        const userId = c.req.query('user_id');
+        const host = c.req.query('host');
+        const projectPath = c.req.query('project_path');
+        const sessionId = c.req.query('session_id');
+        const after = c.req.query('after');
+        const before = c.req.query('before');
+        if (source) filters.source = source;
+        if (userId) filters.user_id = userId;
+        if (host) filters.host = host;
+        if (projectPath) filters.project_path = projectPath;
+        if (sessionId) filters.session_id = sessionId;
+        if (after) {
+            if (isNaN(Date.parse(after))) return c.json({ error: 'Invalid after timestamp' }, 400);
+            filters.after = after;
+        }
+        if (before) {
+            if (isNaN(Date.parse(before))) return c.json({ error: 'Invalid before timestamp' }, 400);
+            filters.before = before;
+        }
+
+        const data = await storage.listRootContexts(projectId, limit, filters);
 
         return c.json({
             data: data.map((n) => ({

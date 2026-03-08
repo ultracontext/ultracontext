@@ -49,6 +49,17 @@ export type GetContextResponse<T = unknown> = {
     versions?: Version[];
 };
 
+export type ListContextsInput = {
+    limit?: number;
+    source?: string;
+    user_id?: string;
+    host?: string;
+    project_path?: string;
+    session_id?: string;
+    after?: string;
+    before?: string;
+};
+
 export type ListContextsResponse = {
     data: Array<{
         id: string;
@@ -121,15 +132,24 @@ export class UltraContext {
         });
     }
 
-    async get(options?: { limit?: number }): Promise<ListContextsResponse>;
+    async get(options?: ListContextsInput): Promise<ListContextsResponse>;
     async get<T = unknown>(id: string, options?: GetContextInput): Promise<GetContextResponse<T>>;
     async get<T = unknown>(
-        idOrOptions?: string | { limit?: number },
+        idOrOptions?: string | ListContextsInput,
         options?: GetContextInput
     ): Promise<GetContextResponse<T> | ListContextsResponse> {
         if (!idOrOptions || typeof idOrOptions === 'object') {
             const params = new URLSearchParams();
-            if (typeof idOrOptions === 'object' && idOrOptions.limit) params.set('limit', String(idOrOptions.limit));
+            if (typeof idOrOptions === 'object') {
+                if (idOrOptions.limit) params.set('limit', String(idOrOptions.limit));
+                if (idOrOptions.source) params.set('source', idOrOptions.source);
+                if (idOrOptions.user_id) params.set('user_id', idOrOptions.user_id);
+                if (idOrOptions.host) params.set('host', idOrOptions.host);
+                if (idOrOptions.project_path) params.set('project_path', idOrOptions.project_path);
+                if (idOrOptions.session_id) params.set('session_id', idOrOptions.session_id);
+                if (idOrOptions.after) params.set('after', idOrOptions.after);
+                if (idOrOptions.before) params.set('before', idOrOptions.before);
+            }
             const query = params.toString();
             return this.request<ListContextsResponse>(`/contexts${query ? `?${query}` : ''}`, { method: 'GET' });
         }

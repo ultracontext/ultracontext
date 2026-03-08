@@ -107,6 +107,10 @@ create table nodes (
   prev_id text,
   context_id text
 );
+
+-- GIN index for fast metadata filtering
+create index if not exists idx_nodes_metadata
+  on nodes using gin (metadata);
 ```
 
 ## Storage adapters
@@ -177,3 +181,63 @@ Best for managed hosting and quick setup. Scaling handled by Supabase.
 | `SUPABASE_SERVICE_ROLE_KEY` | If using Supabase | Supabase service role key |
 | `ULTRACONTEXT_ADMIN_KEY` | Yes | Admin key for key management endpoints |
 | `PORT` | No | API server port (default: 8787) |
+
+## Deploy to Cloudflare Workers
+
+The Context API ships with a Workers entrypoint (`src/worker.ts`) that runs on Cloudflare's edge network. Only the **Supabase** storage adapter is supported on Workers (no direct TCP to PostgreSQL).
+
+### Prerequisites
+
+- A [Supabase](https://supabase.com) project with the schema applied
+- [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/) installed
+
+### Configure
+
+Create a `wrangler.jsonc` in `apps/api`:
+
+```jsonc wrangler.jsonc
+{
+    "name": "ultracontext-api",
+    "main": "src/worker.ts",
+    "compatibility_date": "2024-12-01"
+}
+```
+
+Set your secrets via `wrangler secret put`:
+
+```bash
+wrangler secret put DATABASE_PROVIDER        # enter: supabase
+wrangler secret put SUPABASE_URL
+wrangler secret put SUPABASE_SERVICE_ROLE_KEY
+wrangler secret put ULTRACONTEXT_ADMIN_KEY
+```
+
+### Optional: API key caching with KV
+
+You can cache API key lookups using Workers KV to reduce Supabase calls:
+
+1. Create a KV namespace: `wrangler kv namespace create ULTRACONTEXT_API_KEYS_CACHE`
+2. Add the binding to `wrangler.jsonc`:
+
+```jsonc wrangler.jsonc
+{
+    "kv_namespaces": [
+        {
+            "binding": "ULTRACONTEXT_API_KEYS_CACHE",
+            "id": "<your-namespace-id>"
+        }
+    ]
+}
+```
+
+When the binding is present, key lookups are cached for 1 hour. Without it, every request queries Supabase directly (same behavior as Node.js).
+
+### Deploy
+
+```bash
+cd apps/api && npx wrangler deploy
+```
+
+## MCP endpoint
+
+Self-hosted APIs include a built-in MCP endpoint at `/mcp`. No extra setup needed -- it uses the same Bearer token authentication as the REST API. See [MCP Server](/fundamentals/mcp-server#remote-mode-http) for details.

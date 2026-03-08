@@ -1,11 +1,54 @@
 ---
-title: 'Configuration'
-description: 'All environment variables and config options for Context Hub'
+title: 'CLI'
+description: 'Sync agent sessions to the Context API automatically'
 ---
 
-Context Hub reads configuration from environment variables, `~/.ultracontext/config.json`, and a local SQLite store. Environment variables take precedence.
+The UltraContext CLI watches agent session files in the background, parses events, and syncs them to the Context API in real time.
 
-## Config file
+<Info>New here? Start with the [Quickstart](/quickstart) for a 2-minute setup.</Info>
+
+## Supported agents
+
+| Agent | Session files |
+|-------|-------------|
+| **Claude Code** | `~/.claude/projects/**/*.jsonl` |
+| **Codex** | `~/.codex/sessions/**/*.jsonl` |
+| **OpenClaw** | `~/.openclaw/agents/*/sessions/**/*.jsonl` |
+
+## Context metadata
+
+The daemon enriches each context with metadata you can use to filter and search:
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| `source` | Agent that created the session | `claude`, `codex`, `openclaw` |
+| `user_id` | User identifier (`DAEMON_USER_ID` or `$USER`) | `alice` |
+| `host` | Machine hostname | `Alices-MacBook-Pro.local` |
+| `project_path` | Project directory (Claude Code only) | `/Users/alice/Code/myapp` |
+| `session_id` | Original agent session ID | `b1ae8187-56cb-...` |
+| `started_at` | Timestamp of the first event | `2026-03-08T00:01:20Z` |
+
+These fields are filterable via `GET /contexts` and the [MCP Server](/fundamentals/mcp-server).
+
+## CLI commands
+
+```bash bash
+ultracontext              # start daemon + open dashboard
+ultracontext config       # run setup wizard
+ultracontext start        # start daemon only (background)
+ultracontext stop         # stop daemon
+ultracontext status       # check if daemon is running
+ultracontext tui          # open dashboard only
+ultracontext update       # update CLI globally
+ultracontext version      # print version
+ultracontext help         # show help
+```
+
+## Configuration
+
+The CLI reads configuration from environment variables and `~/.ultracontext/config.json`. Environment variables take precedence.
+
+### Config file
 
 ```bash bash
 ~/.ultracontext/config.json
@@ -23,7 +66,7 @@ Persisted fields:
 }
 ```
 
-## Core
+### Core
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -31,11 +74,11 @@ Persisted fields:
 | `ULTRACONTEXT_BASE_URL` | `https://api.ultracontext.ai` | API base URL. Change for self-hosted deployments |
 | `ULTRACONTEXT_CONFIG_FILE` | `~/.ultracontext/config.json` | Path to the runtime config file |
 
-## Daemon
+### Daemon
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DAEMON_ENGINEER_ID` | `$USER` | Identifier for the engineer. Used in context metadata |
+| `DAEMON_USER_ID` | `$USER` | User identifier. Used in context metadata |
 | `DAEMON_HOST` | `os.hostname()` | Machine identifier. Used in context metadata |
 | `DAEMON_POLL_MS` | `1500` | Polling interval in milliseconds |
 | `DAEMON_LOG_LEVEL` | `info` | Log level: `error`, `warn`, `info`, `debug` |
@@ -43,12 +86,11 @@ Persisted fields:
 | `DAEMON_LOG_APPENDS` | `true` | Log each append event |
 | `DAEMON_BOOTSTRAP_MODE` | `prompt` | Bootstrap mode: `new_only`, `last_24h`, `all`, `prompt` |
 | `DAEMON_BOOTSTRAP_RESET` | `false` | Reset bootstrap state on next start |
-| `DAEMON_ENABLE_DAILY_CONTEXT` | `false` | Also append events to daily aggregate contexts |
 | `DAEMON_MAX_READ_BYTES` | `524288` | Max bytes read per file per cycle (512KB) |
 | `DAEMON_DEDUPE_TTL_SEC` | `2592000` | Deduplication TTL in seconds (30 days) |
 | `DAEMON_STORE_CLEANUP_CYCLES` | `20` | Run expired entry cleanup every N poll cycles |
 
-## Storage
+### Storage
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -56,7 +98,7 @@ Persisted fields:
 | `ULTRACONTEXT_LOCK_FILE` | `~/.ultracontext/daemon.lock` | Lock file to prevent duplicate daemon instances |
 | `ULTRACONTEXT_DAEMON_LOG_FILE` | `~/.ultracontext/daemon.log` | Daemon log output file (background mode) |
 
-## WebSocket (daemon-TUI communication)
+### WebSocket (daemon-TUI communication)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -64,7 +106,7 @@ Persisted fields:
 | `ULTRACONTEXT_DAEMON_WS_PORT` | auto | WebSocket server port |
 | `ULTRACONTEXT_DAEMON_INFO_FILE` | `~/.ultracontext/daemon.info` | File where daemon writes its WS connection info for TUI discovery |
 
-## Source globs
+### Source globs
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -72,7 +114,7 @@ Persisted fields:
 | `CODEX_GLOB` | `~/.codex/sessions/**/*.jsonl` | Glob pattern for Codex session files |
 | `OPENCLAW_GLOB` | `~/.openclaw/agents/*/sessions/**/*.jsonl` | Glob pattern for OpenClaw session files |
 
-## Source toggles
+### Source toggles
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -81,7 +123,7 @@ Persisted fields:
 | `INGEST_OPENCLAW` | `true` | Enable OpenClaw source |
 | `CLAUDE_INCLUDE_SUBAGENTS` | `false` | Include Claude Code subagent sessions (`**/subagents/**`) |
 
-## TUI
+### TUI
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -93,7 +135,7 @@ Persisted fields:
 | `TUI_STARTUP_SOUND_FILE` | bundled | Custom startup sound file path |
 | `TUI_CONTEXT_SOUND_FILE` | bundled | Custom context creation sound file path |
 
-## Dotenv
+### Dotenv
 
 The daemon and TUI load environment variables from `.env` files in this order:
 
@@ -110,3 +152,12 @@ ultracontext update
 ```
 
 Updates to the latest version. The package manager is auto-detected from your install.
+
+<CardGroup cols={2}>
+    <Card title='MCP Server' icon='plug' href='/fundamentals/mcp-server'>
+        Share context between agents via MCP.
+    </Card>
+    <Card title='Self-hosting' icon='server' href='/guides/self-hosting'>
+        Run the Context API on your own infrastructure.
+    </Card>
+</CardGroup>

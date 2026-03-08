@@ -40,5 +40,8 @@ CREATE INDEX IF NOT EXISTS idx_nodes_prev
 CREATE INDEX IF NOT EXISTS idx_nodes_created_at
   ON nodes (created_at);
 
+CREATE INDEX IF NOT EXISTS idx_nodes_metadata
+  ON nodes USING GIN (metadata);
+
 CREATE INDEX IF NOT EXISTS idx_api_keys_project_id
   ON api_keys (project_id);

@@ -34,7 +34,7 @@ export function resolveLockPath(env = process.env) {
 
 export async function acquireFileLock({
   lockPath = resolveLockPath(process.env),
-  engineerId = "",
+  userId = "",
   host = "",
 } = {}) {
   const resolved = path.resolve(lockPath);
@@ -69,7 +69,7 @@ export async function acquireFileLock({
   const payload = {
     pid: process.pid,
     host: String(host ?? ""),
-    engineerId: String(engineerId ?? ""),
+    userId: String(userId ?? ""),
     startedAt: new Date().toISOString(),
   };
   await handle.writeFile(`${JSON.stringify(payload, null, 2)}\n`, "utf8");

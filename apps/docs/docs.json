@@ -22,28 +22,26 @@
                         "group": "Context API",
                         "pages": [
                             "index",
-                            {
-                                "group": "Quickstart",
-                                "pages": ["quickstart/nodejs", "quickstart/python"]
-                            },
-                            {
-                                "group": "Fundamentals",
-                                "pages": [
-                                    "guides/store-retrieve-contexts",
-                                    "guides/edit-contexts",
-                                    "guides/view-context-history",
-                                    "guides/fork-clone-contexts"
-                                ]
-                            },
-                            {
-                                "group": "Advanced",
-                                "pages": ["guides/self-hosting"]
-                            }
+                            "quickstart"
                         ]
                     },
                     {
-                        "group": "Context Hub",
-                        "pages": ["context-hub/introduction", "context-hub/quickstart", "context-hub/configuration"]
+                        "group": "Fundamentals",
+                        "pages": [
+                            "fundamentals/cli",
+                            "fundamentals/mcp-server",
+                            "sdk"
+                        ]
+                    },
+                    {
+                        "group": "Guides",
+                        "pages": [
+                            "guides/store-retrieve-contexts",
+                            "guides/edit-contexts",
+                            "guides/view-context-history",
+                            "guides/fork-clone-contexts",
+                            "guides/self-hosting"
+                        ]
                     }
                 ]
             },
@@ -55,6 +53,12 @@
                     {
                         "group": "API Reference",
                         "pages": ["api-reference/introduction", "api-reference/authentication", "api-reference/errors"]
+                    },
+                    {
+                        "group": "MCP",
+                        "pages": [
+                            "POST /mcp"
+                        ]
                     },
                     {
                         "group": "Contexts",

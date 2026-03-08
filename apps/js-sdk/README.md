@@ -4,7 +4,12 @@
   </a>
 </p>
 
-<h3 align="center">Context infrastructure for AI agents.</h3>
+<h3 align="center">Same context. Everywhere.</h3>
+
+<p align="center">
+  Start on Claude Code. Continue on Codex.<br/>
+  Open source, realtime and invisible context infrastructure for the ones shipping at inference speed.
+</p>
 
 <p align="center">
   <a href="https://ultracontext.ai/docs">Documentation</a> ·
@@ -38,17 +43,36 @@
 
 ---
 
-<h2 align="center">All agents. One context.</h2>
-
-Auto-capture and share your agents' context everywhere. Realtime. Open source.
-
 ![ultracontext-gif](https://github.com/user-attachments/assets/be73afe5-161d-4fa3-8f4d-c4987fe63cb4)
 
-Everyone is shipping with agents. Few are shipping with agents together. 
+What Claude Code knows, Codex doesn't. What your teammate is shipping right now? Your agent has no idea.
 
-Multiple people, multiple agents, multiple machines. Our contexts are spread everywhere. There's no standard for context engineering. No infrastructure to build on. No fundamental building blocks to agree on. So we decided to make it.
+UltraContext captures every agent's context in realtime and makes it available to all of them. It's like having a personal context engineer everywhere. Continue a session in a different agent, or just ask what's happeming.
 
-UltraContext is the context infrastructure. The API gives you git-like primitives for context engineering. The Hub lets you auto-capture, share, and collaborate across agents in realtime.
+For example:
+
+- *"Codex, grab the last plan Claude Code made and implement it."*
+- *"What's the team building today?"*
+- *"What is Alex working on in Codex right now?"*
+
+Open source. Framework-agnostic. Customizable via the git-like Context API.
+
+## Features
+
+| CLI | Auto-ingest Claude Code, Codex, and OpenClaw sessions with a terminal dashboard. |
+| --- | --- |
+| MCP Server | Share context everywhere. Built into the API, or run standalone via stdio. |
+| Context API | Git-like context engineering API. Store, version, and retrieve agent context with zero complexity. |
+
+---
+
+## How it works
+
+1. **Start the daemon.** It captures all your agents' context in realtime.
+
+2. **Add the MCP server.** Any agent gets full awareness of every other agent.
+
+3. **That's it.** Ask questions, continue sessions, fork — your context is everywhere.
 
 ## Install
 
@@ -58,30 +82,15 @@ Requires Node >= 22.
 npm install -g ultracontext
 ```
 
-## The Hub
-
-**All agents. One context.**
-
-The Hub lets you auto-capture, share, and collaborate across agents in realtime.
-
-### Features
-
-- **Auto-capture** — Ingests your agents' context in realtime. Zero config.
-- **Switch between agents** — Pick up where one agent left off with another.
-- **Collaborate** — Share contexts across your team. See what everyone sees. Realtime.
-- **Fork & clone** — Continue contexts while preserving the full history.
-- **Own your data** — Open source. Your contexts. Your rules.
-
-### How it works
-
-1. A daemon runs in the background, watching your agents.
-2. Contexts are ingested in realtime.
-3. Your dashboard gets updated.
-
-### Quick Start
+## Quick Start
 
 ```bash
 ultracontext          # start daemon + open dashboard
+```
+
+That's it. The daemon watches your agents, ingests context in realtime, and the dashboard shows everything.
+
+```bash
 ultracontext config   # run setup wizard
 ultracontext start    # start daemon only
 ultracontext stop     # stop daemon
@@ -89,35 +98,21 @@ ultracontext status   # check if daemon is running
 ultracontext tui      # open dashboard only
 ```
 
-The default `ultracontext` command does everything: checks the daemon, starts it if needed, and opens the dashboard.
+## Context API
 
-When you open an existing session, it forks the context — the original is always preserved and automatically versioned. A local caching layer prevents duplicate context creations and appends.
-
-Add your own agents and extend behavior with the Context API. ([Docs here](https://ultracontext.ai/docs/))
-
-## The API
-
-**Context engineering built like Git.**
-
-The API gives you git-like primitives for context engineering, without the complexity.
-
-### Features
+For builders who want to go deeper. Git-like primitives for context engineering.
 
 - **Five methods** — Create, get, append, update, delete. That's it.
 - **Automatic versioning** — Every change creates a new version. Full history out of the box.
 - **Time-travel** — Jump to any point in your context history.
 - **Framework-agnostic** — Works with any LLM framework. No vendor lock-in.
 
-The simplest way to control what your agents see. Replace messages, compact long context, replay decisions and roll back mistakes — all with a single API call.
-
-Use the API standalone to build your own agents, or to extend existing ones in UltraContext.
-
+Use the API standalone to build your own agents, or extend existing ones in UltraContext.
 
 | SDK                   | Install                    | Source                               |
 | --------------------- | -------------------------- | ------------------------------------ |
 | JavaScript/TypeScript | `npm install ultracontext` | [apps/js-sdk](./apps/js-sdk)         |
 | Python                | `pip install ultracontext` | [apps/python-sdk](./apps/python-sdk) |
-
 
 ### JavaScript/TypeScript
 
@@ -170,9 +165,8 @@ response = generate_text(model=model, messages=uc.get(ctx["id"])["data"])
 
 [![Star History Chart](https://api.star-history.com/svg?repos=ultracontext/ultracontext-node&type=date&legend=top-left)](https://www.star-history.com/#ultracontext/ultracontext-node&type=date&legend=top-left)
 
-
 ## Documentation
 
-- [Quickstart](https://ultracontext.ai/docs/quickstart/nodejs) — Get running in 2 minutes
+- [Quickstart](https://ultracontext.ai/docs/quickstart) — Get running in 2 minutes
 - [Guides](https://ultracontext.ai/docs/guides/store-retrieve-contexts) — Practical patterns for common use cases
 - [API Reference](https://ultracontext.ai/docs/api-reference/introduction) — Full endpoint documentation

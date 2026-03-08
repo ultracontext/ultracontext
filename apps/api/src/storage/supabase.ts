@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
-import type { StorageAdapter, NodeRow, NodeInsertRow, ApiKeyRow, ProjectRow } from './types';
+import type { StorageAdapter, NodeRow, NodeInsertRow, ApiKeyRow, ProjectRow, ContextFilters } from './types';
 
 // =============================================================================
 // SUPABASE ADAPTER — same interface via Supabase REST client
@@ -84,13 +84,26 @@ export class SupabaseAdapter implements StorageAdapter {
         return data;
     }
 
-    async listRootContexts(projectId: number, limit: number) {
-        const { data, error } = await this.client
+    async listRootContexts(projectId: number, limit: number, filters?: ContextFilters) {
+        let query = this.client
             .from('nodes')
             .select('public_id, metadata, created_at')
             .eq('project_id', projectId)
             .eq('type', 'context')
-            .is('context_id', null)
+            .is('context_id', null);
+
+        // metadata JSONB filters
+        if (filters?.source) query = query.eq('metadata->>source', filters.source);
+        if (filters?.user_id) query = query.eq('metadata->>user_id', filters.user_id);
+        if (filters?.host) query = query.eq('metadata->>host', filters.host);
+        if (filters?.project_path) query = query.eq('metadata->>project_path', filters.project_path);
+        if (filters?.session_id) query = query.eq('metadata->>session_id', filters.session_id);
+
+        // timestamp range filters
+        if (filters?.after) query = query.gt('created_at', filters.after);
+        if (filters?.before) query = query.lt('created_at', filters.before);
+
+        const { data, error } = await query
             .order('created_at', { ascending: false })
             .limit(limit);
         if (error) throw error;

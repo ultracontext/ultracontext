@@ -9,13 +9,17 @@
     },
     "dependencies": {
         "@hono/node-server": "^1.19.6",
+        "@modelcontextprotocol/sdk": "^1.27.1",
         "@supabase/supabase-js": "^2.49.4",
         "dotenv": "^17.2.3",
         "drizzle-orm": "^0.44.5",
         "hono": "^4.10.7",
-        "postgres": "^3.4.7"
+        "postgres": "^3.4.7",
+        "ultracontext-mcp-server": "workspace:*",
+        "zod": "^3.25.76"
     },
     "devDependencies": {
+        "@cloudflare/workers-types": "^4.20260307.1",
         "@commitlint/cli": "^20.2.0",
         "@commitlint/config-conventional": "^20.2.0",
         "@types/node": "^22.18.6",
