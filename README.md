@@ -45,25 +45,38 @@
 
 ![ultracontext-gif](https://github.com/user-attachments/assets/be73afe5-161d-4fa3-8f4d-c4987fe63cb4)
 
-UltraContext is a unified context layer for AI agents. It automatically carries the work you started on one agent to another — unlocking seamless collaboration between humans and agents.
+What Claude Code knows, Codex doesn't. What your teammate built yesterday, what they're building right now — your agent has no idea.
 
-Start working with Cursor on computer 1. Pick up where you left off with Claude Code on computer 2. No re-explaining. No context lost.
+UltraContext captures every agent's context in realtime and makes it available to all of them. Continue a session in a different agent, or just ask.
 
-It's invisible, open source infrastructure meant to be used alone or to extend the productivity of your team. Your agents get real-time context of what everyone is doing — so you ship faster without being bottlenecked by human communication. The agents just understand the big picture.
+You can ask questions like:
 
-Framework-agnostic. Customizable via the git-like Context API. Works everywhere.
+- *"What's the team building today?"*
+- *"What is Alex working on in Codex right now?"*
+- *"Codex, grab the last plan Claude Code made and implement it."*
+- *"What did my agents ship this week?"*
+
+Your agent already has the answer.
+
+Open source. Framework-agnostic. Customizable via the git-like Context API.
+
+Our goal is to create the infrastructure on which the first billion-dollar company will be built entirely by agents. And to make it open source.
 
 ## How it works
 
-**1. Work normally.** Use Claude Code, Codex, Cursor — whatever you want. The UltraContext daemon runs in the background, listening to your agent sessions and ingesting context in realtime. You change nothing about how you work.
+**1. Work normally.** Use Claude Code, Codex, Cursor — whatever you want. The UltraContext daemon runs in the background, capturing every agent's context in realtime. You change nothing about how you work.
 
 ```bash
 ultracontext start    # that's it. daemon is running.
 ```
 
-**2. Context flows to the API.** Every session is automatically captured, versioned, and stored. Nothing is ever lost. Access it programmatically or let your tools consume it.
+**2. Context flows to the API.** Every session, every decision, every piece of work — automatically captured, versioned, and stored. Nothing is ever lost.
 
-**3. Any agent picks it up via MCP.** Your agents connect to UltraContext's MCP server and get full context from every other agent — automatically. No config, no copy-pasting, no re-explaining. Just add the MCP server and every agent knows what every other agent did.
+**3. Use it.**
+
+You have two options:
+
+**Query via MCP.** Add UltraContext's MCP server to any agent. It gets realtime awareness of what every other agent is doing — across tools, machines, and team members. Just ask.
 
 ```json
 {
@@ -76,7 +89,11 @@ ultracontext start    # that's it. daemon is running.
 }
 ```
 
-That's it. Install, forget, and your agents share context forever.
+**Fork and continue.** Pull any session to your local machine, fork it, and keep working in the agent of your choice. The original is preserved, you get a full copy with history.
+
+```bash
+ultracontext tui      # browse sessions, fork, and resume in any agent
+```
 
 ## Install
 
