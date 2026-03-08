@@ -1,26 +1,38 @@
 ---
 title: 'Introduction'
-description: 'The Context API for AI Agents'
+description: 'Same context. Everywhere.'
 ---
 
 <img
     src='/images/context-api-hero.svg'
-    alt='Context API'
+    alt='UltraContext'
 />
 
-**Context engineering built like Git. Open source.**
+**Same context. Everywhere. Open source.**
 
-The Context API is the easiest way to control what your agents see. Replace messages, compact/offload long context, replay decisions and roll back mistakes with a single API call. Git-like automatic versioning with zero cost abstraction. Full history. Zero complexity.
+What Claude Code knows, Codex doesn't. What your teammate is shipping right now? Your agent has no idea.
 
-Focus on building your product, not duct-taping context.
+UltraContext captures every agent's context in realtime and makes it available to all of them. Continue a session in a different agent, or just ask what's happening.
+
+- *"Codex, grab the last plan Claude Code made and implement it."*
+- *"What's the team building today?"*
+- *"What is Alex working on in Codex right now?"*
 
 ## Features
 
 |                            |                                                                          |
 | -------------------------- | ------------------------------------------------------------------------ |
-| **Context API**            | Git-like context engineering API. Store, version, and retrieve agent context with zero complexity. |
 | **CLI**                    | Auto-ingest Claude Code, Codex, and OpenClaw sessions with a terminal dashboard. [Learn more](/fundamentals/cli). |
 | **MCP Server**             | Share context everywhere. Built into the API, or run standalone via stdio. [Learn more](/fundamentals/mcp-server). |
+| **Context API**            | Git-like context engineering API. Store, version, and retrieve agent context with zero complexity. |
+
+## How it works
+
+1. **Start the daemon.** It captures all your agents' context in realtime.
+
+2. **Add the MCP server.** Any agent gets full awareness of every other agent.
+
+3. **That's it.** Ask questions, continue sessions, fork — your context is everywhere.
 
 ---
 
@@ -28,7 +40,7 @@ Focus on building your product, not duct-taping context.
 
 As LLMs take over as the new operating system, managing AI context becomes more and more valuable.
 
-Context is the **RAM** — it’s everything LLMs can see. That’s the last interface between humans and AI. It’s the lowest level of abstraction we can get to.
+Context is the **RAM** — it's everything LLMs can see. That's the last interface between humans and AI. It's the lowest level of abstraction we can get to.
 
 <Frame caption='Source: Andrej Karpathy (adapted)'>
 
@@ -75,7 +87,11 @@ Right now, we're reinventing the wheel for every car we build. Instead of tackli
 
 **It's time to simplify.**
 
-# Why the Context API
+---
+
+# Context API
+
+For builders who want to go deeper. Git-like primitives for context engineering.
 
 |                          |                                                                     |
 | ------------------------ | ------------------------------------------------------------------- |
@@ -90,7 +106,7 @@ Just plug & play.
 
 ---
 
-# How it works
+## How it works
 
 A single idea is all you need.
 
