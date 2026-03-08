@@ -22,7 +22,8 @@
                         "group": "Context API",
                         "pages": [
                             "index",
-                            "quickstart"
+                            "quickstart",
+                            "configuration"
                         ]
                     },
                     {
