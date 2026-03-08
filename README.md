@@ -57,6 +57,16 @@ For example:
 
 Open source. Framework-agnostic. Customizable via the git-like Context API.
 
+## Features
+
+|                            |                                                                          |
+| -------------------------- | ------------------------------------------------------------------------ |
+| **CLI**                    | Auto-ingest Claude Code, Codex, and OpenClaw sessions with a terminal dashboard. |
+| **MCP Server**             | Share context everywhere. Built into the API, or run standalone via stdio. |
+| **Context API**            | Git-like context engineering API. Store, version, and retrieve agent context with zero complexity. |
+
+---
+
 ## How it works
 
 **1. Work normally.**
@@ -67,9 +77,9 @@ Use Claude Code, Codex, Cursor — whatever you want. The CLI runs the daemon in
 
 Every session is automatically captured, versioned, and stored. Nothing is ever lost.
 
-**3. Access you context.**
+**3. Ask or continue.**
 
-Add the MCP server to any agent — it gets full awareness of what every other agent did. Or fork a session with the UI to continue sessions locally
+Add the MCP server to query what any agent did. Or fork a session and keep building from where it stopped.
 
 ## Install
 
