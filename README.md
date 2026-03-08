@@ -64,15 +64,14 @@ Our goal is to create the infrastructure on which the first billion-dollar compa
 
 ## How it works
 
-**1. Work normally.** Use Claude Code, Codex, Cursor — whatever you want. The UltraContext daemon runs in the background, capturing every agent's context in realtime. You change nothing about how you work.
+**1. Work normally.**
+Use Claude Code, Codex, Cursor — whatever you want. The daemon runs in the background, capturing context in realtime.
 
-```bash
-ultracontext start    # that's it. daemon is running.
-```
+**2. Context flows to the API.**
+Every session is automatically captured, versioned, and stored. Nothing is ever lost.
 
-**2. Context flows to the API.** Every session is automatically captured, versioned, and stored. Nothing is ever lost.
-
-**3. Any agent picks it up.** Add the MCP server to any agent — it gets full awareness of what every other agent did. Or fork a session and continue it in a different tool.
+**3. Any agent picks it up.**
+Add the MCP server to any agent — it gets full awareness of what every other agent did. Or fork a session and continue it in a different tool.
 
 ## Install
 
