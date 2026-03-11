@@ -9,8 +9,10 @@ export async function handleMcpRequest(
   reader: ContextReader,
 ): Promise<Response> {
   const mcp = createMcpServer(reader);
+  // stateless + JSON responses — rejects GET/DELETE with 405 per MCP spec
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
+    enableJsonResponse: true,
   });
 
   await mcp.connect(transport);

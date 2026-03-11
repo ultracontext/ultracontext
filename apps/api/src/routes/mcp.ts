@@ -15,14 +15,19 @@ function storageReader(c: HttpContext): ContextReader {
     };
 }
 
-// -- MCP endpoint -------------------------------------------------------------
+// -- MCP endpoint (stateless — no SSE/sessions, POST only per MCP spec) ------
+
+const METHOD_NOT_ALLOWED = {
+    jsonrpc: '2.0',
+    error: { code: -32000, message: 'Method not allowed.' },
+    id: null,
+};
 
 export function registerMcpRoutes(app: HttpApp) {
-    const handler = async (c: HttpContext) => {
+    app.post('/mcp', async (c: HttpContext) => {
         return handleMcpRequest(c.req.raw, storageReader(c));
-    };
+    });
 
-    app.post('/mcp', handler);
-    app.get('/mcp', handler);
-    app.delete('/mcp', handler);
+    app.get('/mcp', (c) => c.json(METHOD_NOT_ALLOWED, 405));
+    app.delete('/mcp', (c) => c.json(METHOD_NOT_ALLOWED, 405));
 }
