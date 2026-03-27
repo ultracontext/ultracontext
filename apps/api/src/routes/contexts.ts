@@ -427,14 +427,93 @@ export function registerContextRoutes(app: HttpApp) {
         return c.json({ data: result, version: currentVersion });
     });
 
-    app.delete('/contexts/:id', async (c) => {
+    // -- batch delete contexts ---------------------------------------------------
+
+    app.post('/contexts/batch-delete', async (c) => {
         const { projectId } = c.get('auth');
-        const contextPublicId = c.req.param('id');
         const body = await c.req.json().catch(() => null);
 
         if (!isPlainObject(body)) return c.json({ error: 'Request body must be a JSON object' }, 400);
 
+        const { ids } = body;
+        if (!Array.isArray(ids) || ids.length === 0) {
+            return c.json({ error: 'ids must be a non-empty array of context IDs' }, 400);
+        }
+
         const storage = c.get('storage');
+        const results: Array<{ id: string; deleted: boolean; error?: string }> = [];
+
+        for (const contextId of ids) {
+            if (typeof contextId !== 'string') {
+                results.push({ id: String(contextId), deleted: false, error: 'Invalid ID type' });
+                continue;
+            }
+
+            const root = await storage.findRootContext(projectId, contextId);
+            if (!root) {
+                results.push({ id: contextId, deleted: false, error: 'Not found' });
+                continue;
+            }
+
+            try {
+                // Delete all version branches and their messages
+                const branches = await storage.findContextBranches(root.public_id);
+                for (const branch of branches) {
+                    await storage.deleteNodesByContextId(projectId, branch.public_id);
+                }
+
+                // Delete all nodes referencing this context (versions)
+                await storage.deleteNodesByContextId(projectId, root.public_id);
+
+                // Delete the root context node itself
+                await storage.deleteNodeByPublicId(projectId, root.public_id);
+
+                results.push({ id: contextId, deleted: true });
+            } catch (error) {
+                const message = error instanceof Error ? error.message : 'Unknown error';
+                results.push({ id: contextId, deleted: false, error: message });
+            }
+        }
+
+        return c.json({ results });
+    });
+
+    // -- delete context or messages -----------------------------------------------
+
+    app.delete('/contexts/:id', async (c) => {
+        const { projectId } = c.get('auth');
+        const contextPublicId = c.req.param('id');
+        const body = await c.req.json().catch(() => null);
+        const storage = c.get('storage');
+
+        // No body or empty body → delete entire context
+        if (!body || (isPlainObject(body) && !body.ids)) {
+            const root = await storage.findRootContext(projectId, contextPublicId);
+            if (!root) return c.json({ error: 'Context not found' }, 404);
+
+            try {
+                // Delete all version branches and their messages
+                const branches = await storage.findContextBranches(root.public_id);
+                for (const branch of branches) {
+                    await storage.deleteNodesByContextId(projectId, branch.public_id);
+                }
+
+                // Delete all nodes referencing this context
+                await storage.deleteNodesByContextId(projectId, root.public_id);
+
+                // Delete the root context node itself
+                await storage.deleteNodeByPublicId(projectId, root.public_id);
+
+                return c.json({ deleted: true, id: contextPublicId });
+            } catch (error) {
+                const message = error instanceof Error ? error.message : 'Failed to delete context';
+                return c.json({ error: message }, 500);
+            }
+        }
+
+        // Body with ids → delete specific messages (existing behavior)
+        if (!isPlainObject(body)) return c.json({ error: 'Request body must be a JSON object' }, 400);
+
         const { ids, metadata: userMetadata } = body;
         if (ids === undefined || ids === null) return c.json({ error: 'ids is required' }, 400);
         if (userMetadata !== undefined && !isPlainObject(userMetadata)) {
