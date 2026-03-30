@@ -140,6 +140,15 @@ export class SupabaseAdapter implements StorageAdapter {
         if (error) throw error;
     }
 
+    async clearParentReferences(projectId: number, parentId: string) {
+        const { error } = await this.client
+            .from('nodes')
+            .update({ parent_id: null })
+            .eq('project_id', projectId)
+            .eq('parent_id', parentId);
+        if (error) throw error;
+    }
+
     // -- api keys -------------------------------------------------------------
 
     async findApiKeyByPrefix(prefix: string): Promise<ApiKeyRow | null> {

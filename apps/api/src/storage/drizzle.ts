@@ -103,6 +103,13 @@ export class DrizzleAdapter implements StorageAdapter {
         await this.db.delete(nodes).where(and(eq(nodes.project_id, projectId), eq(nodes.public_id, publicId)));
     }
 
+    async clearParentReferences(projectId: number, parentId: string) {
+        await this.db
+            .update(nodes)
+            .set({ parent_id: null })
+            .where(and(eq(nodes.project_id, projectId), eq(nodes.parent_id, parentId)));
+    }
+
     // -- api keys -------------------------------------------------------------
 
     async findApiKeyByPrefix(prefix: string): Promise<ApiKeyRow | null> {

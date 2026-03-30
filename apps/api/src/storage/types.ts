@@ -66,6 +66,7 @@ export interface StorageAdapter {
     insertNodes(values: NodeInsertRow | NodeInsertRow[]): Promise<Partial<NodeRow>[]>;
     deleteNodesByContextId(projectId: number, contextId: string): Promise<void>;
     deleteNodeByPublicId(projectId: number, publicId: string): Promise<void>;
+    clearParentReferences(projectId: number, parentId: string): Promise<void>;
 
     // api keys
     findApiKeyByPrefix(prefix: string): Promise<ApiKeyRow | null>;

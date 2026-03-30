@@ -89,6 +89,21 @@ export type DeleteResponse<T = unknown> = {
     version: number;
 };
 
+export type DestroyResponse = {
+    deleted: boolean;
+    id: string;
+};
+
+export type BatchDeleteResult = {
+    id: string;
+    deleted: boolean;
+    error?: string;
+};
+
+export type BatchDeleteResponse = {
+    results: BatchDeleteResult[];
+};
+
 export class UltraContextHttpError extends Error {
     readonly status: number;
     readonly url: string;
@@ -178,6 +193,19 @@ export class UltraContext {
         return this.request<DeleteResponse<T>>(`/contexts/${encodeURIComponent(contextId)}`, {
             method: 'DELETE',
             body: { ids, metadata: options?.metadata },
+        });
+    }
+
+    async destroy(contextId: string): Promise<DestroyResponse> {
+        return this.request<DestroyResponse>(`/contexts/${encodeURIComponent(contextId)}`, {
+            method: 'DELETE',
+        });
+    }
+
+    async batchDelete(ids: string[]): Promise<BatchDeleteResponse> {
+        return this.request<BatchDeleteResponse>('/contexts/batch-delete', {
+            method: 'POST',
+            body: { ids },
         });
     }
 

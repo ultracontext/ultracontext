@@ -412,6 +412,75 @@ uc.delete(context_id, -1)
 
 <Tip>Deleting a message creates a new version of the conversation. The original is always preserved in the version history. Notice that after deleting the last message, the version number is incremented by 1 in our example, so v0 is completely preserved.</Tip>
 
+---
+
+### Delete Entire Context
+
+Permanently delete a context and all its versions.
+
+<CodeGroup>
+```typescript TypeScript
+import { UltraContext } from 'ultracontext';
+
+const uc = new UltraContext({ apiKey: process.env.ULTRACONTEXT_API_KEY });
+
+// delete a context entirely
+await uc.destroy('ctx_abc123');
+// { deleted: true, id: 'ctx_abc123' }
+```
+
+```python Python
+from ultracontext import UltraContext
+import os
+
+uc = UltraContext(api_key=os.environ["ULTRACONTEXT_API_KEY"])
+
+# delete a context entirely
+result = uc.destroy("ctx_abc123")
+# {"deleted": True, "id": "ctx_abc123"}
+```
+</CodeGroup>
+
+<Warning>This is irreversible. The context, all its versions, and all messages are permanently deleted.</Warning>
+
+---
+
+### Batch Delete Contexts
+
+Delete multiple contexts in one call.
+
+<CodeGroup>
+```typescript TypeScript
+import { UltraContext } from 'ultracontext';
+
+const uc = new UltraContext({ apiKey: process.env.ULTRACONTEXT_API_KEY });
+
+const { results } = await uc.batchDelete(['ctx_abc123', 'ctx_def456']);
+
+for (const r of results) {
+    if (r.deleted) console.log(`Deleted ${r.id}`);
+    else console.log(`Failed ${r.id}: ${r.error}`);
+}
+```
+
+```python Python
+from ultracontext import UltraContext
+import os
+
+uc = UltraContext(api_key=os.environ["ULTRACONTEXT_API_KEY"])
+
+result = uc.batch_delete(["ctx_abc123", "ctx_def456"])
+
+for r in result["results"]:
+    if r["deleted"]:
+        print(f"Deleted {r['id']}")
+    else:
+        print(f"Failed {r['id']}: {r.get('error')}")
+```
+</CodeGroup>
+
+<Tip>Batch delete returns results for each context individually, so partial failures don't block the entire operation.</Tip>
+
 <Card
     title='See also: Fork & Clone Contexts'
     icon='code-branch'

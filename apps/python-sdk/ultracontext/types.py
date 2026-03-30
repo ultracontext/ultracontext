@@ -72,3 +72,24 @@ class DeleteResponse(TypedDict):
 
     data: List[Message]
     version: int
+
+
+class DestroyResponse(TypedDict):
+    """Response from destroy()."""
+
+    deleted: bool
+    id: str
+
+
+class BatchDeleteResult(TypedDict, total=False):
+    """Single result from batch_delete()."""
+
+    id: str
+    deleted: bool
+    error: Optional[str]
+
+
+class BatchDeleteResponse(TypedDict):
+    """Response from batch_delete()."""
+
+    results: List[BatchDeleteResult]

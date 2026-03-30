@@ -7,8 +7,10 @@ import httpx
 from .exceptions import UltraContextHttpError
 from .types import (
     AppendResponse,
+    BatchDeleteResponse,
     CreateContextResponse,
     DeleteResponse,
+    DestroyResponse,
     GetContextResponse,
     ListContextsResponse,
     UpdateResponse,
@@ -34,8 +36,10 @@ class _BaseClient:
         self._timeout = timeout or self.DEFAULT_TIMEOUT
         self._headers = headers or {}
 
-    def _build_headers(self) -> Dict[str, str]:
-        headers = {"Content-Type": "application/json", **self._headers}
+    def _build_headers(self, *, with_content_type: bool = True) -> Dict[str, str]:
+        headers = {**self._headers}
+        if with_content_type:
+            headers["Content-Type"] = "application/json"
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
         return headers
@@ -60,13 +64,15 @@ class UltraContext(_BaseClient):
 
         url = f"{self._base_url}{path}"
 
+        headers = self._build_headers(with_content_type=json is not None)
+
         with httpx.Client(timeout=self._timeout) as client:
             response = client.request(
                 method,
                 url,
                 params=params,
                 json=json,
-                headers=self._build_headers(),
+                headers=headers,
             )
 
         # handle errors
@@ -250,6 +256,24 @@ class UltraContext(_BaseClient):
 
         return self._request("DELETE", f"/contexts/{context_id}", json=body)
 
+    def destroy(self, context_id: str) -> DestroyResponse:
+        """
+        Delete an entire context and all its versions.
+
+        Args:
+            context_id: Context ID to delete
+        """
+        return self._request("DELETE", f"/contexts/{context_id}")
+
+    def batch_delete(self, ids: List[str]) -> BatchDeleteResponse:
+        """
+        Delete multiple contexts at once.
+
+        Args:
+            ids: List of context IDs to delete
+        """
+        return self._request("POST", "/contexts/batch-delete", json={"ids": ids})
+
 
 class AsyncUltraContext(_BaseClient):
     """Async UltraContext API client."""
@@ -270,13 +294,15 @@ class AsyncUltraContext(_BaseClient):
 
         url = f"{self._base_url}{path}"
 
+        headers = self._build_headers(with_content_type=json is not None)
+
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             response = await client.request(
                 method,
                 url,
                 params=params,
                 json=json,
-                headers=self._build_headers(),
+                headers=headers,
             )
 
         # handle errors
@@ -417,3 +443,11 @@ class AsyncUltraContext(_BaseClient):
             body["metadata"] = metadata
 
         return await self._request("DELETE", f"/contexts/{context_id}", json=body)
+
+    async def destroy(self, context_id: str) -> DestroyResponse:
+        """Delete an entire context and all its versions."""
+        return await self._request("DELETE", f"/contexts/{context_id}")
+
+    async def batch_delete(self, ids: List[str]) -> BatchDeleteResponse:
+        """Delete multiple contexts at once."""
+        return await self._request("POST", "/contexts/batch-delete", json={"ids": ids})

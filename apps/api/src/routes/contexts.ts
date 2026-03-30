@@ -41,6 +41,31 @@ async function rollbackRootContext(storage: StorageAdapter, projectId: number, r
     }
 }
 
+// -- destroy helper -----------------------------------------------------------
+
+async function destroyContext(storage: StorageAdapter, projectId: number, rootPublicId: string) {
+    const branches = await storage.findContextBranches(rootPublicId);
+
+    // Clear parent refs for all messages under each branch, then delete them
+    for (const branch of branches) {
+        const messages = await storage.findNonContextNodes(branch.public_id);
+        for (const msg of messages) {
+            await storage.clearParentReferences(projectId, msg.public_id);
+        }
+        await storage.clearParentReferences(projectId, branch.public_id);
+        await storage.deleteNodesByContextId(projectId, branch.public_id);
+    }
+
+    // Clear parent refs pointing to root (forked contexts)
+    await storage.clearParentReferences(projectId, rootPublicId);
+
+    // Delete version head nodes
+    await storage.deleteNodesByContextId(projectId, rootPublicId);
+
+    // Delete the root node itself
+    await storage.deleteNodeByPublicId(projectId, rootPublicId);
+}
+
 // -- routes -------------------------------------------------------------------
 
 export function registerContextRoutes(app: HttpApp) {
@@ -194,6 +219,48 @@ export function registerContextRoutes(app: HttpApp) {
             })),
         });
     });
+
+    // -- batch delete contexts (must be registered before :id routes) -----------
+
+    app.post('/contexts/batch-delete', async (c) => {
+        const { projectId } = c.get('auth');
+        const body = await c.req.json().catch(() => null);
+
+        if (!isPlainObject(body)) return c.json({ error: 'Request body must be a JSON object' }, 400);
+
+        const { ids } = body;
+        if (!Array.isArray(ids) || ids.length === 0) {
+            return c.json({ error: 'ids must be a non-empty array of context IDs' }, 400);
+        }
+
+        const storage = c.get('storage');
+        const results: Array<{ id: string; deleted: boolean; error?: string }> = [];
+
+        for (const contextId of ids) {
+            if (typeof contextId !== 'string') {
+                results.push({ id: String(contextId), deleted: false, error: 'Invalid ID type' });
+                continue;
+            }
+
+            const root = await storage.findRootContext(projectId, contextId);
+            if (!root) {
+                results.push({ id: contextId, deleted: false, error: 'Not found' });
+                continue;
+            }
+
+            try {
+                await destroyContext(storage, projectId, root.public_id);
+                results.push({ id: contextId, deleted: true });
+            } catch (error) {
+                const message = error instanceof Error ? error.message : 'Unknown error';
+                results.push({ id: contextId, deleted: false, error: message });
+            }
+        }
+
+        return c.json({ results });
+    });
+
+    // -- parameterized :id routes ------------------------------------------------
 
     app.post('/contexts/:id', async (c) => {
         const { projectId } = c.get('auth');
@@ -427,83 +494,33 @@ export function registerContextRoutes(app: HttpApp) {
         return c.json({ data: result, version: currentVersion });
     });
 
-    // -- batch delete contexts ---------------------------------------------------
-
-    app.post('/contexts/batch-delete', async (c) => {
-        const { projectId } = c.get('auth');
-        const body = await c.req.json().catch(() => null);
-
-        if (!isPlainObject(body)) return c.json({ error: 'Request body must be a JSON object' }, 400);
-
-        const { ids } = body;
-        if (!Array.isArray(ids) || ids.length === 0) {
-            return c.json({ error: 'ids must be a non-empty array of context IDs' }, 400);
-        }
-
-        const storage = c.get('storage');
-        const results: Array<{ id: string; deleted: boolean; error?: string }> = [];
-
-        for (const contextId of ids) {
-            if (typeof contextId !== 'string') {
-                results.push({ id: String(contextId), deleted: false, error: 'Invalid ID type' });
-                continue;
-            }
-
-            const root = await storage.findRootContext(projectId, contextId);
-            if (!root) {
-                results.push({ id: contextId, deleted: false, error: 'Not found' });
-                continue;
-            }
-
-            try {
-                // Delete all version branches and their messages
-                const branches = await storage.findContextBranches(root.public_id);
-                for (const branch of branches) {
-                    await storage.deleteNodesByContextId(projectId, branch.public_id);
-                }
-
-                // Delete all nodes referencing this context (versions)
-                await storage.deleteNodesByContextId(projectId, root.public_id);
-
-                // Delete the root context node itself
-                await storage.deleteNodeByPublicId(projectId, root.public_id);
-
-                results.push({ id: contextId, deleted: true });
-            } catch (error) {
-                const message = error instanceof Error ? error.message : 'Unknown error';
-                results.push({ id: contextId, deleted: false, error: message });
-            }
-        }
-
-        return c.json({ results });
-    });
-
     // -- delete context or messages -----------------------------------------------
 
     app.delete('/contexts/:id', async (c) => {
         const { projectId } = c.get('auth');
         const contextPublicId = c.req.param('id');
-        const body = await c.req.json().catch(() => null);
         const storage = c.get('storage');
 
-        // No body or empty body → delete entire context
-        if (!body || (isPlainObject(body) && !body.ids)) {
+        // Check Content-Type to distinguish "no body" from "JSON body"
+        const contentType = c.req.header('content-type') ?? '';
+        const hasJsonBody = contentType.includes('application/json');
+
+        let body: any = null;
+        if (hasJsonBody) {
+            try {
+                body = await c.req.json();
+            } catch {
+                return c.json({ error: 'Invalid JSON body' }, 400);
+            }
+        }
+
+        // No body → delete entire context
+        if (!hasJsonBody || (isPlainObject(body) && !body.ids)) {
             const root = await storage.findRootContext(projectId, contextPublicId);
             if (!root) return c.json({ error: 'Context not found' }, 404);
 
             try {
-                // Delete all version branches and their messages
-                const branches = await storage.findContextBranches(root.public_id);
-                for (const branch of branches) {
-                    await storage.deleteNodesByContextId(projectId, branch.public_id);
-                }
-
-                // Delete all nodes referencing this context
-                await storage.deleteNodesByContextId(projectId, root.public_id);
-
-                // Delete the root context node itself
-                await storage.deleteNodeByPublicId(projectId, root.public_id);
-
+                await destroyContext(storage, projectId, root.public_id);
                 return c.json({ deleted: true, id: contextPublicId });
             } catch (error) {
                 const message = error instanceof Error ? error.message : 'Failed to delete context';
