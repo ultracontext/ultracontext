@@ -46,7 +46,8 @@ CREATE INDEX IF NOT EXISTS idx_nodes_metadata
 CREATE INDEX IF NOT EXISTS idx_api_keys_project_id
   ON api_keys (project_id);
 
-CREATE OR REPLACE VIEW project_activity_daily AS
+CREATE OR REPLACE VIEW project_activity_daily
+  WITH (security_invoker = on) AS
 WITH node_activity AS (
   SELECT
     n.project_id,
@@ -94,7 +95,8 @@ GROUP BY
   na.first_event_at,
   na.last_event_at;
 
-CREATE OR REPLACE VIEW project_activity_weekly AS
+CREATE OR REPLACE VIEW project_activity_weekly
+  WITH (security_invoker = on) AS
 SELECT
   project_id,
   project_name,
