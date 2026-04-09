@@ -19,6 +19,15 @@ function unauthorized(c: HttpContext) {
     return c.json({ error: 'Unauthorized' }, 401);
 }
 
+async function recordApiKeyUse(c: HttpContext, apiKeyId: number) {
+    try {
+        await c.get('storage').updateApiKeyLastUsedAt(apiKeyId, new Date().toISOString());
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Failed to update api_keys.last_used_at for key ${apiKeyId}: ${message}`);
+    }
+}
+
 function bearerAuthMiddleware(verify: (token: string, c: HttpContext) => Promise<boolean>): HttpMiddleware {
     return async (c, next) => {
         const token = readBearerToken(c as HttpContext);
@@ -43,6 +52,7 @@ function createTokenVerifier(keyCache?: KeyCache) {
             const cached = await keyCache.get(prefix);
             if (cached && cached.keyHash === hash) {
                 c.set('auth', { apiKeyId: cached.apiKeyId, projectId: cached.projectId });
+                await recordApiKeyUse(c, cached.apiKeyId);
                 return true;
             }
         }
@@ -62,6 +72,8 @@ function createTokenVerifier(keyCache?: KeyCache) {
                 projectId: tokenRow.project_id,
             });
         }
+
+        await recordApiKeyUse(c, tokenRow.id);
 
         return true;
     };
