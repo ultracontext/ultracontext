@@ -94,6 +94,7 @@ export type AuthOptions = {
 export function registerAuthMiddleware(app: HttpApp, options?: AuthOptions) {
     const verifyToken = createTokenVerifier(options?.keyCache);
 
+    app.use('/contexts', bearerAuthMiddleware(verifyToken));
     app.use('/contexts/*', bearerAuthMiddleware(verifyToken));
     app.use('/mcp', bearerAuthMiddleware(verifyToken));
     app.use('/v1/keys', bearerAuthMiddleware(verifyAdminToken));
