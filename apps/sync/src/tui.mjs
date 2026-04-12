@@ -1261,6 +1261,18 @@ function moveUpdatePrompt(delta) {
   renderDashboard();
 }
 
+function teardownTui() {
+  if (runtime.statusPollTimer) clearInterval(runtime.statusPollTimer);
+  runtime.statusPollTimer = null;
+  if (runtime.contextRefreshTimer) clearInterval(runtime.contextRefreshTimer);
+  runtime.contextRefreshTimer = null;
+  runtime.uiController?.stop();
+  runtime.uiController = null;
+  runtime.stop?.("update");
+  runtime.stop = null;
+  runtime.uc = null;
+}
+
 function chooseUpdatePrompt(index) {
   const safeIndex = Math.max(Math.min(index, UPDATE_PROMPT_OPTIONS.length - 1), 0);
   const choice = UPDATE_PROMPT_OPTIONS[safeIndex]?.id;
@@ -1270,15 +1282,26 @@ function chooseUpdatePrompt(index) {
   renderDashboard();
 
   if (choice === "install") {
-    // stop TUI and run update in a new terminal tab
-    const command = "ultracontext update";
-    const opened = resumeOpenTerminalTab(command);
-    if (opened.ok) {
-      ui.resume.notice = `Update started in new tab. Restart TUI after update.`;
+    // tear down TUI so we can reuse the current terminal
+    teardownTui();
+
+    // run update in the same terminal
+    const result = spawnSync(process.execPath, [process.argv[1], "update"], {
+      stdio: "inherit",
+      env: process.env,
+    });
+
+    if (result.status === 0) {
+      // re-exec ultracontext to restart with the new version
+      const restart = spawnSync(process.execPath, [process.argv[1]], {
+        stdio: "inherit",
+        env: process.env,
+      });
+      process.exit(restart.status ?? 0);
     } else {
-      ui.resume.notice = `Run manually: ultracontext update`;
+      console.error("Update failed. Run manually: ultracontext update");
+      process.exit(result.status ?? 1);
     }
-    renderDashboard();
   }
 }
 
