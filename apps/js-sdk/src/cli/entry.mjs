@@ -307,27 +307,11 @@ function runUpdate(rawArgs) {
 
 // ── update check ────────────────────────────────────────────────
 
-const UPDATE_CHECK_INTERVAL = 3 * 60 * 60 * 1000; // 3h
 const SKIP_UPDATE_CHECK = new Set(["version", "v", "update", "upgrade", "help", "h", "stop", "status"]);
-
-function getUpdateCheckPath() {
-  const home = process.env.HOME || process.env.USERPROFILE || "~";
-  return path.join(home, ".ultracontext", "update-check.json");
-}
-
-function readUpdateCache() {
-  try { return JSON.parse(fs.readFileSync(getUpdateCheckPath(), "utf8")); }
-  catch { return null; }
-}
-
-function writeUpdateCache(data) {
-  try { fs.writeFileSync(getUpdateCheckPath(), JSON.stringify(data)); }
-  catch { /* best effort */ }
-}
 
 async function fetchLatestVersion() {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 3000);
+  const timeout = setTimeout(() => controller.abort(), 5000);
   try {
     const res = await fetch("https://registry.npmjs.org/ultracontext/latest", { signal: controller.signal });
     const data = await res.json();
@@ -352,22 +336,12 @@ function printUpdateNotice(current, latest) {
   console.log(`  Run ${cyan}ultracontext update${r} to upgrade.\n`);
 }
 
+// check on every invocation, no cache — like Claude Code
 async function checkForUpdate() {
   const current = readVersion();
   if (current === "unknown") return;
 
-  // use cache if fresh
-  const cache = readUpdateCache();
-  if (cache?.lastCheck && Date.now() - cache.lastCheck < UPDATE_CHECK_INTERVAL) {
-    if (cache.latestVersion && isNewer(cache.latestVersion, current)) {
-      printUpdateNotice(current, cache.latestVersion);
-    }
-    return;
-  }
-
-  // fetch from registry
   const latest = await fetchLatestVersion();
-  writeUpdateCache({ lastCheck: Date.now(), latestVersion: latest });
   if (latest && isNewer(latest, current)) {
     printUpdateNotice(current, latest);
   }
