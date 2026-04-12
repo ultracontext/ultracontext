@@ -25,8 +25,6 @@ function expandHome(inputPath) {
 export function resolveDaemonInfoFile(env = process.env) {
   return expandHome(
     env.ULTRACONTEXT_DAEMON_INFO_FILE ??
-      env.ULTRACONTEXT_DAEMON_WS_PORT_FILE ??
-      env.ULTRACONTEXT_WS_INFO_FILE ??
       DEFAULT_DAEMON_INFO_FILE
   );
 }

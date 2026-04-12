@@ -6,7 +6,6 @@ import process from "node:process";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { resolveDaemonInfoFile } from "./protocol.mjs";
 
 import { resolveLockPath } from "./lock.mjs";
 import { expandHome } from "./utils.mjs";
@@ -93,7 +92,6 @@ export async function launchDaemon({ entryPath, diagnosticsHint } = {}) {
   const hint = diagnosticsHint ?? "pnpm --filter @ultracontext/sync run start";
 
   const lockPath = path.resolve(resolveLockPath(process.env));
-  const infoPath = path.resolve(resolveDaemonInfoFile(process.env));
   const preferredLogPath = resolveDaemonLogFile(process.env);
 
   console.log("");

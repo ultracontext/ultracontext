@@ -348,7 +348,7 @@ function applyDaemonStatus(status) {
   // check liveness — if updatedAt is stale by >5s, daemon is offline
   const updatedAt = new Date(status.updatedAt).getTime();
   const staleMs = Date.now() - updatedAt;
-  ui.daemonOnline = staleMs < 5000;
+  ui.daemonOnline = staleMs < 30_000;
 
   if (!ui.daemonOnline) return;
 
@@ -1158,9 +1158,16 @@ function serializeConfigPrefs() {
 
 async function persistConfigPrefsToFile(targetFile = cfg.configFile) {
   const target = path.resolve(targetFile);
-  const payload = JSON.stringify(serializeConfigPrefs(), null, 2);
   await fs.mkdir(path.dirname(target), { recursive: true });
-  await fs.writeFile(target, `${payload}\n`, "utf8");
+
+  // read-modify-write to preserve non-TUI keys (apiKey, _bootstrapState, etc.)
+  let existing = {};
+  try { existing = JSON.parse(await fs.readFile(target, "utf8")); } catch { /* empty */ }
+  const merged = { ...existing, ...serializeConfigPrefs() };
+
+  const tmp = target + ".tmp.prefs";
+  await fs.writeFile(tmp, JSON.stringify(merged, null, 2) + "\n", "utf8");
+  await fs.rename(tmp, target);
   return { saved: true, file: target };
 }
 
@@ -1373,10 +1380,10 @@ async function toggleSelectedConfig() {
   const item = items[selected];
 
   try {
-    // bootstrap reset — write flag to config.json, daemon picks it up next cycle
+    // bootstrap reset — persist prefs first, then add flag on top so it isn't clobbered
     if (item.kind === "action" && item.key === "bootstrapResetState") {
+      await persistConfigPrefs();
       const ok = writeConfigKey("bootstrapReset", true);
-      const saved = await persistConfigPrefs();
       ui.resume.notice = ok
         ? "Bootstrap reset requested. Daemon will apply next cycle."
         : "Failed to write config.";
