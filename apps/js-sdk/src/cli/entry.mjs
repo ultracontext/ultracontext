@@ -34,6 +34,7 @@ Usage: ultracontext [command] [options]
 Commands:
   (none)   Start sync (daemon + TUI)
   sync     Start sync (daemon + TUI)
+  start    Start daemon in background (no TUI)
   stop     Stop a running sync daemon
   config   Run the setup wizard
   update   Update CLI globally via npm/pnpm/bun
@@ -58,7 +59,7 @@ Options:
 }
 
 // commands that need an API key
-const NEEDS_KEY = new Set(["", "sync"]);
+const NEEDS_KEY = new Set(["", "sync", "start"]);
 
 // interactive onboarding wizard (Ink-based), returns { launchTui }
 async function runOnboarding() {
@@ -292,7 +293,7 @@ function runUpdate(rawArgs) {
   // restart daemon
   if (wasRunning && opts.restart) {
     console.log(`  ${green}●${r} ${d}Restarting daemon...${r}`);
-    const startCode = runCliSubcommand("sync");
+    const startCode = runCliSubcommand("start");
     if (startCode !== 0) {
       throw new Error(`Update succeeded but daemon restart failed (exit ${startCode}).`);
     }
@@ -389,6 +390,11 @@ async function run() {
       break;
     }
 
+    // start: daemon background only (no TUI) — used by update restart flow
+    case "start":
+      await launchSyncDaemon();
+      break;
+
     case "stop":
       process.argv[2] = "stop";
       await runCtlSDK();
@@ -421,7 +427,6 @@ async function run() {
     default: {
       // migration hints for removed commands
       const removed = {
-        start: "The 'start' command was removed. Use 'ultracontext sync' instead.",
         tui: "The 'tui' command was removed. Use 'ultracontext sync' instead (TUI is now built-in).",
         status: "The 'status' command was removed. The TUI shows daemon status automatically.",
       };
