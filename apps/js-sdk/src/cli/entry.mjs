@@ -292,12 +292,12 @@ function runUpdate(rawArgs) {
   // restart daemon
   if (wasRunning && opts.restart) {
     console.log(`  ${green}●${r} ${d}Restarting daemon...${r}`);
-    const startCode = runCliSubcommand("start");
+    const startCode = runCliSubcommand("sync");
     if (startCode !== 0) {
       throw new Error(`Update succeeded but daemon restart failed (exit ${startCode}).`);
     }
   } else if (wasRunning) {
-    console.log(`  ${gray}○${r} ${d}Daemon was stopped. Run:${r} ${cyan}ultracontext start${r}`);
+    console.log(`  ${gray}○${r} ${d}Daemon was stopped. Run:${r} ${cyan}ultracontext sync${r}`);
   }
 
   console.log("");

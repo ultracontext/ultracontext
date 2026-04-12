@@ -1,5 +1,6 @@
 // daemon core — receives store factory as param so callers control env/sqlite
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -105,6 +106,39 @@ async function writeConfigJson(data) {
   const tmp = CONFIG_FILE + ".tmp";
   await fs.writeFile(tmp, JSON.stringify(data, null, 2) + "\n", "utf8");
   await fs.rename(tmp, CONFIG_FILE);
+}
+
+// ── bootstrap state (persisted in config.json under _bootstrapState) ──
+
+function getBootstrapState(key) {
+  try {
+    const raw = fsSync.readFileSync(CONFIG_FILE, "utf8");
+    const data = JSON.parse(raw);
+    return data?._bootstrapState?.[key] ?? "";
+  } catch { return ""; }
+}
+
+function setBootstrapState(key, value) {
+  try {
+    let data = {};
+    try { data = JSON.parse(fsSync.readFileSync(CONFIG_FILE, "utf8")); } catch { /* empty */ }
+    if (!data._bootstrapState) data._bootstrapState = {};
+    data._bootstrapState[key] = String(value);
+    const tmp = CONFIG_FILE + ".tmp.bs";
+    fsSync.writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n", "utf8");
+    fsSync.renameSync(tmp, CONFIG_FILE);
+  } catch { /* best effort */ }
+}
+
+function deleteBootstrapState(key) {
+  try {
+    let data = {};
+    try { data = JSON.parse(fsSync.readFileSync(CONFIG_FILE, "utf8")); } catch { /* empty */ }
+    if (data._bootstrapState) delete data._bootstrapState[key];
+    const tmp = CONFIG_FILE + ".tmp.bs";
+    fsSync.writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n", "utf8");
+    fsSync.renameSync(tmp, CONFIG_FILE);
+  } catch { /* best effort */ }
 }
 
 // ── exported boot function ──────────────────────────────────────
@@ -504,15 +538,15 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
     }
   }
 
-  function resolveBootstrapPlan({ store, sources }) {
+  function resolveBootstrapPlan({ sources }) {
     const key = bootstrapStateStoreKey(sources);
     if (cfg.bootstrapReset) {
-      store.deleteConfig(key);
+      deleteBootstrapState(key);
       log("info", "Bootstrap state reset by configuration", { key });
     }
     const forcedMode = normalizeBootstrapMode(cfg.bootstrapMode);
     if (forcedMode) return { mode: forcedMode, needsBootstrap: true, forced: true };
-    const stored = normalizeBootstrapMode(store.getConfig(key));
+    const stored = normalizeBootstrapMode(getBootstrapState(key));
     if (stored) return { mode: stored, needsBootstrap: false, forced: false };
     return { mode: "new_only", needsBootstrap: true, forced: false };
   }
@@ -527,7 +561,7 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
       }
     }
     if (shouldStop()) return "all";
-    store.setConfig(bootstrapStateStoreKey(sources), selected);
+    setBootstrapState(bootstrapStateStoreKey(sources), selected);
     if (selected === "last_24h") return "last_24h";
     return "all";
   }
@@ -854,9 +888,8 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
   // ── runtime commands ──
 
   async function resetBootstrapState() {
-    if (!runtime.store) return;
     const sources = runtime.sources ?? buildSources();
-    runtime.store.deleteConfig(bootstrapStateStoreKey(sources));
+    deleteBootstrapState(bootstrapStateStoreKey(sources));
   }
 
   // ── cleanup ──

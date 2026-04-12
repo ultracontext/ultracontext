@@ -71,9 +71,6 @@ importers:
       react:
         specifier: ^19.2.4
         version: 19.2.4
-      ws:
-        specifier: ^8.18.3
-        version: 8.19.0
     devDependencies:
       '@ultracontext/sync':
         specifier: workspace:*
