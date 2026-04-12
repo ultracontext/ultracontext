@@ -4,7 +4,7 @@ import fsSync from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { UltraContext } from "ultracontext";
@@ -57,8 +57,6 @@ export async function tuiBoot({
 } = {}) {
 
 const APP_ROOT = assetsRoot ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const DEFAULT_STARTUP_SOUND_FILE = path.join(APP_ROOT, "assets", "sounds", "hello_mf.mp3");
-const DEFAULT_CONTEXT_SOUND_FILE = path.join(APP_ROOT, "assets", "sounds", "quack.mp3");
 const OFFLINE_NOTICE = "Daemon offline — status.json stale or missing.";
 
 const CONFIG_BOOTSTRAP_MODES = [
@@ -77,15 +75,10 @@ const RESUME_TARGET_OPTIONS = [
 ];
 const INSPECT_OPTION = { id: "inspect", label: "Inspect messages" };
 const PERSISTED_CONFIG_FIELDS = [
-  "soundEnabled",
-  "startupSoundEnabled",
-  "contextSoundEnabled",
   "bootstrapMode",
   "resumeTerminal",
   "claudeIncludeSubagents",
-  "resumeOpenTab",
-  "startupGreetingFile",
-  "contextCreatedSoundFile",
+  "resumeOpenTab"
 ];
 
 function normalizeApiKey(raw) {
@@ -113,13 +106,6 @@ function normalizeBootstrapModeWithPrompt(raw) {
   return normalizeBootstrapMode(raw, { allowPrompt: true }) || "";
 }
 
-function readEnv(...keys) {
-  for (const key of keys) {
-    if (process.env[key] !== undefined) return process.env[key];
-  }
-  return undefined;
-}
-
 const cfg = {
   apiKey: normalizeApiKey(process.env.ULTRACONTEXT_API_KEY),
   baseUrl: (process.env.ULTRACONTEXT_BASE_URL ?? "https://api.ultracontext.ai").trim(),
@@ -129,21 +115,6 @@ const cfg = {
   resumeAutoRefreshMs: Math.max(toInt(process.env.RESUME_AUTO_REFRESH_MS, 3500), 0),
   uiRecentLimit: toInt(process.env.TUI_RECENT_LIMIT, 240),
   configFile: resolveRuntimeConfigPath(),
-  soundEnabled: boolFromEnv(readEnv("TUI_SOUND_ENABLED", "DAEMON_SOUND_ENABLED"), true),
-  startupSoundEnabled: boolFromEnv(
-    readEnv("TUI_STARTUP_SOUND_ENABLED", "DAEMON_STARTUP_SOUND_ENABLED"),
-    true
-  ),
-  contextSoundEnabled: boolFromEnv(
-    readEnv("TUI_CONTEXT_SOUND_ENABLED", "DAEMON_CONTEXT_SOUND_ENABLED"),
-    true
-  ),
-  startupGreetingFile: expandHome(
-    readEnv("TUI_STARTUP_SOUND_FILE", "DAEMON_STARTUP_GREETING_FILE") ?? DEFAULT_STARTUP_SOUND_FILE
-  ),
-  contextCreatedSoundFile: expandHome(
-    readEnv("TUI_CONTEXT_SOUND_FILE", "DAEMON_CONTEXT_SOUND_FILE") ?? DEFAULT_CONTEXT_SOUND_FILE
-  ),
   bootstrapMode: normalizeBootstrapModeWithPrompt(process.env.DAEMON_BOOTSTRAP_MODE ?? "prompt") || "prompt",
   bootstrapReset: boolFromEnv(process.env.DAEMON_BOOTSTRAP_RESET, false),
   claudeIncludeSubagents: boolFromEnv(process.env.CLAUDE_INCLUDE_SUBAGENTS, false),
@@ -166,24 +137,6 @@ const stats = {
   contextsCreated: 0,
   errors: 0,
 };
-
-const CONFIG_TOGGLES = [
-  {
-    key: "soundEnabled",
-    label: "Master sounds",
-    description: "Enable or disable all app sounds",
-  },
-  {
-    key: "startupSoundEnabled",
-    label: "Startup sounds",
-    description: "Play sound when the TUI starts",
-  },
-  {
-    key: "contextSoundEnabled",
-    label: "Context sounds",
-    description: "Play duck sound when the TUI detects a new context",
-  },
-];
 
 // ── update check helpers ─────────────────────────────────────────
 
@@ -311,8 +264,6 @@ const runtime = {
   resumeKnownContextIds: new Set(),
   resumeBaselineReady: false,
 };
-
-const sound = { startupFile: "", contextFile: "", warnedNonDarwin: false };
 
 // ── status.json → UI state applicator ──────────────────────────
 
@@ -827,10 +778,6 @@ async function loadResumeContexts({ silent = false } = {}) {
     runtime.resumeKnownContextIds = nextIds;
     if (!runtime.resumeBaselineReady) runtime.resumeBaselineReady = true;
 
-    if (newContextCount > 0) {
-      playContextCreatedSound();
-    }
-
     ui.resume.contexts = filtered;
     if (ui.resume.selectedIndex >= filtered.length) {
       ui.resume.selectedIndex = Math.max(filtered.length - 1, 0);
@@ -1121,15 +1068,10 @@ function resumeTerminalConfigLabel(mode) {
 
 function serializeConfigPrefs() {
   return {
-    soundEnabled: Boolean(cfg.soundEnabled),
-    startupSoundEnabled: Boolean(cfg.startupSoundEnabled),
-    contextSoundEnabled: Boolean(cfg.contextSoundEnabled),
     bootstrapMode: normalizeBootstrapModeWithPrompt(cfg.bootstrapMode) || "prompt",
     resumeTerminal: normalizeResumeTerminal(cfg.resumeTerminal),
     claudeIncludeSubagents: Boolean(cfg.claudeIncludeSubagents),
-    resumeOpenTab: Boolean(cfg.resumeOpenTab),
-    startupGreetingFile: String(cfg.startupGreetingFile ?? ""),
-    contextCreatedSoundFile: String(cfg.contextCreatedSoundFile ?? ""),
+    resumeOpenTab: Boolean(cfg.resumeOpenTab)
   };
 }
 
@@ -1190,14 +1132,6 @@ function applyConfigPrefs(prefs) {
       cfg.resumeTerminal = normalizeResumeTerminal(prefs.resumeTerminal);
       continue;
     }
-    if (field === "startupGreetingFile") {
-      cfg.startupGreetingFile = expandHome(String(prefs.startupGreetingFile ?? cfg.startupGreetingFile));
-      continue;
-    }
-    if (field === "contextCreatedSoundFile") {
-      cfg.contextCreatedSoundFile = expandHome(String(prefs.contextCreatedSoundFile ?? cfg.contextCreatedSoundFile));
-      continue;
-    }
     cfg[field] = Boolean(prefs[field]);
   }
 }
@@ -1215,83 +1149,9 @@ async function persistConfigPrefs() {
   return { fileSaved };
 }
 
-async function resolveSoundFile(filePath, label) {
-  if (!filePath) return "";
-  try {
-    const stat = await fs.stat(filePath);
-    if (!stat.isFile()) {
-      ui.resume.notice = `Configured sound is not a file: ${label}`;
-      return "";
-    }
-    return filePath;
-  } catch {
-    ui.resume.notice = `Configured sound file not found: ${label}`;
-    return "";
-  }
-}
-
-async function prepareSoundConfig() {
-  sound.startupFile = "";
-  sound.contextFile = "";
-  sound.warnedNonDarwin = false;
-  if (!cfg.soundEnabled) return;
-
-  sound.startupFile = await resolveSoundFile(cfg.startupGreetingFile, "startup");
-  sound.contextFile = await resolveSoundFile(cfg.contextCreatedSoundFile, "context_created");
-}
-
-function playSoundFile(filePath) {
-  if (!cfg.soundEnabled || !filePath) return;
-
-  if (process.platform !== "darwin") {
-    if (!sound.warnedNonDarwin) {
-      sound.warnedNonDarwin = true;
-      ui.resume.notice = "Sound notifications currently support only macOS (afplay).";
-      renderDashboard();
-    }
-    return;
-  }
-
-  try {
-    const child = spawn("afplay", [filePath], {
-      detached: true,
-      stdio: "ignore",
-    });
-    child.unref();
-  } catch {
-    // ignore playback errors
-  }
-}
-
-function playStartupGreetingSound() {
-  if (!cfg.startupSoundEnabled) return;
-  playSoundFile(sound.startupFile);
-}
-
-function playContextCreatedSound() {
-  if (!cfg.contextSoundEnabled) return;
-  playSoundFile(sound.contextFile);
-}
-
 function configToggleItems() {
-  const masterEnabled = Boolean(cfg.soundEnabled);
-  const soundItems = CONFIG_TOGGLES.map((item) => {
-    const rawValue = Boolean(cfg[item.key]);
-    const isSoundToggle = item.key !== "soundEnabled";
-    const blockedByMaster = isSoundToggle && !masterEnabled;
-    const effectiveValue = blockedByMaster ? false : rawValue;
-    return {
-      ...item,
-      kind: "boolean",
-      rawValue,
-      value: effectiveValue,
-      valueLabel: effectiveValue ? "ON" : "OFF",
-      blockedByMaster,
-    };
-  });
-
   const normalizedBootstrapMode = normalizeBootstrapModeWithPrompt(cfg.bootstrapMode) || "prompt";
-  const syncItems = [
+  return [
     {
       key: "bootstrapMode",
       kind: "enum",
@@ -1299,7 +1159,7 @@ function configToggleItems() {
       description: "Defines bootstrap strategy for next daemon startup/reset.",
       value: normalizedBootstrapMode,
       valueLabel: bootstrapModeConfigLabel(normalizedBootstrapMode),
-      blockedByMaster: false,
+      blockedByMaster: false
     },
     {
       key: "resumeTerminal",
@@ -1308,7 +1168,7 @@ function configToggleItems() {
       description: "Choose where resume opens (Terminal or Warp).",
       value: normalizeResumeTerminal(cfg.resumeTerminal),
       valueLabel: resumeTerminalConfigLabel(cfg.resumeTerminal),
-      blockedByMaster: false,
+      blockedByMaster: false
     },
     {
       key: "bootstrapResetState",
@@ -1317,11 +1177,9 @@ function configToggleItems() {
       description: "Clears daemon bootstrap state so re-bootstrap can run again.",
       value: "run",
       valueLabel: "RUN",
-      blockedByMaster: false,
-    },
+      blockedByMaster: false
+    }
   ];
-
-  return [...soundItems, ...syncItems];
 }
 
 function moveConfigSelection(delta) {
@@ -1387,19 +1245,6 @@ async function toggleSelectedConfig() {
     // boolean toggles
     if (item.kind === "boolean") {
       cfg[item.key] = !cfg[item.key];
-
-      // sound toggles — local only
-      if (
-        item.key === "soundEnabled" ||
-        item.key === "startupSoundEnabled" ||
-        item.key === "contextSoundEnabled"
-      ) {
-        await prepareSoundConfig();
-        const saved = await persistConfigPrefs();
-        ui.resume.notice = `${item.label}: ${cfg[item.key] ? "ON" : "OFF"}${saved.fileSaved ? " (file saved)" : ""}.`;
-        renderDashboard();
-        return;
-      }
     }
   } catch (error) {
     const details = errorDetails(error);
@@ -1580,12 +1425,7 @@ function buildUiSnapshot() {
       host: cfg.host,
       pollMs: 0,
       uiRefreshMs: cfg.uiRefreshMs,
-      logLevel: "info",
-      soundEnabled: cfg.soundEnabled,
-      startupSoundEnabled: cfg.startupSoundEnabled,
-      contextSoundEnabled: cfg.contextSoundEnabled,
-      startupGreetingFile: cfg.startupGreetingFile,
-      contextCreatedSoundFile: cfg.contextCreatedSoundFile,
+      logLevel: "info"
     },
     stats,
     selectedTab: ui.selectedTab,
@@ -1651,9 +1491,6 @@ async function tuiMain() {
   } catch {
     // ignore config persistence startup issues
   }
-
-  await prepareSoundConfig();
-  playStartupGreetingSound();
 
   const uc = new UltraContext({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl });
   runtime.uc = uc;
