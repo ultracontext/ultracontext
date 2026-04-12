@@ -19,7 +19,7 @@ import {
 
 import { acquireFileLock, resolveLockPath } from "./lock.mjs";
 import { redact } from "./redact.mjs";
-import { parseClaudeCodeLine, parseCodexLine, parseOpenClawLine } from "@ultracontext/harness";
+import { parseClaudeCodeLine, parseCodexLine, parseGstackLine, parseOpenClawLine } from "@ultracontext/parsers";
 import { boolFromEnv, expandHome, extractProjectPathFromFile, sha256, toInt } from "./utils.mjs";
 import { createWsServer } from "./ws-server.mjs";
 
@@ -448,6 +448,13 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
     if (boolFromEnv(process.env.INGEST_OPENCLAW, true)) {
       sources.push({ name: "openclaw", enabled: true, globs: [openclawGlob], parseLine: parseOpenClawLine });
     }
+
+    // gstack — skill artifacts (learnings, timeline, reviews, resources)
+    const gstackGlob = expandHome(process.env.GSTACK_GLOB ?? "~/.gstack/projects/**/*.jsonl");
+    if (boolFromEnv(process.env.INGEST_GSTACK, true)) {
+      sources.push({ name: "gstack", enabled: true, globs: [gstackGlob], parseLine: parseGstackLine });
+    }
+
     return sources;
   }
 
@@ -872,7 +879,7 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
 
     // sources + lock
     const sources = buildSources();
-    if (sources.length === 0) throw new Error("No sources enabled. Set INGEST_CODEX=true and/or INGEST_CLAUDE=true");
+    if (sources.length === 0) throw new Error("No sources enabled. Set INGEST_CODEX=true, INGEST_CLAUDE=true, and/or INGEST_GSTACK=true");
     applyRuntimeSources(sources);
 
     runtime.lockHandle = await acquireFileLock({ lockPath: cfg.lockFile, userId: cfg.userId, host: cfg.host });

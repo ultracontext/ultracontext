@@ -1,11 +1,13 @@
 {
-  "name": "@ultracontext/harness",
+  "name": "@ultracontext/parsers",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "exports": {
     ".": "./src/index.mjs",
-    "./parsers": "./src/parsers/index.mjs",
+    "./agents": "./src/agents/index.mjs",
+    "./gstack": "./src/gstack.mjs",
+    "./generic": "./src/generic.mjs",
     "./writers": "./src/writers/index.mjs",
     "./compat": "./src/compat.mjs",
     "./utils": "./src/utils.mjs"

@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 
 // shared utils from harness
-export { expandHome, truncateString, safeJsonParse, extractSessionIdFromPath } from "@ultracontext/harness/utils";
+export { expandHome, truncateString, safeJsonParse, extractSessionIdFromPath } from "@ultracontext/parsers/utils";
 
 export function sha256(value) {
   return crypto.createHash("sha256").update(value).digest("hex");

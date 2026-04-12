@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { parseOpenClawLine } from "../../src/parsers/openclaw.mjs";
+import { parseOpenClawLine } from "../../src/agents/openclaw.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const fixturePath = path.join(__dirname, "../fixtures/openclaw-v1.jsonl");

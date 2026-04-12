@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { execSync } from "node:child_process";
 
-import { parseClaudeCodeLine } from "../src/parsers/claude.mjs";
-import { parseCodexLine } from "../src/parsers/codex.mjs";
+import { parseClaudeCodeLine } from "../src/agents/claude.mjs";
+import { parseCodexLine } from "../src/agents/codex.mjs";
 
 // find local session files, return empty array if none exist
 function findFiles(cmd) {

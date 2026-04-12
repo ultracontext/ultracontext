@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { parseClaudeCodeLine } from "../../src/parsers/claude.mjs";
+import { parseClaudeCodeLine } from "../../src/agents/claude.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const fixturePath = path.join(__dirname, "../fixtures/claude-v1.jsonl");

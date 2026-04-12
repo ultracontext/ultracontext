@@ -22,7 +22,7 @@ Key internals:
 
 ### Context Hub
 
-- `apps/daemon` — background ingestion of agent sessions. Node ESM + WebSocket server.
+- `apps/daemon` — background ingestion of agent sessions + gstack skill artifacts. Node ESM + WebSocket server.
 - `apps/tui` — terminal dashboard. Ink/React 19 + WebSocket client.
 
 ### SDKs
