@@ -32,12 +32,10 @@ function printHelp() {
 Usage: ultracontext [command] [options]
 
 Commands:
-  (none)   Start daemon if needed, then open TUI
+  (none)   Start sync (daemon + TUI)
+  sync     Start sync (daemon + TUI)
+  stop     Stop a running sync daemon
   config   Run the setup wizard
-  start    Start the daemon in the background
-  stop     Stop a running daemon
-  status   Show daemon status
-  tui      Launch the interactive terminal UI
   update   Update CLI globally via npm/pnpm/bun
   version  Print version
   help     Show this help message
@@ -60,7 +58,7 @@ Options:
 }
 
 // commands that need an API key
-const NEEDS_KEY = new Set(["", "start", "tui"]);
+const NEEDS_KEY = new Set(["", "sync"]);
 
 // interactive onboarding wizard (Ink-based), returns { launchTui }
 async function runOnboarding() {
@@ -294,12 +292,12 @@ function runUpdate(rawArgs) {
   // restart daemon
   if (wasRunning && opts.restart) {
     console.log(`  ${green}●${r} ${d}Restarting daemon...${r}`);
-    const startCode = runCliSubcommand("start");
+    const startCode = runCliSubcommand("sync");
     if (startCode !== 0) {
       throw new Error(`Update succeeded but daemon restart failed (exit ${startCode}).`);
     }
   } else if (wasRunning) {
-    console.log(`  ${gray}○${r} ${d}Daemon was stopped. Run:${r} ${cyan}ultracontext start${r}`);
+    console.log(`  ${gray}○${r} ${d}Daemon was stopped. Run:${r} ${cyan}ultracontext sync${r}`);
   }
 
   console.log("");
@@ -307,7 +305,7 @@ function runUpdate(rawArgs) {
 
 // ── update check ────────────────────────────────────────────────
 
-const SKIP_UPDATE_CHECK = new Set(["version", "v", "update", "upgrade", "help", "h", "stop", "status"]);
+const SKIP_UPDATE_CHECK = new Set(["version", "v", "update", "upgrade", "help", "h", "stop"]);
 
 async function fetchLatestVersion() {
   const controller = new AbortController();
@@ -349,24 +347,23 @@ async function checkForUpdate() {
 
 // ── launch helpers ──────────────────────────────────────────────
 
-async function launchDaemonSDK() {
-  const { launchDaemon } = await import("@ultracontext/daemon/launcher");
+async function launchSyncDaemon() {
+  const { launchDaemon } = await import("@ultracontext/sync/launcher");
   await launchDaemon({
-    entryPath: fileURLToPath(new URL("./sdk-daemon.mjs", import.meta.url)),
-    diagnosticsHint: "DAEMON_VERBOSE=1 ultracontext start",
+    entryPath: fileURLToPath(new URL("./sdk-sync.mjs", import.meta.url)),
+    diagnosticsHint: "DAEMON_VERBOSE=1 ultracontext sync",
   });
 }
 
 async function runCtlSDK() {
-  const { runCtl } = await import("@ultracontext/daemon/ctl");
+  const { runCtl } = await import("@ultracontext/sync/ctl");
   await runCtl();
 }
 
-async function launchTuiSDK() {
-  const { tuiBoot } = await import("@ultracontext/tui/tui");
+async function launchTui() {
+  const { tuiBoot } = await import("@ultracontext/sync/tui");
   await tuiBoot({
     assetsRoot: path.resolve(__dirname, "..", ".."),
-    offlineNotice: "Daemon offline. Run: ultracontext start",
   });
 }
 
@@ -384,33 +381,27 @@ async function run() {
   }
 
   switch (command) {
-    case "start":
-      await launchDaemonSDK();
-      if (onboardResult?.launchTui) await launchTuiSDK();
+    // sync: ensure daemon running, then open TUI
+    case "sync":
+    case "": {
+      if (!isDaemonRunning()) await launchSyncDaemon();
+      if (onboardResult?.launchTui !== false) await launchTui();
       break;
+    }
 
     case "stop":
       process.argv[2] = "stop";
       await runCtlSDK();
       break;
 
-    case "status":
-      process.argv[2] = "status";
-      await runCtlSDK();
-      break;
-
     case "config": {
       const configResult = await runOnboarding();
       if (configResult?.launchTui) {
-        if (!isDaemonRunning()) await launchDaemonSDK();
-        await launchTuiSDK();
+        if (!isDaemonRunning()) await launchSyncDaemon();
+        await launchTui();
       }
       break;
     }
-
-    case "tui":
-      await launchTuiSDK();
-      break;
 
     case "version":
     case "v":
@@ -422,22 +413,27 @@ async function run() {
       runUpdate(process.argv.slice(3));
       break;
 
-    // default: ensure daemon running, then open TUI
-    case "": {
-      if (!isDaemonRunning()) await launchDaemonSDK();
-      await launchTuiSDK();
-      break;
-    }
-
     case "help":
     case "h":
       printHelp();
       break;
 
-    default:
-      console.error(`Unknown command: ${process.argv[2]}`);
-      printHelp();
+    default: {
+      // migration hints for removed commands
+      const removed = {
+        start: "The 'start' command was removed. Use 'ultracontext sync' instead.",
+        tui: "The 'tui' command was removed. Use 'ultracontext sync' instead (TUI is now built-in).",
+        status: "The 'status' command was removed. The TUI shows daemon status automatically.",
+      };
+      const hint = removed[command];
+      if (hint) {
+        console.error(hint);
+      } else {
+        console.error(`Unknown command: ${process.argv[2]}`);
+        printHelp();
+      }
       process.exit(1);
+    }
   }
 }
 

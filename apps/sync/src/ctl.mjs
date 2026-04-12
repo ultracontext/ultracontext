@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 
-import { resolveDaemonWsInfoFile } from "@ultracontext/protocol";
+import { resolveDaemonInfoFile } from "./protocol.mjs";
 
 import { resolveLockPath } from "./lock.mjs";
 
@@ -122,7 +122,7 @@ async function stop({ lockPath, infoPath }) {
 export async function runCtl() {
   const cmd = String(process.argv[2] ?? "status").trim().toLowerCase();
   const lockPath = path.resolve(resolveLockPath(process.env));
-  const infoPath = path.resolve(resolveDaemonWsInfoFile(process.env));
+  const infoPath = path.resolve(resolveDaemonInfoFile(process.env));
 
   if (cmd === "status") {
     const code = await status({ lockPath, infoPath });

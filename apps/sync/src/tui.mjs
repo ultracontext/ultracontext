@@ -8,12 +8,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { UltraContext } from "ultracontext";
-import {
-  DAEMON_WS_MESSAGE_TYPES,
-  normalizeBootstrapMode,
-  resolveDaemonWsHost,
-  resolveDaemonWsInfoFile,
-} from "@ultracontext/protocol";
+import { normalizeBootstrapMode } from "./protocol.mjs";
 
 import {
   hasLocalClaudeSession,
@@ -23,23 +18,48 @@ import {
 } from "@ultracontext/parsers";
 import { MENU_TABS, createInkUiController } from "./ui.mjs";
 import { boolFromEnv, expandHome, toInt } from "./utils.mjs";
-import { createDaemonWsClient } from "./ws-client.mjs";
-import { enableStartupItem, disableStartupItem, isStartupItemEnabled } from "./startup-item.mjs";
 
 const DEFAULT_RUNTIME_CONFIG_FILE = "~/.ultracontext/config.json";
+
+// ── status.json polling path ───────────────────────────────────
+
+const STATUS_FILE = path.join(os.homedir(), ".ultracontext", "status.json");
+
+async function readStatusJson() {
+  try {
+    const raw = await fs.readFile(STATUS_FILE, "utf8");
+    return JSON.parse(raw);
+  } catch { return null; }
+}
+
+// ── config.json write helper for TUI mutations ────────────────
+
+function writeConfigKey(key, value) {
+  try {
+    const configPath = path.join(os.homedir(), ".ultracontext", "config.json");
+    let data = {};
+    try { data = JSON.parse(fsSync.readFileSync(configPath, "utf8")); } catch { /* empty */ }
+    data[key] = value;
+    const tmp = configPath + ".tmp.tui";
+    fsSync.writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n", "utf8");
+    fsSync.renameSync(tmp, configPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 // ── exported boot function ──────────────────────────────────────
 
 export async function tuiBoot({
   assetsRoot,
-  offlineNotice,
   onFatalError,
 } = {}) {
 
 const APP_ROOT = assetsRoot ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_STARTUP_SOUND_FILE = path.join(APP_ROOT, "assets", "sounds", "hello_mf.mp3");
 const DEFAULT_CONTEXT_SOUND_FILE = path.join(APP_ROOT, "assets", "sounds", "quack.mp3");
-const OFFLINE_NOTICE = offlineNotice ?? "Daemon offline. Run: pnpm --filter @ultracontext/daemon run start";
+const OFFLINE_NOTICE = "Daemon offline — status.json stale or missing.";
 
 const CONFIG_BOOTSTRAP_MODES = [
   { id: "prompt", label: "Ask on startup" },
@@ -60,7 +80,6 @@ const PERSISTED_CONFIG_FIELDS = [
   "soundEnabled",
   "startupSoundEnabled",
   "contextSoundEnabled",
-  "startOnStartup",
   "bootstrapMode",
   "resumeTerminal",
   "claudeIncludeSubagents",
@@ -104,8 +123,6 @@ function readEnv(...keys) {
 const cfg = {
   apiKey: normalizeApiKey(process.env.ULTRACONTEXT_API_KEY),
   baseUrl: (process.env.ULTRACONTEXT_BASE_URL ?? "https://api.ultracontext.ai").trim(),
-  daemonWsHost: resolveDaemonWsHost(process.env),
-  daemonWsInfoFile: resolveDaemonWsInfoFile(process.env),
   userId: process.env.DAEMON_USER_ID ?? process.env.USER ?? "unknown-user",
   host: (process.env.DAEMON_HOST || os.hostname() || "unknown-host").trim(),
   uiRefreshMs: toInt(process.env.TUI_REFRESH_MS, 1200),
@@ -121,7 +138,6 @@ const cfg = {
     readEnv("TUI_CONTEXT_SOUND_ENABLED", "DAEMON_CONTEXT_SOUND_ENABLED"),
     true
   ),
-  startOnStartup: isStartupItemEnabled(),
   startupGreetingFile: expandHome(
     readEnv("TUI_STARTUP_SOUND_FILE", "DAEMON_STARTUP_GREETING_FILE") ?? DEFAULT_STARTUP_SOUND_FILE
   ),
@@ -152,11 +168,6 @@ const stats = {
 };
 
 const CONFIG_TOGGLES = [
-  {
-    key: "startOnStartup",
-    label: "Start on startup",
-    description: "Auto-start daemon when your computer starts",
-  },
   {
     key: "soundEnabled",
     label: "Master sounds",
@@ -265,9 +276,8 @@ const ui = {
     latestVersion: "",
   },
   recentLogs: [],
-  onlineClients: [],
-  sourceStats: new Map(),
-  sourceOrder: [],
+  onlineClients: 0,
+  sourceStats: [],
   selectedTab: "logs",
   configEditor: {
     selectedIndex: 0,
@@ -312,15 +322,14 @@ const ui = {
 };
 
 const runtime = {
-  daemonClient: null,
   uc: null,
   uiController: null,
   renderTimer: null,
+  statusPollTimer: null,
   contextRefreshTimer: null,
   stop: null,
   seenLogSignatures: new Set(),
   seenLogQueue: [],
-  initialLogsSeeded: false,
   syncCount: 0,
   resumeKnownContextIds: new Set(),
   resumeBaselineReady: false,
@@ -328,23 +337,75 @@ const runtime = {
 
 const sound = { startupFile: "", contextFile: "", warnedNonDarwin: false };
 
-function ensureSourceStats(sourceName) {
-  if (!ui.sourceStats.has(sourceName)) {
-    ui.sourceStats.set(sourceName, {
-      filesScanned: 0,
-      linesRead: 0,
-      parsedEvents: 0,
-      appended: 0,
-      deduped: 0,
-      contextsCreated: 0,
-      errors: 0,
-      lastEventType: "-",
-      lastSessionId: "-",
-      lastAt: 0,
-      lastFile: "-",
-    });
+// ── status.json → UI state applicator ──────────────────────────
+
+function applyDaemonStatus(status) {
+  if (!status) {
+    ui.daemonOnline = false;
+    return;
   }
-  return ui.sourceStats.get(sourceName);
+
+  // check liveness — if updatedAt is stale by >5s, daemon is offline
+  const updatedAt = new Date(status.updatedAt).getTime();
+  const staleMs = Date.now() - updatedAt;
+  ui.daemonOnline = staleMs < 30_000;
+
+  if (!ui.daemonOnline) return;
+
+  // apply stats
+  Object.assign(stats, status.stats || {});
+
+  // apply source stats
+  ui.sourceStats = (status.sources || []).map(s => ({
+    name: s.name,
+    filesScanned: s.filesScanned || 0,
+    linesRead: s.linesRead || 0,
+    parsedEvents: s.parsedEvents || 0,
+    appended: s.appended || 0,
+    deduped: s.deduped || 0,
+    contextsCreated: s.contextsCreated || 0,
+    errors: s.errors || 0,
+    lastEventType: s.lastEventType || "-",
+    lastSessionId: s.lastSessionId || "-",
+    lastAt: s.lastAt || 0,
+    lastFile: s.lastFile || "-",
+  }));
+
+  // apply logs (deduplicate by signature)
+  if (status.recentLogs && Array.isArray(status.recentLogs)) {
+    for (const entry of status.recentLogs) {
+      const sig = `${entry.ts}|${entry.level}|${entry.source}|${entry.text}`;
+      if (!runtime.seenLogSignatures.has(sig)) {
+        runtime.seenLogSignatures.add(sig);
+        ui.recentLogs.push(entry);
+      }
+    }
+    // cap logs + prune dedup set to prevent unbounded growth
+    while (ui.recentLogs.length > cfg.uiRecentLimit) ui.recentLogs.shift();
+    if (runtime.seenLogSignatures.size > cfg.uiRecentLimit * 2) {
+      const keep = new Set();
+      for (const entry of ui.recentLogs) {
+        keep.add(`${entry.ts}|${entry.level}|${entry.source}|${entry.text}`);
+      }
+      runtime.seenLogSignatures = keep;
+    }
+  }
+
+  // apply config from daemon
+  if (status.config) {
+    if (status.config.bootstrapMode) cfg.bootstrapMode = status.config.bootstrapMode;
+    if (status.config.claudeIncludeSubagents !== undefined) cfg.claudeIncludeSubagents = Boolean(status.config.claudeIncludeSubagents);
+  }
+
+  // update online clients count (just show 1 if daemon is running)
+  ui.onlineClients = ui.daemonOnline ? 1 : 0;
+}
+
+// ── poll daemon status ─────────────────────────────────────────
+
+async function pollDaemonStatus() {
+  const status = await readStatusJson();
+  applyDaemonStatus(status);
 }
 
 function runtimeLogsKeep() {
@@ -372,287 +433,6 @@ function errorDetails(error) {
 
 function renderDashboard() {
   runtime.uiController?.refresh();
-}
-
-function applyRemoteRuntimeSnapshot(snapshot) {
-  if (!snapshot || typeof snapshot !== "object") return false;
-
-  const remoteStats = snapshot.stats;
-  if (remoteStats && typeof remoteStats === "object") {
-    Object.assign(stats, remoteStats);
-  }
-
-  const sourceStats = Array.isArray(snapshot.sourceStats) ? snapshot.sourceStats : [];
-  ui.sourceOrder = [];
-  ui.sourceStats.clear();
-
-  for (const item of sourceStats) {
-    const name = String(item?.name ?? "").trim();
-    if (!name) continue;
-    ui.sourceOrder.push(name);
-    ui.sourceStats.set(name, {
-      filesScanned: Number(item.filesScanned ?? 0),
-      linesRead: Number(item.linesRead ?? 0),
-      parsedEvents: Number(item.parsedEvents ?? 0),
-      appended: Number(item.appended ?? 0),
-      deduped: Number(item.deduped ?? 0),
-      contextsCreated: Number(item.contextsCreated ?? 0),
-      errors: Number(item.errors ?? 0),
-      lastEventType: item.lastEventType ?? "-",
-      lastSessionId: item.lastSessionId ?? "-",
-      lastAt: Number(item.lastAt ?? 0),
-      lastFile: item.lastFile ?? "-",
-    });
-  }
-
-  const online = Boolean(snapshot.running);
-  if (!online) {
-    ui.onlineClients = [];
-    return false;
-  }
-
-  const host = String(snapshot.host ?? cfg.host);
-  const userId = String(snapshot.userId ?? cfg.userId);
-  const ts = Number(snapshot.ts ?? Date.now());
-  const clientCountRaw = Number(snapshot.clients ?? 1);
-  const clientCount = Number.isFinite(clientCountRaw) && clientCountRaw > 0 ? Math.floor(clientCountRaw) : 1;
-
-  ui.onlineClients = Array.from({ length: clientCount }, () => ({
-    host,
-    userId,
-    ts,
-  }));
-
-  return true;
-}
-
-function logSignature(entry) {
-  return `${entry.ts}|${entry.level}|${entry.source}|${entry.text}`;
-}
-
-function trackSeenLogSignature(signature) {
-  if (runtime.seenLogSignatures.has(signature)) return;
-  runtime.seenLogSignatures.add(signature);
-  runtime.seenLogQueue.push(signature);
-
-  const maxSize = 4000;
-  while (runtime.seenLogQueue.length > maxSize) {
-    const removed = runtime.seenLogQueue.shift();
-    if (removed) runtime.seenLogSignatures.delete(removed);
-  }
-}
-
-function normalizeLogEntry(item) {
-  if (!item || typeof item !== "object") return null;
-  if (!item.ts || !item.level) return null;
-  return {
-    ts: String(item.ts),
-    level: String(item.level),
-    source: String(item.source ?? ""),
-    text: String(item.text ?? ""),
-  };
-}
-
-function applyRemoteLogsSnapshot(list) {
-  const parsed = [];
-  for (const raw of list ?? []) {
-    const entry = normalizeLogEntry(raw);
-    if (!entry) continue;
-    parsed.push(entry);
-  }
-
-  const newEntries = [];
-  for (const entry of parsed) {
-    const signature = logSignature(entry);
-    if (runtime.initialLogsSeeded && !runtime.seenLogSignatures.has(signature)) {
-      newEntries.push(entry);
-    }
-    trackSeenLogSignature(signature);
-  }
-
-  if (!runtime.initialLogsSeeded) {
-    runtime.initialLogsSeeded = true;
-  }
-
-  ui.recentLogs = parsed.slice(-runtimeLogsKeep());
-  return newEntries;
-}
-
-function appendRemoteLogEntry(raw) {
-  const entry = normalizeLogEntry(raw);
-  if (!entry) return null;
-
-  const signature = logSignature(entry);
-  if (runtime.seenLogSignatures.has(signature)) return null;
-
-  trackSeenLogSignature(signature);
-  ui.recentLogs.push(entry);
-  while (ui.recentLogs.length > runtimeLogsKeep()) {
-    ui.recentLogs.shift();
-  }
-  return entry;
-}
-
-function setDaemonOfflineNotice(notice = OFFLINE_NOTICE) {
-  ui.daemonOnline = false;
-  ui.sourceOrder = [];
-  ui.sourceStats.clear();
-  ui.onlineClients = [];
-
-  if (!ui.resume.notice || ui.resume.notice === OFFLINE_NOTICE || ui.resume.notice.startsWith("Daemon offline")) {
-    ui.resume.notice = notice;
-  }
-
-  const alreadyHasOffline = ui.recentLogs.some((entry) => entry.text === OFFLINE_NOTICE);
-  if (!alreadyHasOffline) {
-    ui.recentLogs.push({
-      ts: formatTime(),
-      level: "warn",
-      source: "",
-      text: OFFLINE_NOTICE,
-    });
-  }
-
-  while (ui.recentLogs.length > runtimeLogsKeep()) {
-    ui.recentLogs.shift();
-  }
-}
-
-function clearDaemonOfflineNotice() {
-  if (ui.resume.notice === OFFLINE_NOTICE || ui.resume.notice.startsWith("Daemon offline")) {
-    ui.resume.notice = "";
-  }
-}
-
-function applyDaemonConfig(config) {
-  if (!config || typeof config !== "object") return;
-
-  if ("bootstrapMode" in config) {
-    const normalized = normalizeBootstrapModeWithPrompt(config.bootstrapMode);
-    if (normalized) cfg.bootstrapMode = normalized;
-  }
-
-  if ("claudeIncludeSubagents" in config) {
-    cfg.claudeIncludeSubagents = Boolean(config.claudeIncludeSubagents);
-  }
-}
-
-async function sendDaemonCommand(type, data = {}, timeoutMs = 8000) {
-  if (!runtime.daemonClient || !runtime.daemonClient.isConnected()) {
-    return { sent: false, reason: "daemon_offline" };
-  }
-
-  const response = await runtime.daemonClient.request(type, data, timeoutMs);
-  if (response?.config) {
-    applyDaemonConfig(response.config);
-  }
-
-  return { sent: true, response };
-}
-
-async function requestDaemonConfig() {
-  try {
-    const result = await sendDaemonCommand(DAEMON_WS_MESSAGE_TYPES.CONFIG_GET, {});
-    if (result.sent && result.response?.config) {
-      applyDaemonConfig(result.response.config);
-      renderDashboard();
-    }
-  } catch {
-    // ignore one-off config request errors
-  }
-}
-
-function handleDaemonWsMessage(message) {
-  if (!message || typeof message !== "object") return;
-
-  if (message.type === DAEMON_WS_MESSAGE_TYPES.SNAPSHOT) {
-    const payload = message.data ?? {};
-    const wasOnline = ui.daemonOnline;
-    ui.daemonOnline = applyRemoteRuntimeSnapshot(payload.state);
-    const recentLogs = Array.isArray(payload.recentLogs) ? payload.recentLogs : payload.logs;
-    const newLogEntries = applyRemoteLogsSnapshot(recentLogs);
-    applyDaemonConfig(payload.config);
-
-    if (!ui.daemonOnline) {
-      setDaemonOfflineNotice();
-    } else {
-      clearDaemonOfflineNotice();
-      if (runtime.syncCount > 0 && !wasOnline) {
-        ui.resume.notice = "Daemon reconnected.";
-      }
-    }
-
-    runtime.syncCount += 1;
-    renderDashboard();
-    return;
-  }
-
-  if (message.type === DAEMON_WS_MESSAGE_TYPES.STATE) {
-    const wasOnline = ui.daemonOnline;
-    ui.daemonOnline = applyRemoteRuntimeSnapshot(message.data);
-    if (!ui.daemonOnline) {
-      setDaemonOfflineNotice();
-    } else {
-      clearDaemonOfflineNotice();
-      if (runtime.syncCount > 0 && !wasOnline) {
-        ui.resume.notice = "Daemon reconnected.";
-      }
-    }
-    runtime.syncCount += 1;
-    renderDashboard();
-    return;
-  }
-
-  if (message.type === DAEMON_WS_MESSAGE_TYPES.LOG) {
-    const appended = appendRemoteLogEntry(message.data);
-    void appended;
-    renderDashboard();
-    return;
-  }
-
-  if (message.type === DAEMON_WS_MESSAGE_TYPES.CONFIG_STATE) {
-    applyDaemonConfig(message.data);
-    renderDashboard();
-    return;
-  }
-
-  if (message.type === DAEMON_WS_MESSAGE_TYPES.CONTEXT_EVENT) {
-    // TUI-driven context sound is based on API context list diffs, not daemon events.
-    return;
-  }
-}
-
-function handleDaemonWsStatus(status) {
-  if (status?.connected) {
-    ui.daemonOnline = true;
-    clearDaemonOfflineNotice();
-    void requestDaemonConfig();
-    renderDashboard();
-    return;
-  }
-
-  setDaemonOfflineNotice();
-  renderDashboard();
-}
-
-function handleDaemonWsError(error) {
-  if (ui.daemonOnline) return;
-
-  const formatter = runtime.daemonClient?.formatError?.bind(runtime.daemonClient);
-  const message = formatter ? formatter(error) : String(error ?? "");
-
-  if (
-    message.includes("ENOENT") ||
-    message.includes("invalid daemon info file") ||
-    message.includes("invalid port file") ||
-    message.includes("stale daemon info file")
-  ) {
-    setDaemonOfflineNotice();
-  } else {
-    setDaemonOfflineNotice(`${OFFLINE_NOTICE} (${message})`);
-  }
-
-  renderDashboard();
 }
 
 function resumeCompact(value, max = 60) {
@@ -1364,7 +1144,6 @@ function resumeTerminalConfigLabel(mode) {
 
 function serializeConfigPrefs() {
   return {
-    startOnStartup: Boolean(cfg.startOnStartup),
     soundEnabled: Boolean(cfg.soundEnabled),
     startupSoundEnabled: Boolean(cfg.startupSoundEnabled),
     contextSoundEnabled: Boolean(cfg.contextSoundEnabled),
@@ -1379,9 +1158,16 @@ function serializeConfigPrefs() {
 
 async function persistConfigPrefsToFile(targetFile = cfg.configFile) {
   const target = path.resolve(targetFile);
-  const payload = JSON.stringify(serializeConfigPrefs(), null, 2);
   await fs.mkdir(path.dirname(target), { recursive: true });
-  await fs.writeFile(target, `${payload}\n`, "utf8");
+
+  // read-modify-write to preserve non-TUI keys (apiKey, _bootstrapState, etc.)
+  let existing = {};
+  try { existing = JSON.parse(await fs.readFile(target, "utf8")); } catch { /* empty */ }
+  const merged = { ...existing, ...serializeConfigPrefs() };
+
+  const tmp = target + ".tmp.prefs";
+  await fs.writeFile(tmp, JSON.stringify(merged, null, 2) + "\n", "utf8");
+  await fs.rename(tmp, target);
   return { saved: true, file: target };
 }
 
@@ -1514,7 +1300,7 @@ function configToggleItems() {
   const masterEnabled = Boolean(cfg.soundEnabled);
   const soundItems = CONFIG_TOGGLES.map((item) => {
     const rawValue = Boolean(cfg[item.key]);
-    const isSoundToggle = item.key !== "soundEnabled" && item.key !== "startOnStartup";
+    const isSoundToggle = item.key !== "soundEnabled";
     const blockedByMaster = isSoundToggle && !masterEnabled;
     const effectiveValue = blockedByMaster ? false : rawValue;
     return {
@@ -1594,48 +1380,31 @@ async function toggleSelectedConfig() {
   const item = items[selected];
 
   try {
+    // bootstrap reset — persist prefs first, then add flag on top so it isn't clobbered
     if (item.kind === "action" && item.key === "bootstrapResetState") {
-      const daemonResult = await sendDaemonCommand(DAEMON_WS_MESSAGE_TYPES.BOOTSTRAP_RESET, {
-        profile: normalizeBootstrapModeWithPrompt(cfg.bootstrapMode) || "prompt",
-      });
-      cfg.bootstrapReset = true;
-      const saved = await persistConfigPrefs();
-      if (daemonResult.sent) {
-        ui.resume.notice = "Bootstrap state reset on daemon.";
-      } else {
-        ui.resume.notice = "Daemon offline. Bootstrap reset will apply on next start.";
-      }
-      if (!saved.fileSaved) {
-        ui.resume.notice = "Bootstrap reset requested, but prefs were not persisted.";
-      }
+      await persistConfigPrefs();
+      const ok = writeConfigKey("bootstrapReset", true);
+      ui.resume.notice = ok
+        ? "Bootstrap reset requested. Daemon will apply next cycle."
+        : "Failed to write config.";
       renderDashboard();
       return;
     }
 
+    // bootstrap mode cycle — spawn CLI config set
     if (item.kind === "enum" && item.key === "bootstrapMode") {
       const currentIndex = Math.max(CONFIG_BOOTSTRAP_MODES.findIndex((entry) => entry.id === item.value), 0);
       const next = CONFIG_BOOTSTRAP_MODES[(currentIndex + 1) % CONFIG_BOOTSTRAP_MODES.length];
       cfg.bootstrapMode = next.id;
       cfg.bootstrapReset = next.id === "prompt";
 
-      const daemonResult = await sendDaemonCommand(DAEMON_WS_MESSAGE_TYPES.CONFIG_SET, {
-        key: "bootstrapMode",
-        value: next.id,
-      });
-
       const saved = await persistConfigPrefs();
-      if (daemonResult.sent) {
-        ui.resume.notice = `Sync profile set: ${next.label} (daemon + file).`;
-      } else {
-        ui.resume.notice = `Sync profile set: ${next.label} (file only; daemon offline).`;
-      }
-      if (!saved.fileSaved) {
-        ui.resume.notice = `Sync profile set: ${next.label}, but prefs were not persisted.`;
-      }
+      ui.resume.notice = `Sync profile set: ${next.label}${saved.fileSaved ? " (saved)" : ""}.`;
       renderDashboard();
       return;
     }
 
+    // resume terminal cycle — local only
     if (item.kind === "enum" && item.key === "resumeTerminal") {
       const current = normalizeResumeTerminal(item.value);
       const currentIndex = Math.max(CONFIG_RESUME_TERMINALS.findIndex((entry) => entry.id === current), 0);
@@ -1647,46 +1416,21 @@ async function toggleSelectedConfig() {
       return;
     }
 
+    // boolean toggles
     if (item.kind === "boolean") {
       cfg[item.key] = !cfg[item.key];
 
-      // toggle OS-level startup item (LaunchAgent / systemd)
-      if (item.key === "startOnStartup") {
-        try {
-          if (cfg.startOnStartup) enableStartupItem();
-          else disableStartupItem();
-        } catch (err) {
-          cfg.startOnStartup = !cfg.startOnStartup;
-          ui.resume.notice = `Failed: ${err.message}`;
-          renderDashboard();
-          return;
-        }
-        const saved = await persistConfigPrefs();
-        ui.resume.notice = `Start on startup: ${cfg.startOnStartup ? "ON" : "OFF"}${saved.fileSaved ? " (saved)" : ""}.`;
-        renderDashboard();
-        return;
-      }
-
+      // claude subagents — write to config.json, daemon picks up next cycle
       if (item.key === "claudeIncludeSubagents") {
-        const daemonResult = await sendDaemonCommand(DAEMON_WS_MESSAGE_TYPES.CONFIG_SET, {
-          key: "claudeIncludeSubagents",
-          value: cfg.claudeIncludeSubagents,
-        });
-
         const saved = await persistConfigPrefs();
-        if (daemonResult.sent) {
-          ui.resume.notice = cfg.claudeIncludeSubagents
-            ? `Claude subagents: ON (daemon + file${saved.fileSaved ? " saved" : ""}).`
-            : `Claude subagents: OFF (daemon + file${saved.fileSaved ? " saved" : ""}).`;
-        } else {
-          ui.resume.notice = cfg.claudeIncludeSubagents
-            ? `Claude subagents: ON (file only; daemon offline).`
-            : `Claude subagents: OFF (file only; daemon offline).`;
-        }
+        ui.resume.notice = cfg.claudeIncludeSubagents
+          ? `Claude subagents: ON${saved.fileSaved ? " (saved)" : ""}.`
+          : `Claude subagents: OFF${saved.fileSaved ? " (saved)" : ""}.`;
         renderDashboard();
         return;
       }
 
+      // sound toggles — local only
       if (
         item.key === "soundEnabled" ||
         item.key === "startupSoundEnabled" ||
@@ -1793,7 +1537,7 @@ async function refreshContextDetail() {
   }
 }
 
-// message-level scroll (↑/↓) — resets line offset
+// message-level scroll — resets line offset
 function scrollContextDetail(delta) {
   const total = ui.detailView.messages.length;
   if (total === 0) return;
@@ -1876,8 +1620,6 @@ function buildUiSnapshot() {
     cfg: {
       userId: cfg.userId,
       host: cfg.host,
-      daemonWsHost: cfg.daemonWsHost,
-      daemonWsInfoFile: cfg.daemonWsInfoFile,
       pollMs: 0,
       uiRefreshMs: cfg.uiRefreshMs,
       logLevel: "info",
@@ -1894,10 +1636,7 @@ function buildUiSnapshot() {
       items: configItems,
     },
     recentLogs: ui.recentLogs.slice(-runtimeLogsKeep()),
-    sourceStats: ui.sourceOrder.map((name) => ({
-      name,
-      ...ensureSourceStats(name),
-    })),
+    sourceStats: ui.sourceStats,
     resume: {
       ...ui.resume,
       contexts: ui.resume.contexts,
@@ -1937,6 +1676,8 @@ function validateConfig() {
   }
 }
 
+// ── main entry ──────────────────────────────────────────────────
+
 async function tuiMain() {
   validateConfig();
 
@@ -1955,20 +1696,11 @@ async function tuiMain() {
 
   await prepareSoundConfig();
   playStartupGreetingSound();
-  setDaemonOfflineNotice();
 
   const uc = new UltraContext({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl });
   runtime.uc = uc;
 
   await uc.get({ limit: 1 });
-
-  runtime.daemonClient = createDaemonWsClient({
-    host: cfg.daemonWsHost,
-    infoFilePath: cfg.daemonWsInfoFile,
-    onMessage: handleDaemonWsMessage,
-    onStatus: handleDaemonWsStatus,
-    onError: handleDaemonWsError,
-  });
 
   let running = true;
   let stopRequested = false;
@@ -2052,14 +1784,19 @@ async function tuiMain() {
   runtime.uiController.start();
   renderDashboard();
   void loadResumeContexts();
-  void runtime.daemonClient.start();
   void checkForUpdateSilent();
 
-  runtime.renderTimer = setInterval(() => {
-    renderDashboard();
-  }, Math.max(cfg.uiRefreshMs, 250));
-  runtime.renderTimer.unref?.();
+  // initial status poll
+  await pollDaemonStatus();
 
+  // status.json polling + render loop
+  runtime.statusPollTimer = setInterval(async () => {
+    await pollDaemonStatus();
+    renderDashboard();
+  }, cfg.uiRefreshMs);
+  runtime.statusPollTimer.unref?.();
+
+  // context auto-refresh
   if (cfg.resumeAutoRefreshMs > 0) {
     runtime.contextRefreshTimer = setInterval(() => {
       if (ui.resume.loading || ui.resume.syncing) return;
@@ -2075,40 +1812,27 @@ async function tuiMain() {
     await new Promise((resolve) => setTimeout(resolve, 120));
   }
 
-  if (runtime.renderTimer) clearInterval(runtime.renderTimer);
-  runtime.renderTimer = null;
+  // cleanup
+  if (runtime.statusPollTimer) clearInterval(runtime.statusPollTimer);
+  runtime.statusPollTimer = null;
   if (runtime.contextRefreshTimer) clearInterval(runtime.contextRefreshTimer);
   runtime.contextRefreshTimer = null;
 
   runtime.uiController?.stop();
   runtime.uiController = null;
-
-  if (runtime.daemonClient) {
-    await runtime.daemonClient.stop();
-    runtime.daemonClient = null;
-  }
 
   runtime.stop = null;
   runtime.uc = null;
 }
 
 tuiMain().catch(async (error) => {
-  if (runtime.renderTimer) clearInterval(runtime.renderTimer);
-  runtime.renderTimer = null;
+  if (runtime.statusPollTimer) clearInterval(runtime.statusPollTimer);
+  runtime.statusPollTimer = null;
   if (runtime.contextRefreshTimer) clearInterval(runtime.contextRefreshTimer);
   runtime.contextRefreshTimer = null;
 
   runtime.uiController?.stop();
   runtime.uiController = null;
-
-  if (runtime.daemonClient) {
-    try {
-      await runtime.daemonClient.stop();
-    } catch {
-      // ignore close errors
-    }
-    runtime.daemonClient = null;
-  }
 
   runtime.stop = null;
   runtime.uc = null;

@@ -1,6 +1,7 @@
+// merged utils (daemon + tui deduplicated)
 import crypto from "node:crypto";
 
-// shared utils from harness
+// shared utils from parsers
 export { expandHome, truncateString, safeJsonParse, extractSessionIdFromPath } from "@ultracontext/parsers/utils";
 
 export function sha256(value) {
@@ -18,4 +19,16 @@ export function boolFromEnv(value, fallback = false) {
   if (["1", "true", "yes", "on"].includes(normalized)) return true;
   if (["0", "false", "no", "off"].includes(normalized)) return false;
   return fallback;
+}
+
+// claude: ~/.claude/projects/-Users-fabio-Code-foo/session.jsonl → /Users/fabio/Code/foo
+// codex:  ~/.codex/sessions/<uuid>.jsonl → null (cwd comes from session_meta)
+// openclaw: ~/.openclaw/agents/<name>/sessions/<uuid>.jsonl → null
+export function extractProjectPathFromFile(filePath) {
+  const match = filePath.match(/\.claude\/projects\/([^/]+)/);
+  if (!match) return null;
+
+  // convert dash-separated path back to real path (leading dash = leading /)
+  const encoded = match[1];
+  return encoded.replace(/-/g, "/");
 }

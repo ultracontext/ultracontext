@@ -65,13 +65,10 @@
         "fast-glob": "^3.3.3",
         "figlet": "^1.10.0",
         "ink": "^6.7.0",
-        "react": "^19.2.4",
-        "ws": "^8.18.3"
+        "react": "^19.2.4"
     },
     "devDependencies": {
-        "@ultracontext/daemon": "workspace:*",
-        "@ultracontext/protocol": "workspace:*",
-        "@ultracontext/tui": "workspace:*",
+        "@ultracontext/sync": "workspace:*",
         "tsdown": "^0.20.3",
         "typescript": "^5.9.3"
     },

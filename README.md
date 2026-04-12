@@ -68,7 +68,7 @@ Open source. Framework-agnostic. Customizable via the git-like Context API.
 
 ## How it works
 
-1. **Start the daemon.** It captures all your agents' context in realtime.
+1. **Start sync.** It captures all your agents' context in realtime.
 
 2. **Add the MCP server.** Any agent gets full awareness of every other agent.
 
@@ -85,17 +85,16 @@ npm install -g ultracontext
 ## Quick Start
 
 ```bash
-ultracontext          # start daemon + open dashboard
+ultracontext          # start sync (daemon + dashboard)
 ```
 
-That's it. The daemon watches your agents, ingests context in realtime, and the dashboard shows everything.
+That's it. UltraContext watches your agents, ingests context in realtime, and the dashboard shows everything.
 
 ```bash
-ultracontext config   # run setup wizard
-ultracontext start    # start daemon only
+ultracontext sync     # start sync (daemon + dashboard)
 ultracontext stop     # stop daemon
-ultracontext status   # check if daemon is running
-ultracontext tui      # open dashboard only
+ultracontext config   # run setup wizard
+ultracontext update   # update CLI globally
 ```
 
 ## Context API
