@@ -308,7 +308,7 @@ function runUpdate(rawArgs) {
 
 // ── update check ────────────────────────────────────────────────
 
-const SKIP_UPDATE_CHECK = new Set(["version", "v", "update", "upgrade", "help", "h", "stop"]);
+const SKIP_UPDATE_CHECK = new Set(["version", "v", "update", "upgrade", "help", "h", "stop", "sync", ""]);
 
 async function fetchLatestVersion() {
   const controller = new AbortController();
