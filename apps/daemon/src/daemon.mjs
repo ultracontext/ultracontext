@@ -94,7 +94,7 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
     wsPort: resolveDaemonWsPort(process.env),
     wsInfoFile: resolveDaemonWsInfoFile(process.env),
     dedupeTtlSec: toInt(process.env.DAEMON_DEDUPE_TTL_SEC, 60 * 60 * 24 * 30),
-    maxReadBytes: toInt(process.env.DAEMON_MAX_READ_BYTES, 512 * 1024),
+    maxReadBytes: toInt(process.env.DAEMON_MAX_READ_BYTES, 4 * 1024 * 1024),
     bootstrapMode: normalizeBootstrapModeWithPrompt(process.env.DAEMON_BOOTSTRAP_MODE ?? "prompt") || "prompt",
     bootstrapReset: boolFromEnv(process.env.DAEMON_BOOTSTRAP_RESET, false),
     claudeIncludeSubagents: boolFromEnv(process.env.CLAUDE_INCLUDE_SUBAGENTS, false),
@@ -580,35 +580,19 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
     return store.markEventSeen(seenEventStoreKey(sourceName, eventId), cfg.dedupeTtlSec);
   }
 
+  // prevent duplicate context creation when files are processed in parallel
+  const contextCreateInflight = new Map();
+
   async function getOrCreateContext(store, uc, cacheKey, metadata, sourceName) {
     const cached = store.getContextCache(cacheKey);
     if (cached) return cached;
 
-    try {
-      const created = await uc.create({ metadata });
-      store.setContextCache(cacheKey, created.id);
-      bumpStat("contextsCreated");
-      bumpSourceStat(sourceName, "contextsCreated");
-      runtime.wsServer?.broadcastEvent({
-        action: "created", source: sourceName,
-        sessionId: String(metadata?.session_id ?? ""),
-        contextId: created.id,
-      });
-      if (cfg.logAppends) {
-        log("info", "Context created", {
-          source: sourceName, context_id: created.id,
-          session_id: metadata?.session_id ?? "",
-        });
-      }
-      return created.id;
-    } catch (error) {
-      const details = errorDetails(error);
-      bumpStat("errors");
-      bumpSourceStat(sourceName, "errors");
-      log("warn", "Failed to create context with metadata", details);
+    // coalesce concurrent creates for the same cache key
+    if (contextCreateInflight.has(cacheKey)) return contextCreateInflight.get(cacheKey);
 
-      if (details.status === 400) {
-        const created = await uc.create();
+    const pending = (async () => {
+      try {
+        const created = await uc.create({ metadata });
         store.setContextCache(cacheKey, created.id);
         bumpStat("contextsCreated");
         bumpSourceStat(sourceName, "contextsCreated");
@@ -618,14 +602,43 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
           contextId: created.id,
         });
         if (cfg.logAppends) {
-          log("warn", "Context created without metadata fallback", {
+          log("info", "Context created", {
             source: sourceName, context_id: created.id,
+            session_id: metadata?.session_id ?? "",
           });
         }
         return created.id;
+      } catch (error) {
+        const details = errorDetails(error);
+        bumpStat("errors");
+        bumpSourceStat(sourceName, "errors");
+        log("warn", "Failed to create context with metadata", details);
+
+        if (details.status === 400) {
+          const created = await uc.create();
+          store.setContextCache(cacheKey, created.id);
+          bumpStat("contextsCreated");
+          bumpSourceStat(sourceName, "contextsCreated");
+          runtime.wsServer?.broadcastEvent({
+            action: "created", source: sourceName,
+            sessionId: String(metadata?.session_id ?? ""),
+            contextId: created.id,
+          });
+          if (cfg.logAppends) {
+            log("warn", "Context created without metadata fallback", {
+              source: sourceName, context_id: created.id,
+            });
+          }
+          return created.id;
+        }
+        throw error;
+      } finally {
+        contextCreateInflight.delete(cacheKey);
       }
-      throw error;
-    }
+    })();
+
+    contextCreateInflight.set(cacheKey, pending);
+    return pending;
   }
 
   async function appendToUltraContext({ store, uc, sourceName, normalized, eventId, filePath, lineOffset }) {
@@ -663,6 +676,88 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
         event_type: normalized.eventType, role: normalized.kind, event_id: eventId,
       });
     }
+  }
+
+  // bulk ingestion tunables
+  const BULK_BATCH_SIZE = 50;
+  const FILE_CONCURRENCY = 8;
+  const SESSION_CONCURRENCY = 6;
+
+  // run async tasks with bounded concurrency
+  async function parallelMap(items, concurrency, fn) {
+    const results = [];
+    let idx = 0;
+    async function worker() {
+      while (idx < items.length) {
+        const i = idx++;
+        results[i] = await fn(items[i], i);
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker()));
+    return results;
+  }
+
+  async function appendBulkToUltraContext({ store, uc, sourceName, events, filePath }) {
+
+    // group events by session id
+    const bySession = new Map();
+    for (const ev of events) {
+      const key = ev.normalized.sessionId;
+      if (!bySession.has(key)) bySession.set(key, []);
+      bySession.get(key).push(ev);
+    }
+
+    // resolve all context ids first (sequential — touches local store)
+    const sessionEntries = [...bySession.entries()];
+    const projectPath = extractProjectPathFromFile(filePath);
+    const contextIds = new Map();
+    for (const [sessionId, sessionEvents] of sessionEntries) {
+      const contextMeta = {
+        source: sourceName, host: cfg.host, user_id: cfg.userId,
+        session_id: sessionId,
+        started_at: sessionEvents[0].normalized.timestamp,
+      };
+      if (projectPath) contextMeta.project_path = projectPath;
+      const ctxId = await getOrCreateContext(store, uc,
+        sessionContextStoreKey(sourceName, sessionId),
+        contextMeta, sourceName,
+      );
+      contextIds.set(sessionId, ctxId);
+    }
+
+    // send bulk requests in parallel across sessions
+    await parallelMap(sessionEntries, SESSION_CONCURRENCY, async ([sessionId, sessionEvents]) => {
+      const sessionContextId = contextIds.get(sessionId);
+
+      // build payloads array
+      const payloads = sessionEvents.map(({ normalized, eventId, lineOffset }) => {
+        const safeRaw = redact(normalized.raw);
+        return {
+          role: normalized.kind,
+          content: { message: normalized.message, event_type: normalized.eventType, timestamp: normalized.timestamp, raw: safeRaw },
+          metadata: { source: sourceName, host: cfg.host, user_id: cfg.userId, session_id: sessionId, event_id: eventId, file_path: filePath, file_offset: lineOffset },
+        };
+      });
+
+      // send in batches of BULK_BATCH_SIZE
+      for (let i = 0; i < payloads.length; i += BULK_BATCH_SIZE) {
+        const batch = payloads.slice(i, i + BULK_BATCH_SIZE);
+        await uc.append(sessionContextId, batch);
+      }
+
+      // update stats + broadcast
+      bumpStat("appended", sessionEvents.length);
+      bumpSourceStat(sourceName, "appended", sessionEvents.length);
+      const last = sessionEvents[sessionEvents.length - 1].normalized;
+      runtime.wsServer?.broadcastEvent({ action: "appended", source: sourceName, sessionId, contextId: sessionContextId, count: sessionEvents.length });
+      noteSourceActivity(sourceName, { lastEventType: last.eventType, lastSessionId: sessionId, lastAt: Date.now() });
+
+      if (cfg.logAppends) {
+        log("info", "Bulk appended events to session context", {
+          source: sourceName, session_id: sessionId, context_id: sessionContextId, count: sessionEvents.length,
+        });
+      }
+    });
   }
 
   // ── file reading ──
@@ -716,6 +811,9 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
       noteSourceActivity(source.name, { lastFile: filePath, lastAt: Date.now() });
       if (lines.length === 0) return;
 
+      // collect all new events, then bulk-append per session
+      const pendingEvents = [];
+
       for (const { line, lineOffset } of lines) {
         if (shouldStop()) break;
         const normalized = source.parseLine({ line, filePath });
@@ -730,8 +828,14 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
         const isNew = markEventSeen(store, source.name, eventId);
         if (!isNew) { bumpStat("deduped"); bumpSourceStat(source.name, "deduped"); continue; }
 
-        await appendToUltraContext({ store, uc, sourceName: source.name, normalized, eventId, filePath, lineOffset });
+        pendingEvents.push({ normalized, eventId, lineOffset });
       }
+
+      // bulk append all collected events
+      if (pendingEvents.length > 0) {
+        await appendBulkToUltraContext({ store, uc, sourceName: source.name, events: pendingEvents, filePath });
+      }
+
       store.setOffset(offsetKey, nextOffset);
     } catch (error) {
       bumpStat("errors");
@@ -748,10 +852,13 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
       log("warn", `Failed to list files for source=${source.name}`, { error: error instanceof Error ? error.message : String(error) });
       return;
     }
-    for (const filePath of files) {
-      if (shouldStop()) break;
-      await processFile({ store, uc, source, filePath, shouldStop, ingestMode });
-    }
+
+    // process files concurrently
+    await parallelMap(
+      files.filter(() => !shouldStop()),
+      FILE_CONCURRENCY,
+      (filePath) => processFile({ store, uc, source, filePath, shouldStop, ingestMode }),
+    );
   }
 
   // ── runtime commands ──
@@ -953,10 +1060,12 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
 
       bumpStat("cycles");
       const cycleStart = Date.now();
-      for (const source of (runtime.sources ?? [])) {
-        if (!running) break;
-        await processSource({ store, uc, source, shouldStop: () => !running, ingestMode: runtime.ingestMode ?? "all" });
-      }
+
+      // process all sources in parallel
+      const activeSources = (runtime.sources ?? []);
+      await Promise.all(activeSources.map((source) =>
+        processSource({ store, uc, source, shouldStop: () => !running, ingestMode: runtime.ingestMode ?? "all" }),
+      ));
 
       if (stats.cycles % cfg.cleanupEveryCycles === 0) { try { store.cleanupExpired(); } catch { /* ignore */ } }
       publishDaemonRuntimeSnapshot();
