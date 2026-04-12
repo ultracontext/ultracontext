@@ -569,7 +569,7 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
   // ── validation ──
 
   function validateConfig() {
-    if (!cfg.apiKey) throw new Error("Missing ULTRACONTEXT_API_KEY");
+    if (!cfg.apiKey) throw new Error("Missing ULTRACONTEXT_API_KEY. Run `ultracontext config` to set up your API key.");
     if (!cfg.apiKey.startsWith("uc_live_") && !cfg.apiKey.startsWith("uc_test_")) {
       log("warn", "ULTRACONTEXT_API_KEY format looks unusual", { key_prefix: cfg.apiKey.slice(0, 8), key_len: cfg.apiKey.length });
     }
@@ -941,7 +941,7 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
     // connectivity check
     try { await uc.get({ limit: 1 }); } catch (error) {
       const details = errorDetails(error);
-      throw new Error(`UltraContext auth/connectivity check failed (status=${details.status ?? "?"}, url=${details.url ?? cfg.baseUrl}, body=${details.bodyText ?? details.message})`);
+      throw new Error(`UltraContext auth/connectivity check failed (status=${details.status ?? "?"}, url=${details.url ?? cfg.baseUrl}, body=${details.bodyText ?? details.message}). Check your API key at https://ultracontext.ai`);
     }
 
     log("info", "UltraContext daemon started", {

@@ -29,8 +29,7 @@ pnpm ultracontext:api
 ### Run the Context Hub locally
 
 ```bash
-pnpm dev:daemon    # start ingestor
-pnpm dev:tui       # start TUI dashboard
+pnpm dev:sync      # start sync (daemon + TUI)
 ```
 
 ## Monorepo structure
@@ -40,8 +39,7 @@ pnpm dev:tui       # start TUI dashboard
 | `apps/api` | Context API (Hono + Drizzle) |
 | `apps/js-sdk` | Node.js SDK + CLI (`ultracontext` npm package) |
 | `apps/python-sdk` | Python SDK |
-| `apps/daemon` | Ingestor (dev mode) |
-| `apps/tui` | TUI dashboard (dev mode) |
+| `apps/sync` | Sync daemon + TUI (dev mode) |
 | `apps/postgres` | Docker Compose + schema for local PostgreSQL |
 | `apps/docs` | Documentation (Mintlify) |
 

@@ -418,10 +418,22 @@ async function run() {
       printHelp();
       break;
 
-    default:
-      console.error(`Unknown command: ${process.argv[2]}`);
-      printHelp();
+    default: {
+      // migration hints for removed commands
+      const removed = {
+        start: "The 'start' command was removed. Use 'ultracontext sync' instead.",
+        tui: "The 'tui' command was removed. Use 'ultracontext sync' instead (TUI is now built-in).",
+        status: "The 'status' command was removed. The TUI shows daemon status automatically.",
+      };
+      const hint = removed[command];
+      if (hint) {
+        console.error(hint);
+      } else {
+        console.error(`Unknown command: ${process.argv[2]}`);
+        printHelp();
+      }
       process.exit(1);
+    }
   }
 }
 
