@@ -10,6 +10,7 @@ import { spawnSync } from "node:child_process";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const command = (process.argv[2] ?? "").trim().toLowerCase().replace(/^--?/, "");
+const subcommand = (process.argv[3] ?? "").trim().toLowerCase().replace(/^--?/, "");
 const PACKAGE_NAME = "ultracontext";
 const packageRoot = path.resolve(__dirname, "..", "..");
 const cliWrapperPath = path.join(packageRoot, "ultracontext.mjs");
@@ -32,14 +33,15 @@ function printHelp() {
 Usage: ultracontext [command] [options]
 
 Commands:
-  (none)   Start sync (daemon + TUI)
-  sync     Start sync (daemon + TUI)
-  start    Start daemon in background (no TUI)
-  stop     Stop a running sync daemon
-  config   Run the setup wizard
-  update   Update CLI globally via npm/pnpm/bun
-  version  Print version
-  help     Show this help message
+  (none)        Start sync (daemon + TUI)
+  sync          Start sync (daemon + TUI)
+  sync start    Start daemon in background (no TUI)
+  sync stop     Stop a running daemon
+  sync status   Show daemon status
+  config        Run the setup wizard
+  update        Update CLI globally via npm/pnpm/bun
+  version       Print version
+  help          Show this help message
 
 Environment:
   ULTRACONTEXT_API_KEY   Required. Your UltraContext API key.
@@ -59,7 +61,7 @@ Options:
 }
 
 // commands that need an API key
-const NEEDS_KEY = new Set(["", "sync", "start"]);
+const NEEDS_KEY = new Set(["", "sync"]);
 
 // interactive onboarding wizard (Ink-based), returns { launchTui }
 async function runOnboarding() {
@@ -382,15 +384,36 @@ async function run() {
   }
 
   switch (command) {
-    // sync: ensure daemon running, then open TUI
+    // sync: subcommand router
     case "sync":
     case "": {
+      // sync start — daemon background only
+      if (subcommand === "start") {
+        await launchSyncDaemon();
+        break;
+      }
+
+      // sync stop — stop daemon
+      if (subcommand === "stop") {
+        process.argv[2] = "stop";
+        await runCtlSDK();
+        break;
+      }
+
+      // sync status — show daemon status
+      if (subcommand === "status") {
+        process.argv[2] = "status";
+        await runCtlSDK();
+        break;
+      }
+
+      // bare sync (no subcommand) — daemon bg + TUI fg
       if (!isDaemonRunning()) await launchSyncDaemon();
       if (onboardResult?.launchTui !== false) await launchTui();
       break;
     }
 
-    // start: daemon background only (no TUI) — used by update restart flow
+    // legacy aliases — redirect to sync subcommands
     case "start":
       await launchSyncDaemon();
       break;
@@ -426,13 +449,12 @@ async function run() {
 
     default: {
       // migration hints for removed commands
-      const removed = {
-        tui: "The 'tui' command was removed. Use 'ultracontext sync' instead (TUI is now built-in).",
-        status: "The 'status' command was removed. The TUI shows daemon status automatically.",
-      };
-      const hint = removed[command];
-      if (hint) {
-        console.log(hint);
+      if (command === "tui") {
+        console.log("The 'tui' command was removed. Use 'ultracontext sync' instead (TUI is now built-in).");
+        process.exit(0);
+      }
+      if (command === "status") {
+        console.log("Use 'ultracontext sync status' instead.");
         process.exit(0);
       }
       console.error(`Unknown command: ${process.argv[2]}`);
