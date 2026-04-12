@@ -4,7 +4,7 @@ import fsSync from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { spawn, spawnSync, execSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { UltraContext } from "ultracontext";
@@ -32,11 +32,17 @@ async function readStatusJson() {
   } catch { return null; }
 }
 
-// ── CLI spawn helper for config mutations ──────────────────────
+// ── config.json write helper for TUI mutations ────────────────
 
-function spawnCliCommand(args) {
+function writeConfigKey(key, value) {
   try {
-    execSync(`ultracontext ${args}`, { stdio: "ignore", timeout: 5000 });
+    const configPath = path.join(os.homedir(), ".ultracontext", "config.json");
+    let data = {};
+    try { data = JSON.parse(fsSync.readFileSync(configPath, "utf8")); } catch { /* empty */ }
+    data[key] = value;
+    const tmp = configPath + ".tmp.tui";
+    fsSync.writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n", "utf8");
+    fsSync.renameSync(tmp, configPath);
     return true;
   } catch {
     return false;
@@ -374,8 +380,15 @@ function applyDaemonStatus(status) {
         ui.recentLogs.push(entry);
       }
     }
-    // cap logs
+    // cap logs + prune dedup set to prevent unbounded growth
     while (ui.recentLogs.length > cfg.uiRecentLimit) ui.recentLogs.shift();
+    if (runtime.seenLogSignatures.size > cfg.uiRecentLimit * 2) {
+      const keep = new Set();
+      for (const entry of ui.recentLogs) {
+        keep.add(`${entry.ts}|${entry.level}|${entry.source}|${entry.text}`);
+      }
+      runtime.seenLogSignatures = keep;
+    }
   }
 
   // apply config from daemon
@@ -1360,19 +1373,13 @@ async function toggleSelectedConfig() {
   const item = items[selected];
 
   try {
-    // bootstrap reset — spawn CLI command
+    // bootstrap reset — write flag to config.json, daemon picks it up next cycle
     if (item.kind === "action" && item.key === "bootstrapResetState") {
-      cfg.bootstrapReset = true;
+      const ok = writeConfigKey("bootstrapReset", true);
       const saved = await persistConfigPrefs();
-      const cliOk = spawnCliCommand("sync reset");
-      if (cliOk) {
-        ui.resume.notice = "Bootstrap state reset via CLI.";
-      } else {
-        ui.resume.notice = "Daemon offline. Bootstrap reset will apply on next start.";
-      }
-      if (!saved.fileSaved) {
-        ui.resume.notice = "Bootstrap reset requested, but prefs were not persisted.";
-      }
+      ui.resume.notice = ok
+        ? "Bootstrap reset requested. Daemon will apply next cycle."
+        : "Failed to write config.";
       renderDashboard();
       return;
     }
@@ -1384,17 +1391,8 @@ async function toggleSelectedConfig() {
       cfg.bootstrapMode = next.id;
       cfg.bootstrapReset = next.id === "prompt";
 
-      const cliOk = spawnCliCommand(`config set bootstrapMode ${next.id}`);
-
       const saved = await persistConfigPrefs();
-      if (cliOk) {
-        ui.resume.notice = `Sync profile set: ${next.label} (daemon + file).`;
-      } else {
-        ui.resume.notice = `Sync profile set: ${next.label} (file only; daemon offline).`;
-      }
-      if (!saved.fileSaved) {
-        ui.resume.notice = `Sync profile set: ${next.label}, but prefs were not persisted.`;
-      }
+      ui.resume.notice = `Sync profile set: ${next.label}${saved.fileSaved ? " (saved)" : ""}.`;
       renderDashboard();
       return;
     }
@@ -1415,20 +1413,12 @@ async function toggleSelectedConfig() {
     if (item.kind === "boolean") {
       cfg[item.key] = !cfg[item.key];
 
-      // claude subagents — spawn CLI config set
+      // claude subagents — write to config.json, daemon picks up next cycle
       if (item.key === "claudeIncludeSubagents") {
-        const cliOk = spawnCliCommand(`config set claudeIncludeSubagents ${cfg.claudeIncludeSubagents}`);
-
         const saved = await persistConfigPrefs();
-        if (cliOk) {
-          ui.resume.notice = cfg.claudeIncludeSubagents
-            ? `Claude subagents: ON (daemon + file${saved.fileSaved ? " saved" : ""}).`
-            : `Claude subagents: OFF (daemon + file${saved.fileSaved ? " saved" : ""}).`;
-        } else {
-          ui.resume.notice = cfg.claudeIncludeSubagents
-            ? `Claude subagents: ON (file only; daemon offline).`
-            : `Claude subagents: OFF (file only; daemon offline).`;
-        }
+        ui.resume.notice = cfg.claudeIncludeSubagents
+          ? `Claude subagents: ON${saved.fileSaved ? " (saved)" : ""}.`
+          : `Claude subagents: OFF${saved.fileSaved ? " (saved)" : ""}.`;
         renderDashboard();
         return;
       }
