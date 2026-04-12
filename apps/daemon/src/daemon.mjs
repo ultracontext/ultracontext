@@ -19,7 +19,7 @@ import {
 
 import { acquireFileLock, resolveLockPath } from "./lock.mjs";
 import { redact } from "./redact.mjs";
-import { parseClaudeCodeLine, parseCodexLine, parseOpenClawLine } from "./sources.mjs";
+import { parseClaudeCodeLine, parseCodexLine, parseOpenClawLine } from "@ultracontext/harness";
 import { boolFromEnv, expandHome, extractProjectPathFromFile, sha256, toInt } from "./utils.mjs";
 import { createWsServer } from "./ws-server.mjs";
 

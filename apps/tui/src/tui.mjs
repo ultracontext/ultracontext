@@ -18,9 +18,9 @@ import {
 import {
   hasLocalClaudeSession,
   hasLocalCodexSession,
-  materializeClaudeSession,
-  materializeCodexSession,
-} from "./codex-local-resume.mjs";
+  writeClaudeSession,
+  writeCodexSession,
+} from "@ultracontext/harness";
 import { MENU_TABS, createInkUiController } from "./ui.mjs";
 import { boolFromEnv, expandHome, toInt } from "./utils.mjs";
 import { createDaemonWsClient } from "./ws-client.mjs";
@@ -1180,7 +1180,7 @@ async function buildCodexResumePlan({ sessionId, runCwd, messages }) {
   let restoredError = "";
 
   if (!canResumeBySessionId && originalSessionId) {
-    const restored = await materializeCodexSession({
+    const restored = await writeCodexSession({
       sessionId: originalSessionId,
       cwd: runCwd,
       messages,
@@ -1212,7 +1212,7 @@ async function buildClaudeResumePlan({ sessionId, runCwd, messages }) {
   let restoredError = "";
 
   if (!canResumeBySessionId || !candidateSessionId) {
-    const restored = await materializeClaudeSession({
+    const restored = await writeClaudeSession({
       sessionId: candidateSessionId,
       cwd: runCwd,
       messages,
