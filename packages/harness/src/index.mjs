@@ -5,6 +5,7 @@ export { expandHome, truncateString, safeJsonParse, extractSessionIdFromPath } f
 export { parseClaudeCodeLine, extractClaudeTextContent } from "./parsers/claude.mjs";
 export { parseCodexLine } from "./parsers/codex.mjs";
 export { parseOpenClawLine } from "./parsers/openclaw.mjs";
+export { parseGstackLine } from "./parsers/gstack.mjs";
 export { parseGenericJsonlLine } from "./parsers/generic.mjs";
 
 // writers: UltraContext → agent JSONL
