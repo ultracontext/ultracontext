@@ -187,7 +187,7 @@ const CONFIG_TOGGLES = [
 
 // ── update check helpers ─────────────────────────────────────────
 
-const UPDATE_CHECK_INTERVAL = 3 * 60 * 60 * 1000; // 3h
+// no cache — check every invocation, like Claude Code
 
 function readTuiVersion() {
   try {
@@ -197,19 +197,6 @@ function readTuiVersion() {
   } catch { return "unknown"; }
 }
 
-function getUpdateCheckPath() {
-  return path.join(os.homedir(), ".ultracontext", "update-check.json");
-}
-
-function readUpdateCache() {
-  try { return JSON.parse(fsSync.readFileSync(getUpdateCheckPath(), "utf8")); }
-  catch { return null; }
-}
-
-function writeUpdateCache(data) {
-  try { fsSync.writeFileSync(getUpdateCheckPath(), JSON.stringify(data)); }
-  catch { /* best effort */ }
-}
 
 async function fetchLatestVersion() {
   const controller = new AbortController();
@@ -244,18 +231,8 @@ async function checkForUpdateSilent() {
     renderDashboard();
   };
 
-  // use cache if fresh
-  const cache = readUpdateCache();
-  if (cache?.lastCheck && Date.now() - cache.lastCheck < UPDATE_CHECK_INTERVAL) {
-    if (cache.latestVersion && isNewerVersion(cache.latestVersion, current)) {
-      notifyUpdate(cache.latestVersion);
-    }
-    return;
-  }
-
-  // fetch from registry
+  // fetch from registry every invocation
   const latest = await fetchLatestVersion();
-  writeUpdateCache({ lastCheck: Date.now(), latestVersion: latest });
   if (latest && isNewerVersion(latest, current)) {
     notifyUpdate(latest);
   }

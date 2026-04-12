@@ -253,7 +253,7 @@ const red = esc("38;2;220;80;80");
 const cyan = esc("36");
 const gray = esc("38;5;245");
 
-function runUpdate(rawArgs) {
+async function runUpdate(rawArgs) {
   const opts = parseUpdateOptions(rawArgs);
   if (opts.help) {
     printUpdateHelp();
@@ -273,13 +273,15 @@ function runUpdate(rawArgs) {
   console.log(`  ${blue}${b}UltraContext${r} ${d}Update${r}`);
   console.log("");
 
-  // stop daemon before update
+  // stop daemon before update (in-process, no subprocess)
   const wasRunning = isDaemonRunning();
   if (wasRunning && opts.restart) {
     console.log(`  ${gray}○${r} ${d}Stopping daemon...${r}`);
-    const stopCode = runCliSubcommand("stop");
-    if (stopCode !== 0) {
-      throw new Error(`Failed to stop daemon before update (exit ${stopCode}).`);
+    try {
+      process.argv[2] = "stop";
+      await runCtlSDK();
+    } catch {
+      console.log(`  ${gray}○${r} ${d}Could not stop daemon. Continuing update...${r}`);
     }
   }
 
@@ -292,12 +294,13 @@ function runUpdate(rawArgs) {
   console.log("");
   console.log(`  ${green}✓${r} ${b}Updated${r}  ${gray}${previousVersion} → ${newVersion}${r}`);
 
-  // restart daemon
+  // restart daemon in-process (no subprocess, no new terminal)
   if (wasRunning && opts.restart) {
     console.log(`  ${green}●${r} ${d}Restarting daemon...${r}`);
-    const startCode = runCliSubcommand("start");
-    if (startCode !== 0) {
-      throw new Error(`Update succeeded but daemon restart failed (exit ${startCode}).`);
+    try {
+      await launchSyncDaemon();
+    } catch {
+      console.log(`  ${gray}○${r} ${d}Auto-restart failed. Run:${r} ${cyan}ultracontext sync${r}`);
     }
   } else if (wasRunning) {
     console.log(`  ${gray}○${r} ${d}Daemon was stopped. Run:${r} ${cyan}ultracontext sync${r}`);
@@ -439,7 +442,7 @@ async function run() {
 
     case "update":
     case "upgrade":
-      runUpdate(process.argv.slice(3));
+      await runUpdate(process.argv.slice(3));
       break;
 
     case "help":
