@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@mishieck/ink-titled-box": "^0.4.2",
-    "@ultracontext/harness": "workspace:*",
+    "@ultracontext/parsers": "workspace:*",
     "@ultracontext/protocol": "workspace:*",
     "dotenv": "^17.2.3",
     "fast-glob": "^3.3.3",

@@ -1,4 +1,4 @@
-import { extractSessionIdFromPath, normalizeRole, safeJsonParse, toMessage } from "../utils.mjs";
+import { extractSessionIdFromPath, normalizeRole, safeJsonParse, toMessage } from "./utils.mjs";
 
 // parse a generic JSONL line (best-effort for unknown agents)
 export function parseGenericJsonlLine({ line, filePath, sourceName }) {

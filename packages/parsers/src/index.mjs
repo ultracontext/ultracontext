@@ -1,12 +1,14 @@
 // shared utils
 export { expandHome, truncateString, safeJsonParse, extractSessionIdFromPath } from "./utils.mjs";
 
-// parsers: agent JSONL → UltraContext
-export { parseClaudeCodeLine, extractClaudeTextContent } from "./parsers/claude.mjs";
-export { parseCodexLine } from "./parsers/codex.mjs";
-export { parseOpenClawLine } from "./parsers/openclaw.mjs";
-export { parseGstackLine } from "./parsers/gstack.mjs";
-export { parseGenericJsonlLine } from "./parsers/generic.mjs";
+// agent session parsers
+export { parseClaudeCodeLine, extractClaudeTextContent } from "./agents/claude.mjs";
+export { parseCodexLine } from "./agents/codex.mjs";
+export { parseOpenClawLine } from "./agents/openclaw.mjs";
+
+// tool artifact parsers
+export { parseGstackLine } from "./gstack.mjs";
+export { parseGenericJsonlLine } from "./generic.mjs";
 
 // writers: UltraContext → agent JSONL
 export { writeClaudeSession, hasLocalClaudeSession } from "./writers/claude.mjs";

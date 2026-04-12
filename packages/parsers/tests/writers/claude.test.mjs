@@ -5,7 +5,7 @@ import path from "node:path";
 import os from "node:os";
 
 import { writeClaudeSession } from "../../src/writers/claude.mjs";
-import { parseClaudeCodeLine } from "../../src/parsers/claude.mjs";
+import { parseClaudeCodeLine } from "../../src/agents/claude.mjs";
 
 let tmpDir;
 

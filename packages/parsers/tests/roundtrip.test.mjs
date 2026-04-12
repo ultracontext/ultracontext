@@ -4,9 +4,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { parseCodexLine } from "../src/parsers/codex.mjs";
-import { parseClaudeCodeLine } from "../src/parsers/claude.mjs";
-import { parseOpenClawLine } from "../src/parsers/openclaw.mjs";
+import { parseCodexLine } from "../src/agents/codex.mjs";
+import { parseClaudeCodeLine } from "../src/agents/claude.mjs";
+import { parseOpenClawLine } from "../src/agents/openclaw.mjs";
 import { AGENT_COMPAT, isResumePairTested } from "../src/compat.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));

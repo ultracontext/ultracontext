@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { parseCodexLine } from "../../src/parsers/codex.mjs";
+import { parseCodexLine } from "../../src/agents/codex.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const fixturePath = path.join(__dirname, "../fixtures/codex-v1.jsonl");

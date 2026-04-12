@@ -5,7 +5,7 @@ import path from "node:path";
 import os from "node:os";
 
 import { writeCodexSession } from "../../src/writers/codex.mjs";
-import { parseCodexLine } from "../../src/parsers/codex.mjs";
+import { parseCodexLine } from "../../src/agents/codex.mjs";
 
 let tmpDir;
 

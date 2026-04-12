@@ -20,7 +20,7 @@ import {
   hasLocalCodexSession,
   writeClaudeSession,
   writeCodexSession,
-} from "@ultracontext/harness";
+} from "@ultracontext/parsers";
 import { MENU_TABS, createInkUiController } from "./ui.mjs";
 import { boolFromEnv, expandHome, toInt } from "./utils.mjs";
 import { createDaemonWsClient } from "./ws-client.mjs";

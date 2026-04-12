@@ -1,4 +1,4 @@
-import { normalizeWhitespace, safeJsonParse, toMessage } from "../utils.mjs";
+import { normalizeWhitespace, safeJsonParse, toMessage } from "./utils.mjs";
 
 // extract project slug from gstack path: ~/.gstack/projects/{slug}/...
 function extractGstackProjectSlug(filePath) {

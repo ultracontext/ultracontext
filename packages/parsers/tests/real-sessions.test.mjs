@@ -4,8 +4,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { parseClaudeCodeLine } from "../src/parsers/claude.mjs";
-import { parseCodexLine } from "../src/parsers/codex.mjs";
+import { parseClaudeCodeLine } from "../src/agents/claude.mjs";
+import { parseCodexLine } from "../src/agents/codex.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
