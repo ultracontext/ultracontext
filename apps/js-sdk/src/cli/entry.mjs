@@ -427,11 +427,11 @@ async function run() {
       };
       const hint = removed[command];
       if (hint) {
-        console.error(hint);
-      } else {
-        console.error(`Unknown command: ${process.argv[2]}`);
-        printHelp();
+        console.log(hint);
+        process.exit(0);
       }
+      console.error(`Unknown command: ${process.argv[2]}`);
+      printHelp();
       process.exit(1);
     }
   }
