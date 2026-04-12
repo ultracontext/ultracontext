@@ -294,10 +294,32 @@ async function runUpdate(rawArgs) {
   console.log("");
   console.log(`  ${green}✓${r} ${b}Updated${r}  ${gray}${previousVersion} → ${newVersion}${r}`);
 
-  // don't auto-restart — tell user to restart manually to pick up new version
+  // auto-restart daemon in background (same terminal, no new window)
   if (wasRunning) {
-    console.log(`  ${gray}○${r} ${d}Restart to use v${newVersion}:${r} ${cyan}ultracontext sync${r}`);
+    console.log(`  ${green}●${r} ${d}Restarting daemon...${r}`);
+    try {
+      // spawn daemon directly — detached + stdio to log file (no terminal allocation)
+      const { spawn: spawnChild } = await import("node:child_process");
+      const syncEntry = fileURLToPath(new URL("./sdk-sync.mjs", import.meta.url));
+      const logDir = path.join(process.env.HOME || "~", ".ultracontext");
+      const { mkdirSync, openSync, closeSync } = await import("node:fs");
+      mkdirSync(logDir, { recursive: true });
+      const logFd = openSync(path.join(logDir, "daemon.log"), "a");
+      const child = spawnChild(process.execPath, [syncEntry, "--daemon"], {
+        detached: true,
+        stdio: ["ignore", logFd, logFd],
+        env: process.env,
+      });
+      child.unref();
+      closeSync(logFd);
+      await new Promise((r) => setTimeout(r, 500));
+      console.log(`  ${green}●${r} ${d}Daemon running (PID ${child.pid}).${r}`);
+    } catch {
+      console.log(`  ${gray}○${r} ${d}Auto-restart failed. Run:${r} ${cyan}ultracontext sync${r}`);
+    }
   }
+
+  console.log("");
 
   console.log("");
 }
