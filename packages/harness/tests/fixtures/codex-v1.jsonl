@@ -1,0 +1,5 @@
+{"timestamp":"2026-04-01T10:00:00.000Z","type":"session_meta","payload":{"id":"sess-codex-001","timestamp":"2026-04-01T10:00:00.000Z","cwd":"/Users/alice/Code/myapp","originator":"codex","cli_version":"0.1.2","source":"cli","model_provider":"openai"}}
+{"timestamp":"2026-04-01T10:00:01.000Z","type":"event_msg","payload":{"type":"user_message","message":"Refactor the database module","images":[],"local_images":[],"text_elements":[]}}
+{"timestamp":"2026-04-01T10:00:05.000Z","type":"event_msg","payload":{"type":"agent_message","message":"I'll refactor the database module to use connection pooling."}}
+{"timestamp":"2026-04-01T10:00:10.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}
+{"timestamp":"2026-04-01T10:00:30.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-1","last_agent_message":"Refactoring complete."}}

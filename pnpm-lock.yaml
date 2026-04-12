@@ -56,6 +56,9 @@ importers:
 
   apps/daemon:
     dependencies:
+      '@ultracontext/harness':
+        specifier: workspace:*
+        version: link:../../packages/harness
       '@ultracontext/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
@@ -136,6 +139,9 @@ importers:
       '@mishieck/ink-titled-box':
         specifier: ^0.4.2
         version: 0.4.2(ink@6.7.0(react@19.2.4))(react@19.2.4)(typescript@5.9.3)
+      '@ultracontext/harness':
+        specifier: workspace:*
+        version: link:../../packages/harness
       '@ultracontext/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
@@ -160,6 +166,12 @@ importers:
       ws:
         specifier: ^8.18.3
         version: 8.19.0
+
+  packages/harness:
+    dependencies:
+      fast-glob:
+        specifier: ^3.3.3
+        version: 3.3.3
 
   packages/protocol: {}
 
