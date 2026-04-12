@@ -228,8 +228,10 @@ function runGlobalUpdate(manager, tag) {
   }
 
   const [bin, args] = tuple;
+
+  // skip postinstall to prevent launching a new instance mid-update
   const result = spawnSync(bin, args, {
-    env: process.env,
+    env: { ...process.env, ULTRACONTEXT_SKIP_POSTINSTALL: "1" },
     stdio: "inherit",
   });
   if (result.status !== 0) {
