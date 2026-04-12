@@ -24,6 +24,7 @@ import {
 import { MENU_TABS, createInkUiController } from "./ui.mjs";
 import { boolFromEnv, expandHome, toInt } from "./utils.mjs";
 import { createDaemonWsClient } from "./ws-client.mjs";
+import { enableStartupItem, disableStartupItem, isStartupItemEnabled } from "./startup-item.mjs";
 
 const DEFAULT_RUNTIME_CONFIG_FILE = "~/.ultracontext/config.json";
 
@@ -59,6 +60,7 @@ const PERSISTED_CONFIG_FIELDS = [
   "soundEnabled",
   "startupSoundEnabled",
   "contextSoundEnabled",
+  "startOnStartup",
   "bootstrapMode",
   "resumeTerminal",
   "claudeIncludeSubagents",
@@ -119,6 +121,7 @@ const cfg = {
     readEnv("TUI_CONTEXT_SOUND_ENABLED", "DAEMON_CONTEXT_SOUND_ENABLED"),
     true
   ),
+  startOnStartup: isStartupItemEnabled(),
   startupGreetingFile: expandHome(
     readEnv("TUI_STARTUP_SOUND_FILE", "DAEMON_STARTUP_GREETING_FILE") ?? DEFAULT_STARTUP_SOUND_FILE
   ),
@@ -149,6 +152,11 @@ const stats = {
 };
 
 const CONFIG_TOGGLES = [
+  {
+    key: "startOnStartup",
+    label: "Start on startup",
+    description: "Auto-start daemon when your computer starts",
+  },
   {
     key: "soundEnabled",
     label: "Master sounds",
@@ -1356,6 +1364,7 @@ function resumeTerminalConfigLabel(mode) {
 
 function serializeConfigPrefs() {
   return {
+    startOnStartup: Boolean(cfg.startOnStartup),
     soundEnabled: Boolean(cfg.soundEnabled),
     startupSoundEnabled: Boolean(cfg.startupSoundEnabled),
     contextSoundEnabled: Boolean(cfg.contextSoundEnabled),
@@ -1505,7 +1514,8 @@ function configToggleItems() {
   const masterEnabled = Boolean(cfg.soundEnabled);
   const soundItems = CONFIG_TOGGLES.map((item) => {
     const rawValue = Boolean(cfg[item.key]);
-    const blockedByMaster = item.key !== "soundEnabled" && !masterEnabled;
+    const isSoundToggle = item.key !== "soundEnabled" && item.key !== "startOnStartup";
+    const blockedByMaster = isSoundToggle && !masterEnabled;
     const effectiveValue = blockedByMaster ? false : rawValue;
     return {
       ...item,
@@ -1639,6 +1649,23 @@ async function toggleSelectedConfig() {
 
     if (item.kind === "boolean") {
       cfg[item.key] = !cfg[item.key];
+
+      // toggle OS-level startup item (LaunchAgent / systemd)
+      if (item.key === "startOnStartup") {
+        try {
+          if (cfg.startOnStartup) enableStartupItem();
+          else disableStartupItem();
+        } catch (err) {
+          cfg.startOnStartup = !cfg.startOnStartup;
+          ui.resume.notice = `Failed: ${err.message}`;
+          renderDashboard();
+          return;
+        }
+        const saved = await persistConfigPrefs();
+        ui.resume.notice = `Start on startup: ${cfg.startOnStartup ? "ON" : "OFF"}${saved.fileSaved ? " (saved)" : ""}.`;
+        renderDashboard();
+        return;
+      }
 
       if (item.key === "claudeIncludeSubagents") {
         const daemonResult = await sendDaemonCommand(DAEMON_WS_MESSAGE_TYPES.CONFIG_SET, {
