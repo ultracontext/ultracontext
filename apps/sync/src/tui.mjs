@@ -1334,15 +1334,6 @@ function configToggleItems() {
       blockedByMaster: false,
     },
     {
-      key: "claudeIncludeSubagents",
-      kind: "boolean",
-      label: "Claude subagents",
-      description: "Includes Claude subagents in scan (daemon applies on next cycle).",
-      value: Boolean(cfg.claudeIncludeSubagents),
-      valueLabel: cfg.claudeIncludeSubagents ? "ON" : "OFF",
-      blockedByMaster: false,
-    },
-    {
       key: "bootstrapResetState",
       kind: "action",
       label: "Reset bootstrap state",
@@ -1419,16 +1410,6 @@ async function toggleSelectedConfig() {
     // boolean toggles
     if (item.kind === "boolean") {
       cfg[item.key] = !cfg[item.key];
-
-      // claude subagents — write to config.json, daemon picks up next cycle
-      if (item.key === "claudeIncludeSubagents") {
-        const saved = await persistConfigPrefs();
-        ui.resume.notice = cfg.claudeIncludeSubagents
-          ? `Claude subagents: ON${saved.fileSaved ? " (saved)" : ""}.`
-          : `Claude subagents: OFF${saved.fileSaved ? " (saved)" : ""}.`;
-        renderDashboard();
-        return;
-      }
 
       // sound toggles — local only
       if (
