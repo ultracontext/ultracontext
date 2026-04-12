@@ -8,20 +8,15 @@ import { spawnSync } from "node:child_process";
 import fg from "fast-glob";
 import { UltraContext } from "ultracontext";
 import {
-  DAEMON_WS_MESSAGE_TYPES,
   createBootstrapStateKey,
   normalizeBootstrapMode,
   parseProtocolJson,
-  resolveDaemonWsHost,
-  resolveDaemonWsInfoFile,
-  resolveDaemonWsPort,
-} from "@ultracontext/protocol";
+} from "./protocol.mjs";
 
 import { acquireFileLock, resolveLockPath } from "./lock.mjs";
 import { redact } from "./redact.mjs";
 import { parseClaudeCodeLine, parseCodexLine, parseGstackLine, parseOpenClawLine } from "@ultracontext/parsers";
 import { boolFromEnv, expandHome, extractProjectPathFromFile, sha256, toInt } from "./utils.mjs";
-import { createWsServer } from "./ws-server.mjs";
 
 const LOG_LEVELS = { error: 0, warn: 1, info: 2, debug: 3 };
 const DEFAULT_RUNTIME_CONFIG_FILE = "~/.ultracontext/config.json";
@@ -31,9 +26,11 @@ const BOOTSTRAP_OPTIONS = [
   { id: "all", label: "All" },
   { id: "prompt", label: "Ask on startup" },
 ];
-const PERSISTED_CONFIG_FIELDS = ["bootstrapMode", "claudeIncludeSubagents"];
-const STORE_CONFIG_PREFS_KEY = "daemon:prefs";
 const cliArgs = new Set(process.argv.slice(2));
+
+// file-based IPC paths
+const STATUS_FILE = path.join(os.homedir(), ".ultracontext", "status.json");
+const CONFIG_FILE = path.join(os.homedir(), ".ultracontext", "config.json");
 
 const ANSI = {
   reset: "\x1b[0m",
@@ -73,6 +70,43 @@ function normalizeBootstrapModeWithPrompt(raw) {
   return normalizeBootstrapMode(raw, { allowPrompt: true }) || "";
 }
 
+// ── file-based IPC helpers ─────────────────────────────────────
+
+async function writeStatusJson(cfg, stats, state, runtime) {
+  const snapshot = {
+    pid: process.pid,
+    startedAt: new Date(stats.startedAt).toISOString(),
+    updatedAt: new Date().toISOString(),
+    host: cfg.host,
+    userId: cfg.userId,
+    mode: runtime.ingestMode,
+    running: runtime.daemonRunning,
+    stats: { ...stats },
+    sources: state.sourceOrder.map(name => {
+      const s = state.sourceStats.get(name) || {};
+      return { name, ...s };
+    }),
+    recentLogs: state.recentLogs.slice(-240),
+    config: { bootstrapMode: cfg.bootstrapMode, claudeIncludeSubagents: cfg.claudeIncludeSubagents },
+  };
+  const tmp = STATUS_FILE + ".tmp";
+  await fs.writeFile(tmp, JSON.stringify(snapshot, null, 2) + "\n", "utf8");
+  await fs.rename(tmp, STATUS_FILE);
+}
+
+async function readConfigJson() {
+  try {
+    const raw = await fs.readFile(CONFIG_FILE, "utf8");
+    return JSON.parse(raw);
+  } catch { return null; }
+}
+
+async function writeConfigJson(data) {
+  const tmp = CONFIG_FILE + ".tmp";
+  await fs.writeFile(tmp, JSON.stringify(data, null, 2) + "\n", "utf8");
+  await fs.rename(tmp, CONFIG_FILE);
+}
+
 // ── exported boot function ──────────────────────────────────────
 
 export async function daemonBoot({ createStore, resolveDbPath }) {
@@ -90,9 +124,6 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
     configFile: resolveRuntimeConfigPath(),
     dbFile: resolveDbPath(process.env),
     lockFile: resolveLockPath(process.env),
-    wsHost: resolveDaemonWsHost(process.env),
-    wsPort: resolveDaemonWsPort(process.env),
-    wsInfoFile: resolveDaemonWsInfoFile(process.env),
     dedupeTtlSec: toInt(process.env.DAEMON_DEDUPE_TTL_SEC, 60 * 60 * 24 * 30),
     maxReadBytes: toInt(process.env.DAEMON_MAX_READ_BYTES, 4 * 1024 * 1024),
     bootstrapMode: normalizeBootstrapModeWithPrompt(process.env.DAEMON_BOOTSTRAP_MODE ?? "prompt") || "prompt",
@@ -119,7 +150,6 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
     sourceOrder: [],
   };
 
-  let daemonStateTimer = null;
   let stdioErrorHandled = false;
 
   const runtime = {
@@ -129,7 +159,6 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
     sources: null,
     ingestMode: "all",
     daemonRunning: false,
-    wsServer: null,
     lockHandle: null,
   };
 
@@ -227,9 +256,6 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
     state.recentLogs.push({ ts: formatTime(), level, source: logSourceFromData(data), text: line });
     const keep = runtimeLogsKeep();
     while (state.recentLogs.length > keep) state.recentLogs.shift();
-
-    const last = state.recentLogs[state.recentLogs.length - 1];
-    if (runtime.wsServer && last) runtime.wsServer.broadcastLog(last);
   }
 
   function log(level, message, data) {
@@ -296,8 +322,7 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
     return details;
   }
 
-
-  // ── config persistence ──
+  // ── config persistence (file-only) ──
 
   function serializeConfigPrefs() {
     return {
@@ -319,11 +344,6 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
     await fs.mkdir(path.dirname(target), { recursive: true });
     await fs.writeFile(target, `${payload}\n`, "utf8");
     return { saved: true, file: target };
-  }
-
-  function persistConfigPrefsToStore(store = runtime.store) {
-    if (!store) return;
-    store.setConfig(STORE_CONFIG_PREFS_KEY, JSON.stringify(serializeConfigPrefs()));
   }
 
   async function loadConfigPrefsFromPath(target) {
@@ -355,22 +375,10 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
     };
   }
 
-  async function backupConfigFileAsBak(targetFile, sourceRaw = "") {
-    const source = path.resolve(targetFile);
-    const backup = `${source}.bak`;
-    let raw = sourceRaw;
-    if (!raw) {
-      try { raw = await fs.readFile(source, "utf8"); } catch { return { backedUp: false, reason: "missing", backup }; }
-    }
-    try { await fs.access(backup); return { backedUp: false, reason: "exists", backup }; } catch { /* continue */ }
-    await fs.rename(source, backup);
-    await fs.writeFile(source, raw, "utf8");
-    return { backedUp: true, reason: "ok", backup };
-  }
-
   function applyConfigPrefs(prefs) {
     if (!prefs || typeof prefs !== "object") return;
-    for (const field of PERSISTED_CONFIG_FIELDS) {
+    const fields = ["bootstrapMode", "claudeIncludeSubagents"];
+    for (const field of fields) {
       if (!(field in prefs)) continue;
       if (field === "bootstrapMode") {
         cfg.bootstrapMode = normalizeBootstrapModeWithPrompt(prefs.bootstrapMode) || "prompt";
@@ -380,13 +388,40 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
     }
   }
 
-  function loadConfigPrefsFromStore(store = runtime.store) {
-    if (!store) return false;
-    const raw = store.getConfig(STORE_CONFIG_PREFS_KEY);
-    const parsed = parseProtocolJson(raw, null);
-    if (!parsed || typeof parsed !== "object") return false;
-    applyConfigPrefs(parsed);
-    return true;
+  // ── config.json reading each cycle ──
+
+  async function refreshConfigFromFile() {
+    const data = await readConfigJson();
+    if (!data || typeof data !== "object") return;
+
+    // apply setting changes
+    const before = serializeConfigPrefs();
+    applyConfigPrefs(data);
+    const after = serializeConfigPrefs();
+
+    // rebuild sources if subagent toggle changed
+    if (before.claudeIncludeSubagents !== after.claudeIncludeSubagents) {
+      applyRuntimeSources(buildSources());
+    }
+
+    if (JSON.stringify(before) !== JSON.stringify(after)) {
+      log("info", "Reloaded config from config.json", {
+        claude_subagents: after.claudeIncludeSubagents ? "on" : "off",
+        bootstrap_mode: after.bootstrapMode,
+      });
+    }
+
+    // handle bootstrapReset command flag
+    if (data.bootstrapReset) {
+      cfg.bootstrapReset = true;
+      await resetBootstrapState();
+      log("info", "Bootstrap reset triggered via config.json");
+
+      // clear the flag by writing config.json back
+      const cleaned = { ...data };
+      delete cleaned.bootstrapReset;
+      await writeConfigJson(cleaned);
+    }
   }
 
   // ── sources ──
@@ -395,38 +430,6 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
     runtime.sources = sources;
     state.sourceOrder = sources.map((s) => s.name);
     for (const name of state.sourceOrder) ensureSourceStats(name);
-  }
-
-  function refreshDaemonConfigFromStore(store = runtime.store) {
-    if (!store) return false;
-    const before = serializeConfigPrefs();
-    const loaded = loadConfigPrefsFromStore(store);
-    if (!loaded) return false;
-    const after = serializeConfigPrefs();
-    if (JSON.stringify(before) === JSON.stringify(after)) return false;
-
-    if (before.claudeIncludeSubagents !== after.claudeIncludeSubagents) {
-      applyRuntimeSources(buildSources());
-    }
-    log("info", "Reloaded config prefs from local store", {
-      claude_subagents: after.claudeIncludeSubagents ? "on" : "off",
-      bootstrap_mode: after.bootstrapMode,
-    });
-    runtime.wsServer?.broadcastConfig();
-    return true;
-  }
-
-  function buildDaemonRuntimeSnapshot() {
-    return {
-      ts: Date.now(), mode: "daemon", running: Boolean(runtime.daemonRunning),
-      pid: process.pid, host: cfg.host, userId: cfg.userId,
-      stats: { ...stats },
-      sourceStats: state.sourceOrder.map((name) => ({ name, ...ensureSourceStats(name) })),
-    };
-  }
-
-  function publishDaemonRuntimeSnapshot() {
-    runtime.wsServer?.broadcastState();
   }
 
   function buildSources() {
@@ -488,7 +491,6 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
   function offsetStoreKey(sourceName, fileId) { return `offset:${sourceName}:${fileId}`; }
   function seenEventStoreKey(sourceName, eventId) { return `seen:${sourceName}:${eventId}`; }
   function sessionContextStoreKey(sourceName, sessionId) { return `ctx:session:${sourceName}:${cfg.host}:${cfg.userId}:${sessionId}`; }
-
 
   async function primeOffsetsToEof(store, source, shouldStop = () => false) {
     if (shouldStop()) return;
@@ -596,11 +598,6 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
         store.setContextCache(cacheKey, created.id);
         bumpStat("contextsCreated");
         bumpSourceStat(sourceName, "contextsCreated");
-        runtime.wsServer?.broadcastEvent({
-          action: "created", source: sourceName,
-          sessionId: String(metadata?.session_id ?? ""),
-          contextId: created.id,
-        });
         if (cfg.logAppends) {
           log("info", "Context created", {
             source: sourceName, context_id: created.id,
@@ -619,11 +616,6 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
           store.setContextCache(cacheKey, created.id);
           bumpStat("contextsCreated");
           bumpSourceStat(sourceName, "contextsCreated");
-          runtime.wsServer?.broadcastEvent({
-            action: "created", source: sourceName,
-            sessionId: String(metadata?.session_id ?? ""),
-            contextId: created.id,
-          });
           if (cfg.logAppends) {
             log("warn", "Context created without metadata fallback", {
               source: sourceName, context_id: created.id,
@@ -667,7 +659,6 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
     await uc.append(sessionContextId, payload);
     bumpStat("appended");
     bumpSourceStat(sourceName, "appended");
-    runtime.wsServer?.broadcastEvent({ action: "appended", source: sourceName, sessionId: normalized.sessionId, contextId: sessionContextId });
     noteSourceActivity(sourceName, { lastEventType: normalized.eventType, lastSessionId: normalized.sessionId, lastAt: Date.now() });
 
     if (cfg.logAppends) {
@@ -745,11 +736,10 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
         await uc.append(sessionContextId, batch);
       }
 
-      // update stats + broadcast
+      // update stats
       bumpStat("appended", sessionEvents.length);
       bumpSourceStat(sourceName, "appended", sessionEvents.length);
       const last = sessionEvents[sessionEvents.length - 1].normalized;
-      runtime.wsServer?.broadcastEvent({ action: "appended", source: sourceName, sessionId, contextId: sessionContextId, count: sessionEvents.length });
       noteSourceActivity(sourceName, { lastEventType: last.eventType, lastSessionId: sessionId, lastAt: Date.now() });
 
       if (cfg.logAppends) {
@@ -869,74 +859,10 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
     runtime.store.deleteConfig(bootstrapStateStoreKey(sources));
   }
 
-  async function persistDaemonConfigEverywhere() {
-    persistConfigPrefsToStore(runtime.store);
-    await persistConfigPrefsToFile();
-    publishDaemonRuntimeSnapshot();
-    runtime.wsServer?.broadcastConfig();
-  }
-
-  async function handleWsCommand(message) {
-    if (!message || typeof message !== "object") return { ok: true };
-
-    if (message.type === DAEMON_WS_MESSAGE_TYPES.CONFIG_GET) {
-      return { config: serializeConfigPrefs() };
-    }
-
-    if (message.type === DAEMON_WS_MESSAGE_TYPES.CONFIG_SET) {
-      const key = String(message?.data?.key ?? "").trim();
-      const value = message?.data?.value;
-      if (!key) throw new Error("config key is required");
-
-      if (key === "claudeIncludeSubagents") {
-        cfg.claudeIncludeSubagents = boolFromEnv(value, cfg.claudeIncludeSubagents);
-        applyRuntimeSources(buildSources());
-        await persistDaemonConfigEverywhere();
-        log("info", "Config updated via TUI", { key, value: cfg.claudeIncludeSubagents ? "on" : "off" });
-        return { config: serializeConfigPrefs() };
-      }
-
-      if (key === "bootstrapMode") {
-        const next = normalizeBootstrapModeWithPrompt(value);
-        if (!next) throw new Error("invalid bootstrap mode");
-        cfg.bootstrapMode = next;
-        cfg.bootstrapReset = next === "prompt";
-        await persistDaemonConfigEverywhere();
-        log("info", "Config updated via TUI", { key, value: cfg.bootstrapMode });
-        return { config: serializeConfigPrefs() };
-      }
-
-      if (key === "bootstrapReset") {
-        cfg.bootstrapReset = boolFromEnv(value, false);
-        if (cfg.bootstrapReset) await resetBootstrapState();
-        await persistDaemonConfigEverywhere();
-        log("info", "Config updated via TUI", { key, value: cfg.bootstrapReset ? "on" : "off" });
-        return { config: serializeConfigPrefs() };
-      }
-
-      throw new Error(`unsupported config key: ${key}`);
-    }
-
-    if (message.type === DAEMON_WS_MESSAGE_TYPES.BOOTSTRAP_RESET) {
-      const profile = normalizeBootstrapModeWithPrompt(message?.data?.profile) || "prompt";
-      cfg.bootstrapMode = profile;
-      cfg.bootstrapReset = true;
-      await resetBootstrapState();
-      await persistDaemonConfigEverywhere();
-      log("info", "Bootstrap reset requested via TUI", { profile });
-      return { ok: true, config: serializeConfigPrefs(), reset: true };
-    }
-
-    return { ignored: true };
-  }
-
   // ── cleanup ──
 
   async function stopRuntimeResources() {
-    if (daemonStateTimer) { clearInterval(daemonStateTimer); daemonStateTimer = null; }
     runtime.daemonRunning = false;
-    try { publishDaemonRuntimeSnapshot(); } catch { /* ignore */ }
-    if (runtime.wsServer) { try { await runtime.wsServer.stop(); } catch (e) { log("warn", "Failed to stop WS server", errorDetails(e)); } runtime.wsServer = null; }
     if (runtime.lockHandle) { try { await runtime.lockHandle.release(); } catch (e) { log("warn", "Failed to release daemon lock", errorDetails(e)); } runtime.lockHandle = null; }
     if (runtime.store) { try { runtime.store.close(); } catch (e) { log("warn", "Failed to close local store", errorDetails(e)); } runtime.store = null; }
     runtime.uc = null;
@@ -954,29 +880,14 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
     const store = createStore({ dbPath: cfg.dbFile });
     runtime.store = store;
 
-    // load persisted config
+    // load persisted config from file
     try {
       const fileLoad = await loadConfigPrefsFromFile();
-      const loadedFromFile = fileLoad.loaded;
-      const loadedFromStore = loadConfigPrefsFromStore(store);
-
-      if (loadedFromFile || loadedFromStore) {
+      if (fileLoad.loaded) {
         log("info", "Loaded persisted config preferences", {
-          file: loadedFromFile ? "yes" : "no", file_source: loadedFromFile ? fileLoad.source : "none",
-          file_path: loadedFromFile ? fileLoad.file : "", store: loadedFromStore ? "yes" : "no", db_path: cfg.dbFile,
+          file_source: fileLoad.source, file_path: fileLoad.file,
         });
-      }
-      if (loadedFromStore && !loadedFromFile) {
-        await persistConfigPrefsToFile();
-        log("info", "Materialized store config prefs into file", { file_saved: "yes" });
-      }
-      if (loadedFromFile && !loadedFromStore) {
-        persistConfigPrefsToStore(store);
-        const backup = await backupConfigFileAsBak(fileLoad.file || cfg.configFile, fileLoad.raw);
-        log("info", "Materialized file config prefs into store", { db_saved: "yes", file_backup: backup.backedUp ? "yes" : "no", backup_path: backup.backup });
-      }
-      if (!loadedFromFile && !loadedFromStore) {
-        persistConfigPrefsToStore(store);
+      } else {
         await persistConfigPrefsToFile();
         log("info", "Created default runtime config file", { file: path.resolve(cfg.configFile) });
       }
@@ -1000,28 +911,13 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
       throw new Error(`UltraContext auth/connectivity check failed (status=${details.status ?? "?"}, url=${details.url ?? cfg.baseUrl}, body=${details.bodyText ?? details.message})`);
     }
 
-    // ws server
-    const wsServer = createWsServer({
-      host: cfg.wsHost, port: cfg.wsPort, infoFilePath: cfg.wsInfoFile, heartbeatMs: 5000,
-      getSnapshot: buildDaemonRuntimeSnapshot,
-      getLogs: () => state.recentLogs.slice(-runtimeLogsKeep()),
-      getConfig: serializeConfigPrefs,
-      onCommand: handleWsCommand,
-    });
-    runtime.wsServer = wsServer;
-    const wsInfo = await wsServer.start();
-
     log("info", "UltraContext daemon started", {
       user_id: cfg.userId, host: cfg.host, poll_ms: cfg.pollMs, mode: "headless",
-      ws_host: wsInfo.host, ws_port: wsInfo.port, ws_info_file: cfg.wsInfoFile, db_file: cfg.dbFile,
+      db_file: cfg.dbFile,
       sources: sources.map((s) => ({ name: s.name, globs: s.globs })),
     });
 
     runtime.daemonRunning = true;
-    publishDaemonRuntimeSnapshot();
-
-    daemonStateTimer = setInterval(() => { try { publishDaemonRuntimeSnapshot(); } catch { /* ignore */ } }, Math.max(cfg.uiRefreshMs, 500));
-    daemonStateTimer.unref?.();
 
     // main poll loop
     let running = true;
@@ -1054,8 +950,9 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
     }
 
     while (running) {
-      try { refreshDaemonConfigFromStore(store); } catch (error) {
-        log("warn", "Failed to refresh daemon config from local store", errorDetails(error));
+      // check config.json for setting changes + commands
+      try { await refreshConfigFromFile(); } catch (error) {
+        log("warn", "Failed to refresh config from config.json", errorDetails(error));
       }
 
       bumpStat("cycles");
@@ -1068,7 +965,9 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
       ));
 
       if (stats.cycles % cfg.cleanupEveryCycles === 0) { try { store.cleanupExpired(); } catch { /* ignore */ } }
-      publishDaemonRuntimeSnapshot();
+
+      // write status.json atomically after each cycle
+      try { await writeStatusJson(cfg, stats, state, runtime); } catch { /* ignore */ }
 
       if (!running) break;
       const waitMs = Math.max(cfg.pollMs - (Date.now() - cycleStart), 10);
@@ -1076,7 +975,10 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
     }
 
     runtime.daemonRunning = false;
-    publishDaemonRuntimeSnapshot();
+
+    // final status write
+    try { await writeStatusJson(cfg, stats, state, runtime); } catch { /* ignore */ }
+
     emitStatusLine();
     await stopRuntimeResources();
     log("info", "UltraContext daemon stopped");

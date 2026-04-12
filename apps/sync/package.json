@@ -1,0 +1,31 @@
+{
+  "name": "@ultracontext/sync",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.mjs",
+    "stop": "node -e \"import('./src/ctl.mjs').then(m => { process.argv[2]='stop'; m.runCtl(); })\"",
+    "dev": "node --watch src/index.mjs",
+    "check": "node --check src/index.mjs && node --check src/daemon.mjs && node --check src/tui.mjs && node --check src/store.mjs && node --check src/ctl.mjs && node --check src/launcher.mjs && node --check src/lock.mjs && node --check src/env.mjs && node --check src/utils.mjs && node --check src/protocol.mjs && node --check src/redact.mjs"
+  },
+  "exports": {
+    "./sync": "./src/daemon.mjs",
+    "./tui": "./src/tui.mjs",
+    "./store": "./src/store.mjs",
+    "./ctl": "./src/ctl.mjs",
+    "./launcher": "./src/launcher.mjs",
+    "./ui/hero-art": "./src/ui/hero-art.mjs",
+    "./ui/constants": "./src/ui/constants.mjs",
+    "./Spinner": "./src/Spinner.mjs"
+  },
+  "dependencies": {
+    "@mishieck/ink-titled-box": "^0.4.2",
+    "@ultracontext/parsers": "workspace:*",
+    "dotenv": "^17.2.3",
+    "fast-glob": "^3.3.3",
+    "figlet": "^1.10.0",
+    "ink": "^6.7.0",
+    "react": "^19.2.4",
+    "ultracontext": "^1.0.1"
+  }
+}

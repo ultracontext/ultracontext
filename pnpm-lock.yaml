@@ -54,27 +54,6 @@ importers:
         specifier: ^4.20.5
         version: 4.21.0
 
-  apps/daemon:
-    dependencies:
-      '@ultracontext/parsers':
-        specifier: workspace:*
-        version: link:../../packages/parsers
-      '@ultracontext/protocol':
-        specifier: workspace:*
-        version: link:../../packages/protocol
-      dotenv:
-        specifier: ^17.2.3
-        version: 17.3.1
-      fast-glob:
-        specifier: ^3.3.3
-        version: 3.3.3
-      ultracontext:
-        specifier: ^1.0.1
-        version: 1.0.2
-      ws:
-        specifier: ^8.18.3
-        version: 8.19.0
-
   apps/js-sdk:
     dependencies:
       '@mishieck/ink-titled-box':
@@ -96,15 +75,9 @@ importers:
         specifier: ^8.18.3
         version: 8.19.0
     devDependencies:
-      '@ultracontext/daemon':
+      '@ultracontext/sync':
         specifier: workspace:*
-        version: link:../daemon
-      '@ultracontext/protocol':
-        specifier: workspace:*
-        version: link:../../packages/protocol
-      '@ultracontext/tui':
-        specifier: workspace:*
-        version: link:../tui
+        version: link:../sync
       tsdown:
         specifier: ^0.20.3
         version: 0.20.3(typescript@5.9.3)
@@ -134,7 +107,7 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
 
-  apps/tui:
+  apps/sync:
     dependencies:
       '@mishieck/ink-titled-box':
         specifier: ^0.4.2
@@ -142,9 +115,6 @@ importers:
       '@ultracontext/parsers':
         specifier: workspace:*
         version: link:../../packages/parsers
-      '@ultracontext/protocol':
-        specifier: workspace:*
-        version: link:../../packages/protocol
       dotenv:
         specifier: ^17.2.3
         version: 17.3.1
@@ -163,17 +133,12 @@ importers:
       ultracontext:
         specifier: ^1.0.1
         version: 1.0.2
-      ws:
-        specifier: ^8.18.3
-        version: 8.19.0
 
   packages/parsers:
     dependencies:
       fast-glob:
         specifier: ^3.3.3
         version: 3.3.3
-
-  packages/protocol: {}
 
 packages:
 

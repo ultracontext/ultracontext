@@ -20,19 +20,17 @@ Key internals:
 - **Config** (`src/config.ts`) — `buildApiConfig(env)` takes any plain object. `getApiConfig()` loads dotenv first.
 - **Schema** (`apps/postgres/init.sql`) — tables: `projects`, `api_keys`, `nodes`. JSONB for `content`/`metadata`.
 
-### Context Hub
+### Sync (`apps/sync`)
 
-- `apps/daemon` — background ingestion of agent sessions + gstack skill artifacts. Node ESM + WebSocket server.
-- `apps/tui` — terminal dashboard. Ink/React 19 + WebSocket client.
+Single package for local ingestion + TUI dashboard. Two processes, JSON file IPC:
+- **Daemon** (`daemon.mjs`) — background ingestion of agent sessions. Writes `status.json` each cycle.
+- **TUI** (`tui.mjs`) — read-only terminal dashboard (Ink/React 19). Polls `status.json`.
+- **IPC** — `config.json` (CLI→daemon), `status.json` (daemon→TUI). No WebSocket, no shared SQLite.
 
 ### SDKs
 
-- `apps/js-sdk` — published as `ultracontext` on npm. Bundles CLI + daemon + TUI.
+- `apps/js-sdk` — published as `ultracontext` on npm. Bundles CLI + sync.
 - `apps/python-sdk` — httpx, published on PyPI.
-
-### Shared
-
-`packages/protocol` — WS message types, env resolution, constants.
 
 ## Commands
 
@@ -43,8 +41,7 @@ pnpm ultracontext:db:down                       # stop
 pnpm ultracontext:db:reset                      # reset with volumes
 pnpm ultracontext:db:migrate                    # apply schema
 pnpm ultracontext:api                           # run API (port 8787)
-pnpm dev:daemon                                 # daemon watch mode
-pnpm dev:tui                                    # TUI watch mode
+pnpm dev:sync                                   # sync watch mode (daemon + TUI)
 pnpm --filter ultracontext run build            # build JS SDK
 pnpm --filter ultracontext-api run test         # API tests (node --test)
 pnpm --filter ultracontext-api run test:watch   # API tests watch
@@ -58,7 +55,7 @@ No repo-wide formatter. Match local style:
 | Package | Indent | Quotes | Files |
 |---|---|---|---|
 | `apps/api` | 4 spaces | single | kebab-case |
-| `apps/daemon`, `apps/tui`, `apps/js-sdk` | 2 spaces | double | kebab-case, PascalCase for React |
+| `apps/sync`, `apps/js-sdk` | 2 spaces | double | kebab-case, PascalCase for React |
 
 ## Conventions
 

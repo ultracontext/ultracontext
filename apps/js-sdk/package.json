@@ -69,9 +69,7 @@
         "ws": "^8.18.3"
     },
     "devDependencies": {
-        "@ultracontext/daemon": "workspace:*",
-        "@ultracontext/protocol": "workspace:*",
-        "@ultracontext/tui": "workspace:*",
+        "@ultracontext/sync": "workspace:*",
         "tsdown": "^0.20.3",
         "typescript": "^5.9.3"
     },

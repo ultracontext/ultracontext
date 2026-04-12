@@ -1,24 +1,11 @@
+// env resolution + bootstrap helpers (extracted from packages/protocol)
 import os from "node:os";
 import path from "node:path";
 
 const VERSION = "v1";
-const DEFAULT_DAEMON_WS_HOST = "127.0.0.1";
-const DEFAULT_DAEMON_WS_PORT = 0;
 const DEFAULT_DAEMON_INFO_FILE = "~/.ultracontext/daemon.info";
 
-export const DAEMON_WS_MESSAGE_TYPES = Object.freeze({
-  SNAPSHOT: "snapshot",
-  STATE: "state",
-  LOG: "log",
-  CONTEXT_EVENT: "context:event",
-  CONFIG_STATE: "config:state",
-  REQUEST_ACK: "ack",
-  PING: "ping",
-  PONG: "pong",
-  CONFIG_GET: "config:get",
-  CONFIG_SET: "config:set",
-  BOOTSTRAP_RESET: "bootstrap:reset",
-});
+// ── helpers ────────────────────────────────────────────
 
 function norm(value, fallback = "unknown") {
   const trimmed = String(value ?? "").trim();
@@ -33,18 +20,9 @@ function expandHome(inputPath) {
   return raw;
 }
 
-export function resolveDaemonWsHost(env = process.env) {
-  const raw = String(env.ULTRACONTEXT_DAEMON_WS_HOST ?? env.ULTRACONTEXT_WS_HOST ?? "").trim();
-  return raw || DEFAULT_DAEMON_WS_HOST;
-}
+// ── env resolution ─────────────────────────────────────
 
-export function resolveDaemonWsPort(env = process.env) {
-  const raw = Number.parseInt(String(env.ULTRACONTEXT_DAEMON_WS_PORT ?? env.ULTRACONTEXT_WS_PORT ?? ""), 10);
-  if (Number.isInteger(raw) && raw >= 0 && raw <= 65535) return raw;
-  return DEFAULT_DAEMON_WS_PORT;
-}
-
-export function resolveDaemonWsInfoFile(env = process.env) {
+export function resolveDaemonInfoFile(env = process.env) {
   return expandHome(
     env.ULTRACONTEXT_DAEMON_INFO_FILE ??
       env.ULTRACONTEXT_DAEMON_WS_PORT_FILE ??
@@ -53,9 +31,7 @@ export function resolveDaemonWsInfoFile(env = process.env) {
   );
 }
 
-export function resolveDaemonWsPortFile(env = process.env) {
-  return resolveDaemonWsInfoFile(env);
-}
+// ── bootstrap helpers ──────────────────────────────────
 
 export function createBootstrapStateKey({ host, userId, sourceNames }) {
   const names = Array.isArray(sourceNames) ? sourceNames.map((name) => String(name ?? "").trim()).filter(Boolean) : [];
@@ -72,6 +48,8 @@ export function normalizeBootstrapMode(raw, { allowPrompt = false } = {}) {
   return "";
 }
 
+// ── json parsing ───────────────────────────────────────
+
 export function parseProtocolJson(raw, fallback) {
   if (!raw) return fallback;
   try {
@@ -79,20 +57,4 @@ export function parseProtocolJson(raw, fallback) {
   } catch {
     return fallback;
   }
-}
-
-export function buildDaemonWsMessage(type, data = {}) {
-  return { type: String(type ?? ""), data: data ?? {} };
-}
-
-export function parseDaemonWsMessage(raw, fallback = null) {
-  const parsed = typeof raw === "string" ? parseProtocolJson(raw, fallback) : raw;
-  if (!parsed || typeof parsed !== "object") return fallback;
-  const type = String(parsed.type ?? "").trim();
-  if (!type) return fallback;
-  return {
-    ...parsed,
-    type,
-    data: parsed.data ?? {},
-  };
 }

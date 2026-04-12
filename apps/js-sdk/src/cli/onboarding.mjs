@@ -7,9 +7,9 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
-import { heroArtForWidth } from "@ultracontext/tui/ui/hero-art";
-import { UC_BRAND_BLUE, UC_BLUE_LIGHT } from "@ultracontext/tui/ui/constants";
-import Spinner from "@ultracontext/tui/Spinner";
+import { heroArtForWidth } from "@ultracontext/sync/ui/hero-art";
+import { UC_BRAND_BLUE, UC_BLUE_LIGHT } from "@ultracontext/sync/ui/constants";
+import Spinner from "@ultracontext/sync/Spinner";
 
 // ── config helpers ──────────────────────────────────────────────
 

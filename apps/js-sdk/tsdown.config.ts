@@ -16,7 +16,7 @@ export default defineConfig([
     entry: {
       "cli/entry": "src/cli/entry.mjs",
       "cli/onboarding": "src/cli/onboarding.mjs",
-      "cli/sdk-daemon": "src/cli/sdk-daemon.mjs",
+      "cli/sdk-sync": "src/cli/sdk-sync.mjs",
     },
     outDir: "dist",
     format: "esm",

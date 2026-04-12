@@ -6,7 +6,7 @@ import process from "node:process";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { resolveDaemonWsInfoFile } from "@ultracontext/protocol";
+import { resolveDaemonInfoFile } from "./protocol.mjs";
 
 import { resolveLockPath } from "./lock.mjs";
 import { expandHome } from "./utils.mjs";
@@ -90,10 +90,10 @@ async function resolveWritableLogPath(preferredPath) {
 
 export async function launchDaemon({ entryPath, diagnosticsHint } = {}) {
   const resolvedEntry = entryPath ?? fileURLToPath(new URL("./index.mjs", import.meta.url));
-  const hint = diagnosticsHint ?? "pnpm --filter @ultracontext/daemon run start:verbose";
+  const hint = diagnosticsHint ?? "pnpm --filter @ultracontext/sync run start";
 
   const lockPath = path.resolve(resolveLockPath(process.env));
-  const infoPath = path.resolve(resolveDaemonWsInfoFile(process.env));
+  const infoPath = path.resolve(resolveDaemonInfoFile(process.env));
   const preferredLogPath = resolveDaemonLogFile(process.env);
 
   console.log("");

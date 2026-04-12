@@ -48,12 +48,6 @@ export function createStore({ dbPath = resolveDbPath(process.env) } = {}) {
       updated_at INTEGER DEFAULT (unixepoch())
     );
 
-    CREATE TABLE IF NOT EXISTS daemon_config (
-      key TEXT PRIMARY KEY,
-      value TEXT,
-      updated_at INTEGER DEFAULT (unixepoch())
-    );
-
     CREATE TABLE IF NOT EXISTS context_cache (
       cache_key TEXT PRIMARY KEY,
       context_id TEXT NOT NULL,
@@ -92,27 +86,6 @@ export function createStore({ dbPath = resolveDbPath(process.env) } = {}) {
       ON CONFLICT(file_key) DO UPDATE SET
         offset_value = excluded.offset_value,
         updated_at = unixepoch()
-    `),
-    getConfig: db.prepare(`
-      SELECT value
-      FROM daemon_config
-      WHERE key = ?
-      LIMIT 1
-    `),
-    setConfig: db.prepare(`
-      INSERT INTO daemon_config (key, value, updated_at)
-      VALUES (?, ?, unixepoch())
-      ON CONFLICT(key) DO UPDATE SET
-        value = excluded.value,
-        updated_at = unixepoch()
-    `),
-    deleteConfig: db.prepare(`
-      DELETE FROM daemon_config
-      WHERE key = ?
-    `),
-    getAllConfig: db.prepare(`
-      SELECT key, value
-      FROM daemon_config
     `),
     getContextCache: db.prepare(`
       SELECT context_id
@@ -161,29 +134,6 @@ export function createStore({ dbPath = resolveDbPath(process.env) } = {}) {
     },
     setOffset(fileKey, value) {
       stmt.setOffset.run(String(fileKey ?? ""), parseNumber(value, 0));
-    },
-    getConfig(key) {
-      const row = stmt.getConfig.get(String(key ?? ""));
-      return row ? String(row.value ?? "") : null;
-    },
-    setConfig(key, value) {
-      stmt.setConfig.run(String(key ?? ""), String(value ?? ""));
-    },
-    deleteConfig(key) {
-      stmt.deleteConfig.run(String(key ?? ""));
-    },
-    getAllConfig() {
-      const out = {};
-      for (const row of stmt.getAllConfig.all()) {
-        out[String(row.key)] = String(row.value ?? "");
-      }
-      return out;
-    },
-    getConfigBool(key, fallback = false) {
-      return parseBool(this.getConfig(key), fallback);
-    },
-    getConfigInt(key, fallback = 0) {
-      return parseNumber(this.getConfig(key), fallback);
     },
     getContextCache(cacheKey) {
       const row = stmt.getContextCache.get(String(cacheKey ?? ""));
