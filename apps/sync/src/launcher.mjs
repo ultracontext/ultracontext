@@ -116,7 +116,7 @@ export async function launchDaemon({ entryPath, diagnosticsHint } = {}) {
   try {
     child = spawn(process.execPath, [resolvedEntry, "--daemon"], {
       env: process.env,
-      detached: true,
+      detached: false,
       stdio: ["ignore", outFd, errFd],
     });
     child.unref();

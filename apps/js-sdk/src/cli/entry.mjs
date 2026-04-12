@@ -306,7 +306,7 @@ async function runUpdate(rawArgs) {
       mkdirSync(logDir, { recursive: true });
       const logFd = openSync(path.join(logDir, "daemon.log"), "a");
       const child = spawnChild(process.execPath, [syncEntry, "--daemon"], {
-        detached: true,
+        detached: false,
         stdio: ["ignore", logFd, logFd],
         env: process.env,
       });
