@@ -273,9 +273,9 @@ async function runUpdate(rawArgs) {
   console.log(`  ${blue}${b}UltraContext${r} ${d}Update${r}`);
   console.log("");
 
-  // stop daemon before update (in-process, no subprocess)
+  // stop daemon before update
   const wasRunning = isDaemonRunning();
-  if (wasRunning && opts.restart) {
+  if (wasRunning) {
     console.log(`  ${gray}○${r} ${d}Stopping daemon...${r}`);
     try {
       process.argv[2] = "stop";
@@ -294,16 +294,9 @@ async function runUpdate(rawArgs) {
   console.log("");
   console.log(`  ${green}✓${r} ${b}Updated${r}  ${gray}${previousVersion} → ${newVersion}${r}`);
 
-  // restart daemon in-process (no subprocess, no new terminal)
-  if (wasRunning && opts.restart) {
-    console.log(`  ${green}●${r} ${d}Restarting daemon...${r}`);
-    try {
-      await launchSyncDaemon();
-    } catch {
-      console.log(`  ${gray}○${r} ${d}Auto-restart failed. Run:${r} ${cyan}ultracontext sync${r}`);
-    }
-  } else if (wasRunning) {
-    console.log(`  ${gray}○${r} ${d}Daemon was stopped. Run:${r} ${cyan}ultracontext sync${r}`);
+  // don't auto-restart — tell user to restart manually to pick up new version
+  if (wasRunning) {
+    console.log(`  ${gray}○${r} ${d}Restart to use v${newVersion}:${r} ${cyan}ultracontext sync${r}`);
   }
 
   console.log("");
