@@ -74,14 +74,14 @@ export function ContextsContent({ snapshot, viewFocused, maxRows, maxCols }) {
       const sourceInfo = contextBadge(md.source || "unknown");
       const createdAt = formatContextDate(ctx?.created_at);
       const user = compact(md.user_id ?? "-", 12);
-      const sessionId = compact(md.session_id ?? "-", 28);
+      const label = compact(md.title ?? md.session_id ?? "-", 48);
       rows.push(
         React.createElement(
           Text,
           { key: `contexts-row-${i}`, color: rowColor },
           `${marker} `,
           React.createElement(Text, { color: sourceInfo.color, bold: true }, `[${sourceInfo.text}]`),
-          ` ${createdAt} ${user} ${sessionId}`
+          ` ${createdAt} ${user} ${label}`
         )
       );
     }
