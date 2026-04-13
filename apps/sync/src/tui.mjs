@@ -267,6 +267,9 @@ const runtime = {
   resumeBaselineReady: false,
   dirty: true,
   lastSnapshot: null,
+  cachedLogSlice: [],
+  cachedLogLen: 0,
+  stopResolve: null,
 };
 
 // ── status.json → UI state applicator ──────────────────────────
@@ -286,11 +289,16 @@ function applyDaemonStatus(status) {
 
   if (!ui.daemonOnline) return;
 
-  // apply stats — only mark dirty if values changed
+  // apply stats — only mark dirty if display-visible values changed
+  // (skip 'cycles' — it increments every daemon loop and would defeat the dirty-flag)
   const ss = status.stats || {};
+  let statsChanged = false;
   for (const k of Object.keys(ss)) {
-    if (stats[k] !== ss[k]) { Object.assign(stats, ss); markDirty(); break; }
+    if (k === "cycles") continue;
+    if (stats[k] !== ss[k]) { statsChanged = true; break; }
   }
+  Object.assign(stats, ss);
+  if (statsChanged) markDirty();
 
   // apply source stats — reuse array if unchanged
   const sources = status.sources || [];
@@ -355,6 +363,17 @@ async function pollDaemonStatus() {
 
 function runtimeLogsKeep() {
   return Math.max(cfg.uiRecentLimit, 180);
+}
+
+// reuse slice when log array hasn't changed (avoids allocation per snapshot)
+function recentLogsCached() {
+  const len = ui.recentLogs.length;
+  if (len === runtime.cachedLogLen && runtime.cachedLogSlice.length > 0) {
+    return runtime.cachedLogSlice;
+  }
+  runtime.cachedLogLen = len;
+  runtime.cachedLogSlice = ui.recentLogs.slice(-runtimeLogsKeep());
+  return runtime.cachedLogSlice;
 }
 
 function formatTime(value = Date.now()) {
@@ -1503,30 +1522,11 @@ function buildUiSnapshot() {
       selectedIndex: selectedConfigIndex,
       items: configItems,
     },
-    recentLogs: ui.recentLogs.slice(-runtimeLogsKeep()),
+    recentLogs: recentLogsCached(),
     sourceStats: ui.sourceStats,
-    resume: {
-      ...ui.resume,
-      contexts: ui.resume.contexts,
-    },
-    detailView: {
-      active: ui.detailView.active,
-      contextId: ui.detailView.contextId,
-      contextMeta: ui.detailView.contextMeta,
-      messages: ui.detailView.messages,
-      scrollOffset: ui.detailView.scrollOffset,
-      lineOffset: ui.detailView.lineOffset,
-      loading: ui.detailView.loading,
-      error: ui.detailView.error,
-    },
-    resumeTargetPicker: {
-      active: ui.resumeTargetPicker.active,
-      selectedIndex: ui.resumeTargetPicker.selectedIndex,
-      source: ui.resumeTargetPicker.source,
-      contextId: ui.resumeTargetPicker.contextId,
-      options: ui.resumeTargetPicker.options,
-      recommendedTarget: ui.resumeTargetPicker.recommendedTarget,
-    },
+    resume: ui.resume,
+    detailView: ui.detailView,
+    resumeTargetPicker: ui.resumeTargetPicker,
     onlineClients: ui.onlineClients,
     bootstrap: {
       active: ui.bootstrap.active,
@@ -1570,7 +1570,6 @@ async function tuiMain() {
 
   await uc.get({ limit: 1 });
 
-  let running = true;
   let stopRequested = false;
   const stop = (reason = "internal") => {
     if (stopRequested) return;
@@ -1578,7 +1577,7 @@ async function tuiMain() {
     if (reason === "user" || reason === "sigint") {
       stopWatchParentProcess();
     }
-    running = false;
+    runtime.stopResolve?.();
   };
   runtime.stop = stop;
 
@@ -1676,9 +1675,8 @@ async function tuiMain() {
   process.on("SIGINT", () => stop("sigint"));
   process.on("SIGTERM", () => stop("sigterm"));
 
-  while (running) {
-    await new Promise((resolve) => setTimeout(resolve, 120));
-  }
+  // block until stop() is called (single Promise, no spin-loop allocation)
+  await new Promise((resolve) => { runtime.stopResolve = resolve; });
 
   // cleanup
   if (runtime.statusPollTimer) clearInterval(runtime.statusPollTimer);
@@ -1690,6 +1688,7 @@ async function tuiMain() {
   runtime.uiController = null;
 
   runtime.lastSnapshot = null;
+  runtime.stopResolve = null;
   runtime.stop = null;
   runtime.uc = null;
 }
@@ -1703,6 +1702,7 @@ tuiMain().catch(async (error) => {
   runtime.uiController?.stop();
   runtime.uiController = null;
 
+  runtime.stopResolve = null;
   runtime.stop = null;
   runtime.uc = null;
 
