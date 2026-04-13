@@ -69,6 +69,7 @@ const CONFIG_RESUME_TERMINALS = [
   { id: "terminal", label: "Terminal" },
   { id: "ghostty", label: "Ghostty" },
   { id: "warp", label: "Warp" },
+  { id: "tmux", label: "tmux" },
 ];
 const RESUME_TARGET_OPTIONS = [
   { id: "claude", label: "Claude Code" },
@@ -98,6 +99,7 @@ function normalizeResumeTerminal(raw) {
   const value = String(raw ?? "terminal").trim().toLowerCase();
   if (value === "warp") return "warp";
   if (value === "ghostty") return "ghostty";
+  if (value === "tmux") return "tmux";
   return "terminal";
 }
 
@@ -658,7 +660,20 @@ function resumeOpenGhosttyTab(command) {
   return { ...out, method: "ghostty_applescript" };
 }
 
+// tmux — open new window with command
+function resumeOpenTmuxWindow(command) {
+  if (!process.env.TMUX) {
+    return { ok: false, reason: "not inside a tmux session" };
+  }
+  const out = spawnSync("tmux", ["new-window", command], {
+    stdio: "pipe", encoding: "utf8", timeout: 5000,
+  });
+  if (out.status === 0) return { ok: true, method: "tmux" };
+  return { ok: false, reason: out.stderr?.trim() || "tmux new-window failed", method: "tmux" };
+}
+
 function resumeOpenTerminalTab(command) {
+  if (cfg.resumeTerminal === "tmux") return resumeOpenTmuxWindow(command);
   if (process.platform !== "darwin") {
     return { ok: false, reason: "open-tab is available only on macOS" };
   }
