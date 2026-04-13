@@ -70,6 +70,7 @@ const CONFIG_RESUME_TERMINALS = [
   { id: "ghostty", label: "Ghostty" },
   { id: "warp", label: "Warp" },
   { id: "tmux", label: "tmux" },
+  { id: "cmux", label: "cmux" },
 ];
 const RESUME_TARGET_OPTIONS = [
   { id: "claude", label: "Claude Code" },
@@ -100,6 +101,7 @@ function normalizeResumeTerminal(raw) {
   if (value === "warp") return "warp";
   if (value === "ghostty") return "ghostty";
   if (value === "tmux") return "tmux";
+  if (value === "cmux") return "cmux";
   return "terminal";
 }
 
@@ -660,6 +662,27 @@ function resumeOpenGhosttyTab(command) {
   return { ...out, method: "ghostty_applescript" };
 }
 
+// cmux — Ghostty-based terminal, same AppleScript approach
+function resumeOpenCmuxTab(command) {
+  const scriptLines = [
+    "set _uc_prev_clipboard to the clipboard",
+    `set the clipboard to ${resumeAppleScriptString(command)}`,
+    "tell application \"cmux\" to activate",
+    "delay 0.4",
+    "tell application \"System Events\"",
+    "keystroke \"t\" using {command down}",
+    "delay 0.3",
+    "keystroke \"v\" using {command down}",
+    "delay 0.15",
+    "key code 36",
+    "end tell",
+    "delay 0.05",
+    "set the clipboard to _uc_prev_clipboard",
+  ];
+  const out = runAppleScriptLines(scriptLines);
+  return { ...out, method: "cmux_applescript" };
+}
+
 // tmux — open new window with command
 function resumeOpenTmuxWindow(command) {
   if (!process.env.TMUX) {
@@ -674,6 +697,7 @@ function resumeOpenTmuxWindow(command) {
 
 function resumeOpenTerminalTab(command) {
   if (cfg.resumeTerminal === "tmux") return resumeOpenTmuxWindow(command);
+  if (cfg.resumeTerminal === "cmux") return resumeOpenCmuxTab(command);
   if (process.platform !== "darwin") {
     return { ok: false, reason: "open-tab is available only on macOS" };
   }
