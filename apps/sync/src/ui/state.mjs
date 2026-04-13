@@ -28,7 +28,7 @@ export function footerHelpText({ updatePromptActive, bootstrapActive, resumeTarg
     return "Detail: ↑/↓ messages, j/k lines, r refresh, Esc/← back.";
   }
   if (selectedTab === "contexts") {
-    return "Contexts: ↑/↓ select, Enter open, r refresh, ← back, q/Ctrl+C quit.";
+    return "Contexts: ↑/↓ select, Enter open, f filter, r refresh, ← back, q/Ctrl+C quit.";
   }
   if (selectedTab === "configs") {
     return "Controls: ↑/↓ select config, Enter/→ apply, ← back, q/Ctrl+C quit.";

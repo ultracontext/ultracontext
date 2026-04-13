@@ -39,6 +39,10 @@ export function handleContextsViewInput({ input, key, actions, snapshot }) {
     actions.moveResume(1);
     return true;
   }
+  if (input === "f") {
+    actions.cycleSourceFilter();
+    return true;
+  }
   if (input === "r") {
     actions.refreshResume();
     return true;

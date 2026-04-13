@@ -75,6 +75,7 @@ const RESUME_TARGET_OPTIONS = [
   { id: "codex", label: "Codex" },
 ];
 const INSPECT_OPTION = { id: "inspect", label: "Inspect messages" };
+const SOURCE_FILTERS = ["all", "claude", "codex", "openclaw"];
 const PERSISTED_CONFIG_FIELDS = [
   "bootstrapMode",
   "resumeTerminal",
@@ -146,9 +147,14 @@ const stats = {
 
 function readTuiVersion() {
   try {
-    const pkgPath = path.resolve(APP_ROOT, "package.json");
-    const pkg = JSON.parse(fsSync.readFileSync(pkgPath, "utf8"));
-    return pkg.version ?? "unknown";
+    // in dev, read from js-sdk (the published package)
+    const candidates = process.env.ULTRACONTEXT_DEV
+      ? [path.resolve(APP_ROOT, "..", "js-sdk", "package.json"), path.resolve(APP_ROOT, "package.json")]
+      : [path.resolve(APP_ROOT, "package.json")];
+    for (const p of candidates) {
+      try { return JSON.parse(fsSync.readFileSync(p, "utf8")).version ?? "unknown"; } catch {}
+    }
+    return "unknown";
   } catch { return "unknown"; }
 }
 
@@ -175,6 +181,7 @@ function isNewerVersion(latest, current) {
 }
 
 async function checkForUpdateSilent() {
+  if (process.env.ULTRACONTEXT_DEV) return;
   const current = readTuiVersion();
   if (current === "unknown") return;
 
@@ -218,6 +225,8 @@ const ui = {
     loading: false,
     syncing: false,
     contexts: [],
+    filteredContexts: [],
+    sourceFilter: "all",
     selectedIndex: 0,
     loadedAt: 0,
     error: "",
@@ -270,6 +279,8 @@ const runtime = {
   cachedLogSlice: [],
   cachedLogLen: 0,
   stopResolve: null,
+  titleCache: new Map(),
+  titleInflight: new Set(),
 };
 
 // ── status.json → UI state applicator ──────────────────────────
@@ -724,6 +735,30 @@ function resumeFilterContexts(contexts) {
   });
 }
 
+// client-side filter by source agent (applied on already-loaded contexts)
+function applySourceFilter() {
+  const filter = ui.resume.sourceFilter;
+  if (filter === "all") {
+    ui.resume.filteredContexts = ui.resume.contexts;
+  } else {
+    ui.resume.filteredContexts = ui.resume.contexts.filter((ctx) => {
+      const source = String(ctx?.metadata?.source ?? "").toLowerCase();
+      return source === filter;
+    });
+  }
+  if (ui.resume.selectedIndex >= ui.resume.filteredContexts.length) {
+    ui.resume.selectedIndex = Math.max(ui.resume.filteredContexts.length - 1, 0);
+  }
+}
+
+function cycleSourceFilter() {
+  const current = ui.resume.sourceFilter;
+  const idx = SOURCE_FILTERS.indexOf(current);
+  ui.resume.sourceFilter = SOURCE_FILTERS[(idx + 1) % SOURCE_FILTERS.length];
+  applySourceFilter();
+  renderDashboard();
+}
+
 function resumeSortContexts(contexts) {
   const ts = (ctx) => {
     const candidates = [ctx?.created_at, ctx?.updated_at, ctx?.metadata?.timestamp, ctx?.metadata?.created_at];
@@ -818,6 +853,29 @@ function resumeSummaryMarkdown({ context, messages }) {
   return lines.join("\n");
 }
 
+// fetch titles for contexts missing md.title (background, non-blocking)
+function enrichContextTitles(contexts) {
+  const missing = contexts.filter(ctx =>
+    ctx?.id && !ctx?.metadata?.title && !runtime.titleCache.has(ctx.id) && !runtime.titleInflight.has(ctx.id)
+  ).slice(0, 20);
+  if (!missing.length || !runtime.uc) return;
+
+  for (const ctx of missing) {
+    runtime.titleInflight.add(ctx.id);
+    runtime.uc.get(ctx.id, { at: 30 }).then(res => {
+      const msgs = res?.data ?? [];
+      const firstUser = msgs.find(m => m?.role === "user") ?? msgs[0];
+      const text = firstUser?.content?.message ?? firstUser?.content ?? "";
+      const title = (typeof text === "string" ? text : JSON.stringify(text)).replace(/[\r\n]+/g, " ").trim().slice(0, 120);
+      if (title) {
+        runtime.titleCache.set(ctx.id, title);
+        ctx.metadata = { ...ctx.metadata, title };
+        markDirty();
+      }
+    }).catch(() => {}).finally(() => runtime.titleInflight.delete(ctx.id));
+  }
+}
+
 async function loadResumeContexts({ silent = false } = {}) {
   if (!runtime.uc || ui.resume.loading) return;
   ui.resume.loading = true;
@@ -840,10 +898,14 @@ async function loadResumeContexts({ silent = false } = {}) {
     runtime.resumeKnownContextIds = nextIds;
     if (!runtime.resumeBaselineReady) runtime.resumeBaselineReady = true;
 
-    ui.resume.contexts = filtered;
-    if (ui.resume.selectedIndex >= filtered.length) {
-      ui.resume.selectedIndex = Math.max(filtered.length - 1, 0);
+    // apply cached titles + fetch missing ones in background
+    for (const ctx of filtered) {
+      const cached = runtime.titleCache.get(ctx.id);
+      if (cached && !ctx.metadata?.title) ctx.metadata = { ...ctx.metadata, title: cached };
     }
+    ui.resume.contexts = filtered;
+    applySourceFilter();
+    enrichContextTitles(filtered);
     ui.resume.loadedAt = Date.now();
 
     const sourceCounts = { codex: 0, claude: 0, openclaw: 0, other: 0 };
@@ -875,7 +937,7 @@ async function loadResumeContexts({ silent = false } = {}) {
 }
 
 function moveResumeSelection(delta) {
-  const total = ui.resume.contexts.length;
+  const total = ui.resume.filteredContexts.length;
   if (!total) return;
   const next = ui.resume.selectedIndex + delta;
   if (next < 0) {
@@ -897,7 +959,7 @@ function recommendedResumeTargetForContext(context) {
 
 function openResumeTargetPicker() {
   if (ui.resume.syncing) return false;
-  const context = ui.resume.contexts[ui.resume.selectedIndex];
+  const context = ui.resume.filteredContexts[ui.resume.selectedIndex];
   if (!context) {
     ui.resume.notice = "No context selected";
     renderDashboard();
@@ -1013,7 +1075,7 @@ async function buildClaudeResumePlan({ sessionId, runCwd, messages }) {
 
 async function resumeSelectedContext({ targetAgentOverride = "" } = {}) {
   if (!runtime.uc || ui.resume.syncing) return;
-  const context = ui.resume.contexts[ui.resume.selectedIndex];
+  const context = ui.resume.filteredContexts[ui.resume.selectedIndex];
   if (!context) {
     ui.resume.notice = "No context selected";
     renderDashboard();
@@ -1371,7 +1433,7 @@ function chooseUpdatePrompt(index) {
 
 async function openContextDetail() {
   if (ui.detailView.loading) return;
-  const context = ui.resume.contexts[ui.resume.selectedIndex];
+  const context = ui.resume.filteredContexts[ui.resume.selectedIndex];
   if (!context) return;
 
   ui.detailView.active = true;
@@ -1447,7 +1509,7 @@ function scrollContextDetailLine(delta) {
 // ── enter context (picker or detail based on source) ────────────
 
 function enterContext() {
-  const context = ui.resume.contexts[ui.resume.selectedIndex];
+  const context = ui.resume.filteredContexts[ui.resume.selectedIndex];
   if (!context) {
     ui.resume.notice = "No context selected";
     renderDashboard();
@@ -1608,6 +1670,9 @@ async function tuiMain() {
       },
       refreshResume: () => {
         void loadResumeContexts();
+      },
+      cycleSourceFilter: () => {
+        cycleSourceFilter();
       },
       promptResumeTarget: () => {
         openResumeTargetPicker();

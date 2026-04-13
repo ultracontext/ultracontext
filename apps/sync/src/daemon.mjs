@@ -745,9 +745,9 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
       if (projectPath) contextMeta.project_path = projectPath;
 
       // extract title from first user message
-      const firstUserEvent = sessionEvents.find(ev => ev.normalized.kind === "human");
+      const firstUserEvent = sessionEvents.find(ev => ev.normalized.kind === "user");
       if (firstUserEvent?.normalized?.message) {
-        contextMeta.title = firstUserEvent.normalized.message.slice(0, 120);
+        contextMeta.title = firstUserEvent.normalized.message.replace(/[\r\n]+/g, " ").trim().slice(0, 120);
       }
       const ctxId = await getOrCreateContext(store, uc,
         sessionContextStoreKey(sourceName, sessionId),

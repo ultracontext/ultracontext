@@ -1,9 +1,27 @@
 import React from "react";
 import { Box, Text } from "ink";
 
-import { UC_BLUE_LIGHT } from "../constants.mjs";
+import { UC_BLUE_LIGHT, UC_CLAUDE_ORANGE, UC_CODEX_BLUE, UC_OPENCLAW_RED } from "../constants.mjs";
 import { compact, contextBadge, formatContextDate, padElements } from "../format.mjs";
 import { ContextDetailContent } from "./ContextDetailContent.mjs";
+
+// source filter bar — highlights active filter
+function renderFilterBar(activeFilter) {
+  const filters = [
+    { id: "all", label: "All", color: "white" },
+    { id: "claude", label: "Claude", color: UC_CLAUDE_ORANGE },
+    { id: "codex", label: "Codex", color: UC_CODEX_BLUE },
+    { id: "openclaw", label: "OpenClaw", color: UC_OPENCLAW_RED },
+  ];
+  const parts = filters.map((f) =>
+    React.createElement(
+      Text,
+      { key: `filter-${f.id}`, color: activeFilter === f.id ? f.color : "gray", bold: activeFilter === f.id, dimColor: activeFilter !== f.id },
+      activeFilter === f.id ? `[${f.label}]` : ` ${f.label} `
+    )
+  );
+  return React.createElement(Box, { key: "filter-bar", flexDirection: "row", gap: 1 }, ...parts);
+}
 
 export function ContextsContent({ snapshot, viewFocused, maxRows, maxCols }) {
   // detail view takes over the panel
@@ -11,11 +29,13 @@ export function ContextsContent({ snapshot, viewFocused, maxRows, maxCols }) {
     return React.createElement(ContextDetailContent, { snapshot, maxRows, maxCols });
   }
 
-  const contexts = snapshot.resume.contexts;
+  const contexts = snapshot.resume.filteredContexts ?? snapshot.resume.contexts;
   const total = contexts.length;
   const selected = Math.max(Math.min(snapshot.resume.selectedIndex, Math.max(total - 1, 0)), 0);
+  const activeFilter = snapshot.resume.sourceFilter ?? "all";
 
-  const rows = [];
+  // filter bar row
+  const rows = [renderFilterBar(activeFilter)];
 
   const tailRows = [];
   if (total > 0 && (snapshot.resume.notice || snapshot.resume.error || snapshot.resume.summaryPath || snapshot.resume.command)) {
