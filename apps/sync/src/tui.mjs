@@ -67,6 +67,7 @@ const CONFIG_BOOTSTRAP_MODES = [
 ];
 const CONFIG_RESUME_TERMINALS = [
   { id: "terminal", label: "Terminal" },
+  { id: "ghostty", label: "Ghostty" },
   { id: "warp", label: "Warp" },
 ];
 const RESUME_TARGET_OPTIONS = [
@@ -95,6 +96,7 @@ function normalizeResumeSourceFilter(raw) {
 function normalizeResumeTerminal(raw) {
   const value = String(raw ?? "terminal").trim().toLowerCase();
   if (value === "warp") return "warp";
+  if (value === "ghostty") return "ghostty";
   return "terminal";
 }
 
@@ -586,11 +588,33 @@ function resumeOpenWarpTab(command) {
   };
 }
 
+// ghostty — activate app, open new tab, paste command, press enter
+function resumeOpenGhosttyTab(command) {
+  const scriptLines = [
+    "set _uc_prev_clipboard to the clipboard",
+    `set the clipboard to ${resumeAppleScriptString(command)}`,
+    "tell application \"Ghostty\" to activate",
+    "delay 0.4",
+    "tell application \"System Events\"",
+    "keystroke \"t\" using {command down}",
+    "delay 0.3",
+    "keystroke \"v\" using {command down}",
+    "delay 0.15",
+    "key code 36",
+    "end tell",
+    "delay 0.05",
+    "set the clipboard to _uc_prev_clipboard",
+  ];
+  const out = runAppleScriptLines(scriptLines);
+  return { ...out, method: "ghostty_applescript" };
+}
+
 function resumeOpenTerminalTab(command) {
   if (process.platform !== "darwin") {
     return { ok: false, reason: "open-tab is available only on macOS" };
   }
   if (cfg.resumeTerminal === "warp") return resumeOpenWarpTab(command);
+  if (cfg.resumeTerminal === "ghostty") return resumeOpenGhosttyTab(command);
   return resumeOpenAppleTerminalTab(command);
 }
 
@@ -1165,7 +1189,7 @@ function configToggleItems() {
       key: "resumeTerminal",
       kind: "enum",
       label: "Resume terminal",
-      description: "Choose where resume opens (Terminal or Warp).",
+      description: "Choose where resume opens (Terminal, Ghostty, or Warp).",
       value: normalizeResumeTerminal(cfg.resumeTerminal),
       valueLabel: resumeTerminalConfigLabel(cfg.resumeTerminal),
       blockedByMaster: false
