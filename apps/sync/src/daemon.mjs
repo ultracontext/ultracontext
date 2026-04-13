@@ -275,7 +275,7 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
   }
 
   function pushRecentLog(level, message, data) {
-    let line = String(message ?? "");
+    let line = String(message ?? "").replace(/[\r\n\t\v\f\x00-\x1f]+/g, " ").replace(/\s{2,}/g, " ");
     if (line.startsWith("Appended event to session context")) line = "context append";
     if (line.startsWith("Context created")) line = "Context created";
     if (line.startsWith("Context created without metadata fallback")) line = "Context created (fallback)";
@@ -796,10 +796,12 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
       noteSourceActivity(sourceName, { lastEventType: last.eventType, lastSessionId: sessionId, lastAt: Date.now() });
 
       if (cfg.logAppends) {
-        const lastMsg = (last.message ?? "").replace(/[\r\n]+/g, " ").trim().slice(0, 60);
-        log("info", `${sessionEvents.length} events → [${last.eventType}] ${lastMsg}`, {
-          source: sourceName, session_id: sessionId, context_id: sessionContextId, count: sessionEvents.length,
-        });
+        for (const { normalized } of sessionEvents) {
+          const msg = (normalized.message ?? "").replace(/[\r\n\t\v\f\x00-\x1f]+/g, " ").replace(/\s{2,}/g, " ").trim().slice(0, 80);
+          log("info", `[${normalized.eventType}] ${msg}`, {
+            source: sourceName, session_id: sessionId,
+          });
+        }
       }
     });
   }
