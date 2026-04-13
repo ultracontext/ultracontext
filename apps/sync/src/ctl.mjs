@@ -124,27 +124,18 @@ export async function runCtl() {
   const lockPath = path.resolve(resolveLockPath(process.env));
   const infoPath = path.resolve(resolveDaemonInfoFile(process.env));
 
-  if (cmd === "status") {
-    const code = await status({ lockPath, infoPath });
-    process.exit(code);
-    return;
-  }
-
-  if (cmd === "stop") {
-    const code = await stop({ lockPath, infoPath });
-    process.exit(code);
-    return;
-  }
+  if (cmd === "status") return status({ lockPath, infoPath });
+  if (cmd === "stop") return stop({ lockPath, infoPath });
 
   console.error(`Invalid command: ${cmd}`);
   console.error("Use: ultracontext [status|stop]");
-  process.exit(1);
+  return 1;
 }
 
 // auto-exec when run directly
 const isDirectRun = process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/.*\//, ""));
 if (isDirectRun) {
-  runCtl().catch((error) => {
+  runCtl().then((code) => process.exit(code)).catch((error) => {
     console.error(`Daemon control failed: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
   });
