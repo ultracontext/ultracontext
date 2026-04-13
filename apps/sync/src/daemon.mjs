@@ -798,7 +798,7 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
       if (cfg.logAppends) {
         for (const { normalized } of sessionEvents) {
           const msg = (normalized.message ?? "").replace(/[\r\n\t\v\f\x00-\x1f]+/g, " ").replace(/\s{2,}/g, " ").trim().slice(0, 80);
-          log("info", `[${normalized.eventType}] ${msg}`, {
+          log("debug", `[${normalized.eventType}] ${msg}`, {
             source: sourceName, session_id: sessionId,
           });
         }
