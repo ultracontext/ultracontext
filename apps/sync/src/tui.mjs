@@ -265,51 +265,65 @@ const runtime = {
   syncCount: 0,
   resumeKnownContextIds: new Set(),
   resumeBaselineReady: false,
+  dirty: true,
+  lastSnapshot: null,
 };
 
 // ── status.json → UI state applicator ──────────────────────────
 
 function applyDaemonStatus(status) {
   if (!status) {
-    ui.daemonOnline = false;
+    if (ui.daemonOnline) { ui.daemonOnline = false; markDirty(); }
     return;
   }
 
   // check liveness — if updatedAt is stale by >5s, daemon is offline
   const updatedAt = new Date(status.updatedAt).getTime();
   const staleMs = Date.now() - updatedAt;
+  const wasOnline = ui.daemonOnline;
   ui.daemonOnline = staleMs < 30_000;
+  if (wasOnline !== ui.daemonOnline) markDirty();
 
   if (!ui.daemonOnline) return;
 
-  // apply stats
-  Object.assign(stats, status.stats || {});
+  // apply stats — only mark dirty if values changed
+  const ss = status.stats || {};
+  for (const k of Object.keys(ss)) {
+    if (stats[k] !== ss[k]) { Object.assign(stats, ss); markDirty(); break; }
+  }
 
-  // apply source stats
-  ui.sourceStats = (status.sources || []).map(s => ({
-    name: s.name,
-    filesScanned: s.filesScanned || 0,
-    linesRead: s.linesRead || 0,
-    parsedEvents: s.parsedEvents || 0,
-    appended: s.appended || 0,
-    deduped: s.deduped || 0,
-    contextsCreated: s.contextsCreated || 0,
-    errors: s.errors || 0,
-    lastEventType: s.lastEventType || "-",
-    lastSessionId: s.lastSessionId || "-",
-    lastAt: s.lastAt || 0,
-    lastFile: s.lastFile || "-",
-  }));
+  // apply source stats — reuse array if unchanged
+  const sources = status.sources || [];
+  if (sources.length !== ui.sourceStats.length || sources.some((s, i) => s.lastAt !== ui.sourceStats[i]?.lastAt)) {
+    ui.sourceStats = sources.map(s => ({
+      name: s.name,
+      filesScanned: s.filesScanned || 0,
+      linesRead: s.linesRead || 0,
+      parsedEvents: s.parsedEvents || 0,
+      appended: s.appended || 0,
+      deduped: s.deduped || 0,
+      contextsCreated: s.contextsCreated || 0,
+      errors: s.errors || 0,
+      lastEventType: s.lastEventType || "-",
+      lastSessionId: s.lastSessionId || "-",
+      lastAt: s.lastAt || 0,
+      lastFile: s.lastFile || "-",
+    }));
+    markDirty();
+  }
 
   // apply logs (deduplicate by signature)
   if (status.recentLogs && Array.isArray(status.recentLogs)) {
+    let newLogs = false;
     for (const entry of status.recentLogs) {
       const sig = `${entry.ts}|${entry.level}|${entry.source}|${entry.text}`;
       if (!runtime.seenLogSignatures.has(sig)) {
         runtime.seenLogSignatures.add(sig);
         ui.recentLogs.push(entry);
+        newLogs = true;
       }
     }
+
     // cap logs + prune dedup set to prevent unbounded growth
     while (ui.recentLogs.length > cfg.uiRecentLimit) ui.recentLogs.shift();
     if (runtime.seenLogSignatures.size > cfg.uiRecentLimit * 2) {
@@ -319,6 +333,7 @@ function applyDaemonStatus(status) {
       }
       runtime.seenLogSignatures = keep;
     }
+    if (newLogs) markDirty();
   }
 
   // apply config from daemon
@@ -361,7 +376,11 @@ function errorDetails(error) {
   return details;
 }
 
+// mark UI dirty so next refresh actually rerenders
+function markDirty() { runtime.dirty = true; }
+
 function renderDashboard() {
+  markDirty();
   runtime.uiController?.refresh();
 }
 
@@ -1451,13 +1470,17 @@ function moveTabAndRefresh(delta) {
 }
 
 function buildUiSnapshot() {
+  // reuse cached snapshot when nothing changed (prevents GC pressure from poll timer)
+  if (!runtime.dirty && runtime.lastSnapshot) return runtime.lastSnapshot;
+  runtime.dirty = false;
+
   const configItems = configToggleItems();
   const selectedConfigIndex = Math.max(
     Math.min(ui.configEditor.selectedIndex, Math.max(configItems.length - 1, 0)),
     0
   );
 
-  return {
+  const snapshot = {
     now: Date.now(),
     currentVersion: ui.currentVersion,
     updateAvailable: ui.updateAvailable,
@@ -1513,6 +1536,9 @@ function buildUiSnapshot() {
       note: ui.bootstrap.note,
     },
   };
+
+  runtime.lastSnapshot = snapshot;
+  return snapshot;
 }
 
 function validateConfig() {
@@ -1631,10 +1657,10 @@ async function tuiMain() {
   // initial status poll
   await pollDaemonStatus();
 
-  // status.json polling + render loop
+  // status.json polling + render loop (only rerender when state changed)
   runtime.statusPollTimer = setInterval(async () => {
     await pollDaemonStatus();
-    renderDashboard();
+    if (runtime.dirty) runtime.uiController?.refresh();
   }, cfg.uiRefreshMs);
   runtime.statusPollTimer.unref?.();
 
@@ -1663,6 +1689,7 @@ async function tuiMain() {
   runtime.uiController?.stop();
   runtime.uiController = null;
 
+  runtime.lastSnapshot = null;
   runtime.stop = null;
   runtime.uc = null;
 }
