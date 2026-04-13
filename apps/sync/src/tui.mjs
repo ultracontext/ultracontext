@@ -864,15 +864,28 @@ function enrichContextTitles(contexts) {
     runtime.titleInflight.add(ctx.id);
     runtime.uc.get(ctx.id, { at: 30 }).then(res => {
       const msgs = res?.data ?? [];
-      const firstUser = msgs.find(m => m?.role === "user") ?? msgs[0];
+
+      // skip system-injected user messages (AGENTS.md, openclaw session init)
+      const isRealUser = m => {
+        if (m?.role !== "user") return false;
+        if (m?.content?.event_type === "response_item.message") return false;
+        const msg = typeof m?.content?.message === "string" ? m.content.message : "";
+        if (msg.startsWith("A new session was started")) return false;
+        if (msg.startsWith("[result]")) return false;
+        if (msg.startsWith("<")) return false;
+        return true;
+      };
+
+      const firstUser = msgs.find(isRealUser) ?? msgs.find(m => m?.role === "user");
+      if (!firstUser) { runtime.titleCache.set(ctx.id, null); return; }
       const text = firstUser?.content?.message ?? firstUser?.content ?? "";
-      const title = (typeof text === "string" ? text : JSON.stringify(text)).replace(/[\r\n]+/g, " ").trim().slice(0, 120);
+      const title = (typeof text === "string" ? text : JSON.stringify(text)).replace(/[\r\n\t\v\f\x00-\x1f]+/g, " ").replace(/\s{2,}/g, " ").trim().slice(0, 120);
+      runtime.titleCache.set(ctx.id, title || null);
       if (title) {
-        runtime.titleCache.set(ctx.id, title);
         ctx.metadata = { ...ctx.metadata, title };
         markDirty();
       }
-    }).catch(() => {}).finally(() => runtime.titleInflight.delete(ctx.id));
+    }).catch(() => { runtime.titleCache.set(ctx.id, null); }).finally(() => runtime.titleInflight.delete(ctx.id));
   }
 }
 
@@ -905,7 +918,7 @@ async function loadResumeContexts({ silent = false } = {}) {
     }
     ui.resume.contexts = filtered;
     applySourceFilter();
-    enrichContextTitles(filtered);
+    if (!silent) enrichContextTitles(filtered);
     ui.resume.loadedAt = Date.now();
 
     const sourceCounts = { codex: 0, claude: 0, openclaw: 0, other: 0 };

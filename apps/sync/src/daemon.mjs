@@ -744,10 +744,23 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
       };
       if (projectPath) contextMeta.project_path = projectPath;
 
-      // extract title from first user message
-      const firstUserEvent = sessionEvents.find(ev => ev.normalized.kind === "user");
+      // extract title from first real user message
+      const isRealUserEvent = (ev) => {
+        if (ev.normalized.kind !== "user") return false;
+        const et = ev.normalized.eventType ?? "";
+        const msg = ev.normalized.message ?? "";
+        // skip codex system-injected user messages (AGENTS.md, permissions)
+        if (et === "response_item.message") return false;
+        // skip openclaw session init + claude tool results + xml tags
+        if (msg.startsWith("A new session was started")) return false;
+        if (msg.startsWith("[result]")) return false;
+        if (msg.startsWith("<")) return false;
+        return true;
+      };
+      const firstUserEvent = sessionEvents.find(isRealUserEvent)
+        ?? sessionEvents.find(ev => ev.normalized.kind === "user");
       if (firstUserEvent?.normalized?.message) {
-        contextMeta.title = firstUserEvent.normalized.message.replace(/[\r\n]+/g, " ").trim().slice(0, 120);
+        contextMeta.title = firstUserEvent.normalized.message.replace(/[\r\n\t\v\f\x00-\x1f]+/g, " ").replace(/\s{2,}/g, " ").trim().slice(0, 120);
       }
       const ctxId = await getOrCreateContext(store, uc,
         sessionContextStoreKey(sourceName, sessionId),
@@ -783,7 +796,8 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
       noteSourceActivity(sourceName, { lastEventType: last.eventType, lastSessionId: sessionId, lastAt: Date.now() });
 
       if (cfg.logAppends) {
-        log("info", "Bulk appended events to session context", {
+        const lastMsg = (last.message ?? "").replace(/[\r\n]+/g, " ").trim().slice(0, 60);
+        log("info", `${sessionEvents.length} events → [${last.eventType}] ${lastMsg}`, {
           source: sourceName, session_id: sessionId, context_id: sessionContextId, count: sessionEvents.length,
         });
       }
