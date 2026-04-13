@@ -78,7 +78,7 @@ export function ContextsContent({ snapshot, viewFocused, maxRows, maxCols }) {
   }
 
   const availableRows = Math.max(maxRows, 4);
-  const listCapacity = Math.max(availableRows - tailRows.length, 1);
+  const listCapacity = Math.max(availableRows - tailRows.length - 1, 1); // -1 for filter bar
 
   if (total === 0) {
     rows.push(React.createElement(Text, { key: "contexts-empty", color: "yellow" }, "No contexts available."));
