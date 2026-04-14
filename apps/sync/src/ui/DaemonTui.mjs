@@ -164,9 +164,11 @@ export function DaemonTui({ snapshot, actions }) {
     { flexDirection: "column" },
     React.createElement(Box, { width: layout.containerWidth }, renderMainFrameTop(
       layout.containerWidth,
-      snapshot.updateAvailable
-        ? `UltraContext v${snapshot.currentVersion} ↑`
-        : `UltraContext v${snapshot.currentVersion}`
+      process.env.ULTRACONTEXT_DEV
+        ? `UltraContext v${snapshot.currentVersion} [dev]`
+        : snapshot.updateAvailable
+          ? `UltraContext v${snapshot.currentVersion} ↑`
+          : `UltraContext v${snapshot.currentVersion}`
     )),
     React.createElement(
       Box,

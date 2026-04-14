@@ -1,9 +1,29 @@
 import React from "react";
 import { Box, Text } from "ink";
 
-import { UC_BLUE_LIGHT } from "../constants.mjs";
+import { UC_BLUE_LIGHT, UC_CLAUDE_ORANGE, UC_CODEX_BLUE, UC_OPENCLAW_RED } from "../constants.mjs";
 import { compact, contextBadge, formatContextDate, padElements } from "../format.mjs";
 import { ContextDetailContent } from "./ContextDetailContent.mjs";
+
+// source filter bar — highlights active filter
+function renderFilterBar(activeFilter) {
+  const filters = [
+    { id: "all", label: "All", color: "white" },
+    { id: "claude", label: "Claude", color: UC_CLAUDE_ORANGE },
+    { id: "codex", label: "Codex", color: UC_CODEX_BLUE },
+    { id: "openclaw", label: "OpenClaw", color: UC_OPENCLAW_RED },
+    { id: "cursor", label: "Cursor", color: "cyan" },
+    { id: "gemini", label: "Gemini", color: "blue" },
+  ];
+  const parts = filters.map((f) =>
+    React.createElement(
+      Text,
+      { key: `filter-${f.id}`, color: activeFilter === f.id ? f.color : "gray", bold: activeFilter === f.id, dimColor: activeFilter !== f.id },
+      activeFilter === f.id ? `[${f.label}]` : ` ${f.label} `
+    )
+  );
+  return React.createElement(Box, { key: "filter-bar", flexDirection: "row", gap: 1 }, ...parts);
+}
 
 export function ContextsContent({ snapshot, viewFocused, maxRows, maxCols }) {
   // detail view takes over the panel
@@ -11,11 +31,13 @@ export function ContextsContent({ snapshot, viewFocused, maxRows, maxCols }) {
     return React.createElement(ContextDetailContent, { snapshot, maxRows, maxCols });
   }
 
-  const contexts = snapshot.resume.contexts;
+  const contexts = snapshot.resume.filteredContexts ?? snapshot.resume.contexts;
   const total = contexts.length;
   const selected = Math.max(Math.min(snapshot.resume.selectedIndex, Math.max(total - 1, 0)), 0);
+  const activeFilter = snapshot.resume.sourceFilter ?? "all";
 
-  const rows = [];
+  // filter bar row
+  const rows = [renderFilterBar(activeFilter)];
 
   const tailRows = [];
   if (total > 0 && (snapshot.resume.notice || snapshot.resume.error || snapshot.resume.summaryPath || snapshot.resume.command)) {
@@ -58,7 +80,7 @@ export function ContextsContent({ snapshot, viewFocused, maxRows, maxCols }) {
   }
 
   const availableRows = Math.max(maxRows, 4);
-  const listCapacity = Math.max(availableRows - tailRows.length, 1);
+  const listCapacity = Math.max(availableRows - tailRows.length - 1, 1); // -1 for filter bar
 
   if (total === 0) {
     rows.push(React.createElement(Text, { key: "contexts-empty", color: "yellow" }, "No contexts available."));
@@ -74,14 +96,14 @@ export function ContextsContent({ snapshot, viewFocused, maxRows, maxCols }) {
       const sourceInfo = contextBadge(md.source || "unknown");
       const createdAt = formatContextDate(ctx?.created_at);
       const user = compact(md.user_id ?? "-", 12);
-      const sessionId = compact(md.session_id ?? "-", 28);
+      const label = compact(md.title ?? md.session_id ?? "-", 48);
       rows.push(
         React.createElement(
           Text,
           { key: `contexts-row-${i}`, color: rowColor },
           `${marker} `,
           React.createElement(Text, { color: sourceInfo.color, bold: true }, `[${sourceInfo.text}]`),
-          ` ${createdAt} ${user} ${sessionId}`
+          ` ${createdAt} ${user} ${label}`
         )
       );
     }

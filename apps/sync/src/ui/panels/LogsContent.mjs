@@ -25,8 +25,8 @@ export function LogsContent({ snapshot, maxRows, maxCols = 100 }) {
   } else {
     rows.push(
       ...visibleLogs.map((entry, index) => {
-        const category = classifyLog(entry);
         const sourceTag = entry.source ? `[${sourceLabel(entry.source)}]` : "";
+        const category = sourceTag ? { label: "", color: "gray" } : classifyLog(entry);
         const timePrefix = `${String(entry.ts ?? "--:--:--")} `;
         const typePrefix = category.label ? `[${category.label}] ` : "";
         const sourcePrefix = sourceTag ? `${sourceTag} ` : "";

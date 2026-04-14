@@ -69,12 +69,15 @@ const CONFIG_RESUME_TERMINALS = [
   { id: "terminal", label: "Terminal" },
   { id: "ghostty", label: "Ghostty" },
   { id: "warp", label: "Warp" },
+  { id: "tmux", label: "tmux" },
+  { id: "cmux", label: "cmux" },
 ];
 const RESUME_TARGET_OPTIONS = [
   { id: "claude", label: "Claude Code" },
   { id: "codex", label: "Codex" },
 ];
 const INSPECT_OPTION = { id: "inspect", label: "Inspect messages" };
+const SOURCE_FILTERS = ["all", "claude", "codex", "openclaw", "cursor", "gemini"];
 const PERSISTED_CONFIG_FIELDS = [
   "bootstrapMode",
   "resumeTerminal",
@@ -97,6 +100,8 @@ function normalizeResumeTerminal(raw) {
   const value = String(raw ?? "terminal").trim().toLowerCase();
   if (value === "warp") return "warp";
   if (value === "ghostty") return "ghostty";
+  if (value === "tmux") return "tmux";
+  if (value === "cmux") return "cmux";
   return "terminal";
 }
 
@@ -146,9 +151,14 @@ const stats = {
 
 function readTuiVersion() {
   try {
-    const pkgPath = path.resolve(APP_ROOT, "package.json");
-    const pkg = JSON.parse(fsSync.readFileSync(pkgPath, "utf8"));
-    return pkg.version ?? "unknown";
+    // in dev, read from js-sdk (the published package)
+    const candidates = process.env.ULTRACONTEXT_DEV
+      ? [path.resolve(APP_ROOT, "..", "js-sdk", "package.json"), path.resolve(APP_ROOT, "package.json")]
+      : [path.resolve(APP_ROOT, "package.json")];
+    for (const p of candidates) {
+      try { return JSON.parse(fsSync.readFileSync(p, "utf8")).version ?? "unknown"; } catch {}
+    }
+    return "unknown";
   } catch { return "unknown"; }
 }
 
@@ -175,6 +185,7 @@ function isNewerVersion(latest, current) {
 }
 
 async function checkForUpdateSilent() {
+  if (process.env.ULTRACONTEXT_DEV) return;
   const current = readTuiVersion();
   if (current === "unknown") return;
 
@@ -218,6 +229,8 @@ const ui = {
     loading: false,
     syncing: false,
     contexts: [],
+    filteredContexts: [],
+    sourceFilter: "all",
     selectedIndex: 0,
     loadedAt: 0,
     error: "",
@@ -270,6 +283,8 @@ const runtime = {
   cachedLogSlice: [],
   cachedLogLen: 0,
   stopResolve: null,
+  titleCache: new Map(),
+  titleInflight: new Set(),
 };
 
 // ── status.json → UI state applicator ──────────────────────────
@@ -647,7 +662,42 @@ function resumeOpenGhosttyTab(command) {
   return { ...out, method: "ghostty_applescript" };
 }
 
+// cmux — Ghostty-based terminal, same AppleScript approach
+function resumeOpenCmuxTab(command) {
+  const scriptLines = [
+    "set _uc_prev_clipboard to the clipboard",
+    `set the clipboard to ${resumeAppleScriptString(command)}`,
+    "tell application \"cmux\" to activate",
+    "delay 0.4",
+    "tell application \"System Events\"",
+    "keystroke \"t\" using {command down}",
+    "delay 0.3",
+    "keystroke \"v\" using {command down}",
+    "delay 0.15",
+    "key code 36",
+    "end tell",
+    "delay 0.05",
+    "set the clipboard to _uc_prev_clipboard",
+  ];
+  const out = runAppleScriptLines(scriptLines);
+  return { ...out, method: "cmux_applescript" };
+}
+
+// tmux — open new window with command
+function resumeOpenTmuxWindow(command) {
+  if (!process.env.TMUX) {
+    return { ok: false, reason: "not inside a tmux session" };
+  }
+  const out = spawnSync("tmux", ["new-window", command], {
+    stdio: "pipe", encoding: "utf8", timeout: 5000,
+  });
+  if (out.status === 0) return { ok: true, method: "tmux" };
+  return { ok: false, reason: out.stderr?.trim() || "tmux new-window failed", method: "tmux" };
+}
+
 function resumeOpenTerminalTab(command) {
+  if (cfg.resumeTerminal === "tmux") return resumeOpenTmuxWindow(command);
+  if (cfg.resumeTerminal === "cmux") return resumeOpenCmuxTab(command);
   if (process.platform !== "darwin") {
     return { ok: false, reason: "open-tab is available only on macOS" };
   }
@@ -722,6 +772,30 @@ function resumeFilterContexts(contexts) {
     if (cfg.resumeSourceFilter !== "all" && source && source !== cfg.resumeSourceFilter) return false;
     return true;
   });
+}
+
+// client-side filter by source agent (applied on already-loaded contexts)
+function applySourceFilter() {
+  const filter = ui.resume.sourceFilter;
+  if (filter === "all") {
+    ui.resume.filteredContexts = ui.resume.contexts;
+  } else {
+    ui.resume.filteredContexts = ui.resume.contexts.filter((ctx) => {
+      const source = String(ctx?.metadata?.source ?? "").toLowerCase();
+      return source === filter;
+    });
+  }
+  if (ui.resume.selectedIndex >= ui.resume.filteredContexts.length) {
+    ui.resume.selectedIndex = Math.max(ui.resume.filteredContexts.length - 1, 0);
+  }
+}
+
+function cycleSourceFilter() {
+  const current = ui.resume.sourceFilter;
+  const idx = SOURCE_FILTERS.indexOf(current);
+  ui.resume.sourceFilter = SOURCE_FILTERS[(idx + 1) % SOURCE_FILTERS.length];
+  applySourceFilter();
+  renderDashboard();
 }
 
 function resumeSortContexts(contexts) {
@@ -818,6 +892,42 @@ function resumeSummaryMarkdown({ context, messages }) {
   return lines.join("\n");
 }
 
+// fetch titles for contexts missing md.title (background, non-blocking)
+function enrichContextTitles(contexts) {
+  const missing = contexts.filter(ctx =>
+    ctx?.id && !ctx?.metadata?.title && !runtime.titleCache.has(ctx.id) && !runtime.titleInflight.has(ctx.id)
+  ).slice(0, 20);
+  if (!missing.length || !runtime.uc) return;
+
+  for (const ctx of missing) {
+    runtime.titleInflight.add(ctx.id);
+    runtime.uc.get(ctx.id, { at: 30 }).then(res => {
+      const msgs = res?.data ?? [];
+
+      // skip system-injected user messages (AGENTS.md, openclaw session init)
+      const isRealUser = m => {
+        if (m?.role !== "user") return false;
+        if (m?.content?.event_type === "response_item.message") return false;
+        const msg = typeof m?.content?.message === "string" ? m.content.message : "";
+        if (msg.startsWith("A new session was started")) return false;
+        if (msg.startsWith("[result]")) return false;
+        if (msg.startsWith("<")) return false;
+        return true;
+      };
+
+      const firstUser = msgs.find(isRealUser) ?? msgs.find(m => m?.role === "user");
+      if (!firstUser) { runtime.titleCache.set(ctx.id, null); return; }
+      const text = firstUser?.content?.message ?? firstUser?.content ?? "";
+      const title = (typeof text === "string" ? text : JSON.stringify(text)).replace(/[\r\n\t\v\f\x00-\x1f]+/g, " ").replace(/\s{2,}/g, " ").trim().slice(0, 120);
+      runtime.titleCache.set(ctx.id, title || null);
+      if (title) {
+        ctx.metadata = { ...ctx.metadata, title };
+        markDirty();
+      }
+    }).catch(() => { runtime.titleCache.set(ctx.id, null); }).finally(() => runtime.titleInflight.delete(ctx.id));
+  }
+}
+
 async function loadResumeContexts({ silent = false } = {}) {
   if (!runtime.uc || ui.resume.loading) return;
   ui.resume.loading = true;
@@ -840,24 +950,27 @@ async function loadResumeContexts({ silent = false } = {}) {
     runtime.resumeKnownContextIds = nextIds;
     if (!runtime.resumeBaselineReady) runtime.resumeBaselineReady = true;
 
-    ui.resume.contexts = filtered;
-    if (ui.resume.selectedIndex >= filtered.length) {
-      ui.resume.selectedIndex = Math.max(filtered.length - 1, 0);
+    // apply cached titles + fetch missing ones in background
+    for (const ctx of filtered) {
+      const cached = runtime.titleCache.get(ctx.id);
+      if (cached && !ctx.metadata?.title) ctx.metadata = { ...ctx.metadata, title: cached };
     }
+    ui.resume.contexts = filtered;
+    applySourceFilter();
+    if (!silent) enrichContextTitles(filtered);
     ui.resume.loadedAt = Date.now();
 
-    const sourceCounts = { codex: 0, claude: 0, openclaw: 0, other: 0 };
+    const sourceCounts = { codex: 0, claude: 0, openclaw: 0, cursor: 0, gemini: 0, other: 0 };
     for (const ctx of filtered) {
       const source = String(ctx?.metadata?.source ?? "").toLowerCase();
-      if (source === "codex") sourceCounts.codex += 1;
-      else if (source === "claude") sourceCounts.claude += 1;
-      else if (source === "openclaw") sourceCounts.openclaw += 1;
+      if (sourceCounts[source] !== undefined) sourceCounts[source] += 1;
       else sourceCounts.other += 1;
     }
 
     if (!silent) {
       const filterLabel = cfg.resumeSourceFilter === "all" ? "all sources" : cfg.resumeSourceFilter;
-      ui.resume.notice = `Loaded ${filtered.length} session contexts (${filterLabel}: codex=${sourceCounts.codex}, claude=${sourceCounts.claude}, openclaw=${sourceCounts.openclaw}, other=${sourceCounts.other})`;
+      const counts = Object.entries(sourceCounts).map(([k, v]) => `${k}=${v}`).join(", ");
+      ui.resume.notice = `Loaded ${filtered.length} session contexts (${filterLabel}: ${counts})`;
       if (filtered.length === 0) {
         ui.resume.notice = `No contexts found for filter=${cfg.resumeSourceFilter}`;
       }
@@ -875,7 +988,7 @@ async function loadResumeContexts({ silent = false } = {}) {
 }
 
 function moveResumeSelection(delta) {
-  const total = ui.resume.contexts.length;
+  const total = ui.resume.filteredContexts.length;
   if (!total) return;
   const next = ui.resume.selectedIndex + delta;
   if (next < 0) {
@@ -897,7 +1010,7 @@ function recommendedResumeTargetForContext(context) {
 
 function openResumeTargetPicker() {
   if (ui.resume.syncing) return false;
-  const context = ui.resume.contexts[ui.resume.selectedIndex];
+  const context = ui.resume.filteredContexts[ui.resume.selectedIndex];
   if (!context) {
     ui.resume.notice = "No context selected";
     renderDashboard();
@@ -1013,7 +1126,7 @@ async function buildClaudeResumePlan({ sessionId, runCwd, messages }) {
 
 async function resumeSelectedContext({ targetAgentOverride = "" } = {}) {
   if (!runtime.uc || ui.resume.syncing) return;
-  const context = ui.resume.contexts[ui.resume.selectedIndex];
+  const context = ui.resume.filteredContexts[ui.resume.selectedIndex];
   if (!context) {
     ui.resume.notice = "No context selected";
     renderDashboard();
@@ -1371,7 +1484,7 @@ function chooseUpdatePrompt(index) {
 
 async function openContextDetail() {
   if (ui.detailView.loading) return;
-  const context = ui.resume.contexts[ui.resume.selectedIndex];
+  const context = ui.resume.filteredContexts[ui.resume.selectedIndex];
   if (!context) return;
 
   ui.detailView.active = true;
@@ -1447,7 +1560,7 @@ function scrollContextDetailLine(delta) {
 // ── enter context (picker or detail based on source) ────────────
 
 function enterContext() {
-  const context = ui.resume.contexts[ui.resume.selectedIndex];
+  const context = ui.resume.filteredContexts[ui.resume.selectedIndex];
   if (!context) {
     ui.resume.notice = "No context selected";
     renderDashboard();
@@ -1608,6 +1721,9 @@ async function tuiMain() {
       },
       refreshResume: () => {
         void loadResumeContexts();
+      },
+      cycleSourceFilter: () => {
+        cycleSourceFilter();
       },
       promptResumeTarget: () => {
         openResumeTargetPicker();

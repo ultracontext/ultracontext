@@ -1,8 +1,10 @@
 # CLAUDE.md
 
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 ## Architecture
 
-UltraContext — version control for AI agent context. pnpm monorepo.
+UltraContext — version control for AI agent context. pnpm monorepo (`pnpm-workspace.yaml`: `apps/*`, `packages/*`).
 
 ### Context API (`apps/api`)
 
@@ -13,12 +15,14 @@ REST API. Hono + TypeScript. Two entrypoints via `createApp(options?)`:
 | `server.ts` | Node.js | dotenv → `getApiConfig()` | Drizzle or Supabase | — |
 | `worker.ts` | CF Workers | env bindings → `buildApiConfig(env)` | Supabase only | KV (optional) |
 
+Routes (`src/routes/`): `contexts.ts` (CRUD + POST messages), `keys.ts` (API key mgmt), `mcp.ts` (MCP endpoint), `root.ts`.
+
 Key internals:
 - **Storage** (`src/storage/`) — `StorageAdapter` interface. Drizzle (postgres.js) or Supabase. Selected by `DATABASE_PROVIDER`.
 - **Auth** (`src/middleware/auth.ts`) — Bearer token. Prefix lookup + hash verification. Optional `KeyCache` for caching (KV on Workers).
 - **Cache** (`src/cache/`) — `KeyCache` interface + `KvKeyCache` (CF KV). Injected via `AppOptions.keyCache`.
 - **Config** (`src/config.ts`) — `buildApiConfig(env)` takes any plain object. `getApiConfig()` loads dotenv first.
-- **Schema** (`apps/postgres/init.sql`) — tables: `projects`, `api_keys`, `nodes`. JSONB for `content`/`metadata`.
+- **Schema** (`apps/postgres/init.sql`) — tables: `projects`, `api_keys`, `nodes`. JSONB for `content`/`metadata`. Views: `project_activity_daily`, `project_activity_weekly`.
 
 ### Sync (`apps/sync`)
 
@@ -27,10 +31,17 @@ Single package for local ingestion + TUI dashboard. Two processes, JSON file IPC
 - **TUI** (`tui.mjs`) — read-only terminal dashboard (Ink/React 19). Polls `status.json`.
 - **IPC** — `config.json` (CLI→daemon), `status.json` (daemon→TUI). No WebSocket, no shared SQLite.
 
-### SDKs
+### MCP Server (`apps/mcp-server`)
 
-- `apps/js-sdk` — published as `ultracontext` on npm. Bundles CLI + sync.
-- `apps/python-sdk` — httpx, published on PyPI.
+Stdio-based MCP server for Claude/Cursor integration. Reads config from `~/.ultracontext/config.json` or env vars. Exposes tools: `list_contexts`, `get_context_messages`, `get_recent_activity`.
+
+### JS SDK (`apps/js-sdk`)
+
+Published as `ultracontext` on npm. Bundles SDK + CLI (`ultracontext` command) via `tsdown`. CLI dispatches to sync/daemon/TUI/onboarding.
+
+### Python SDK (`apps/python-sdk`)
+
+httpx client, published on PyPI via Hatchling. Tests: `pytest`.
 
 ## Commands
 
@@ -42,10 +53,19 @@ pnpm ultracontext:db:reset                      # reset with volumes
 pnpm ultracontext:db:migrate                    # apply schema
 pnpm ultracontext:api                           # run API (port 8787)
 pnpm dev:sync                                   # sync watch mode (daemon + TUI)
-pnpm --filter ultracontext run build            # build JS SDK
+pnpm --filter ultracontext run build            # build JS SDK (tsdown)
 pnpm --filter ultracontext-api run test         # API tests (node --test)
 pnpm --filter ultracontext-api run test:watch   # API tests watch
 pnpm check                                      # all package checks
+
+# single test file
+cd apps/api && node --test --env-file=.env.local src/routes/contexts.test.ts
+
+# Python SDK tests
+cd apps/python-sdk && pytest
+
+# generate local dev API key
+pnpm ultracontext:key:local
 ```
 
 ## Style
@@ -64,6 +84,10 @@ No repo-wide formatter. Match local style:
 - **Env**: `.env.example` → `.env`. Never commit secrets.
 - **PRs**: one feature/fix, target `main`, include scope
 - **Docs** (`apps/docs`): Mintlify MDX, YAML frontmatter, second-person voice
+
+## CI/CD
+
+`.github/workflows/publish.yml` — triggered on release. Publishes JS SDK to npm + Python SDK to PyPI. Version from git tag.
 
 ## Skill routing
 

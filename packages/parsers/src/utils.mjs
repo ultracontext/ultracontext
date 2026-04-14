@@ -96,3 +96,24 @@ export function asIso(value) {
     if (Number.isNaN(d.getTime())) return new Date().toISOString();
     return d.toISOString();
 }
+
+// strip IDE-injected context tags from user prompts
+const IDE_TAG_RE = /<ide_[^>]*>[\s\S]*?<\/ide_[^>]*>/g;
+const SYSTEM_TAG_RES = [
+    /<local-command-caveat[^>]*>[\s\S]*?<\/local-command-caveat>/g,
+    /<system-reminder[^>]*>[\s\S]*?<\/system-reminder>/g,
+    /<command-name[^>]*>[\s\S]*?<\/command-name>/g,
+    /<command-message[^>]*>[\s\S]*?<\/command-message>/g,
+    /<command-args[^>]*>[\s\S]*?<\/command-args>/g,
+    /<local-command-stdout[^>]*>[\s\S]*?<\/local-command-stdout>/g,
+    /<\/?user_query>/g,
+];
+
+export function stripIDEContextTags(text) {
+    if (!text) return "";
+    let result = text.replace(IDE_TAG_RE, "");
+    for (const re of SYSTEM_TAG_RES) {
+        result = result.replace(re, "");
+    }
+    return result.replace(/\n{3,}/g, "\n\n").trim();
+}

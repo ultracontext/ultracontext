@@ -4,7 +4,7 @@ import { Text } from "ink";
 import { UC_CLAUDE_ORANGE, UC_CODEX_BLUE, UC_OPENCLAW_RED } from "./constants.mjs";
 
 export function compact(value, max = 80) {
-  const raw = String(value ?? "");
+  const raw = String(value ?? "").replace(/[\r\n\t\v\f\x00-\x1f]+/g, " ");
   if (raw.length <= max) return raw;
   if (max <= 3) return raw.slice(0, max);
   return `${raw.slice(0, max - 3)}...`;

@@ -5,6 +5,7 @@
   "scripts": {
     "check": "pnpm -r --if-present run check",
     "dev:sync": "pnpm --filter @ultracontext/sync run dev",
+    "dev:tui": "pnpm --filter @ultracontext/sync run dev:tui",
     "ultracontext:api": "pnpm --filter ultracontext-api run dev",
     "ultracontext:db:up": "cd apps/postgres && docker compose up -d",
     "ultracontext:db:down": "cd apps/postgres && docker compose down",

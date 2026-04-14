@@ -16,7 +16,10 @@ import {
 
 import { acquireFileLock, resolveLockPath } from "./lock.mjs";
 import { redact } from "./redact.mjs";
-import { parseClaudeCodeLine, parseCodexLine, parseGstackLine, parseOpenClawLine } from "@ultracontext/parsers";
+import {
+  parseClaudeCodeLine, parseCodexLine, parseGstackLine, parseOpenClawLine,
+  parseCursorLine, parseGeminiFile,
+} from "@ultracontext/parsers";
 import { boolFromEnv, expandHome, extractProjectPathFromFile, sha256, toInt } from "./utils.mjs";
 
 const LOG_LEVELS = { error: 0, warn: 1, info: 2, debug: 3 };
@@ -275,7 +278,7 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
   }
 
   function pushRecentLog(level, message, data) {
-    let line = String(message ?? "");
+    let line = String(message ?? "").replace(/[\r\n\t\v\f\x00-\x1f]+/g, " ").replace(/\s{2,}/g, " ");
     if (line.startsWith("Appended event to session context")) line = "context append";
     if (line.startsWith("Context created")) line = "Context created";
     if (line.startsWith("Context created without metadata fallback")) line = "Context created (fallback)";
@@ -486,6 +489,18 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
       sources.push({ name: "openclaw", enabled: true, globs: [openclawGlob], parseLine: parseOpenClawLine });
     }
 
+    // cursor — same format as Claude but uses "role" instead of "type"
+    const cursorGlob = expandHome(process.env.CURSOR_GLOB ?? "~/.cursor/projects/**/*.jsonl");
+    if (boolFromEnv(process.env.INGEST_CURSOR, true)) {
+      sources.push({ name: "cursor", enabled: true, globs: [cursorGlob], parseLine: parseCursorLine });
+    }
+
+    // gemini — JSON format (not JSONL), uses parseFile instead of parseLine
+    const geminiGlob = expandHome(process.env.GEMINI_GLOB ?? "~/.gemini/tmp/*/chats/session-*.json");
+    if (boolFromEnv(process.env.INGEST_GEMINI, true)) {
+      sources.push({ name: "gemini", enabled: true, globs: [geminiGlob], parseFile: parseGeminiFile });
+    }
+
     // gstack — skill artifacts (learnings, timeline, reviews, resources)
     const gstackGlob = expandHome(process.env.GSTACK_GLOB ?? "~/.gstack/projects/**/*.jsonl");
     if (boolFromEnv(process.env.INGEST_GSTACK, true)) {
@@ -533,7 +548,15 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
       if (shouldStop()) break;
       try {
         const stat = await fs.stat(filePath);
-        store.setOffset(offsetStoreKey(source.name, `${stat.dev}:${stat.ino}`), stat.size);
+        const fileId = `${stat.dev}:${stat.ino}`;
+
+        // JSON-format sources (e.g. Gemini): store content hash to match processFile's comparison
+        if (source.parseFile) {
+          const contents = await fs.readFile(filePath, "utf8");
+          store.setOffset(offsetStoreKey(source.name, fileId), sha256(contents));
+        } else {
+          store.setOffset(offsetStoreKey(source.name, fileId), stat.size);
+        }
       } catch { /* ignore */ }
     }
   }
@@ -743,6 +766,25 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
         started_at: sessionEvents[0].normalized.timestamp,
       };
       if (projectPath) contextMeta.project_path = projectPath;
+
+      // extract title from first real user message
+      const isRealUserEvent = (ev) => {
+        if (ev.normalized.kind !== "user") return false;
+        const et = ev.normalized.eventType ?? "";
+        const msg = ev.normalized.message ?? "";
+        // skip codex system-injected user messages (AGENTS.md, permissions)
+        if (et === "response_item.message") return false;
+        // skip openclaw session init + claude tool results + xml tags
+        if (msg.startsWith("A new session was started")) return false;
+        if (msg.startsWith("[result]")) return false;
+        if (msg.startsWith("<")) return false;
+        return true;
+      };
+      const firstUserEvent = sessionEvents.find(isRealUserEvent)
+        ?? sessionEvents.find(ev => ev.normalized.kind === "user");
+      if (firstUserEvent?.normalized?.message) {
+        contextMeta.title = firstUserEvent.normalized.message.replace(/[\r\n\t\v\f\x00-\x1f]+/g, " ").replace(/\s{2,}/g, " ").trim().slice(0, 120);
+      }
       const ctxId = await getOrCreateContext(store, uc,
         sessionContextStoreKey(sourceName, sessionId),
         contextMeta, sourceName,
@@ -777,9 +819,12 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
       noteSourceActivity(sourceName, { lastEventType: last.eventType, lastSessionId: sessionId, lastAt: Date.now() });
 
       if (cfg.logAppends) {
-        log("info", "Bulk appended events to session context", {
-          source: sourceName, session_id: sessionId, context_id: sessionContextId, count: sessionEvents.length,
-        });
+        for (const { normalized } of sessionEvents) {
+          const msg = (normalized.message ?? "").replace(/[\r\n\t\v\f\x00-\x1f]+/g, " ").replace(/\s{2,}/g, " ").trim().slice(0, 80);
+          log("info", `[${normalized.eventType}] ${msg}`, {
+            source: sourceName, session_id: sessionId,
+          });
+        }
       }
     });
   }
@@ -827,6 +872,47 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
 
       const fileId = `${stat.dev}:${stat.ino}`;
       const offsetKey = offsetStoreKey(source.name, fileId);
+
+      // JSON-format sources (e.g. Gemini): read entire file, dedup by content hash
+      if (source.parseFile) {
+        const fileContents = await fs.readFile(filePath, "utf8");
+        const contentHash = sha256(fileContents);
+        const storedHash = store.getOffset(offsetKey);
+        if (storedHash === contentHash) return;
+
+        noteSourceActivity(source.name, { lastFile: filePath, lastAt: Date.now() });
+        const allEvents = source.parseFile({ fileContents, filePath });
+        if (!Array.isArray(allEvents) || allEvents.length === 0) return;
+
+        bumpStat("linesRead", allEvents.length);
+        bumpSourceStat(source.name, "linesRead", allEvents.length);
+
+        const pendingEvents = [];
+        for (let i = 0; i < allEvents.length; i++) {
+          if (shouldStop()) break;
+          const normalized = allEvents[i];
+          if (!normalized || !normalized.sessionId) continue;
+          if (ingestMode === "last_24h" && !isWithinLast24h(normalized.timestamp)) continue;
+
+          bumpStat("parsedEvents");
+          bumpSourceStat(source.name, "parsedEvents");
+          noteSourceActivity(source.name, { lastEventType: normalized.eventType, lastSessionId: normalized.sessionId, lastAt: Date.now() });
+
+          const eventId = sha256(`${source.name}|${cfg.host}|${cfg.userId}|${normalized.sessionId}|${fileId}|${i}`);
+          const isNew = markEventSeen(store, source.name, eventId);
+          if (!isNew) { bumpStat("deduped"); bumpSourceStat(source.name, "deduped"); continue; }
+
+          pendingEvents.push({ normalized, eventId, lineOffset: i });
+        }
+
+        if (pendingEvents.length > 0) {
+          await appendBulkToUltraContext({ store, uc, sourceName: source.name, events: pendingEvents, filePath });
+        }
+        store.setOffset(offsetKey, contentHash);
+        return;
+      }
+
+      // JSONL-format sources: read new lines from byte offset
       const currentOffset = toInt(store.getOffset(offsetKey), 0);
       const { lines, nextOffset } = await readNewLines(filePath, currentOffset);
 
