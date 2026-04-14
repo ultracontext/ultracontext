@@ -12,6 +12,8 @@ function renderFilterBar(activeFilter) {
     { id: "claude", label: "Claude", color: UC_CLAUDE_ORANGE },
     { id: "codex", label: "Codex", color: UC_CODEX_BLUE },
     { id: "openclaw", label: "OpenClaw", color: UC_OPENCLAW_RED },
+    { id: "cursor", label: "Cursor", color: "cyan" },
+    { id: "gemini", label: "Gemini", color: "blue" },
   ];
   const parts = filters.map((f) =>
     React.createElement(

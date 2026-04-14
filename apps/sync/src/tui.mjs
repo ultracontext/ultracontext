@@ -77,7 +77,7 @@ const RESUME_TARGET_OPTIONS = [
   { id: "codex", label: "Codex" },
 ];
 const INSPECT_OPTION = { id: "inspect", label: "Inspect messages" };
-const SOURCE_FILTERS = ["all", "claude", "codex", "openclaw"];
+const SOURCE_FILTERS = ["all", "claude", "codex", "openclaw", "cursor", "gemini"];
 const PERSISTED_CONFIG_FIELDS = [
   "bootstrapMode",
   "resumeTerminal",
@@ -960,18 +960,17 @@ async function loadResumeContexts({ silent = false } = {}) {
     if (!silent) enrichContextTitles(filtered);
     ui.resume.loadedAt = Date.now();
 
-    const sourceCounts = { codex: 0, claude: 0, openclaw: 0, other: 0 };
+    const sourceCounts = { codex: 0, claude: 0, openclaw: 0, cursor: 0, gemini: 0, other: 0 };
     for (const ctx of filtered) {
       const source = String(ctx?.metadata?.source ?? "").toLowerCase();
-      if (source === "codex") sourceCounts.codex += 1;
-      else if (source === "claude") sourceCounts.claude += 1;
-      else if (source === "openclaw") sourceCounts.openclaw += 1;
+      if (sourceCounts[source] !== undefined) sourceCounts[source] += 1;
       else sourceCounts.other += 1;
     }
 
     if (!silent) {
       const filterLabel = cfg.resumeSourceFilter === "all" ? "all sources" : cfg.resumeSourceFilter;
-      ui.resume.notice = `Loaded ${filtered.length} session contexts (${filterLabel}: codex=${sourceCounts.codex}, claude=${sourceCounts.claude}, openclaw=${sourceCounts.openclaw}, other=${sourceCounts.other})`;
+      const counts = Object.entries(sourceCounts).map(([k, v]) => `${k}=${v}`).join(", ");
+      ui.resume.notice = `Loaded ${filtered.length} session contexts (${filterLabel}: ${counts})`;
       if (filtered.length === 0) {
         ui.resume.notice = `No contexts found for filter=${cfg.resumeSourceFilter}`;
       }

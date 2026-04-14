@@ -548,7 +548,15 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
       if (shouldStop()) break;
       try {
         const stat = await fs.stat(filePath);
-        store.setOffset(offsetStoreKey(source.name, `${stat.dev}:${stat.ino}`), stat.size);
+        const fileId = `${stat.dev}:${stat.ino}`;
+
+        // JSON-format sources (e.g. Gemini): store content hash to match processFile's comparison
+        if (source.parseFile) {
+          const contents = await fs.readFile(filePath, "utf8");
+          store.setOffset(offsetStoreKey(source.name, fileId), sha256(contents));
+        } else {
+          store.setOffset(offsetStoreKey(source.name, fileId), stat.size);
+        }
       } catch { /* ignore */ }
     }
   }
