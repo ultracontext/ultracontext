@@ -27,6 +27,17 @@ export const AGENT_COMPAT = {
         testedAgainst: ["0.1.x"],
         sessionDir: "~/.openclaw/sessions",
     },
+    gemini: {
+        formatVersion: "v1",
+        testedAgainst: ["0.1.x"],
+        sessionDir: "~/.gemini/tmp",
+        format: "json",
+    },
+    cursor: {
+        formatVersion: "v1",
+        testedAgainst: ["0.1.x"],
+        sessionDir: "~/.cursor/projects",
+    },
 
     // cross-agent resume compatibility
     resume: {
