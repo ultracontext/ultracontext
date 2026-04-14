@@ -1,7 +1,7 @@
 import figlet from "figlet";
 
 const HERO_TEXT = "UltraContext";
-const HERO_FONT_ORDER = ["Standard", "Small", "Mini", "Slant"];
+const HERO_FONT_ORDER = ["ANSI Shadow", "Standard", "Small", "Mini"];
 const HERO_ART_CACHE = new Map();
 
 function trimBlankEdgeLines(lines) {

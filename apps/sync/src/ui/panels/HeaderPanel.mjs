@@ -16,62 +16,30 @@ function formatUptime(value) {
   return `${seconds}s`;
 }
 
+export { formatUptime };
+
 export function HeaderPanel({ snapshot, stdoutColumns }) {
-  const [pulseOn, setPulseOn] = React.useState(true);
-
-  React.useEffect(() => {
-    const timer = setInterval(() => {
-      setPulseOn((current) => !current);
-    }, 320);
-    timer.unref?.();
-    return () => clearInterval(timer);
-  }, []);
-
-  const health = snapshot.stats.errors > 0 ? "DEGRADED" : "HEALTHY";
-  const healthColor = health === "HEALTHY" ? "green" : "yellow";
   const tagline = "Same context, everywhere";
   const innerWidth = Math.max(stdoutColumns, 40);
   const spinnerVisualWidth = 28;
-  const gap = innerWidth >= 96 ? 3 : 2;
+
+  const gap = 2;
   const artWidth = Math.max(innerWidth - spinnerVisualWidth - gap, 8);
-  const statusPrefix = "status ";
-  const healthToken = `● ${health}`;
-  const clientsOnline = Array.isArray(snapshot.onlineClients) ? snapshot.onlineClients.length : 0;
-  const dashboardTail = [
-    `live ${formatTime(snapshot.now)}`,
-    `☻ ${snapshot.cfg.userId}`,
-    `clients ${clientsOnline}`,
-    `uptime ${formatUptime(Date.now() - Number(snapshot.stats.startedAt ?? 0))}`,
-  ].join(" │ ");
-  const tailMax = Math.max(innerWidth - statusPrefix.length - healthToken.length - 3, 0);
-  const fittedTail = fitToWidth(dashboardTail, tailMax);
+
+  const padLeft = 1;
 
   return React.createElement(
     Box,
-    { flexDirection: "column", width: innerWidth },
+    { flexDirection: "column", width: innerWidth, paddingX: padLeft, paddingTop: 4, paddingBottom: 3 },
     React.createElement(
       Box,
-      { flexDirection: "row", alignItems: "center", width: innerWidth },
+      { flexDirection: "row", alignItems: "flex-end", width: innerWidth - padLeft * 2 },
       React.createElement(Spinner, { color: "white" }),
       React.createElement(Box, { width: gap }),
       React.createElement(
         HeroLockup,
-        { width: artWidth, tagline }
+        { width: artWidth - padLeft * 2, tagline }
       )
-    ),
-    React.createElement(
-      Box,
-      { flexDirection: "row", width: innerWidth },
-      React.createElement(Text, { color: "gray", dim: true }, statusPrefix),
-      React.createElement(
-        Text,
-        { color: healthColor, bold: true },
-        React.createElement(Text, { color: healthColor, dim: !pulseOn }, "●"),
-        ` ${health}`
-      ),
-      fittedTail
-        ? React.createElement(Text, { color: "gray", dim: true }, ` │ ${fittedTail}`)
-        : null
     )
   );
 }

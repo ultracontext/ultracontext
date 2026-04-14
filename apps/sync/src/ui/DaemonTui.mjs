@@ -8,34 +8,7 @@ import { fitToWidth } from "./format.mjs";
 import { footerHelpText, selectedTabIndexFromId } from "./state.mjs";
 import { NarrowWidthPanel } from "./components/index.mjs";
 import { BootstrapPanel, HeaderPanel, MainPanels, ResumeTargetPanel, UpdatePromptPanel } from "./panels/index.mjs";
-
-const FOOTER_QUIPS = [
-  "Who is John Galt?",
-  "ultrathink -> ultracontext",
-  "Welcome to the beginning of infinity.",
-  "Our job is to take the jobs.",
-];
-
-function renderFooterQuip(quip) {
-  const token = "ultrathink";
-  const lower = String(quip ?? "").toLowerCase();
-  const index = lower.indexOf(token);
-  if (index < 0) {
-    return React.createElement(Text, { color: "gray", bold: true }, quip);
-  }
-
-  const before = quip.slice(0, index);
-  const match = quip.slice(index, index + token.length);
-  const after = quip.slice(index + token.length);
-
-  return React.createElement(
-    Box,
-    { flexDirection: "row", flexShrink: 0 },
-    before ? React.createElement(Text, { key: "quip-before", color: "gray", bold: true }, before) : null,
-    React.createElement(Text, { key: "quip-strike", color: "gray", bold: true, strikethrough: true }, match),
-    after ? React.createElement(Text, { key: "quip-after", color: "gray", bold: true }, after) : null
-  );
-}
+import { formatUptime } from "./panels/HeaderPanel.mjs";
 
 function renderMainFrameTop(width, title) {
   const safeWidth = Math.max(Number(width) || 0, 4);
@@ -94,18 +67,9 @@ export function DaemonTui({ snapshot, actions }) {
   const resumeTargetPickerActive = Boolean(snapshot.resumeTargetPicker?.active);
   const [focusMode, setFocusMode] = React.useState("menu");
   const [menuIndex, setMenuIndex] = React.useState(selectedTabIndex);
-  const [quipIndex, setQuipIndex] = React.useState(0);
-
   React.useEffect(() => {
     if (focusMode === "menu") setMenuIndex(selectedTabIndex);
   }, [focusMode, selectedTabIndex]);
-
-  React.useEffect(() => {
-    const timer = setInterval(() => {
-      setQuipIndex((current) => (current + 1) % FOOTER_QUIPS.length);
-    }, 3800);
-    return () => clearInterval(timer);
-  }, []);
 
   const moveMenuIndex = React.useMemo(() => buildMoveMenuIndex(actions, setMenuIndex), [actions]);
 
@@ -152,11 +116,16 @@ export function DaemonTui({ snapshot, actions }) {
     focusMode,
   });
   const footerWidth = Math.max(layout.containerWidth, 24);
-  const quipRaw = FOOTER_QUIPS[quipIndex % FOOTER_QUIPS.length];
-  const quip = fitToWidth(quipRaw, Math.max(Math.floor(footerWidth * 0.48), 18));
-  const leftMax = Math.max(footerWidth - quip.length - 2, 12);
+
+  // status info for the right side of footer
+  const health = snapshot.stats.errors > 0 ? "DEGRADED" : "HEALTHY";
+  const healthColor = health === "HEALTHY" ? "green" : "yellow";
+  const uptime = formatUptime(Date.now() - Number(snapshot.stats.startedAt ?? 0));
+  const statusRight = `● ${health}  ·  uptime ${uptime}`;
+
+  const leftMax = Math.max(footerWidth - statusRight.length - 2, 12);
   const left = fitToWidth(footerLeft, leftMax);
-  const gap = " ".repeat(Math.max(footerWidth - left.length - quip.length, 1));
+  const gap = " ".repeat(Math.max(footerWidth - left.length - statusRight.length, 1));
   const footerRule = "─".repeat(Math.max(footerWidth, 1));
 
   return React.createElement(
@@ -191,12 +160,8 @@ export function DaemonTui({ snapshot, actions }) {
       React.createElement(
         Box,
         { width: footerWidth, flexDirection: "row" },
-        React.createElement(
-          Text,
-          { color: "gray", wrap: "truncate-end" },
-          `${left}${gap}`
-        ),
-        renderFooterQuip(quip)
+        React.createElement(Text, { color: "gray", wrap: "truncate-end" }, `${left}${gap}`),
+        React.createElement(Text, { color: healthColor, bold: true }, statusRight)
       )
     )
   );
