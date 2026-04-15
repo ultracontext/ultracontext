@@ -68,6 +68,7 @@
         "react": "^19.2.4"
     },
     "devDependencies": {
+        "@ultracontext/parsers": "workspace:*",
         "@ultracontext/sync": "workspace:*",
         "tsdown": "^0.20.3",
         "typescript": "^5.9.3"
