@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
-// Post-install: register skills with AI agents + launch onboarding
+// Post-install: register skills with AI agents via symlinks + launch onboarding
 import { execSync } from "node:child_process";
-import { mkdirSync, copyFileSync, existsSync } from "node:fs";
+import { mkdirSync, symlinkSync, unlinkSync, lstatSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
@@ -15,26 +15,33 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const home = os.homedir();
 
 // ── register skills with AI agents ─────────────────────────────
-// copy SKILL.md files so /switch works immediately after install
+// symlink SKILL.md so /switch works immediately after install
+// pattern: ~/.claude/skills/switch/SKILL.md → <npm-global>/ultracontext/skills/switch/SKILL.md
 
 const skills = [
   { name: "switch", source: join(__dirname, "skills", "switch", "SKILL.md") },
 ];
 
-for (const skill of skills) {
-  // Claude Code
-  const claudeDir = join(home, ".claude", "skills", skill.name);
-  try {
-    mkdirSync(claudeDir, { recursive: true });
-    copyFileSync(skill.source, join(claudeDir, "SKILL.md"));
-  } catch { /* read-only fs, CI, etc */ }
+// agent skill directories
+const agents = [
+  join(home, ".claude", "skills"),
+  join(home, ".codex", "skills"),
+];
 
-  // Codex
-  const codexDir = join(home, ".codex", "skills", skill.name);
-  try {
-    mkdirSync(codexDir, { recursive: true });
-    copyFileSync(skill.source, join(codexDir, "SKILL.md"));
-  } catch { /* optional */ }
+for (const skill of skills) {
+  for (const agentSkillsDir of agents) {
+    const targetDir = join(agentSkillsDir, skill.name);
+    const targetFile = join(targetDir, "SKILL.md");
+
+    try {
+      mkdirSync(targetDir, { recursive: true });
+
+      // remove existing symlink or file before creating new one
+      try { lstatSync(targetFile); unlinkSync(targetFile); } catch { /* doesn't exist */ }
+
+      symlinkSync(skill.source, targetFile);
+    } catch { /* read-only fs, CI, etc — silent */ }
+  }
 }
 
 // ── launch onboarding (global TTY installs only) ───────────────
