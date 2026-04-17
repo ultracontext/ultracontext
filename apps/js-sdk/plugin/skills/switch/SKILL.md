@@ -1,6 +1,6 @@
 ---
 name: switch
-description: "Switch AI agent sessions with full context. Powered by UltraContext."
+description: "Switch current session to codex. UltraContext keeps your original context."
 allowed-tools:
   - Bash
 ---
