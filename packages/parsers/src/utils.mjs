@@ -15,12 +15,17 @@ export function claudeProjectDirName(cwd) {
     return resolved.replace(/[\\/]/g, "-").replace(/[^A-Za-z0-9._-]/g, "-");
 }
 
-// accept only absolute paths without control chars — hardens cwd used in shell
+// accept only absolute paths in canonical form with no control chars or unicode
+// line separators — hardens cwd used in shell/AppleScript sinks. Rejects ".."
+// traversal and encodings that would round-trip unsafely through a terminal emulator.
 export function isSafeCwd(value) {
     if (typeof value !== "string" || !value.length) return false;
     if (!path.isAbsolute(value)) return false;
-    if (/[\n\r\0\t\v\f]/.test(value)) return false;
-    return true;
+    // reject all C0 controls, DEL, Unicode NEL (U+0085), LINE SEP (U+2028), PARA SEP (U+2029)
+    if (/[\x00-\x1F\x7F\u0085\u2028\u2029]/.test(value)) return false;
+    // require canonical form — path.normalize strips ``..``, `.`, and redundant slashes;
+    // if input differs, reject rather than silently normalize behind the caller
+    return path.normalize(value) === value;
 }
 
 // safe truncation with indicator

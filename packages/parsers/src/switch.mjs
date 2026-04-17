@@ -31,16 +31,17 @@ async function findLatestSession(pattern, excludePattern) {
 }
 
 // auto-detect latest session file for a given agent
-async function resolveSessionPath(source, cwd) {
+// baseDirs override lets tests point at tmp roots instead of ~/.claude or ~/.codex
+async function resolveSessionPath(source, cwd, baseDirs = {}) {
     if (source === "claude") {
         const projectDir = claudeProjectDirName(cwd);
-        const root = expandHome("~/.claude/projects");
+        const root = baseDirs.claude || expandHome("~/.claude/projects");
         const pattern = path.join(root, projectDir, "*.jsonl");
         return findLatestSession(pattern, "**/subagents/**");
     }
 
     if (source === "codex") {
-        const root = expandHome("~/.codex/sessions");
+        const root = baseDirs.codex || expandHome("~/.codex/sessions");
         const pattern = path.join(root, "**/*.jsonl");
         return findLatestSession(pattern);
     }
@@ -49,11 +50,11 @@ async function resolveSessionPath(source, cwd) {
 }
 
 // read and parse a local agent session file
-export async function readLocalSession({ source, sessionPath, cwd }) {
+export async function readLocalSession({ source, sessionPath, cwd, sourceRoots }) {
     const resolvedCwd = cwd || process.cwd();
 
-    // resolve session file path
-    const filePath = sessionPath || (await resolveSessionPath(source, resolvedCwd));
+    // resolve session file path — sourceRoots lets callers/tests override ~/.claude + ~/.codex
+    const filePath = sessionPath || (await resolveSessionPath(source, resolvedCwd, sourceRoots));
     if (!filePath) {
         throw new Error(`No ${source} session found. Specify --session <path>.`);
     }
@@ -61,8 +62,11 @@ export async function readLocalSession({ source, sessionPath, cwd }) {
         throw new Error(`Session file not found: ${filePath}`);
     }
 
-    // size cap — reject absurdly large files before loading into memory
-    const stat = fs.statSync(filePath);
+    // stat via lstat to detect symlinks / special files before read
+    const stat = fs.lstatSync(filePath);
+    if (!stat.isFile()) {
+        throw new Error(`Session path is not a regular file: ${filePath}`);
+    }
     if (stat.size > MAX_SESSION_BYTES) {
         throw new Error(`Session file too large: ${stat.size} bytes (max ${MAX_SESSION_BYTES}).`);
     }
@@ -124,8 +128,10 @@ function toWriterMessages(messages, source) {
 }
 
 // switch a session from one agent to another
-export async function switchSession({ source, target, sessionPath, cwd, last, baseDir }) {
-    const session = await readLocalSession({ source, sessionPath, cwd });
+// baseDir: override target writer's output root (for tests)
+// sourceRoots: { claude, codex } override source auto-detect roots (for tests)
+export async function switchSession({ source, target, sessionPath, cwd, last, baseDir, sourceRoots }) {
+    const session = await readLocalSession({ source, sessionPath, cwd, sourceRoots });
 
     // optionally slice to last N messages
     let msgs = session.messages;

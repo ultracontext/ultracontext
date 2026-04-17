@@ -72,10 +72,10 @@ export async function hasLocalCodexSession(sessionId, baseDir) {
 // write a Codex-native JSONL session file from UltraContext messages
 export async function writeCodexSession({ sessionId, cwd, messages, baseDir }) {
     const id = String(sessionId ?? "").trim();
-    if (!id) return { written: false, reason: "missing_session_id", filePath: "" };
+    if (!id) return { written: false, reason: "missing_session_id", filePath: "", sessionId: "" };
 
     if (await hasLocalCodexSession(id, baseDir)) {
-        return { written: false, reason: "already_exists", filePath: "" };
+        return { written: false, reason: "already_exists", filePath: "", sessionId: id };
     }
 
     const firstMessageTs = firstMessageTimestamp(messages);
@@ -128,12 +128,13 @@ export async function writeCodexSession({ sessionId, cwd, messages, baseDir }) {
         }
 
         await fs.writeFile(filePath, `${lines.join("\n")}\n`, "utf8");
-        return { written: true, reason: "created", filePath };
+        return { written: true, reason: "created", filePath, sessionId: id };
     } catch (error) {
         return {
             written: false,
             reason: "write_failed",
             filePath,
+            sessionId: id,
             error: error instanceof Error ? error.message : String(error),
         };
     }

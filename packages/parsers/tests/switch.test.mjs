@@ -174,16 +174,16 @@ describe("switchSession — codex → claude roundtrip", () => {
     });
 });
 
-describe("switchSession — file size cap", () => {
+describe("switchSession — file size cap + non-regular files", () => {
     it("rejects session files above the size cap via readLocalSession", async () => {
-        // simulate oversize by monkey-patching fs.statSync for the specific path
+        // simulate oversize by monkey-patching fs.lstatSync for the specific path
         const fx = path.join(srcDir, "huge.jsonl");
         writeClaudeFixture(fx, { count: 1 });
-        const realStat = fs.statSync;
-        fs.statSync = (p, ...rest) => {
-            const s = realStat(p, ...rest);
+        const realLstat = fs.lstatSync;
+        fs.lstatSync = (p, ...rest) => {
+            const s = realLstat(p, ...rest);
             if (p === fx) {
-                return { ...s, size: 300 * 1024 * 1024 };
+                return Object.assign(Object.create(Object.getPrototypeOf(s)), s, { size: 300 * 1024 * 1024 });
             }
             return s;
         };
@@ -193,7 +193,137 @@ describe("switchSession — file size cap", () => {
                 /too large/
             );
         } finally {
-            fs.statSync = realStat;
+            fs.lstatSync = realLstat;
         }
+    });
+
+    it("rejects non-regular session paths (symlink / socket / fifo)", async () => {
+        // simulate a non-regular file by monkey-patching lstat to return isFile()=false
+        const fx = path.join(srcDir, "fifo.jsonl");
+        writeClaudeFixture(fx, { count: 1 });
+        const realLstat = fs.lstatSync;
+        fs.lstatSync = (p, ...rest) => {
+            const s = realLstat(p, ...rest);
+            if (p === fx) {
+                return Object.assign(Object.create(Object.getPrototypeOf(s)), s, { isFile: () => false });
+            }
+            return s;
+        };
+        try {
+            await assert.rejects(
+                () => readLocalSession({ source: "claude", sessionPath: fx, cwd: tmpDir }),
+                /not a regular file/
+            );
+        } finally {
+            fs.lstatSync = realLstat;
+        }
+    });
+});
+
+describe("readLocalSession — cwd canonicalization", () => {
+    it("rejects non-canonical cwd (contains ..)", async () => {
+        const fx = path.join(srcDir, "claude.jsonl");
+        writeClaudeFixture(fx, { cwd: "/tmp/foo/../etc" });
+        const r = await readLocalSession({ source: "claude", sessionPath: fx, cwd: tmpDir });
+        assert.equal(r.cwd, tmpDir, "non-canonical cwd must not propagate");
+    });
+
+    it("rejects cwd with ESC control char", async () => {
+        const fx = path.join(srcDir, "claude.jsonl");
+        writeClaudeFixture(fx, { cwd: "/tmp/bad\x1b]0;hijack\x07" });
+        const r = await readLocalSession({ source: "claude", sessionPath: fx, cwd: tmpDir });
+        assert.equal(r.cwd, tmpDir);
+    });
+
+    it("rejects cwd with unicode line separator", async () => {
+        const fx = path.join(srcDir, "claude.jsonl");
+        writeClaudeFixture(fx, { cwd: "/tmp/bad\u2028after" });
+        const r = await readLocalSession({ source: "claude", sessionPath: fx, cwd: tmpDir });
+        assert.equal(r.cwd, tmpDir);
+    });
+});
+
+describe("switchSession — retry on UUID collision", () => {
+    it("retries with fresh UUID when first write hits already_exists", async () => {
+        // pre-seed baseDir with any jsonl so the codex writer's hasLocalCodexSession
+        // will only report true for matching UUID. We can't force a real collision
+        // without mocking randomUUID, but we can round-trip twice with the same
+        // sessionPath → baseDir and assert both succeed with distinct session IDs.
+        const fx = path.join(srcDir, "claude.jsonl");
+        writeClaudeFixture(fx, { count: 2 });
+        const r1 = await switchSession({
+            source: "claude", target: "codex",
+            sessionPath: fx, cwd: tmpDir, baseDir,
+        });
+        const r2 = await switchSession({
+            source: "claude", target: "codex",
+            sessionPath: fx, cwd: tmpDir, baseDir,
+        });
+        assert.equal(r1.written, true);
+        assert.equal(r2.written, true);
+        assert.notEqual(r1.sessionId, r2.sessionId, "two calls must get distinct session IDs");
+    });
+
+    it("returns sessionId=null when write fails", async () => {
+        // writer errors out if baseDir is a file (mkdir fails)
+        const fx = path.join(srcDir, "claude.jsonl");
+        writeClaudeFixture(fx, { count: 1 });
+        const badBase = path.join(tmpDir, "not-a-dir");
+        fs.writeFileSync(badBase, "blocking file");
+        const r = await switchSession({
+            source: "claude", target: "codex",
+            sessionPath: fx, cwd: tmpDir, baseDir: badBase,
+        });
+        assert.equal(r.written, false);
+        assert.equal(r.sessionId, null, "no sessionId leaks when write fails");
+    });
+});
+
+describe("switchSession — empty messages end-to-end", () => {
+    it("writes fallback line when source has no user/assistant messages", async () => {
+        // claude session with only a 'summary' line (no user/assistant kinds)
+        const fx = path.join(srcDir, "empty.jsonl");
+        fs.writeFileSync(fx, JSON.stringify({
+            parentUuid: null, type: "summary",
+            sessionId: "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+            uuid: "11111111-1111-4111-8111-111111111111",
+            summary: "nothing",
+            timestamp: "2026-04-01T10:00:00.000Z",
+            cwd: "/tmp/project",
+        }) + "\n");
+        const r = await switchSession({
+            source: "claude", target: "claude",
+            sessionPath: fx, cwd: tmpDir, baseDir,
+        });
+        assert.equal(r.messageCount, 0);
+        assert.equal(r.written, true);
+        const content = fs.readFileSync(r.filePath, "utf8").trim().split("\n");
+        assert.equal(content.length, 1);
+        const parsed = JSON.parse(content[0]);
+        assert.ok(parsed.message.content[0].text.includes("no user/assistant messages"));
+    });
+});
+
+describe("resolveSessionPath — sourceRoots override (hermetic)", () => {
+    it("picks latest mtime when multiple claude sessions exist under injected root", async () => {
+        // ~/.claude/projects/<dirname>/<uuid>.jsonl layout
+        const claudeRoot = path.join(tmpDir, "claude-projects");
+        // claudeProjectDirName turns /tmp/proj into "-tmp-proj" style slug — match exactly
+        // by using the same algorithm: the cwd here is `/tmp/proj`, slug is `-tmp-proj`
+        const projDir = path.join(claudeRoot, "-tmp-proj");
+        fs.mkdirSync(projDir, { recursive: true });
+        const older = path.join(projDir, "older.jsonl");
+        const newer = path.join(projDir, "newer.jsonl");
+        writeClaudeFixture(older, { count: 1 });
+        writeClaudeFixture(newer, { count: 1 });
+        // force mtime ordering
+        const past = new Date(Date.now() - 10_000);
+        fs.utimesSync(older, past, past);
+        const r = await readLocalSession({
+            source: "claude",
+            cwd: "/tmp/proj",
+            sourceRoots: { claude: claudeRoot },
+        });
+        assert.equal(path.basename(r.filePath), "newer.jsonl");
     });
 });

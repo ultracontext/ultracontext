@@ -20,7 +20,8 @@ const TERM_GHOSTTY = "ghostty";
 const TERM_ITERM2 = "iTerm.app";
 const TERM_TERMINAL_APP = "Apple_Terminal";
 
-// ms to wait for Cmd+T to open a new Ghostty tab before typing into it
+// ms to wait after activate / Cmd+T for Ghostty to be ready to receive paste
+const GHOSTTY_FOCUS_DELAY_MS = 150;
 const GHOSTTY_TAB_OPEN_DELAY_MS = 300;
 
 // parse switch-specific args from process.argv
@@ -82,19 +83,34 @@ function runAppleScript(script) {
   return r.status === 0;
 }
 
-// Ghostty: open new tab via Cmd+T, then type shell command into it
+// write a string to the macOS pasteboard via pbcopy (stdin avoids all quoting)
+function writePasteboard(value) {
+  const r = spawnSync("pbcopy", [], { input: value });
+  return r.status === 0;
+}
+
+// Ghostty: pasteboard the command, activate Ghostty, open tab, paste, return.
+// Pasteboard + Cmd+V avoids the focus-race window where typed keystrokes could
+// land in the frontmost app if it's not Ghostty. Activate re-anchors focus
+// explicitly before any keystroke is sent, and we tell process "ghostty" for
+// every keystroke so System Events routes them to the right process.
 function launchGhostty(cmd) {
-  const openTab =
-    'tell application "System Events" to tell process "ghostty" to keystroke "t" using command down';
-  if (!runAppleScript(openTab)) return false;
-  const delaySec = GHOSTTY_TAB_OPEN_DELAY_MS / 1000;
-  const typeCmd =
-    `delay ${delaySec}\n` +
-    `tell application "System Events"\n` +
-    `  keystroke "${appleScriptEscape(cmd)}"\n` +
-    `  key code 36\n` +
-    `end tell`;
-  return runAppleScript(typeCmd);
+  if (!writePasteboard(cmd)) return false;
+  const focusSec = GHOSTTY_FOCUS_DELAY_MS / 1000;
+  const tabSec = GHOSTTY_TAB_OPEN_DELAY_MS / 1000;
+  const script = [
+    'tell application "Ghostty" to activate',
+    `delay ${focusSec}`,
+    'tell application "System Events"',
+    '  tell process "ghostty"',
+    '    keystroke "t" using command down',
+    `    delay ${tabSec}`,
+    '    keystroke "v" using command down',
+    '    key code 36',
+    '  end tell',
+    'end tell',
+  ].join("\n");
+  return runAppleScript(script);
 }
 
 // iTerm2: create new tab with command
@@ -166,7 +182,9 @@ async function doSwitch(opts) {
     const cmd = `codex fork ${result.sessionId} -C ${shellQuote(result.cwd)}`;
     const launched = openInNewTab(cmd);
     if (!launched) {
-      console.log(`\n  Run in your terminal: ${d}${cmd}${r}`);
+      // print on its own line with no ANSI wrapping so copy-paste yields a clean command
+      console.log(`\n  ${d}Run in your terminal:${r}`);
+      console.log(`  ${cmd}`);
     }
   }
 
@@ -193,4 +211,4 @@ export async function runSwitch() {
 }
 
 // exported for tests
-export { parseArgs, shellQuote, appleScriptEscape, openInNewTab };
+export { parseArgs, shellQuote, appleScriptEscape, openInNewTab, writePasteboard };

@@ -13,7 +13,8 @@
         "build": "tsdown",
         "dev": "tsdown --watch",
         "prepack": "pnpm run build",
-        "postinstall": "node postinstall.mjs"
+        "postinstall": "node postinstall.mjs",
+        "test": "node --test tests/**/*.test.mjs"
     },
     "main": "./dist/index.mjs",
     "types": "./dist/index.d.mts",
@@ -56,6 +57,7 @@
     },
     "files": [
         "dist/",
+        "lib/",
         "ultracontext.mjs",
         "postinstall.mjs",
         "assets/",
