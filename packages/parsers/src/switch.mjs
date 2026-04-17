@@ -6,13 +6,10 @@ import { parseClaudeCodeLine } from "./agents/claude.mjs";
 import { parseCodexLine } from "./agents/codex.mjs";
 import { writeCodexSession } from "./writers/codex.mjs";
 import { writeClaudeSession } from "./writers/claude.mjs";
-import { expandHome, extractSessionIdFromPath } from "./utils.mjs";
+import { claudeProjectDirName, expandHome, extractSessionIdFromPath, isSafeCwd } from "./utils.mjs";
 
-// build Claude project dir name from cwd (mirrors writers/claude.mjs)
-function claudeProjectDirName(cwd) {
-    const resolved = path.resolve(String(cwd || process.cwd()));
-    return resolved.replace(/[\\/]/g, "-").replace(/[^A-Za-z0-9._-]/g, "-");
-}
+// reject sessions larger than this — prevents OOM on crafted/huge JSONL
+const MAX_SESSION_BYTES = 256 * 1024 * 1024;
 
 // find latest .jsonl file matching a glob pattern
 async function findLatestSession(pattern, excludePattern) {
@@ -64,6 +61,12 @@ export async function readLocalSession({ source, sessionPath, cwd }) {
         throw new Error(`Session file not found: ${filePath}`);
     }
 
+    // size cap — reject absurdly large files before loading into memory
+    const stat = fs.statSync(filePath);
+    if (stat.size > MAX_SESSION_BYTES) {
+        throw new Error(`Session file too large: ${stat.size} bytes (max ${MAX_SESSION_BYTES}).`);
+    }
+
     // read and parse lines
     const raw = fs.readFileSync(filePath, "utf8");
     const lines = raw.split("\n").filter((l) => l.trim());
@@ -80,12 +83,17 @@ export async function readLocalSession({ source, sessionPath, cwd }) {
         // capture session id
         if (!sessionId && parsed.sessionId) sessionId = parsed.sessionId;
 
-        // extract cwd from metadata entries
-        if (source === "claude" && parsed.raw?.cwd && !extractedCwd) {
+        // extract cwd from metadata entries — only accept safe absolute paths (shell sink)
+        if (source === "claude" && parsed.raw?.cwd && !extractedCwd && isSafeCwd(parsed.raw.cwd)) {
             extractedCwd = parsed.raw.cwd;
         }
-        if (source === "codex" && parsed.raw?.type === "session_meta" && !extractedCwd) {
-            extractedCwd = parsed.raw.payload?.cwd;
+        if (
+            source === "codex" &&
+            parsed.raw?.type === "session_meta" &&
+            !extractedCwd &&
+            isSafeCwd(parsed.raw.payload?.cwd)
+        ) {
+            extractedCwd = parsed.raw.payload.cwd;
         }
 
         // only keep user/assistant messages
@@ -116,7 +124,7 @@ function toWriterMessages(messages, source) {
 }
 
 // switch a session from one agent to another
-export async function switchSession({ source, target, sessionPath, cwd, last }) {
+export async function switchSession({ source, target, sessionPath, cwd, last, baseDir }) {
     const session = await readLocalSession({ source, sessionPath, cwd });
 
     // optionally slice to last N messages
@@ -127,15 +135,17 @@ export async function switchSession({ source, target, sessionPath, cwd, last }) 
 
     // convert to writer format
     const writerMessages = toWriterMessages(msgs, source);
-    const newSessionId = randomUUID();
+    const firstId = randomUUID();
 
     // pick writer
     const writer = target === "codex" ? writeCodexSession : writeClaudeSession;
     let result = await writer({
-        sessionId: newSessionId,
+        sessionId: firstId,
         cwd: session.cwd,
         messages: writerMessages,
+        baseDir,
     });
+    let usedId = firstId;
 
     // retry with fresh UUID if already exists
     if (!result.written && result.reason === "already_exists") {
@@ -144,14 +154,16 @@ export async function switchSession({ source, target, sessionPath, cwd, last }) 
             sessionId: retryId,
             cwd: session.cwd,
             messages: writerMessages,
+            baseDir,
         });
-        if (result.written) result.sessionId = retryId;
+        usedId = retryId;
     }
 
     return {
         written: result.written,
         filePath: result.filePath,
-        sessionId: result.sessionId || newSessionId,
+        // only claim a sessionId when write actually succeeded
+        sessionId: result.written ? (result.sessionId || usedId) : null,
         messageCount: writerMessages.length,
         reason: result.reason,
         cwd: session.cwd,

@@ -9,6 +9,20 @@ export function expandHome(inputPath) {
     return inputPath;
 }
 
+// Claude Code project directory name from cwd (shared by writer + switch)
+export function claudeProjectDirName(cwd) {
+    const resolved = path.resolve(String(cwd || process.cwd()));
+    return resolved.replace(/[\\/]/g, "-").replace(/[^A-Za-z0-9._-]/g, "-");
+}
+
+// accept only absolute paths without control chars — hardens cwd used in shell
+export function isSafeCwd(value) {
+    if (typeof value !== "string" || !value.length) return false;
+    if (!path.isAbsolute(value)) return false;
+    if (/[\n\r\0\t\v\f]/.test(value)) return false;
+    return true;
+}
+
 // safe truncation with indicator
 export function truncateString(value, maxLen = 4000) {
     if (typeof value !== "string") return value;

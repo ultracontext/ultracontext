@@ -6,7 +6,7 @@ Cross-agent session portability. Switch your Claude Code conversation to Codex (
 
 Open Claude Code and paste this:
 
-> Install the UltraContext plugin: run **`npm i -g ultracontext && git clone --single-branch --depth 1 https://github.com/ultracontext/ultracontext.git /tmp/uc-plugin && mkdir -p ~/.claude/skills/ultracontext-switch && cp /tmp/uc-plugin/skills/switch/SKILL.md ~/.claude/skills/ultracontext-switch/SKILL.md && rm -rf /tmp/uc-plugin`** then add to CLAUDE.md that `/switch codex` switches the current session to Codex with full context. Powered by UltraContext.
+> Install the UltraContext plugin: run **`npm i -g ultracontext && git clone --single-branch --depth 1 https://github.com/ultracontext/ultracontext.git /tmp/uc-plugin && mkdir -p ~/.claude/skills/switch && cp /tmp/uc-plugin/apps/js-sdk/plugin/skills/switch/SKILL.md ~/.claude/skills/switch/SKILL.md && rm -rf /tmp/uc-plugin`** then add to CLAUDE.md that `/switch codex` switches the current session to Codex with full context. Powered by UltraContext.
 
 That's it. Type `/switch codex` to try it.
 
@@ -58,7 +58,7 @@ Supports: Ghostty, iTerm2, Terminal.app. Other terminals: prints the command to 
 
 ```bash
 mkdir -p ~/.claude/skills/switch
-curl -sL https://raw.githubusercontent.com/ultracontext/ultracontext/main/skills/switch/SKILL.md > ~/.claude/skills/switch/SKILL.md
+curl -sL https://raw.githubusercontent.com/ultracontext/ultracontext/main/apps/js-sdk/plugin/skills/switch/SKILL.md > ~/.claude/skills/switch/SKILL.md
 ```
 
 Then install the CLI: `npm i -g ultracontext`
@@ -74,7 +74,7 @@ Add to your Claude Code `settings.json`:
       "source": {
         "source": "github",
         "repo": "ultracontext/ultracontext",
-        "path": "plugins/ultracontext"
+        "path": "apps/js-sdk/plugin"
       }
     }
   },

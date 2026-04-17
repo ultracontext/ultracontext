@@ -1,5 +1,5 @@
 // CLI handler for `ultracontext switch <target>`
-import { spawn, execSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import process from "node:process";
 import os from "node:os";
 
@@ -14,6 +14,14 @@ const red = esc("38;2;220;80;80");
 const gray = esc("38;5;245");
 
 const VALID_TARGETS = ["codex", "claude"];
+
+// known terminal program identifiers from TERM_PROGRAM
+const TERM_GHOSTTY = "ghostty";
+const TERM_ITERM2 = "iTerm.app";
+const TERM_TERMINAL_APP = "Apple_Terminal";
+
+// ms to wait for Cmd+T to open a new Ghostty tab before typing into it
+const GHOSTTY_TAB_OPEN_DELAY_MS = 300;
 
 // parse switch-specific args from process.argv
 function parseArgs() {
@@ -58,44 +66,66 @@ function parseArgs() {
   return opts;
 }
 
+// single-quote wrap + escape any embedded single quotes — safe for POSIX shells
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`;
+}
+
+// escape \ and " for AppleScript double-quoted string literals
+function appleScriptEscape(value) {
+  return String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+// run AppleScript via spawnSync — argv form avoids shell-layer interpolation
+function runAppleScript(script) {
+  const r = spawnSync("osascript", ["-e", script]);
+  return r.status === 0;
+}
+
+// Ghostty: open new tab via Cmd+T, then type shell command into it
+function launchGhostty(cmd) {
+  const openTab =
+    'tell application "System Events" to tell process "ghostty" to keystroke "t" using command down';
+  if (!runAppleScript(openTab)) return false;
+  const delaySec = GHOSTTY_TAB_OPEN_DELAY_MS / 1000;
+  const typeCmd =
+    `delay ${delaySec}\n` +
+    `tell application "System Events"\n` +
+    `  keystroke "${appleScriptEscape(cmd)}"\n` +
+    `  key code 36\n` +
+    `end tell`;
+  return runAppleScript(typeCmd);
+}
+
+// iTerm2: create new tab with command
+function launchITerm2(cmd) {
+  const script = `tell application "iTerm2" to tell current window to create tab with default profile command "${appleScriptEscape(cmd)}"`;
+  return runAppleScript(script);
+}
+
+// Terminal.app: do script in new tab
+function launchTerminalApp(cmd) {
+  const script = `tell application "Terminal" to do script "${appleScriptEscape(cmd)}"`;
+  return runAppleScript(script);
+}
+
+// dispatch table for supported terminals
+const TERMINALS = [
+  { match: (term) => term.toLowerCase().includes(TERM_GHOSTTY), launch: launchGhostty },
+  { match: (term) => term === TERM_ITERM2, launch: launchITerm2 },
+  { match: (term) => term === TERM_TERMINAL_APP, launch: launchTerminalApp },
+];
+
 // open a command in a new terminal tab (macOS)
 function openInNewTab(cmd) {
   if (os.platform() !== "darwin") return false;
-
   const term = process.env.TERM_PROGRAM ?? "";
-
-  // Ghostty: open new tab via AppleScript keystroke, then type command
-  if (term.toLowerCase().includes("ghostty")) {
-    try {
-      execSync(`osascript -e 'tell application "System Events" to tell process "ghostty" to keystroke "t" using command down'`);
-      // small delay for tab to open, then type command
-      execSync(`sleep 0.3 && osascript -e 'tell application "System Events" to keystroke "${cmd}\n"'`);
-      return true;
-    } catch { return false; }
-  }
-
-  // iTerm2
-  if (term === "iTerm.app") {
-    try {
-      execSync(`osascript -e 'tell application "iTerm2" to tell current window to create tab with default profile command "${cmd}"'`);
-      return true;
-    } catch { return false; }
-  }
-
-  // Terminal.app
-  if (term === "Apple_Terminal") {
-    try {
-      execSync(`osascript -e 'tell application "Terminal" to do script "${cmd}"'`);
-      return true;
-    } catch { return false; }
-  }
-
-  return false;
+  const entry = TERMINALS.find((t) => t.match(term));
+  if (!entry) return false;
+  try { return entry.launch(cmd); } catch { return false; }
 }
 
-export async function runSwitch() {
-  const opts = parseArgs();
-
+async function doSwitch(opts) {
   // auto-detect source (opposite of target)
   const source = opts.target === "codex" ? "claude" : "codex";
 
@@ -131,9 +161,9 @@ export async function runSwitch() {
   console.log(`  ${d}File:${r}     ${gray}${result.filePath}${r}`);
   console.log(`  ${d}Messages:${r} ${gray}${result.messageCount}${r}`);
 
-  // launch target agent in a new terminal tab
+  // launch target agent in a new terminal tab — shell-quote cwd so spaces/metachars can't break it
   if (opts.target === "codex") {
-    const cmd = `codex fork ${result.sessionId} -C ${result.cwd}`;
+    const cmd = `codex fork ${result.sessionId} -C ${shellQuote(result.cwd)}`;
     const launched = openInNewTab(cmd);
     if (!launched) {
       console.log(`\n  Run in your terminal: ${d}${cmd}${r}`);
@@ -144,3 +174,23 @@ export async function runSwitch() {
     console.log(`\n  Open a new Claude Code session to load this context.`);
   }
 }
+
+export async function runSwitch() {
+  let opts;
+  try {
+    opts = parseArgs();
+  } catch (err) {
+    console.error(`${red}x${r} ${err.message}`);
+    process.exit(1);
+  }
+
+  try {
+    await doSwitch(opts);
+  } catch (err) {
+    console.error(`${red}x${r} ${err.message}`);
+    process.exit(1);
+  }
+}
+
+// exported for tests
+export { parseArgs, shellQuote, appleScriptEscape, openInNewTab };
