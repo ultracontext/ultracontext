@@ -58,7 +58,8 @@
         "dist/",
         "ultracontext.mjs",
         "postinstall.mjs",
-        "assets/"
+        "assets/",
+        "plugin/"
     ],
     "dependencies": {
         "@mishieck/ink-titled-box": "^0.4.2",
