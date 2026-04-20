@@ -142,4 +142,10 @@ export class DrizzleAdapter implements StorageAdapter {
     async deleteProject(id: number) {
         await this.db.delete(projects).where(eq(projects.id, id));
     }
+
+    // -- transactions ---------------------------------------------------------
+
+    async transaction<T>(fn: (tx: StorageAdapter) => Promise<T>): Promise<T> {
+        return this.db.transaction(async (txDb) => fn(new DrizzleAdapter(txDb as ApiDb)));
+    }
 }

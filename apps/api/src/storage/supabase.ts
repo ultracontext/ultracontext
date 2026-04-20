@@ -192,4 +192,11 @@ export class SupabaseAdapter implements StorageAdapter {
         const { error } = await this.client.from('projects').delete().eq('id', id);
         if (error) throw error;
     }
+
+    // -- transactions ---------------------------------------------------------
+
+    // Supabase REST lacks multi-statement tx. Runs inline; partial failures possible.
+    async transaction<T>(fn: (tx: StorageAdapter) => Promise<T>): Promise<T> {
+        return fn(this);
+    }
 }

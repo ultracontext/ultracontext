@@ -76,4 +76,7 @@ export interface StorageAdapter {
     // projects
     insertProject(name: string): Promise<ProjectRow | null>;
     deleteProject(id: number): Promise<void>;
+
+    // transactions — adapter-specific atomicity (tx on Drizzle, no-op on Supabase REST)
+    transaction<T>(fn: (tx: StorageAdapter) => Promise<T>): Promise<T>;
 }

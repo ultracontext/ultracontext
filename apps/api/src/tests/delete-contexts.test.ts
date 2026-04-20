@@ -112,11 +112,17 @@ class MemoryStorage implements StorageAdapter {
         this.keys.push({ id: this.keys.length + 1, ...values });
     }
 
+    async updateApiKeyLastUsedAt(_id: number, _lastUsedAt: string) {}
+
     async insertProject(name: string): Promise<ProjectRow | null> {
         return { id: ++this.projectSeq };
     }
 
     async deleteProject(_id: number) {}
+
+    async transaction<T>(fn: (tx: StorageAdapter) => Promise<T>): Promise<T> {
+        return fn(this);
+    }
 
     // test helpers
     getAllNodes() {

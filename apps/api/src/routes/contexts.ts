@@ -249,7 +249,7 @@ export function registerContextRoutes(app: HttpApp) {
             }
 
             try {
-                await destroyContext(storage, projectId, root.public_id);
+                await storage.transaction((tx) => destroyContext(tx, projectId, root.public_id));
                 results.push({ id: contextId, deleted: true });
             } catch (error) {
                 const message = error instanceof Error ? error.message : 'Unknown error';
@@ -520,7 +520,7 @@ export function registerContextRoutes(app: HttpApp) {
             if (!root) return c.json({ error: 'Context not found' }, 404);
 
             try {
-                await destroyContext(storage, projectId, root.public_id);
+                await storage.transaction((tx) => destroyContext(tx, projectId, root.public_id));
                 return c.json({ deleted: true, id: contextPublicId });
             } catch (error) {
                 const message = error instanceof Error ? error.message : 'Failed to delete context';
