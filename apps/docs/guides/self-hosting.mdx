@@ -135,6 +135,7 @@ Both produce identical API behavior.
 | **Setup** | Manage your own PostgreSQL | Create a Supabase project |
 | **Scaling** | Manual | Handled by Supabase |
 | **Atomic permanent delete** | Yes (real transactions) | Best-effort (sequential REST) |
+| **Append-vs-delete race safety** | Yes (SERIALIZABLE isolation) | Best-effort (no isolation) |
 | **Open source** | Yes | Yes |
 
 ### Direct PostgreSQL

@@ -251,7 +251,7 @@ export function registerContextRoutes(app: HttpApp) {
             }
 
             try {
-                await storage.transaction((tx) => permanentlyDelete(tx, projectId, root.public_id));
+                await storage.transaction((tx) => permanentlyDelete(tx, projectId, root.public_id), { isolationLevel: 'serializable' });
                 results.push({ id: contextId, deleted: true });
             } catch (error) {
                 const message = error instanceof Error ? error.message : 'Unknown error';
@@ -273,41 +273,49 @@ export function registerContextRoutes(app: HttpApp) {
         const body = await c.req.json();
         const storage = c.get('storage');
 
-        const root = await storage.findRootContext(projectId, contextPublicId);
-        if (!root) return c.json({ error: 'Context not found' }, 404);
-
-        const head = await findHead(storage, root.public_id);
-        if (!head) return c.json({ error: 'HEAD not found' }, 500);
-
-        const messages = Array.isArray(body) ? body : [body];
-        const existingNodes = await getOrderedNodes(storage, head.public_id);
-        const existingCount = existingNodes.length;
-        const tailPublicId = await findTail(storage, head.public_id);
-
-        const nodeInputs = messages.map((msg) => {
-            const { metadata, ...content } = msg;
-            return { type: 'message', content, metadata: metadata ?? {} };
-        });
-        const insertRecords = buildNodeInsertRecords(nodeInputs, projectId, head.public_id, tailPublicId);
-
-        let createdNodes: Array<{ public_id?: string; content?: unknown; metadata?: unknown }>;
+        // Serializable tx so concurrent permanent-delete can't race with append
+        // (Postgres SSI makes one side fail with 40001; client retries).
+        type AppendResult = { data: object[]; version: number } | { error: string; status: number };
+        let outcome: AppendResult;
         try {
-            createdNodes = await storage.insertNodes(insertRecords);
+            outcome = await storage.transaction<AppendResult>(async (tx) => {
+                const root = await tx.findRootContext(projectId, contextPublicId);
+                if (!root) return { error: 'Context not found', status: 404 };
+
+                const head = await findHead(tx, root.public_id);
+                if (!head) return { error: 'HEAD not found', status: 500 };
+
+                const messages = Array.isArray(body) ? body : [body];
+                const existingNodes = await getOrderedNodes(tx, head.public_id);
+                const existingCount = existingNodes.length;
+                const tailPublicId = await findTail(tx, head.public_id);
+
+                const nodeInputs = messages.map((msg) => {
+                    const { metadata, ...content } = msg;
+                    return { type: 'message', content, metadata: metadata ?? {} };
+                });
+                const insertRecords = buildNodeInsertRecords(nodeInputs, projectId, head.public_id, tailPublicId);
+
+                const createdNodes = await tx.insertNodes(insertRecords);
+
+                const versions = await getVersions(tx, root.public_id);
+                const currentVersion = versions.length - 1;
+
+                const data = createdNodes.map((node, i: number) => ({
+                    ...(node.content as object),
+                    id: node.public_id,
+                    index: existingCount + i,
+                    metadata: node.metadata,
+                }));
+
+                return { data, version: currentVersion };
+            }, { isolationLevel: 'serializable' });
         } catch {
             return c.json({ error: 'Failed to append messages' }, 500);
         }
 
-        const versions = await getVersions(storage, root.public_id);
-        const currentVersion = versions.length - 1;
-
-        const result = createdNodes.map((node, i: number) => ({
-            ...(node.content as object),
-            id: node.public_id,
-            index: existingCount + i,
-            metadata: node.metadata,
-        }));
-
-        return c.json({ data: result, version: currentVersion }, 201);
+        if ('error' in outcome) return c.json({ error: outcome.error }, outcome.status as 404 | 500);
+        return c.json({ data: outcome.data, version: outcome.version }, 201);
     });
 
     app.get('/contexts/:id', async (c) => {
@@ -541,7 +549,7 @@ export function registerContextRoutes(app: HttpApp) {
             if (!root) return c.json({ error: 'Context not found' }, 404);
 
             try {
-                await storage.transaction((tx) => permanentlyDelete(tx, projectId, root.public_id));
+                await storage.transaction((tx) => permanentlyDelete(tx, projectId, root.public_id), { isolationLevel: 'serializable' });
                 return c.json({ deleted: true, id: contextPublicId, ...(auditMetadata ? { metadata: auditMetadata } : {}) });
             } catch (error) {
                 const message = error instanceof Error ? error.message : 'Failed to delete context';

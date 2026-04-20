@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, gt, inArray, isNull, lt, ne, sql } from 'drizzle-orm';
 
 import { nodes, api_keys, projects, type ApiDb } from '../db';
-import type { StorageAdapter, NodeRow, NodeInsertRow, ApiKeyRow, ProjectRow, ContextFilters } from './types';
+import type { StorageAdapter, NodeRow, NodeInsertRow, ApiKeyRow, ProjectRow, ContextFilters, TransactionOptions } from './types';
 
 // =============================================================================
 // DRIZZLE ADAPTER — wraps existing Drizzle/PostgreSQL queries
@@ -153,7 +153,8 @@ export class DrizzleAdapter implements StorageAdapter {
 
     // -- transactions ---------------------------------------------------------
 
-    async transaction<T>(fn: (tx: StorageAdapter) => Promise<T>): Promise<T> {
-        return this.db.transaction(async (txDb) => fn(new DrizzleAdapter(txDb as ApiDb)));
+    async transaction<T>(fn: (tx: StorageAdapter) => Promise<T>, options?: TransactionOptions): Promise<T> {
+        const txConfig = options?.isolationLevel ? { isolationLevel: options.isolationLevel } : undefined;
+        return this.db.transaction(async (txDb) => fn(new DrizzleAdapter(txDb as ApiDb)), txConfig);
     }
 }

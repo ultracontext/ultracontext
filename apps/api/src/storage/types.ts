@@ -80,5 +80,11 @@ export interface StorageAdapter {
     deleteProject(id: number): Promise<void>;
 
     // transactions — adapter-specific atomicity (tx on Drizzle, no-op on Supabase REST)
-    transaction<T>(fn: (tx: StorageAdapter) => Promise<T>): Promise<T>;
+    transaction<T>(fn: (tx: StorageAdapter) => Promise<T>, options?: TransactionOptions): Promise<T>;
 }
+
+export type TransactionOptions = {
+    // 'serializable' turns on Postgres SSI — concurrent conflicting txs get
+    // a 40001 error, letting client retry. Required for append-vs-permanent-delete safety.
+    isolationLevel?: 'serializable';
+};

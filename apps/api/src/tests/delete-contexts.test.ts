@@ -130,7 +130,7 @@ class MemoryStorage implements StorageAdapter {
 
     async deleteProject(_id: number) {}
 
-    async transaction<T>(fn: (tx: StorageAdapter) => Promise<T>): Promise<T> {
+    async transaction<T>(fn: (tx: StorageAdapter) => Promise<T>, _options?: unknown): Promise<T> {
         return fn(this);
     }
 

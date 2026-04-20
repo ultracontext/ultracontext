@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
-import type { StorageAdapter, NodeRow, NodeInsertRow, ApiKeyRow, ProjectRow, ContextFilters } from './types';
+import type { StorageAdapter, NodeRow, NodeInsertRow, ApiKeyRow, ProjectRow, ContextFilters, TransactionOptions } from './types';
 
 // =============================================================================
 // SUPABASE ADAPTER — same interface via Supabase REST client
@@ -205,8 +205,9 @@ export class SupabaseAdapter implements StorageAdapter {
 
     // -- transactions ---------------------------------------------------------
 
-    // Supabase REST lacks multi-statement tx. Runs inline; partial failures possible.
-    async transaction<T>(fn: (tx: StorageAdapter) => Promise<T>): Promise<T> {
+    // Supabase REST lacks multi-statement tx + isolation levels. Runs inline;
+    // partial failures + race conditions possible. Options arg accepted for API parity.
+    async transaction<T>(fn: (tx: StorageAdapter) => Promise<T>, _options?: TransactionOptions): Promise<T> {
         return fn(this);
     }
 }
