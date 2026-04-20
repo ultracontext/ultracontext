@@ -335,6 +335,23 @@ describe('DELETE /contexts/:id (permanent)', () => {
         assert.deepEqual(body.metadata, { reason: 'cleanup', author: 'alice' });
     });
 
+    it('should reject ambiguous body combining permanent and ids', async () => {
+        const { req } = await setupTestApp();
+        const contextId = await createTestContext(req);
+        const res = await req('DELETE', `/contexts/${contextId}`, { permanent: true, ids: ['msg_x'] });
+        assert.equal(res.status, 400);
+        // Context must still exist
+        const get = await req('GET', `/contexts/${contextId}`);
+        assert.equal(get.status, 200);
+    });
+
+    it('should reject empty ids array on soft delete', async () => {
+        const { req } = await setupTestApp();
+        const contextId = await createTestContext(req);
+        const res = await req('DELETE', `/contexts/${contextId}`, { ids: [] });
+        assert.equal(res.status, 400);
+    });
+
     it('should accept empty {} as permanent delete for legacy tolerance', async () => {
         const { req } = await setupTestApp();
         const contextId = await createTestContext(req);

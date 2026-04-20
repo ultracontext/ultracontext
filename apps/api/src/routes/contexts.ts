@@ -525,6 +525,11 @@ export function registerContextRoutes(app: HttpApp) {
         const isExplicitPermanent = isPlainObject(body) && body.permanent === true;
         const hasIds = isPlainObject(body) && body.ids !== undefined;
 
+        // Reject ambiguous bodies that combine both — forces the caller to pick one
+        if (isExplicitPermanent && hasIds) {
+            return c.json({ error: 'Cannot combine "permanent" and "ids" in the same request — pick one' }, 400);
+        }
+
         if (!hasJsonBody || isEmptyBody || isExplicitPermanent) {
             // Optional audit metadata logged at infra level (permanent delete wipes history)
             const auditMetadata = isPlainObject(body) && isPlainObject(body.metadata) ? body.metadata : undefined;
@@ -556,6 +561,7 @@ export function registerContextRoutes(app: HttpApp) {
             return c.json({ error: 'metadata must be an object' }, 400);
         }
         const rawIds: Array<string | number> = Array.isArray(ids) ? ids : [ids];
+        if (rawIds.length === 0) return c.json({ error: 'ids must be a non-empty array' }, 400);
 
         for (const input of rawIds) {
             if (typeof input === 'string') continue;
