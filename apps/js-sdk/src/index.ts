@@ -84,7 +84,7 @@ export type UpdateResponse<T = unknown> = {
 
 export type DeleteInput = (string | number) | (string | number)[];
 
-// Unified delete input: pass message ids (soft) OR {permanent: true} (hard, routes through destroy)
+// Unified delete input — either message ids (soft, versioned) OR {permanent: true} (hard, irreversible)
 export type DeletePermanentInput = { permanent: true; metadata?: Record<string, unknown> };
 
 export type DeleteResponse<T = unknown> = {
@@ -92,20 +92,21 @@ export type DeleteResponse<T = unknown> = {
     version: number;
 };
 
-export type DestroyResponse = {
+export type PermanentDeleteResponse = {
     deleted: boolean;
     id: string;
     metadata?: Record<string, unknown>;
 };
 
-export type BatchDeleteResult = {
+export type DeleteManyResult = {
     id: string;
     deleted: boolean;
     error?: string;
 };
 
-export type BatchDeleteResponse = {
-    results: BatchDeleteResult[];
+export type DeleteManyResponse = {
+    results: DeleteManyResult[];
+    deleted_count: number;
 };
 
 export class UltraContextHttpError extends Error {
@@ -194,32 +195,35 @@ export class UltraContext {
     }
 
     async delete<T = unknown>(contextId: string, ids: DeleteInput, options?: MutationOptions): Promise<DeleteResponse<T>>;
-    async delete(contextId: string, input: DeletePermanentInput): Promise<DestroyResponse>;
+    async delete(contextId: string, input: DeletePermanentInput): Promise<PermanentDeleteResponse>;
     async delete<T = unknown>(
         contextId: string,
         input: DeleteInput | DeletePermanentInput,
         options?: MutationOptions,
-    ): Promise<DeleteResponse<T> | DestroyResponse> {
-        // Unified path: {permanent: true} routes through destroy
-        if (typeof input === 'object' && !Array.isArray(input) && input !== null && (input as DeletePermanentInput).permanent === true) {
-            return this.destroy(contextId, { metadata: (input as DeletePermanentInput).metadata });
+    ): Promise<DeleteResponse<T> | PermanentDeleteResponse> {
+        const isPermanent =
+            typeof input === 'object' &&
+            !Array.isArray(input) &&
+            input !== null &&
+            (input as DeletePermanentInput).permanent === true;
+
+        if (isPermanent) {
+            const meta = (input as DeletePermanentInput).metadata;
+            return this.request<PermanentDeleteResponse>(`/contexts/${encodeURIComponent(contextId)}`, {
+                method: 'DELETE',
+                body: meta ? { permanent: true, metadata: meta } : { permanent: true },
+            });
         }
+
         return this.request<DeleteResponse<T>>(`/contexts/${encodeURIComponent(contextId)}`, {
             method: 'DELETE',
             body: { ids: input as DeleteInput, metadata: options?.metadata },
         });
     }
 
-    async destroy(contextId: string, options?: MutationOptions): Promise<DestroyResponse> {
-        return this.request<DestroyResponse>(`/contexts/${encodeURIComponent(contextId)}`, {
-            method: 'DELETE',
-            body: options?.metadata ? { destroy: true, metadata: options.metadata } : undefined,
-        });
-    }
-
-    async batchDelete(ids: string[]): Promise<BatchDeleteResponse> {
-        // 200 (all ok), 207 (partial), and 500 (all failed) all carry a results body — surface it directly.
-        return this.request<BatchDeleteResponse>('/contexts/batch-delete', {
+    async deleteMany(ids: string[]): Promise<DeleteManyResponse> {
+        // 200 (all ok), 207 (partial), 500 (all failed) all carry a results body — surface directly.
+        return this.request<DeleteManyResponse>('/contexts/delete-many', {
             method: 'POST',
             body: { ids },
             acceptStatuses: [200, 207, 500],

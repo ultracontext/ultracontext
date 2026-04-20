@@ -70,7 +70,7 @@
                             "POST /contexts/{id}",
                             "PATCH /contexts/{id}",
                             "DELETE /contexts/{id}",
-                            "POST /contexts/batch-delete"
+                            "POST /contexts/delete-many"
                         ]
                     }
                 ]

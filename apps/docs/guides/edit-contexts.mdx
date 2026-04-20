@@ -200,12 +200,12 @@ uc.update(context_id, index=0, content="Hi there!")
 ## Delete Messages
 
 <Info>
-**Soft delete vs hard delete — two different operations.**
+**Soft delete vs hard delete — one method, two behaviors.**
 
 - **Soft delete** — `uc.delete(contextId, ids)`. Removes messages from the current version but creates a new version; deleted messages are preserved in prior versions and recoverable via `uc.get(contextId, { version: N })`.
-- **Hard delete** — `uc.destroy(contextId)` or the unified `uc.delete(contextId, { permanent: true })`. Wipes the entire context, all versions, all messages. Irreversible.
+- **Hard delete** — `uc.delete(contextId, { permanent: true })`. Wipes the entire context, all versions, all messages. Irreversible.
 
-Both hard-delete forms are equivalent; `destroy` exists for clarity at call sites (easy to grep, hard to invoke by accident), the `permanent: true` param exists for developers who prefer a single `delete` method.
+The second argument is always required — this prevents accidental context wipes from typos.
 </Info>
 
 Delete by ID or index:
@@ -433,14 +433,14 @@ import { UltraContext } from 'ultracontext';
 
 const uc = new UltraContext({ apiKey: process.env.ULTRACONTEXT_API_KEY });
 
-// canonical — clear at call sites, easy to grep
-await uc.destroy('ctx_abc123');
-
-// or unified delete with permanent flag
+// permanent delete — irreversible
 await uc.delete('ctx_abc123', { permanent: true });
 
-// with audit metadata (both forms accept it)
-await uc.destroy('ctx_abc123', { metadata: { reason: 'GDPR request', author: 'alice' } });
+// with audit metadata (echoed in response + logged server-side)
+await uc.delete('ctx_abc123', {
+    permanent: true,
+    metadata: { reason: 'GDPR request', author: 'alice' },
+});
 // { deleted: true, id: 'ctx_abc123', metadata: { reason: 'GDPR request', author: 'alice' } }
 ```
 
@@ -450,14 +450,11 @@ import os
 
 uc = UltraContext(api_key=os.environ["ULTRACONTEXT_API_KEY"])
 
-# canonical
-result = uc.destroy("ctx_abc123")
-
-# or unified delete with permanent flag
+# permanent delete — irreversible
 result = uc.delete("ctx_abc123", permanent=True)
 
 # with audit metadata
-result = uc.destroy("ctx_abc123", metadata={"reason": "GDPR request", "author": "alice"})
+result = uc.delete("ctx_abc123", permanent=True, metadata={"reason": "GDPR request", "author": "alice"})
 # {"deleted": True, "id": "ctx_abc123", "metadata": {"reason": "GDPR request", "author": "alice"}}
 ```
 </CodeGroup>
@@ -466,9 +463,9 @@ result = uc.destroy("ctx_abc123", metadata={"reason": "GDPR request", "author": 
 
 ---
 
-### Batch Delete Contexts
+### Delete Multiple Contexts
 
-Delete multiple contexts in one call.
+Permanently delete up to 100 contexts in one call.
 
 <CodeGroup>
 ```typescript TypeScript
@@ -476,7 +473,7 @@ import { UltraContext } from 'ultracontext';
 
 const uc = new UltraContext({ apiKey: process.env.ULTRACONTEXT_API_KEY });
 
-const { results } = await uc.batchDelete(['ctx_abc123', 'ctx_def456']);
+const { results, deleted_count } = await uc.deleteMany(['ctx_abc123', 'ctx_def456']);
 
 for (const r of results) {
     if (r.deleted) console.log(`Deleted ${r.id}`);
@@ -490,7 +487,7 @@ import os
 
 uc = UltraContext(api_key=os.environ["ULTRACONTEXT_API_KEY"])
 
-result = uc.batch_delete(["ctx_abc123", "ctx_def456"])
+result = uc.delete_many(["ctx_abc123", "ctx_def456"])
 
 for r in result["results"]:
     if r["deleted"]:
@@ -500,7 +497,7 @@ for r in result["results"]:
 ```
 </CodeGroup>
 
-<Tip>Batch delete returns results for each context individually, so partial failures don't block the entire operation.</Tip>
+<Tip>Returns per-context results so partial failures don't block the entire operation. Status code is 200 on full success, 207 on partial, 500 when every item fails — SDKs pass through the response body in all three cases.</Tip>
 
 <Card
     title='See also: Fork & Clone Contexts'

@@ -74,22 +74,24 @@ class DeleteResponse(TypedDict):
     version: int
 
 
-class DestroyResponse(TypedDict):
-    """Response from destroy()."""
+class PermanentDeleteResponse(TypedDict, total=False):
+    """Response from delete(..., permanent=True)."""
 
     deleted: bool
     id: str
+    metadata: Optional[Dict[str, Any]]
 
 
-class BatchDeleteResult(TypedDict, total=False):
-    """Single result from batch_delete()."""
+class DeleteManyResult(TypedDict, total=False):
+    """Single result from delete_many()."""
 
     id: str
     deleted: bool
     error: Optional[str]
 
 
-class BatchDeleteResponse(TypedDict):
-    """Response from batch_delete()."""
+class DeleteManyResponse(TypedDict, total=False):
+    """Response from delete_many()."""
 
-    results: List[BatchDeleteResult]
+    results: List[DeleteManyResult]
+    deleted_count: int

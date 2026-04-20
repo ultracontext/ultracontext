@@ -8,12 +8,12 @@ import httpx
 from .exceptions import UltraContextHttpError
 from .types import (
     AppendResponse,
-    BatchDeleteResponse,
     CreateContextResponse,
+    DeleteManyResponse,
     DeleteResponse,
-    DestroyResponse,
     GetContextResponse,
     ListContextsResponse,
+    PermanentDeleteResponse,
     UpdateResponse,
 )
 
@@ -244,34 +244,39 @@ class UltraContext(_BaseClient):
         *,
         permanent: bool = False,
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> Union[DeleteResponse, DestroyResponse]:
+    ) -> Union[DeleteResponse, PermanentDeleteResponse]:
         """
         Delete messages (soft, versioned) or the entire context (hard, permanent).
 
         Args:
             context_id: Context ID
             ids: Message ID, index, or list — soft delete (preserved in prior versions)
-            permanent: If True, destroy the entire context (irreversible). Requires `ids` to be None.
-            metadata: Audit metadata — version metadata for soft delete, echoed in response for destroy
+            permanent: If True, permanently delete the entire context (irreversible).
+                Requires `ids` to be None.
+            metadata: Audit metadata — version metadata for soft delete, echoed in
+                response for permanent delete
         """
         if permanent:
             if ids is not None:
                 raise ValueError("Cannot pass both `ids` and `permanent=True`")
-            return self.destroy(context_id, metadata=metadata)
+            body: Optional[Dict[str, Any]] = {"permanent": True}
+            if metadata:
+                body["metadata"] = metadata
+            return self._request("DELETE", f"/contexts/{quote(context_id, safe='')}", json=body)
 
         if ids is None:
             raise ValueError("Either `ids` (soft delete) or `permanent=True` (hard delete) is required")
 
         items = ids if isinstance(ids, list) else [ids]
-        body: Dict[str, Any] = {"ids": items}
+        body = {"ids": items}
         if metadata:
             body["metadata"] = metadata
 
         return self._request("DELETE", f"/contexts/{quote(context_id, safe='')}", json=body)
 
-    def batch_delete(self, ids: List[str]) -> BatchDeleteResponse:
+    def delete_many(self, ids: List[str]) -> DeleteManyResponse:
         """
-        Delete multiple contexts at once (max 100).
+        Delete multiple contexts permanently (max 100).
 
         Status 200 = all succeeded, 207 = partial, 500 = all failed. All three carry a
         results body; this method surfaces the body instead of raising.
@@ -279,23 +284,7 @@ class UltraContext(_BaseClient):
         Args:
             ids: List of context IDs to delete
         """
-        return self._request("POST", "/contexts/batch-delete", json={"ids": ids}, accept_statuses=[200, 207, 500])
-
-    def destroy(
-        self,
-        context_id: str,
-        *,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> DestroyResponse:
-        """
-        Delete an entire context and all its versions.
-
-        Args:
-            context_id: Context ID to delete
-            metadata: Optional audit metadata (echoed in response + logged server-side)
-        """
-        body = {"destroy": True, "metadata": metadata} if metadata else None
-        return self._request("DELETE", f"/contexts/{quote(context_id, safe='')}", json=body)
+        return self._request("POST", "/contexts/delete-many", json={"ids": ids}, accept_statuses=[200, 207, 500])
 
 
 class AsyncUltraContext(_BaseClient):
@@ -461,33 +450,26 @@ class AsyncUltraContext(_BaseClient):
         *,
         permanent: bool = False,
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> Union[DeleteResponse, DestroyResponse]:
+    ) -> Union[DeleteResponse, PermanentDeleteResponse]:
         """Delete messages (soft, versioned) or the entire context (hard, permanent=True)."""
         if permanent:
             if ids is not None:
                 raise ValueError("Cannot pass both `ids` and `permanent=True`")
-            return await self.destroy(context_id, metadata=metadata)
+            body: Optional[Dict[str, Any]] = {"permanent": True}
+            if metadata:
+                body["metadata"] = metadata
+            return await self._request("DELETE", f"/contexts/{quote(context_id, safe='')}", json=body)
 
         if ids is None:
             raise ValueError("Either `ids` (soft delete) or `permanent=True` (hard delete) is required")
 
         items = ids if isinstance(ids, list) else [ids]
-        body: Dict[str, Any] = {"ids": items}
+        body = {"ids": items}
         if metadata:
             body["metadata"] = metadata
 
         return await self._request("DELETE", f"/contexts/{quote(context_id, safe='')}", json=body)
 
-    async def destroy(
-        self,
-        context_id: str,
-        *,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> DestroyResponse:
-        """Delete an entire context and all its versions. Optional audit metadata."""
-        body = {"destroy": True, "metadata": metadata} if metadata else None
-        return await self._request("DELETE", f"/contexts/{quote(context_id, safe='')}", json=body)
-
-    async def batch_delete(self, ids: List[str]) -> BatchDeleteResponse:
-        """Delete multiple contexts at once (max 100). 200/207/500 all carry a results body."""
-        return await self._request("POST", "/contexts/batch-delete", json={"ids": ids}, accept_statuses=[200, 207, 500])
+    async def delete_many(self, ids: List[str]) -> DeleteManyResponse:
+        """Delete multiple contexts permanently (max 100). 200/207/500 all carry a results body."""
+        return await self._request("POST", "/contexts/delete-many", json={"ids": ids}, accept_statuses=[200, 207, 500])

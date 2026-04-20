@@ -4,15 +4,15 @@ from .client import AsyncUltraContext, UltraContext
 from .exceptions import UltraContextError, UltraContextHttpError
 from .types import (
     AppendResponse,
-    BatchDeleteResponse,
-    BatchDeleteResult,
     Context,
     CreateContextResponse,
+    DeleteManyResponse,
+    DeleteManyResult,
     DeleteResponse,
-    DestroyResponse,
     GetContextResponse,
     ListContextsResponse,
     Message,
+    PermanentDeleteResponse,
     UpdateResponse,
     Version,
 )
@@ -35,7 +35,7 @@ __all__ = [
     "AppendResponse",
     "UpdateResponse",
     "DeleteResponse",
-    "DestroyResponse",
-    "BatchDeleteResult",
-    "BatchDeleteResponse",
+    "PermanentDeleteResponse",
+    "DeleteManyResult",
+    "DeleteManyResponse",
 ]

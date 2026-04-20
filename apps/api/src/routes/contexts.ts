@@ -42,9 +42,9 @@ async function rollbackRootContext(storage: StorageAdapter, projectId: number, r
     }
 }
 
-// -- destroy helper -----------------------------------------------------------
+// -- permanent-delete helper --------------------------------------------------
 
-async function destroyContext(storage: StorageAdapter, projectId: number, rootPublicId: string) {
+async function permanentlyDelete(storage: StorageAdapter, projectId: number, rootPublicId: string) {
     const branches = await storage.findContextBranches(rootPublicId);
 
     // Per branch: batch-clear parent refs for its messages, then delete them
@@ -220,9 +220,9 @@ export function registerContextRoutes(app: HttpApp) {
         });
     });
 
-    // -- batch delete contexts (must be registered before :id routes) -----------
+    // -- delete-many contexts (must be registered before :id routes) -----------
 
-    app.post('/contexts/batch-delete', async (c) => {
+    app.post('/contexts/delete-many', async (c) => {
         const { projectId } = c.get('auth');
         const body = await c.req.json().catch(() => null);
 
@@ -251,7 +251,7 @@ export function registerContextRoutes(app: HttpApp) {
             }
 
             try {
-                await storage.transaction((tx) => destroyContext(tx, projectId, root.public_id));
+                await storage.transaction((tx) => permanentlyDelete(tx, projectId, root.public_id));
                 results.push({ id: contextId, deleted: true });
             } catch (error) {
                 const message = error instanceof Error ? error.message : 'Unknown error';
@@ -519,25 +519,25 @@ export function registerContextRoutes(app: HttpApp) {
             }
         }
 
-        // Destroy path: no body, OR explicit {destroy: true}. Any other body shape must opt-in
-        // explicitly to prevent typos (e.g. `{IDs:[...]}`, `{id:"x"}`) from silently wiping the context.
+        // Permanent delete path: no body, OR explicit {permanent: true}. Any other body shape must opt
+        // in explicitly to prevent typos (e.g. `{IDs:[...]}`, `{id:"x"}`) from silently wiping the context.
         const isEmptyBody = isPlainObject(body) && Object.keys(body).length === 0;
-        const isExplicitDestroy = isPlainObject(body) && body.destroy === true;
+        const isExplicitPermanent = isPlainObject(body) && body.permanent === true;
         const hasIds = isPlainObject(body) && body.ids !== undefined;
 
-        if (!hasJsonBody || isEmptyBody || isExplicitDestroy) {
-            // Optional audit metadata logged at infra level (destroy wipes history so no DB row can hold it)
-            const destroyMetadata = isPlainObject(body) && isPlainObject(body.metadata) ? body.metadata : undefined;
-            if (destroyMetadata) {
-                console.info(JSON.stringify({ op: 'destroy', project_id: projectId, context_id: contextPublicId, metadata: destroyMetadata }));
+        if (!hasJsonBody || isEmptyBody || isExplicitPermanent) {
+            // Optional audit metadata logged at infra level (permanent delete wipes history)
+            const auditMetadata = isPlainObject(body) && isPlainObject(body.metadata) ? body.metadata : undefined;
+            if (auditMetadata) {
+                console.info(JSON.stringify({ op: 'permanent_delete', project_id: projectId, context_id: contextPublicId, metadata: auditMetadata }));
             }
 
             const root = await storage.findRootContext(projectId, contextPublicId);
             if (!root) return c.json({ error: 'Context not found' }, 404);
 
             try {
-                await storage.transaction((tx) => destroyContext(tx, projectId, root.public_id));
-                return c.json({ deleted: true, id: contextPublicId, ...(destroyMetadata ? { metadata: destroyMetadata } : {}) });
+                await storage.transaction((tx) => permanentlyDelete(tx, projectId, root.public_id));
+                return c.json({ deleted: true, id: contextPublicId, ...(auditMetadata ? { metadata: auditMetadata } : {}) });
             } catch (error) {
                 const message = error instanceof Error ? error.message : 'Failed to delete context';
                 return c.json({ error: message }, 500);
@@ -547,7 +547,7 @@ export function registerContextRoutes(app: HttpApp) {
         // From here, body must have `ids` for message-delete path
         if (!isPlainObject(body)) return c.json({ error: 'Request body must be a JSON object' }, 400);
         if (!hasIds) {
-            return c.json({ error: 'Body must contain "ids" (to delete messages) or {"destroy": true} (to delete context)' }, 400);
+            return c.json({ error: 'Body must contain "ids" (delete messages) or {"permanent": true} (delete entire context)' }, 400);
         }
 
         const { ids, metadata: userMetadata } = body;
