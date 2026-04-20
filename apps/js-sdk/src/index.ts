@@ -92,6 +92,7 @@ export type DeleteResponse<T = unknown> = {
 export type DestroyResponse = {
     deleted: boolean;
     id: string;
+    metadata?: Record<string, unknown>;
 };
 
 export type BatchDeleteResult = {
@@ -196,20 +197,23 @@ export class UltraContext {
         });
     }
 
-    async destroy(contextId: string): Promise<DestroyResponse> {
+    async destroy(contextId: string, options?: MutationOptions): Promise<DestroyResponse> {
         return this.request<DestroyResponse>(`/contexts/${encodeURIComponent(contextId)}`, {
             method: 'DELETE',
+            body: options?.metadata ? { destroy: true, metadata: options.metadata } : undefined,
         });
     }
 
     async batchDelete(ids: string[]): Promise<BatchDeleteResponse> {
+        // 200 (all ok), 207 (partial), and 500 (all failed) all carry a results body — surface it directly.
         return this.request<BatchDeleteResponse>('/contexts/batch-delete', {
             method: 'POST',
             body: { ids },
+            acceptStatuses: [200, 207, 500],
         });
     }
 
-    private async request<T>(path: string, init: { method: string; body?: unknown; headers?: Record<string, string> }): Promise<T> {
+    private async request<T>(path: string, init: { method: string; body?: unknown; headers?: Record<string, string>; acceptStatuses?: number[] }): Promise<T> {
         const url = `${this.baseUrl}${path.startsWith('/') ? '' : '/'}${path}`;
 
         const headers: Record<string, string> = {
@@ -235,7 +239,8 @@ export class UltraContext {
                 signal: ac?.signal,
             });
 
-            if (!res.ok) {
+            const accepted = init.acceptStatuses?.includes(res.status) ?? false;
+            if (!res.ok && !accepted) {
                 const bodyText = await safeReadText(res);
                 throw new UltraContextHttpError({ status: res.status, url, bodyText });
             }

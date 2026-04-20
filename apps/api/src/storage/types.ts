@@ -67,6 +67,8 @@ export interface StorageAdapter {
     deleteNodesByContextId(projectId: number, contextId: string): Promise<void>;
     deleteNodeByPublicId(projectId: number, publicId: string): Promise<void>;
     clearParentReferences(projectId: number, parentId: string): Promise<void>;
+    // batch-clear parent_id for all nodes whose parent_id is any of parentIds (single query)
+    clearParentReferencesBulk(projectId: number, parentIds: string[]): Promise<void>;
 
     // api keys
     findApiKeyByPrefix(prefix: string): Promise<ApiKeyRow | null>;

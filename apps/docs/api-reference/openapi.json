@@ -660,22 +660,34 @@
         },
         "responses": {
           "200": {
-            "description": "Batch delete results",
+            "description": "All contexts deleted successfully",
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BatchDeleteResponse"
-                }
+                "schema": { "$ref": "#/components/schemas/BatchDeleteResponse" }
+              }
+            }
+          },
+          "207": {
+            "description": "Multi-Status — partial success (some items failed)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/BatchDeleteResponse" }
               }
             }
           },
           "400": {
-            "description": "Invalid request body",
+            "description": "Invalid request body (empty, oversized, non-string element)",
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          },
+          "500": {
+            "description": "All items failed (response body still contains per-item errors)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/BatchDeleteResponse" }
               }
             }
           }
@@ -904,48 +916,53 @@
         ]
       },
       "DeleteInput": {
-        "type": "object",
-        "required": ["ids"],
-        "properties": {
-          "ids": {
-            "oneOf": [
-              {
-                "type": "string",
-                "description": "Single message ID (msg_...)"
-              },
-              {
-                "type": "integer",
-                "description": "Single message index (0 = first, -1 = last)"
-              },
-              {
-                "type": "array",
-                "items": {
-                  "oneOf": [
-                    { "type": "string" },
-                    { "type": "integer" }
-                  ]
-                },
-                "description": "Array of message IDs and/or indices"
-              }
-            ]
-          },
-          "metadata": {
+        "description": "Either `ids` (delete specific messages) or `destroy: true` (delete entire context). Any other body shape returns 400 to prevent typos from silently wiping a context.",
+        "oneOf": [
+          {
             "type": "object",
-            "additionalProperties": true,
-            "description": "Audit metadata for this version (e.g., reason, ticket)"
+            "required": ["ids"],
+            "properties": {
+              "ids": {
+                "oneOf": [
+                  { "type": "string", "description": "Single message ID (msg_...)" },
+                  { "type": "integer", "description": "Single message index (0 = first, -1 = last)" },
+                  {
+                    "type": "array",
+                    "items": { "oneOf": [{ "type": "string" }, { "type": "integer" }] },
+                    "description": "Array of message IDs and/or indices"
+                  }
+                ]
+              },
+              "metadata": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "Audit metadata for this version (e.g., reason, ticket)"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["destroy"],
+            "properties": {
+              "destroy": { "type": "boolean", "enum": [true], "description": "Must be `true` to destroy the entire context" },
+              "metadata": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "Audit metadata logged server-side (context history is wiped; metadata is echoed in the response)"
+              }
+            }
           }
-        }
+        ]
       },
       "DestroyResponse": {
         "type": "object",
         "properties": {
-          "deleted": {
-            "type": "boolean",
-            "description": "Whether the context was deleted"
-          },
-          "id": {
-            "type": "string",
-            "description": "The deleted context ID"
+          "deleted": { "type": "boolean", "description": "Whether the context was deleted" },
+          "id": { "type": "string", "description": "The deleted context ID" },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Audit metadata echoed from the request, if supplied"
           }
         }
       },
@@ -955,35 +972,31 @@
         "properties": {
           "ids": {
             "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Array of context IDs to delete"
+            "items": { "type": "string" },
+            "minItems": 1,
+            "maxItems": 100,
+            "description": "Array of context IDs to delete (max 100)"
           }
         }
       },
       "BatchDeleteResponse": {
         "type": "object",
+        "description": "Status 200 when all succeeded, 207 (Multi-Status) on partial failure, 500 when every item failed.",
         "properties": {
           "results": {
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
-                "id": {
-                  "type": "string",
-                  "description": "Context ID"
-                },
-                "deleted": {
-                  "type": "boolean",
-                  "description": "Whether the context was deleted"
-                },
-                "error": {
-                  "type": "string",
-                  "description": "Error message if deletion failed"
-                }
+                "id": { "type": "string", "description": "Context ID" },
+                "deleted": { "type": "boolean", "description": "Whether the context was deleted" },
+                "error": { "type": "string", "description": "Error message if deletion failed" }
               }
             }
+          },
+          "deleted_count": {
+            "type": "integer",
+            "description": "Number of contexts successfully deleted"
           }
         }
       },

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, isNull, lt, ne, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNull, lt, ne, sql } from 'drizzle-orm';
 
 import { nodes, api_keys, projects, type ApiDb } from '../db';
 import type { StorageAdapter, NodeRow, NodeInsertRow, ApiKeyRow, ProjectRow, ContextFilters } from './types';
@@ -108,6 +108,14 @@ export class DrizzleAdapter implements StorageAdapter {
             .update(nodes)
             .set({ parent_id: null })
             .where(and(eq(nodes.project_id, projectId), eq(nodes.parent_id, parentId)));
+    }
+
+    async clearParentReferencesBulk(projectId: number, parentIds: string[]) {
+        if (parentIds.length === 0) return;
+        await this.db
+            .update(nodes)
+            .set({ parent_id: null })
+            .where(and(eq(nodes.project_id, projectId), inArray(nodes.parent_id, parentIds)));
     }
 
     // -- api keys -------------------------------------------------------------

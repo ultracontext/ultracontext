@@ -103,6 +103,16 @@ class MemoryStorage implements StorageAdapter {
         }
     }
 
+    async clearParentReferencesBulk(projectId: number, parentIds: string[]) {
+        if (parentIds.length === 0) return;
+        const set = new Set(parentIds);
+        for (const n of this.nodes) {
+            if (n.project_id === projectId && n.parent_id && set.has(n.parent_id)) {
+                n.parent_id = null;
+            }
+        }
+    }
+
     async findApiKeyByPrefix(prefix: string): Promise<ApiKeyRow | null> {
         const k = this.keys.find((k) => k.key_prefix === prefix);
         return k ? { id: k.id, project_id: k.project_id, key_hash: k.key_hash } : null;
@@ -292,6 +302,48 @@ describe('DELETE /contexts/:id (destroy)', () => {
         assert.equal(forkGet.status, 200);
     });
 
+    it('should reject body with unknown keys (typo-safe)', async () => {
+        const { req } = await setupTestApp();
+        const contextId = await createTestContext(req);
+        // {"id": "msg_x"} is a typo — developer meant {"ids": ["msg_x"]}.
+        // Must 400, not silently destroy.
+        const res = await req('DELETE', `/contexts/${contextId}`, { id: 'msg_x' });
+        assert.equal(res.status, 400);
+        // Context should still exist
+        const get = await req('GET', `/contexts/${contextId}`);
+        assert.equal(get.status, 200);
+    });
+
+    it('should accept explicit {destroy: true} body', async () => {
+        const { req } = await setupTestApp();
+        const contextId = await createTestContext(req);
+        const res = await req('DELETE', `/contexts/${contextId}`, { destroy: true });
+        assert.equal(res.status, 200);
+        const body = await res.json();
+        assert.equal(body.deleted, true);
+    });
+
+    it('should echo audit metadata on explicit destroy', async () => {
+        const { req } = await setupTestApp();
+        const contextId = await createTestContext(req);
+        const res = await req('DELETE', `/contexts/${contextId}`, {
+            destroy: true,
+            metadata: { reason: 'cleanup', author: 'alice' },
+        });
+        assert.equal(res.status, 200);
+        const body = await res.json();
+        assert.deepEqual(body.metadata, { reason: 'cleanup', author: 'alice' });
+    });
+
+    it('should accept empty {} as destroy for legacy tolerance', async () => {
+        const { req } = await setupTestApp();
+        const contextId = await createTestContext(req);
+        const res = await req('DELETE', `/contexts/${contextId}`, {});
+        assert.equal(res.status, 200);
+        const body = await res.json();
+        assert.equal(body.deleted, true);
+    });
+
     it('should clear parent_id on forked message nodes when source is destroyed', async () => {
         const { req, storage } = await setupTestApp();
 
@@ -404,11 +456,12 @@ describe('POST /contexts/batch-delete', () => {
         const res = await req('POST', '/contexts/batch-delete', {
             ids: [realId, 'ctx_nonexistent'],
         });
-        assert.equal(res.status, 200);
+        assert.equal(res.status, 207);
         const body = await res.json();
         assert.equal(body.results[0].deleted, true);
         assert.equal(body.results[1].deleted, false);
         assert.equal(body.results[1].error, 'Not found');
+        assert.equal(body.deleted_count, 1);
     });
 
     it('should return 400 for empty ids array', async () => {
@@ -423,12 +476,27 @@ describe('POST /contexts/batch-delete', () => {
         assert.equal(res.status, 400);
     });
 
+    it('should return 400 for oversized ids array', async () => {
+        const { req } = await setupTestApp();
+        const ids = Array.from({ length: 101 }, (_, i) => `ctx_${i}`);
+        const res = await req('POST', '/contexts/batch-delete', { ids });
+        assert.equal(res.status, 400);
+    });
+
+    it('should return 400 for non-string element in ids', async () => {
+        const { req } = await setupTestApp();
+        const res = await req('POST', '/contexts/batch-delete', { ids: ['ctx_ok', 42] });
+        assert.equal(res.status, 400);
+    });
+
     it('should not be shadowed by POST /contexts/:id route', async () => {
         const { req } = await setupTestApp();
-        // This should hit batch-delete, NOT contexts/:id with id="batch-delete"
+        // This should hit batch-delete, NOT contexts/:id with id="batch-delete".
+        // All items fail (non-existent) → 500, but response shape proves routing.
         const res = await req('POST', '/contexts/batch-delete', { ids: ['ctx_test'] });
-        assert.equal(res.status, 200);
+        assert.equal(res.status, 500);
         const body = await res.json();
         assert.ok(body.results); // batch-delete response shape, not append response
+        assert.equal(body.results[0].error, 'Not found');
     });
 });

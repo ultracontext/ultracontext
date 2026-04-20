@@ -1,6 +1,7 @@
 """UltraContext API client."""
 
 from typing import Any, Dict, List, Optional, Union, overload
+from urllib.parse import quote
 
 import httpx
 
@@ -55,6 +56,7 @@ class UltraContext(_BaseClient):
         *,
         params: Optional[Dict[str, Any]] = None,
         json: Optional[Any] = None,
+        accept_statuses: Optional[List[int]] = None,
     ) -> Any:
         """Make HTTP request."""
 
@@ -75,8 +77,9 @@ class UltraContext(_BaseClient):
                 headers=headers,
             )
 
-        # handle errors
-        if not response.is_success:
+        # handle errors — accept_statuses lets callers surface non-2xx bodies (e.g. batch partial-fail)
+        accepted = accept_statuses is not None and response.status_code in accept_statuses
+        if not response.is_success and not accepted:
             raise UltraContextHttpError(
                 f"HTTP {response.status_code}: {response.text}",
                 status=response.status_code,
@@ -176,7 +179,7 @@ class UltraContext(_BaseClient):
         if history is not None:
             params["history"] = history
 
-        return self._request("GET", f"/contexts/{context_id}", params=params or None)
+        return self._request("GET", f"/contexts/{quote(context_id, safe='')}", params=params or None)
 
     def append(
         self,
@@ -191,7 +194,7 @@ class UltraContext(_BaseClient):
             data: Single message or list of messages
         """
         items = data if isinstance(data, list) else [data]
-        return self._request("POST", f"/contexts/{context_id}", json=items)
+        return self._request("POST", f"/contexts/{quote(context_id, safe='')}", json=items)
 
     def update(
         self,
@@ -219,7 +222,7 @@ class UltraContext(_BaseClient):
             body: Dict[str, Any] = {"updates": updates}
             if metadata:
                 body["metadata"] = metadata
-            return self._request("PATCH", f"/contexts/{context_id}", json=body)
+            return self._request("PATCH", f"/contexts/{quote(context_id, safe='')}", json=body)
 
         # single mode
         body = {**fields}
@@ -232,7 +235,7 @@ class UltraContext(_BaseClient):
         if metadata:
             body = {"updates": [body], "metadata": metadata}
 
-        return self._request("PATCH", f"/contexts/{context_id}", json=body)
+        return self._request("PATCH", f"/contexts/{quote(context_id, safe='')}", json=body)
 
     def delete(
         self,
@@ -254,25 +257,35 @@ class UltraContext(_BaseClient):
         if metadata:
             body["metadata"] = metadata
 
-        return self._request("DELETE", f"/contexts/{context_id}", json=body)
+        return self._request("DELETE", f"/contexts/{quote(context_id, safe='')}", json=body)
 
-    def destroy(self, context_id: str) -> DestroyResponse:
+    def batch_delete(self, ids: List[str]) -> BatchDeleteResponse:
+        """
+        Delete multiple contexts at once (max 100).
+
+        Status 200 = all succeeded, 207 = partial, 500 = all failed. All three carry a
+        results body; this method surfaces the body instead of raising.
+
+        Args:
+            ids: List of context IDs to delete
+        """
+        return self._request("POST", "/contexts/batch-delete", json={"ids": ids}, accept_statuses=[200, 207, 500])
+
+    def destroy(
+        self,
+        context_id: str,
+        *,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> DestroyResponse:
         """
         Delete an entire context and all its versions.
 
         Args:
             context_id: Context ID to delete
+            metadata: Optional audit metadata (echoed in response + logged server-side)
         """
-        return self._request("DELETE", f"/contexts/{context_id}")
-
-    def batch_delete(self, ids: List[str]) -> BatchDeleteResponse:
-        """
-        Delete multiple contexts at once.
-
-        Args:
-            ids: List of context IDs to delete
-        """
-        return self._request("POST", "/contexts/batch-delete", json={"ids": ids})
+        body = {"destroy": True, "metadata": metadata} if metadata else None
+        return self._request("DELETE", f"/contexts/{quote(context_id, safe='')}", json=body)
 
 
 class AsyncUltraContext(_BaseClient):
@@ -285,6 +298,7 @@ class AsyncUltraContext(_BaseClient):
         *,
         params: Optional[Dict[str, Any]] = None,
         json: Optional[Any] = None,
+        accept_statuses: Optional[List[int]] = None,
     ) -> Any:
         """Make async HTTP request."""
 
@@ -305,8 +319,9 @@ class AsyncUltraContext(_BaseClient):
                 headers=headers,
             )
 
-        # handle errors
-        if not response.is_success:
+        # handle errors — accept_statuses lets callers surface non-2xx bodies
+        accepted = accept_statuses is not None and response.status_code in accept_statuses
+        if not response.is_success and not accepted:
             raise UltraContextHttpError(
                 f"HTTP {response.status_code}: {response.text}",
                 status=response.status_code,
@@ -388,7 +403,7 @@ class AsyncUltraContext(_BaseClient):
         if history is not None:
             params["history"] = history
 
-        return await self._request("GET", f"/contexts/{context_id}", params=params or None)
+        return await self._request("GET", f"/contexts/{quote(context_id, safe='')}", params=params or None)
 
     async def append(
         self,
@@ -397,7 +412,7 @@ class AsyncUltraContext(_BaseClient):
     ) -> AppendResponse:
         """Append messages to context."""
         items = data if isinstance(data, list) else [data]
-        return await self._request("POST", f"/contexts/{context_id}", json=items)
+        return await self._request("POST", f"/contexts/{quote(context_id, safe='')}", json=items)
 
     async def update(
         self,
@@ -415,7 +430,7 @@ class AsyncUltraContext(_BaseClient):
             body: Dict[str, Any] = {"updates": updates}
             if metadata:
                 body["metadata"] = metadata
-            return await self._request("PATCH", f"/contexts/{context_id}", json=body)
+            return await self._request("PATCH", f"/contexts/{quote(context_id, safe='')}", json=body)
 
         # single mode
         body = {**fields}
@@ -427,7 +442,7 @@ class AsyncUltraContext(_BaseClient):
         if metadata:
             body = {"updates": [body], "metadata": metadata}
 
-        return await self._request("PATCH", f"/contexts/{context_id}", json=body)
+        return await self._request("PATCH", f"/contexts/{quote(context_id, safe='')}", json=body)
 
     async def delete(
         self,
@@ -442,12 +457,18 @@ class AsyncUltraContext(_BaseClient):
         if metadata:
             body["metadata"] = metadata
 
-        return await self._request("DELETE", f"/contexts/{context_id}", json=body)
+        return await self._request("DELETE", f"/contexts/{quote(context_id, safe='')}", json=body)
 
-    async def destroy(self, context_id: str) -> DestroyResponse:
-        """Delete an entire context and all its versions."""
-        return await self._request("DELETE", f"/contexts/{context_id}")
+    async def destroy(
+        self,
+        context_id: str,
+        *,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> DestroyResponse:
+        """Delete an entire context and all its versions. Optional audit metadata."""
+        body = {"destroy": True, "metadata": metadata} if metadata else None
+        return await self._request("DELETE", f"/contexts/{quote(context_id, safe='')}", json=body)
 
     async def batch_delete(self, ids: List[str]) -> BatchDeleteResponse:
-        """Delete multiple contexts at once."""
-        return await self._request("POST", "/contexts/batch-delete", json={"ids": ids})
+        """Delete multiple contexts at once (max 100). 200/207/500 all carry a results body."""
+        return await self._request("POST", "/contexts/batch-delete", json={"ids": ids}, accept_statuses=[200, 207, 500])

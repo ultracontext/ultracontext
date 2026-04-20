@@ -4,6 +4,7 @@ import { generatePublicId } from '../domain/public-ids';
 import type { HttpApp } from '../types/http';
 import { firstRow } from '../utils/first-row';
 import { isPlainObject, parseUpdateRequestBody } from '../utils/request-parsing';
+import { MAX_BATCH_DELETE } from '../constants';
 
 // -- rollback helpers ---------------------------------------------------------
 
@@ -46,12 +47,11 @@ async function rollbackRootContext(storage: StorageAdapter, projectId: number, r
 async function destroyContext(storage: StorageAdapter, projectId: number, rootPublicId: string) {
     const branches = await storage.findContextBranches(rootPublicId);
 
-    // Clear parent refs for all messages under each branch, then delete them
+    // Per branch: batch-clear parent refs for its messages, then delete them
     for (const branch of branches) {
         const messages = await storage.findNonContextNodes(branch.public_id);
-        for (const msg of messages) {
-            await storage.clearParentReferences(projectId, msg.public_id);
-        }
+        const msgIds = messages.map((m) => m.public_id);
+        await storage.clearParentReferencesBulk(projectId, msgIds);
         await storage.clearParentReferences(projectId, branch.public_id);
         await storage.deleteNodesByContextId(projectId, branch.public_id);
     }
@@ -232,16 +232,18 @@ export function registerContextRoutes(app: HttpApp) {
         if (!Array.isArray(ids) || ids.length === 0) {
             return c.json({ error: 'ids must be a non-empty array of context IDs' }, 400);
         }
+        if (ids.length > MAX_BATCH_DELETE) {
+            return c.json({ error: `ids must contain at most ${MAX_BATCH_DELETE} items` }, 400);
+        }
+        // Validate element types upfront — fail the whole request on any non-string
+        for (const el of ids) {
+            if (typeof el !== 'string') return c.json({ error: 'Each id must be a string' }, 400);
+        }
 
         const storage = c.get('storage');
         const results: Array<{ id: string; deleted: boolean; error?: string }> = [];
 
-        for (const contextId of ids) {
-            if (typeof contextId !== 'string') {
-                results.push({ id: String(contextId), deleted: false, error: 'Invalid ID type' });
-                continue;
-            }
-
+        for (const contextId of ids as string[]) {
             const root = await storage.findRootContext(projectId, contextId);
             if (!root) {
                 results.push({ id: contextId, deleted: false, error: 'Not found' });
@@ -257,7 +259,10 @@ export function registerContextRoutes(app: HttpApp) {
             }
         }
 
-        return c.json({ results });
+        // 207 Multi-Status when partial failure; 500 if every item failed
+        const deletedCount = results.filter((r) => r.deleted).length;
+        const status = deletedCount === 0 ? 500 : deletedCount === results.length ? 200 : 207;
+        return c.json({ results, deleted_count: deletedCount }, status);
     });
 
     // -- parameterized :id routes ------------------------------------------------
@@ -514,22 +519,36 @@ export function registerContextRoutes(app: HttpApp) {
             }
         }
 
-        // No body → delete entire context
-        if (!hasJsonBody || (isPlainObject(body) && !body.ids)) {
+        // Destroy path: no body, OR explicit {destroy: true}. Any other body shape must opt-in
+        // explicitly to prevent typos (e.g. `{IDs:[...]}`, `{id:"x"}`) from silently wiping the context.
+        const isEmptyBody = isPlainObject(body) && Object.keys(body).length === 0;
+        const isExplicitDestroy = isPlainObject(body) && body.destroy === true;
+        const hasIds = isPlainObject(body) && body.ids !== undefined;
+
+        if (!hasJsonBody || isEmptyBody || isExplicitDestroy) {
+            // Optional audit metadata logged at infra level (destroy wipes history so no DB row can hold it)
+            const destroyMetadata = isPlainObject(body) && isPlainObject(body.metadata) ? body.metadata : undefined;
+            if (destroyMetadata) {
+                console.info(JSON.stringify({ op: 'destroy', project_id: projectId, context_id: contextPublicId, metadata: destroyMetadata }));
+            }
+
             const root = await storage.findRootContext(projectId, contextPublicId);
             if (!root) return c.json({ error: 'Context not found' }, 404);
 
             try {
                 await storage.transaction((tx) => destroyContext(tx, projectId, root.public_id));
-                return c.json({ deleted: true, id: contextPublicId });
+                return c.json({ deleted: true, id: contextPublicId, ...(destroyMetadata ? { metadata: destroyMetadata } : {}) });
             } catch (error) {
                 const message = error instanceof Error ? error.message : 'Failed to delete context';
                 return c.json({ error: message }, 500);
             }
         }
 
-        // Body with ids → delete specific messages (existing behavior)
+        // From here, body must have `ids` for message-delete path
         if (!isPlainObject(body)) return c.json({ error: 'Request body must be a JSON object' }, 400);
+        if (!hasIds) {
+            return c.json({ error: 'Body must contain "ids" (to delete messages) or {"destroy": true} (to delete context)' }, 400);
+        }
 
         const { ids, metadata: userMetadata } = body;
         if (ids === undefined || ids === null) return c.json({ error: 'ids is required' }, 400);
