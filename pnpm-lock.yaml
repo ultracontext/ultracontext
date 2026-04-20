@@ -72,6 +72,9 @@ importers:
         specifier: ^19.2.4
         version: 19.2.4
     devDependencies:
+      '@ultracontext/parsers':
+        specifier: workspace:*
+        version: link:../../packages/parsers
       '@ultracontext/sync':
         specifier: workspace:*
         version: link:../sync

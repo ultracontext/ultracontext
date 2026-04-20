@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
-import { asIso, expandHome, firstMessageTimestamp, normalizeRole } from "../utils.mjs";
+import { asIso, claudeProjectDirName, expandHome, firstMessageTimestamp, normalizeRole } from "../utils.mjs";
 
 // validate UUID format
 function isUuid(value) {
@@ -16,12 +16,6 @@ function normalizeSessionUuid(raw) {
     const value = String(raw ?? "").trim();
     if (isUuid(value)) return value;
     return randomUUID();
-}
-
-// build Claude Code project directory name from cwd
-function claudeProjectDirName(cwd) {
-    const resolved = path.resolve(String(cwd || process.cwd()));
-    return resolved.replace(/[\\/]/g, "-").replace(/[^A-Za-z0-9._-]/g, "-");
 }
 
 // compute session file path under ~/.claude/projects/<project>/

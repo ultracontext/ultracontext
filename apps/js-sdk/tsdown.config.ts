@@ -17,6 +17,7 @@ export default defineConfig([
       "cli/entry": "src/cli/entry.mjs",
       "cli/onboarding": "src/cli/onboarding.mjs",
       "cli/sdk-sync": "src/cli/sdk-sync.mjs",
+      "cli/switch": "src/cli/switch.mjs",
     },
     outDir: "dist",
     format: "esm",
