@@ -84,6 +84,9 @@ export type UpdateResponse<T = unknown> = {
 
 export type DeleteInput = (string | number) | (string | number)[];
 
+// Unified delete input: pass message ids (soft) OR {permanent: true} (hard, routes through destroy)
+export type DeletePermanentInput = { permanent: true; metadata?: Record<string, unknown> };
+
 export type DeleteResponse<T = unknown> = {
     data: Array<{ id: string; index: number; metadata: Record<string, unknown> } & T>;
     version: number;
@@ -190,10 +193,20 @@ export class UltraContext {
         });
     }
 
-    async delete<T = unknown>(contextId: string, ids: DeleteInput, options?: MutationOptions): Promise<DeleteResponse<T>> {
+    async delete<T = unknown>(contextId: string, ids: DeleteInput, options?: MutationOptions): Promise<DeleteResponse<T>>;
+    async delete(contextId: string, input: DeletePermanentInput): Promise<DestroyResponse>;
+    async delete<T = unknown>(
+        contextId: string,
+        input: DeleteInput | DeletePermanentInput,
+        options?: MutationOptions,
+    ): Promise<DeleteResponse<T> | DestroyResponse> {
+        // Unified path: {permanent: true} routes through destroy
+        if (typeof input === 'object' && !Array.isArray(input) && input !== null && (input as DeletePermanentInput).permanent === true) {
+            return this.destroy(contextId, { metadata: (input as DeletePermanentInput).metadata });
+        }
         return this.request<DeleteResponse<T>>(`/contexts/${encodeURIComponent(contextId)}`, {
             method: 'DELETE',
-            body: { ids, metadata: options?.metadata },
+            body: { ids: input as DeleteInput, metadata: options?.metadata },
         });
     }
 

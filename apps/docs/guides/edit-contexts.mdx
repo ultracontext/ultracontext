@@ -202,8 +202,10 @@ uc.update(context_id, index=0, content="Hi there!")
 <Info>
 **Soft delete vs hard delete — two different operations.**
 
-- `uc.delete(contextId, ids)` — **soft delete** of messages. Creates a new version; the deleted messages are preserved in prior versions and can be recovered via `uc.get(contextId, { version: N })`.
-- `uc.destroy(contextId)` — **hard delete** of the entire context. All versions, messages, and history are permanently removed. Irreversible.
+- **Soft delete** — `uc.delete(contextId, ids)`. Removes messages from the current version but creates a new version; deleted messages are preserved in prior versions and recoverable via `uc.get(contextId, { version: N })`.
+- **Hard delete** — `uc.destroy(contextId)` or the unified `uc.delete(contextId, { permanent: true })`. Wipes the entire context, all versions, all messages. Irreversible.
+
+Both hard-delete forms are equivalent; `destroy` exists for clarity at call sites (easy to grep, hard to invoke by accident), the `permanent: true` param exists for developers who prefer a single `delete` method.
 </Info>
 
 Delete by ID or index:
@@ -431,9 +433,15 @@ import { UltraContext } from 'ultracontext';
 
 const uc = new UltraContext({ apiKey: process.env.ULTRACONTEXT_API_KEY });
 
-// delete a context entirely
+// canonical — clear at call sites, easy to grep
 await uc.destroy('ctx_abc123');
-// { deleted: true, id: 'ctx_abc123' }
+
+// or unified delete with permanent flag
+await uc.delete('ctx_abc123', { permanent: true });
+
+// with audit metadata (both forms accept it)
+await uc.destroy('ctx_abc123', { metadata: { reason: 'GDPR request', author: 'alice' } });
+// { deleted: true, id: 'ctx_abc123', metadata: { reason: 'GDPR request', author: 'alice' } }
 ```
 
 ```python Python
@@ -442,13 +450,19 @@ import os
 
 uc = UltraContext(api_key=os.environ["ULTRACONTEXT_API_KEY"])
 
-# delete a context entirely
+# canonical
 result = uc.destroy("ctx_abc123")
-# {"deleted": True, "id": "ctx_abc123"}
+
+# or unified delete with permanent flag
+result = uc.delete("ctx_abc123", permanent=True)
+
+# with audit metadata
+result = uc.destroy("ctx_abc123", metadata={"reason": "GDPR request", "author": "alice"})
+# {"deleted": True, "id": "ctx_abc123", "metadata": {"reason": "GDPR request", "author": "alice"}}
 ```
 </CodeGroup>
 
-<Warning>This is irreversible. The context, all its versions, and all messages are permanently deleted.</Warning>
+<Warning>This is irreversible. The context, all its versions, and all messages are permanently deleted. Audit metadata is echoed in the response and logged server-side, but no DB row survives to hold it.</Warning>
 
 ---
 

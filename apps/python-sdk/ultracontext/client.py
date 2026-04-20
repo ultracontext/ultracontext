@@ -240,18 +240,28 @@ class UltraContext(_BaseClient):
     def delete(
         self,
         context_id: str,
-        ids: Union[str, int, List[Union[str, int]]],
+        ids: Optional[Union[str, int, List[Union[str, int]]]] = None,
         *,
+        permanent: bool = False,
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> DeleteResponse:
+    ) -> Union[DeleteResponse, DestroyResponse]:
         """
-        Delete messages by id(s) or index(es).
+        Delete messages (soft, versioned) or the entire context (hard, permanent).
 
         Args:
             context_id: Context ID
-            ids: Message ID, index, or list of IDs/indexes
-            metadata: Version metadata for audit trail
+            ids: Message ID, index, or list — soft delete (preserved in prior versions)
+            permanent: If True, destroy the entire context (irreversible). Requires `ids` to be None.
+            metadata: Audit metadata — version metadata for soft delete, echoed in response for destroy
         """
+        if permanent:
+            if ids is not None:
+                raise ValueError("Cannot pass both `ids` and `permanent=True`")
+            return self.destroy(context_id, metadata=metadata)
+
+        if ids is None:
+            raise ValueError("Either `ids` (soft delete) or `permanent=True` (hard delete) is required")
+
         items = ids if isinstance(ids, list) else [ids]
         body: Dict[str, Any] = {"ids": items}
         if metadata:
@@ -447,11 +457,20 @@ class AsyncUltraContext(_BaseClient):
     async def delete(
         self,
         context_id: str,
-        ids: Union[str, int, List[Union[str, int]]],
+        ids: Optional[Union[str, int, List[Union[str, int]]]] = None,
         *,
+        permanent: bool = False,
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> DeleteResponse:
-        """Delete messages by id(s) or index(es)."""
+    ) -> Union[DeleteResponse, DestroyResponse]:
+        """Delete messages (soft, versioned) or the entire context (hard, permanent=True)."""
+        if permanent:
+            if ids is not None:
+                raise ValueError("Cannot pass both `ids` and `permanent=True`")
+            return await self.destroy(context_id, metadata=metadata)
+
+        if ids is None:
+            raise ValueError("Either `ids` (soft delete) or `permanent=True` (hard delete) is required")
+
         items = ids if isinstance(ids, list) else [ids]
         body: Dict[str, Any] = {"ids": items}
         if metadata:
