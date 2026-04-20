@@ -84,9 +84,29 @@ export type UpdateResponse<T = unknown> = {
 
 export type DeleteInput = (string | number) | (string | number)[];
 
+// Unified delete input — either message ids (soft, versioned) OR {permanent: true} (hard, irreversible)
+export type DeletePermanentInput = { permanent: true; metadata?: Record<string, unknown> };
+
 export type DeleteResponse<T = unknown> = {
     data: Array<{ id: string; index: number; metadata: Record<string, unknown> } & T>;
     version: number;
+};
+
+export type PermanentDeleteResponse = {
+    deleted: boolean;
+    id: string;
+    metadata?: Record<string, unknown>;
+};
+
+export type DeleteManyResult = {
+    id: string;
+    deleted: boolean;
+    error?: string;
+};
+
+export type DeleteManyResponse = {
+    results: DeleteManyResult[];
+    deleted_count: number;
 };
 
 export class UltraContextHttpError extends Error {
@@ -174,14 +194,43 @@ export class UltraContext {
         });
     }
 
-    async delete<T = unknown>(contextId: string, ids: DeleteInput, options?: MutationOptions): Promise<DeleteResponse<T>> {
+    async delete<T = unknown>(contextId: string, ids: DeleteInput, options?: MutationOptions): Promise<DeleteResponse<T>>;
+    async delete(contextId: string, input: DeletePermanentInput): Promise<PermanentDeleteResponse>;
+    async delete<T = unknown>(
+        contextId: string,
+        input: DeleteInput | DeletePermanentInput,
+        options?: MutationOptions,
+    ): Promise<DeleteResponse<T> | PermanentDeleteResponse> {
+        const isPermanent =
+            typeof input === 'object' &&
+            !Array.isArray(input) &&
+            input !== null &&
+            (input as DeletePermanentInput).permanent === true;
+
+        if (isPermanent) {
+            const meta = (input as DeletePermanentInput).metadata;
+            return this.request<PermanentDeleteResponse>(`/contexts/${encodeURIComponent(contextId)}`, {
+                method: 'DELETE',
+                body: meta ? { permanent: true, metadata: meta } : { permanent: true },
+            });
+        }
+
         return this.request<DeleteResponse<T>>(`/contexts/${encodeURIComponent(contextId)}`, {
             method: 'DELETE',
-            body: { ids, metadata: options?.metadata },
+            body: { ids: input as DeleteInput, metadata: options?.metadata },
         });
     }
 
-    private async request<T>(path: string, init: { method: string; body?: unknown; headers?: Record<string, string> }): Promise<T> {
+    async deleteMany(ids: string[]): Promise<DeleteManyResponse> {
+        // 200 (all ok), 207 (partial), 500 (all failed) all carry a results body — surface directly.
+        return this.request<DeleteManyResponse>('/contexts/delete-many', {
+            method: 'POST',
+            body: { ids },
+            acceptStatuses: [200, 207, 500],
+        });
+    }
+
+    private async request<T>(path: string, init: { method: string; body?: unknown; headers?: Record<string, string>; acceptStatuses?: number[] }): Promise<T> {
         const url = `${this.baseUrl}${path.startsWith('/') ? '' : '/'}${path}`;
 
         const headers: Record<string, string> = {
@@ -207,7 +256,8 @@ export class UltraContext {
                 signal: ac?.signal,
             });
 
-            if (!res.ok) {
+            const accepted = init.acceptStatuses?.includes(res.status) ?? false;
+            if (!res.ok && !accepted) {
                 const bodyText = await safeReadText(res);
                 throw new UltraContextHttpError({ status: res.status, url, bodyText });
             }

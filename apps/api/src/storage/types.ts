@@ -66,6 +66,9 @@ export interface StorageAdapter {
     insertNodes(values: NodeInsertRow | NodeInsertRow[]): Promise<Partial<NodeRow>[]>;
     deleteNodesByContextId(projectId: number, contextId: string): Promise<void>;
     deleteNodeByPublicId(projectId: number, publicId: string): Promise<void>;
+    clearParentReferences(projectId: number, parentId: string): Promise<void>;
+    // batch-clear parent_id for all nodes whose parent_id is any of parentIds (single query)
+    clearParentReferencesBulk(projectId: number, parentIds: string[]): Promise<void>;
 
     // api keys
     findApiKeyByPrefix(prefix: string): Promise<ApiKeyRow | null>;
@@ -75,4 +78,13 @@ export interface StorageAdapter {
     // projects
     insertProject(name: string): Promise<ProjectRow | null>;
     deleteProject(id: number): Promise<void>;
+
+    // transactions — adapter-specific atomicity (tx on Drizzle, no-op on Supabase REST)
+    transaction<T>(fn: (tx: StorageAdapter) => Promise<T>, options?: TransactionOptions): Promise<T>;
 }
+
+export type TransactionOptions = {
+    // 'serializable' turns on Postgres SSI — concurrent conflicting txs get
+    // a 40001 error, letting client retry. Required for append-vs-permanent-delete safety.
+    isolationLevel?: 'serializable';
+};

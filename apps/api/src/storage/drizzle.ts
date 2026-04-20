@@ -1,7 +1,7 @@
-import { and, asc, desc, eq, gt, isNull, lt, ne, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNull, lt, ne, sql } from 'drizzle-orm';
 
 import { nodes, api_keys, projects, type ApiDb } from '../db';
-import type { StorageAdapter, NodeRow, NodeInsertRow, ApiKeyRow, ProjectRow, ContextFilters } from './types';
+import type { StorageAdapter, NodeRow, NodeInsertRow, ApiKeyRow, ProjectRow, ContextFilters, TransactionOptions } from './types';
 
 // =============================================================================
 // DRIZZLE ADAPTER — wraps existing Drizzle/PostgreSQL queries
@@ -103,6 +103,21 @@ export class DrizzleAdapter implements StorageAdapter {
         await this.db.delete(nodes).where(and(eq(nodes.project_id, projectId), eq(nodes.public_id, publicId)));
     }
 
+    async clearParentReferences(projectId: number, parentId: string) {
+        await this.db
+            .update(nodes)
+            .set({ parent_id: null })
+            .where(and(eq(nodes.project_id, projectId), eq(nodes.parent_id, parentId)));
+    }
+
+    async clearParentReferencesBulk(projectId: number, parentIds: string[]) {
+        if (parentIds.length === 0) return;
+        await this.db
+            .update(nodes)
+            .set({ parent_id: null })
+            .where(and(eq(nodes.project_id, projectId), inArray(nodes.parent_id, parentIds)));
+    }
+
     // -- api keys -------------------------------------------------------------
 
     async findApiKeyByPrefix(prefix: string): Promise<ApiKeyRow | null> {
@@ -134,5 +149,12 @@ export class DrizzleAdapter implements StorageAdapter {
 
     async deleteProject(id: number) {
         await this.db.delete(projects).where(eq(projects.id, id));
+    }
+
+    // -- transactions ---------------------------------------------------------
+
+    async transaction<T>(fn: (tx: StorageAdapter) => Promise<T>, options?: TransactionOptions): Promise<T> {
+        const txConfig = options?.isolationLevel ? { isolationLevel: options.isolationLevel } : undefined;
+        return this.db.transaction(async (txDb) => fn(new DrizzleAdapter(txDb as ApiDb)), txConfig);
     }
 }

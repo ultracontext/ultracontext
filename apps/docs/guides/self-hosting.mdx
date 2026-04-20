@@ -134,6 +134,8 @@ Both produce identical API behavior.
 | **Latency** | Lower | Slightly higher (HTTP overhead) |
 | **Setup** | Manage your own PostgreSQL | Create a Supabase project |
 | **Scaling** | Manual | Handled by Supabase |
+| **Atomic permanent delete** | Yes (real transactions) | Best-effort (sequential REST) |
+| **Append-vs-delete race safety** | Yes (SERIALIZABLE isolation) | Best-effort (no isolation) |
 | **Open source** | Yes | Yes |
 
 ### Direct PostgreSQL
@@ -156,6 +158,8 @@ ULTRACONTEXT_ADMIN_KEY=your_admin_key
 ```
 
 Best for managed hosting and quick setup. Scaling handled by Supabase.
+
+<Note>Permanent delete operations (`uc.delete(..., {permanent: true})` and `uc.deleteMany(...)`) run as sequential REST calls on this provider — a mid-operation failure may leave partially-deleted state. Use the `postgres` provider for atomic permanent delete.</Note>
 
 <Warning>Use the **service role key**, not the anon key. The service role key bypasses Row Level Security, which the API needs to manage data across projects.</Warning>
 

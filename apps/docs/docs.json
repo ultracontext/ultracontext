@@ -69,7 +69,8 @@
                             "GET /contexts/{id}",
                             "POST /contexts/{id}",
                             "PATCH /contexts/{id}",
-                            "DELETE /contexts/{id}"
+                            "DELETE /contexts/{id}",
+                            "POST /contexts/delete-many"
                         ]
                     }
                 ]

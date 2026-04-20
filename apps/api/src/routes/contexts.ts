@@ -4,6 +4,7 @@ import { generatePublicId } from '../domain/public-ids';
 import type { HttpApp } from '../types/http';
 import { firstRow } from '../utils/first-row';
 import { isPlainObject, parseUpdateRequestBody } from '../utils/request-parsing';
+import { MAX_BATCH_DELETE } from '../constants';
 
 // -- rollback helpers ---------------------------------------------------------
 
@@ -39,6 +40,30 @@ async function rollbackRootContext(storage: StorageAdapter, projectId: number, r
         const message = error instanceof Error ? error.message : String(error);
         console.error(`Rollback failed for root ${rootId}: ${message}`);
     }
+}
+
+// -- permanent-delete helper --------------------------------------------------
+
+async function permanentlyDelete(storage: StorageAdapter, projectId: number, rootPublicId: string) {
+    const branches = await storage.findContextBranches(rootPublicId);
+
+    // Per branch: batch-clear parent refs for its messages, then delete them
+    for (const branch of branches) {
+        const messages = await storage.findNonContextNodes(branch.public_id);
+        const msgIds = messages.map((m) => m.public_id);
+        await storage.clearParentReferencesBulk(projectId, msgIds);
+        await storage.clearParentReferences(projectId, branch.public_id);
+        await storage.deleteNodesByContextId(projectId, branch.public_id);
+    }
+
+    // Clear parent refs pointing to root (forked contexts)
+    await storage.clearParentReferences(projectId, rootPublicId);
+
+    // Delete version head nodes
+    await storage.deleteNodesByContextId(projectId, rootPublicId);
+
+    // Delete the root node itself
+    await storage.deleteNodeByPublicId(projectId, rootPublicId);
 }
 
 // -- routes -------------------------------------------------------------------
@@ -195,47 +220,102 @@ export function registerContextRoutes(app: HttpApp) {
         });
     });
 
+    // -- delete-many contexts (must be registered before :id routes) -----------
+
+    app.post('/contexts/delete-many', async (c) => {
+        const { projectId } = c.get('auth');
+        const body = await c.req.json().catch(() => null);
+
+        if (!isPlainObject(body)) return c.json({ error: 'Request body must be a JSON object' }, 400);
+
+        const { ids } = body;
+        if (!Array.isArray(ids) || ids.length === 0) {
+            return c.json({ error: 'ids must be a non-empty array of context IDs' }, 400);
+        }
+        if (ids.length > MAX_BATCH_DELETE) {
+            return c.json({ error: `ids must contain at most ${MAX_BATCH_DELETE} items` }, 400);
+        }
+        // Validate element types upfront — fail the whole request on any non-string
+        for (const el of ids) {
+            if (typeof el !== 'string') return c.json({ error: 'Each id must be a string' }, 400);
+        }
+
+        const storage = c.get('storage');
+        const results: Array<{ id: string; deleted: boolean; error?: string }> = [];
+
+        for (const contextId of ids as string[]) {
+            const root = await storage.findRootContext(projectId, contextId);
+            if (!root) {
+                results.push({ id: contextId, deleted: false, error: 'Not found' });
+                continue;
+            }
+
+            try {
+                await storage.transaction((tx) => permanentlyDelete(tx, projectId, root.public_id), { isolationLevel: 'serializable' });
+                results.push({ id: contextId, deleted: true });
+            } catch (error) {
+                const message = error instanceof Error ? error.message : 'Unknown error';
+                results.push({ id: contextId, deleted: false, error: message });
+            }
+        }
+
+        // 207 Multi-Status when partial failure; 500 if every item failed
+        const deletedCount = results.filter((r) => r.deleted).length;
+        const status = deletedCount === 0 ? 500 : deletedCount === results.length ? 200 : 207;
+        return c.json({ results, deleted_count: deletedCount }, status);
+    });
+
+    // -- parameterized :id routes ------------------------------------------------
+
     app.post('/contexts/:id', async (c) => {
         const { projectId } = c.get('auth');
         const contextPublicId = c.req.param('id');
         const body = await c.req.json();
         const storage = c.get('storage');
 
-        const root = await storage.findRootContext(projectId, contextPublicId);
-        if (!root) return c.json({ error: 'Context not found' }, 404);
-
-        const head = await findHead(storage, root.public_id);
-        if (!head) return c.json({ error: 'HEAD not found' }, 500);
-
-        const messages = Array.isArray(body) ? body : [body];
-        const existingNodes = await getOrderedNodes(storage, head.public_id);
-        const existingCount = existingNodes.length;
-        const tailPublicId = await findTail(storage, head.public_id);
-
-        const nodeInputs = messages.map((msg) => {
-            const { metadata, ...content } = msg;
-            return { type: 'message', content, metadata: metadata ?? {} };
-        });
-        const insertRecords = buildNodeInsertRecords(nodeInputs, projectId, head.public_id, tailPublicId);
-
-        let createdNodes: Array<{ public_id?: string; content?: unknown; metadata?: unknown }>;
+        // Serializable tx so concurrent permanent-delete can't race with append
+        // (Postgres SSI makes one side fail with 40001; client retries).
+        type AppendResult = { data: object[]; version: number } | { error: string; status: number };
+        let outcome: AppendResult;
         try {
-            createdNodes = await storage.insertNodes(insertRecords);
+            outcome = await storage.transaction<AppendResult>(async (tx) => {
+                const root = await tx.findRootContext(projectId, contextPublicId);
+                if (!root) return { error: 'Context not found', status: 404 };
+
+                const head = await findHead(tx, root.public_id);
+                if (!head) return { error: 'HEAD not found', status: 500 };
+
+                const messages = Array.isArray(body) ? body : [body];
+                const existingNodes = await getOrderedNodes(tx, head.public_id);
+                const existingCount = existingNodes.length;
+                const tailPublicId = await findTail(tx, head.public_id);
+
+                const nodeInputs = messages.map((msg) => {
+                    const { metadata, ...content } = msg;
+                    return { type: 'message', content, metadata: metadata ?? {} };
+                });
+                const insertRecords = buildNodeInsertRecords(nodeInputs, projectId, head.public_id, tailPublicId);
+
+                const createdNodes = await tx.insertNodes(insertRecords);
+
+                const versions = await getVersions(tx, root.public_id);
+                const currentVersion = versions.length - 1;
+
+                const data = createdNodes.map((node, i: number) => ({
+                    ...(node.content as object),
+                    id: node.public_id,
+                    index: existingCount + i,
+                    metadata: node.metadata,
+                }));
+
+                return { data, version: currentVersion };
+            }, { isolationLevel: 'serializable' });
         } catch {
             return c.json({ error: 'Failed to append messages' }, 500);
         }
 
-        const versions = await getVersions(storage, root.public_id);
-        const currentVersion = versions.length - 1;
-
-        const result = createdNodes.map((node, i: number) => ({
-            ...(node.content as object),
-            id: node.public_id,
-            index: existingCount + i,
-            metadata: node.metadata,
-        }));
-
-        return c.json({ data: result, version: currentVersion }, 201);
+        if ('error' in outcome) return c.json({ error: outcome.error }, outcome.status as 404 | 500);
+        return c.json({ data: outcome.data, version: outcome.version }, 201);
     });
 
     app.get('/contexts/:id', async (c) => {
@@ -427,20 +507,69 @@ export function registerContextRoutes(app: HttpApp) {
         return c.json({ data: result, version: currentVersion });
     });
 
+    // -- delete context or messages -----------------------------------------------
+
     app.delete('/contexts/:id', async (c) => {
         const { projectId } = c.get('auth');
         const contextPublicId = c.req.param('id');
-        const body = await c.req.json().catch(() => null);
-
-        if (!isPlainObject(body)) return c.json({ error: 'Request body must be a JSON object' }, 400);
-
         const storage = c.get('storage');
+
+        // Check Content-Type to distinguish "no body" from "JSON body"
+        const contentType = c.req.header('content-type') ?? '';
+        const hasJsonBody = contentType.includes('application/json');
+
+        let body: any = null;
+        if (hasJsonBody) {
+            try {
+                body = await c.req.json();
+            } catch {
+                return c.json({ error: 'Invalid JSON body' }, 400);
+            }
+        }
+
+        // Permanent delete path: no body, OR explicit {permanent: true}. Any other body shape must opt
+        // in explicitly to prevent typos (e.g. `{IDs:[...]}`, `{id:"x"}`) from silently wiping the context.
+        const isEmptyBody = isPlainObject(body) && Object.keys(body).length === 0;
+        const isExplicitPermanent = isPlainObject(body) && body.permanent === true;
+        const hasIds = isPlainObject(body) && body.ids !== undefined;
+
+        // Reject ambiguous bodies that combine both — forces the caller to pick one
+        if (isExplicitPermanent && hasIds) {
+            return c.json({ error: 'Cannot combine "permanent" and "ids" in the same request — pick one' }, 400);
+        }
+
+        if (!hasJsonBody || isEmptyBody || isExplicitPermanent) {
+            // Optional audit metadata logged at infra level (permanent delete wipes history)
+            const auditMetadata = isPlainObject(body) && isPlainObject(body.metadata) ? body.metadata : undefined;
+            if (auditMetadata) {
+                console.info(JSON.stringify({ op: 'permanent_delete', project_id: projectId, context_id: contextPublicId, metadata: auditMetadata }));
+            }
+
+            const root = await storage.findRootContext(projectId, contextPublicId);
+            if (!root) return c.json({ error: 'Context not found' }, 404);
+
+            try {
+                await storage.transaction((tx) => permanentlyDelete(tx, projectId, root.public_id), { isolationLevel: 'serializable' });
+                return c.json({ deleted: true, id: contextPublicId, ...(auditMetadata ? { metadata: auditMetadata } : {}) });
+            } catch (error) {
+                const message = error instanceof Error ? error.message : 'Failed to delete context';
+                return c.json({ error: message }, 500);
+            }
+        }
+
+        // From here, body must have `ids` for message-delete path
+        if (!isPlainObject(body)) return c.json({ error: 'Request body must be a JSON object' }, 400);
+        if (!hasIds) {
+            return c.json({ error: 'Body must contain "ids" (delete messages) or {"permanent": true} (delete entire context)' }, 400);
+        }
+
         const { ids, metadata: userMetadata } = body;
         if (ids === undefined || ids === null) return c.json({ error: 'ids is required' }, 400);
         if (userMetadata !== undefined && !isPlainObject(userMetadata)) {
             return c.json({ error: 'metadata must be an object' }, 400);
         }
         const rawIds: Array<string | number> = Array.isArray(ids) ? ids : [ids];
+        if (rawIds.length === 0) return c.json({ error: 'ids must be a non-empty array' }, 400);
 
         for (const input of rawIds) {
             if (typeof input === 'string') continue;
