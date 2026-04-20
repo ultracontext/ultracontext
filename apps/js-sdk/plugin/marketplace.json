@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "ultracontext",
+  "description": "Cross-agent session portability. Powered by UltraContext.",
+  "owner": {
+    "name": "UltraContext",
+    "url": "https://ultracontext.ai"
+  },
+  "plugins": [
+    {
+      "name": "ultracontext",
+      "description": "Switch between AI agents with full context. /ultracontext:switch codex to continue your Claude session in Codex.",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}

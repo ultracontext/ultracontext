@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
-import type { StorageAdapter, NodeRow, NodeInsertRow, ApiKeyRow, ProjectRow, ContextFilters } from './types';
+import type { StorageAdapter, NodeRow, NodeInsertRow, ApiKeyRow, ProjectRow, ContextFilters, TransactionOptions } from './types';
 
 // =============================================================================
 // SUPABASE ADAPTER — same interface via Supabase REST client
@@ -140,6 +140,25 @@ export class SupabaseAdapter implements StorageAdapter {
         if (error) throw error;
     }
 
+    async clearParentReferences(projectId: number, parentId: string) {
+        const { error } = await this.client
+            .from('nodes')
+            .update({ parent_id: null })
+            .eq('project_id', projectId)
+            .eq('parent_id', parentId);
+        if (error) throw error;
+    }
+
+    async clearParentReferencesBulk(projectId: number, parentIds: string[]) {
+        if (parentIds.length === 0) return;
+        const { error } = await this.client
+            .from('nodes')
+            .update({ parent_id: null })
+            .eq('project_id', projectId)
+            .in('parent_id', parentIds);
+        if (error) throw error;
+    }
+
     // -- api keys -------------------------------------------------------------
 
     async findApiKeyByPrefix(prefix: string): Promise<ApiKeyRow | null> {
@@ -182,5 +201,13 @@ export class SupabaseAdapter implements StorageAdapter {
     async deleteProject(id: number) {
         const { error } = await this.client.from('projects').delete().eq('id', id);
         if (error) throw error;
+    }
+
+    // -- transactions ---------------------------------------------------------
+
+    // Supabase REST lacks multi-statement tx + isolation levels. Runs inline;
+    // partial failures + race conditions possible. Options arg accepted for API parity.
+    async transaction<T>(fn: (tx: StorageAdapter) => Promise<T>, _options?: TransactionOptions): Promise<T> {
+        return fn(this);
     }
 }

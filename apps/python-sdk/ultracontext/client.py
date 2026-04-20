@@ -1,6 +1,7 @@
 """UltraContext API client."""
 
 from typing import Any, Dict, List, Optional, Union, overload
+from urllib.parse import quote
 
 import httpx
 
@@ -8,9 +9,11 @@ from .exceptions import UltraContextHttpError
 from .types import (
     AppendResponse,
     CreateContextResponse,
+    DeleteManyResponse,
     DeleteResponse,
     GetContextResponse,
     ListContextsResponse,
+    PermanentDeleteResponse,
     UpdateResponse,
 )
 
@@ -34,8 +37,10 @@ class _BaseClient:
         self._timeout = timeout or self.DEFAULT_TIMEOUT
         self._headers = headers or {}
 
-    def _build_headers(self) -> Dict[str, str]:
-        headers = {"Content-Type": "application/json", **self._headers}
+    def _build_headers(self, *, with_content_type: bool = True) -> Dict[str, str]:
+        headers = {**self._headers}
+        if with_content_type:
+            headers["Content-Type"] = "application/json"
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
         return headers
@@ -51,6 +56,7 @@ class UltraContext(_BaseClient):
         *,
         params: Optional[Dict[str, Any]] = None,
         json: Optional[Any] = None,
+        accept_statuses: Optional[List[int]] = None,
     ) -> Any:
         """Make HTTP request."""
 
@@ -60,17 +66,20 @@ class UltraContext(_BaseClient):
 
         url = f"{self._base_url}{path}"
 
+        headers = self._build_headers(with_content_type=json is not None)
+
         with httpx.Client(timeout=self._timeout) as client:
             response = client.request(
                 method,
                 url,
                 params=params,
                 json=json,
-                headers=self._build_headers(),
+                headers=headers,
             )
 
-        # handle errors
-        if not response.is_success:
+        # handle errors — accept_statuses lets callers surface non-2xx bodies (e.g. batch partial-fail)
+        accepted = accept_statuses is not None and response.status_code in accept_statuses
+        if not response.is_success and not accepted:
             raise UltraContextHttpError(
                 f"HTTP {response.status_code}: {response.text}",
                 status=response.status_code,
@@ -170,7 +179,7 @@ class UltraContext(_BaseClient):
         if history is not None:
             params["history"] = history
 
-        return self._request("GET", f"/contexts/{context_id}", params=params or None)
+        return self._request("GET", f"/contexts/{quote(context_id, safe='')}", params=params or None)
 
     def append(
         self,
@@ -185,7 +194,7 @@ class UltraContext(_BaseClient):
             data: Single message or list of messages
         """
         items = data if isinstance(data, list) else [data]
-        return self._request("POST", f"/contexts/{context_id}", json=items)
+        return self._request("POST", f"/contexts/{quote(context_id, safe='')}", json=items)
 
     def update(
         self,
@@ -213,7 +222,7 @@ class UltraContext(_BaseClient):
             body: Dict[str, Any] = {"updates": updates}
             if metadata:
                 body["metadata"] = metadata
-            return self._request("PATCH", f"/contexts/{context_id}", json=body)
+            return self._request("PATCH", f"/contexts/{quote(context_id, safe='')}", json=body)
 
         # single mode
         body = {**fields}
@@ -226,29 +235,56 @@ class UltraContext(_BaseClient):
         if metadata:
             body = {"updates": [body], "metadata": metadata}
 
-        return self._request("PATCH", f"/contexts/{context_id}", json=body)
+        return self._request("PATCH", f"/contexts/{quote(context_id, safe='')}", json=body)
 
     def delete(
         self,
         context_id: str,
-        ids: Union[str, int, List[Union[str, int]]],
+        ids: Optional[Union[str, int, List[Union[str, int]]]] = None,
         *,
+        permanent: bool = False,
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> DeleteResponse:
+    ) -> Union[DeleteResponse, PermanentDeleteResponse]:
         """
-        Delete messages by id(s) or index(es).
+        Delete messages (soft, versioned) or the entire context (hard, permanent).
 
         Args:
             context_id: Context ID
-            ids: Message ID, index, or list of IDs/indexes
-            metadata: Version metadata for audit trail
+            ids: Message ID, index, or list — soft delete (preserved in prior versions)
+            permanent: If True, permanently delete the entire context (irreversible).
+                Requires `ids` to be None.
+            metadata: Audit metadata — version metadata for soft delete, echoed in
+                response for permanent delete
         """
+        if permanent:
+            if ids is not None:
+                raise ValueError("Cannot pass both `ids` and `permanent=True`")
+            body: Optional[Dict[str, Any]] = {"permanent": True}
+            if metadata:
+                body["metadata"] = metadata
+            return self._request("DELETE", f"/contexts/{quote(context_id, safe='')}", json=body)
+
+        if ids is None:
+            raise ValueError("Either `ids` (soft delete) or `permanent=True` (hard delete) is required")
+
         items = ids if isinstance(ids, list) else [ids]
-        body: Dict[str, Any] = {"ids": items}
+        body = {"ids": items}
         if metadata:
             body["metadata"] = metadata
 
-        return self._request("DELETE", f"/contexts/{context_id}", json=body)
+        return self._request("DELETE", f"/contexts/{quote(context_id, safe='')}", json=body)
+
+    def delete_many(self, ids: List[str]) -> DeleteManyResponse:
+        """
+        Delete multiple contexts permanently (max 100).
+
+        Status 200 = all succeeded, 207 = partial, 500 = all failed. All three carry a
+        results body; this method surfaces the body instead of raising.
+
+        Args:
+            ids: List of context IDs to delete
+        """
+        return self._request("POST", "/contexts/delete-many", json={"ids": ids}, accept_statuses=[200, 207, 500])
 
 
 class AsyncUltraContext(_BaseClient):
@@ -261,6 +297,7 @@ class AsyncUltraContext(_BaseClient):
         *,
         params: Optional[Dict[str, Any]] = None,
         json: Optional[Any] = None,
+        accept_statuses: Optional[List[int]] = None,
     ) -> Any:
         """Make async HTTP request."""
 
@@ -270,17 +307,20 @@ class AsyncUltraContext(_BaseClient):
 
         url = f"{self._base_url}{path}"
 
+        headers = self._build_headers(with_content_type=json is not None)
+
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             response = await client.request(
                 method,
                 url,
                 params=params,
                 json=json,
-                headers=self._build_headers(),
+                headers=headers,
             )
 
-        # handle errors
-        if not response.is_success:
+        # handle errors — accept_statuses lets callers surface non-2xx bodies
+        accepted = accept_statuses is not None and response.status_code in accept_statuses
+        if not response.is_success and not accepted:
             raise UltraContextHttpError(
                 f"HTTP {response.status_code}: {response.text}",
                 status=response.status_code,
@@ -362,7 +402,7 @@ class AsyncUltraContext(_BaseClient):
         if history is not None:
             params["history"] = history
 
-        return await self._request("GET", f"/contexts/{context_id}", params=params or None)
+        return await self._request("GET", f"/contexts/{quote(context_id, safe='')}", params=params or None)
 
     async def append(
         self,
@@ -371,7 +411,7 @@ class AsyncUltraContext(_BaseClient):
     ) -> AppendResponse:
         """Append messages to context."""
         items = data if isinstance(data, list) else [data]
-        return await self._request("POST", f"/contexts/{context_id}", json=items)
+        return await self._request("POST", f"/contexts/{quote(context_id, safe='')}", json=items)
 
     async def update(
         self,
@@ -389,7 +429,7 @@ class AsyncUltraContext(_BaseClient):
             body: Dict[str, Any] = {"updates": updates}
             if metadata:
                 body["metadata"] = metadata
-            return await self._request("PATCH", f"/contexts/{context_id}", json=body)
+            return await self._request("PATCH", f"/contexts/{quote(context_id, safe='')}", json=body)
 
         # single mode
         body = {**fields}
@@ -401,19 +441,35 @@ class AsyncUltraContext(_BaseClient):
         if metadata:
             body = {"updates": [body], "metadata": metadata}
 
-        return await self._request("PATCH", f"/contexts/{context_id}", json=body)
+        return await self._request("PATCH", f"/contexts/{quote(context_id, safe='')}", json=body)
 
     async def delete(
         self,
         context_id: str,
-        ids: Union[str, int, List[Union[str, int]]],
+        ids: Optional[Union[str, int, List[Union[str, int]]]] = None,
         *,
+        permanent: bool = False,
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> DeleteResponse:
-        """Delete messages by id(s) or index(es)."""
+    ) -> Union[DeleteResponse, PermanentDeleteResponse]:
+        """Delete messages (soft, versioned) or the entire context (hard, permanent=True)."""
+        if permanent:
+            if ids is not None:
+                raise ValueError("Cannot pass both `ids` and `permanent=True`")
+            body: Optional[Dict[str, Any]] = {"permanent": True}
+            if metadata:
+                body["metadata"] = metadata
+            return await self._request("DELETE", f"/contexts/{quote(context_id, safe='')}", json=body)
+
+        if ids is None:
+            raise ValueError("Either `ids` (soft delete) or `permanent=True` (hard delete) is required")
+
         items = ids if isinstance(ids, list) else [ids]
-        body: Dict[str, Any] = {"ids": items}
+        body = {"ids": items}
         if metadata:
             body["metadata"] = metadata
 
-        return await self._request("DELETE", f"/contexts/{context_id}", json=body)
+        return await self._request("DELETE", f"/contexts/{quote(context_id, safe='')}", json=body)
+
+    async def delete_many(self, ids: List[str]) -> DeleteManyResponse:
+        """Delete multiple contexts permanently (max 100). 200/207/500 all carry a results body."""
+        return await self._request("POST", "/contexts/delete-many", json={"ids": ids}, accept_statuses=[200, 207, 500])

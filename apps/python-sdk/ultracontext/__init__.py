@@ -6,10 +6,13 @@ from .types import (
     AppendResponse,
     Context,
     CreateContextResponse,
+    DeleteManyResponse,
+    DeleteManyResult,
     DeleteResponse,
     GetContextResponse,
     ListContextsResponse,
     Message,
+    PermanentDeleteResponse,
     UpdateResponse,
     Version,
 )
@@ -32,4 +35,7 @@ __all__ = [
     "AppendResponse",
     "UpdateResponse",
     "DeleteResponse",
+    "PermanentDeleteResponse",
+    "DeleteManyResult",
+    "DeleteManyResponse",
 ]

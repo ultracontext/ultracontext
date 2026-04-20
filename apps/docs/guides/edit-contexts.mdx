@@ -199,6 +199,15 @@ uc.update(context_id, index=0, content="Hi there!")
 
 ## Delete Messages
 
+<Info>
+**Soft delete vs hard delete — one method, two behaviors.**
+
+- **Soft delete** — `uc.delete(contextId, ids)`. Removes messages from the current version but creates a new version; deleted messages are preserved in prior versions and recoverable via `uc.get(contextId, { version: N })`.
+- **Hard delete** — `uc.delete(contextId, { permanent: true })`. Wipes the entire context, all versions, all messages. Irreversible.
+
+The second argument is always required — this prevents accidental context wipes from typos.
+</Info>
+
 Delete by ID or index:
 
 <CodeGroup>
@@ -411,6 +420,84 @@ uc.delete(context_id, -1)
 </CodeGroup>
 
 <Tip>Deleting a message creates a new version of the conversation. The original is always preserved in the version history. Notice that after deleting the last message, the version number is incremented by 1 in our example, so v0 is completely preserved.</Tip>
+
+---
+
+### Delete Entire Context
+
+Permanently delete a context and all its versions.
+
+<CodeGroup>
+```typescript TypeScript
+import { UltraContext } from 'ultracontext';
+
+const uc = new UltraContext({ apiKey: process.env.ULTRACONTEXT_API_KEY });
+
+// permanent delete — irreversible
+await uc.delete('ctx_abc123', { permanent: true });
+
+// with audit metadata (echoed in response + logged server-side)
+await uc.delete('ctx_abc123', {
+    permanent: true,
+    metadata: { reason: 'GDPR request', author: 'alice' },
+});
+// { deleted: true, id: 'ctx_abc123', metadata: { reason: 'GDPR request', author: 'alice' } }
+```
+
+```python Python
+from ultracontext import UltraContext
+import os
+
+uc = UltraContext(api_key=os.environ["ULTRACONTEXT_API_KEY"])
+
+# permanent delete — irreversible
+result = uc.delete("ctx_abc123", permanent=True)
+
+# with audit metadata
+result = uc.delete("ctx_abc123", permanent=True, metadata={"reason": "GDPR request", "author": "alice"})
+# {"deleted": True, "id": "ctx_abc123", "metadata": {"reason": "GDPR request", "author": "alice"}}
+```
+</CodeGroup>
+
+<Warning>This is irreversible. The context, all its versions, and all messages are permanently deleted. Audit metadata is echoed in the response and logged server-side, but no DB row survives to hold it.</Warning>
+
+---
+
+### Delete Multiple Contexts
+
+Permanently delete up to 100 contexts in one call.
+
+<CodeGroup>
+```typescript TypeScript
+import { UltraContext } from 'ultracontext';
+
+const uc = new UltraContext({ apiKey: process.env.ULTRACONTEXT_API_KEY });
+
+const { results, deleted_count } = await uc.deleteMany(['ctx_abc123', 'ctx_def456']);
+
+for (const r of results) {
+    if (r.deleted) console.log(`Deleted ${r.id}`);
+    else console.log(`Failed ${r.id}: ${r.error}`);
+}
+```
+
+```python Python
+from ultracontext import UltraContext
+import os
+
+uc = UltraContext(api_key=os.environ["ULTRACONTEXT_API_KEY"])
+
+result = uc.delete_many(["ctx_abc123", "ctx_def456"])
+
+for r in result["results"]:
+    if r["deleted"]:
+        print(f"Deleted {r['id']}")
+    else:
+        print(f"Failed {r['id']}: {r.get('error')}")
+```
+</CodeGroup>
+
+<Tip>Returns per-context results so partial failures don't block the entire operation. Status code is 200 on full success, 207 on partial, 500 when every item fails — SDKs pass through the response body in all three cases.</Tip>
 
 <Card
     title='See also: Fork & Clone Contexts'

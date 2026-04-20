@@ -39,6 +39,7 @@ Commands:
   sync stop     Stop a running daemon
   sync status   Show daemon status
   config        Run the setup wizard
+  switch        Switch session to another agent (codex, claude)
   update        Update CLI globally via npm/pnpm/bun
   version       Print version
   help          Show this help message
@@ -459,6 +460,12 @@ async function run() {
     case "upgrade":
       await runUpdate(process.argv.slice(3));
       break;
+
+    case "switch": {
+      const { runSwitch } = await import("./switch.mjs");
+      await runSwitch();
+      break;
+    }
 
     case "help":
     case "h":

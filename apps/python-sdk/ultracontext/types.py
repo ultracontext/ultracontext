@@ -72,3 +72,26 @@ class DeleteResponse(TypedDict):
 
     data: List[Message]
     version: int
+
+
+class PermanentDeleteResponse(TypedDict, total=False):
+    """Response from delete(..., permanent=True)."""
+
+    deleted: bool
+    id: str
+    metadata: Optional[Dict[str, Any]]
+
+
+class DeleteManyResult(TypedDict, total=False):
+    """Single result from delete_many()."""
+
+    id: str
+    deleted: bool
+    error: Optional[str]
+
+
+class DeleteManyResponse(TypedDict, total=False):
+    """Response from delete_many()."""
+
+    results: List[DeleteManyResult]
+    deleted_count: int

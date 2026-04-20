@@ -540,27 +540,27 @@
         }
       },
       "delete": {
-        "summary": "Delete messages",
-        "description": "Delete one or more messages by `id` or `index`. Each deletion automatically creates a new version.",
-        "operationId": "deleteMessages",
+        "summary": "Delete messages or the entire context",
+        "description": "Send a body with `ids` to soft-delete specific messages (creates a new version, prior versions retain the messages). Send no body OR `{\"permanent\": true}` to permanently delete the entire context (irreversible).",
+        "operationId": "deleteContextOrMessages",
         "x-mint": {
-          "content": "<Tip>Mix IDs and indices: `[\"msg_abc\", 0, -1]`</Tip>\n\n<Info>Include `metadata` in the request body to record why this deletion was made. It is optional, but recommended to make audit trail easier to understand.</Info>"
+          "content": "<Tip>Send `{\"ids\": [...]}` to delete specific messages (soft, versioned). Send `{\"permanent\": true}` to delete the entire context (hard, irreversible).</Tip>\n\n<Info>Include `metadata` to record why this deletion was made. Optional, but recommended for audit trail.</Info>"
         },
         "x-codeSamples": [
           {
             "lang": "typescript",
             "label": "TypeScript",
-            "source": "// Delete by id\nconst { data, version } = await uc.delete('ctx_abc123', 'msg_xyz')\n\n// Delete by index (0 = first, -1 = last)\nconst { data, version } = await uc.delete('ctx_abc123', 0)  // delete first\nconst { data, version } = await uc.delete('ctx_abc123', -1) // delete last\n\n// With audit metadata\nconst { data, version } = await uc.delete('ctx_abc123', 'msg_xyz', {\n  metadata: { reason: 'hallucination', ticket: 'JIRA-123' }\n})\n\n// Multiple deletes (mix of ids and indices)\nawait uc.delete('ctx_abc123', ['msg_aaa', 0, -1])"
+            "source": "// Delete entire context (permanent, irreversible)\nawait uc.delete('ctx_abc123', { permanent: true })\n\n// Delete messages by id (soft, versioned)\nconst { data, version } = await uc.delete('ctx_abc123', 'msg_xyz')\n\n// Delete by index (0 = first, -1 = last)\nconst { data, version } = await uc.delete('ctx_abc123', 0)\n\n// With audit metadata\nconst { data, version } = await uc.delete('ctx_abc123', 'msg_xyz', {\n  metadata: { reason: 'hallucination', ticket: 'JIRA-123' }\n})\n\n// Multiple deletes (mix of ids and indices)\nawait uc.delete('ctx_abc123', ['msg_aaa', 0, -1])"
           },
           {
             "lang": "python",
             "label": "Python",
-            "source": "# Delete by id\nresult = uc.delete('ctx_abc123', 'msg_xyz')\n\n# Delete by index (0 = first, -1 = last)\nresult = uc.delete('ctx_abc123', 0)  # delete first\nresult = uc.delete('ctx_abc123', -1)  # delete last\n\n# With audit metadata\nresult = uc.delete('ctx_abc123', 'msg_xyz',\n  metadata={'reason': 'hallucination', 'ticket': 'JIRA-123'}\n)\n\n# Multiple deletes (mix of ids and indices)\nuc.delete('ctx_abc123', ['msg_aaa', 0, -1])"
+            "source": "# Delete entire context (permanent, irreversible)\nuc.delete('ctx_abc123', permanent=True)\n\n# Delete messages by id (soft, versioned)\nresult = uc.delete('ctx_abc123', 'msg_xyz')\n\n# Delete by index (0 = first, -1 = last)\nresult = uc.delete('ctx_abc123', 0)\n\n# With audit metadata\nresult = uc.delete('ctx_abc123', 'msg_xyz',\n  metadata={'reason': 'hallucination', 'ticket': 'JIRA-123'}\n)\n\n# Multiple deletes (mix of ids and indices)\nuc.delete('ctx_abc123', ['msg_aaa', 0, -1])"
           },
           {
             "lang": "bash",
             "label": "cURL",
-            "source": "# Delete by id\ncurl -X DELETE https://api.ultracontext.ai/contexts/ctx_abc123 \\\n  -H \"Authorization: Bearer $API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"ids\": \"msg_xyz\"}'\n\n# Delete by index (0 = first, -1 = last)\ncurl -X DELETE https://api.ultracontext.ai/contexts/ctx_abc123 \\\n  -H \"Authorization: Bearer $API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"ids\": 0}'\n\n# Delete last message\ncurl -X DELETE https://api.ultracontext.ai/contexts/ctx_abc123 \\\n  -H \"Authorization: Bearer $API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"ids\": -1}'\n\n# With audit metadata\ncurl -X DELETE https://api.ultracontext.ai/contexts/ctx_abc123 \\\n  -H \"Authorization: Bearer $API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"ids\": [0, \"msg_xyz\"], \"metadata\": {\"reason\": \"cleanup\"}}'"
+            "source": "# Delete entire context (permanent)\ncurl -X DELETE https://api.ultracontext.ai/contexts/ctx_abc123 \\\n  -H \"Authorization: Bearer $API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"permanent\": true}'\n\n# Delete messages by id (soft, versioned)\ncurl -X DELETE https://api.ultracontext.ai/contexts/ctx_abc123 \\\n  -H \"Authorization: Bearer $API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"ids\": \"msg_xyz\"}'\n\n# Delete by index\ncurl -X DELETE https://api.ultracontext.ai/contexts/ctx_abc123 \\\n  -H \"Authorization: Bearer $API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"ids\": 0}'\n\n# With audit metadata\ncurl -X DELETE https://api.ultracontext.ai/contexts/ctx_abc123 \\\n  -H \"Authorization: Bearer $API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"ids\": [0, \"msg_xyz\"], \"metadata\": {\"reason\": \"cleanup\"}}'"
           }
         ],
         "parameters": [
@@ -575,7 +575,8 @@
           }
         ],
         "requestBody": {
-          "description": "Message ID(s) to delete, with optional audit metadata",
+          "description": "Optional. Omit to delete the entire context. Include `ids` to delete specific messages.",
+          "required": false,
           "content": {
             "application/json": {
               "schema": {
@@ -586,11 +587,18 @@
         },
         "responses": {
           "200": {
-            "description": "Messages deleted (new version created)",
+            "description": "Context deleted or messages deleted (new version created)",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResponse"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/PermanentDeleteResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WriteResponse"
+                    }
+                  ]
                 }
               }
             }
@@ -612,6 +620,74 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/contexts/delete-many": {
+      "post": {
+        "summary": "Delete multiple contexts permanently",
+        "description": "Permanently delete up to 100 contexts in one call. Each context and all its versions are irreversibly removed.",
+        "operationId": "deleteManyContexts",
+        "x-codeSamples": [
+          {
+            "lang": "typescript",
+            "label": "TypeScript",
+            "source": "const { results, deleted_count } = await uc.deleteMany(['ctx_abc123', 'ctx_def456'])\n\nfor (const r of results) {\n  if (r.deleted) console.log(`Deleted ${r.id}`)\n  else console.log(`Failed ${r.id}: ${r.error}`)\n}"
+          },
+          {
+            "lang": "python",
+            "label": "Python",
+            "source": "result = uc.delete_many(['ctx_abc123', 'ctx_def456'])\n\nfor r in result['results']:\n    if r['deleted']:\n        print(f\"Deleted {r['id']}\")\n    else:\n        print(f\"Failed {r['id']}: {r.get('error')}\")"
+          },
+          {
+            "lang": "bash",
+            "label": "cURL",
+            "source": "curl -X POST https://api.ultracontext.ai/contexts/delete-many \\\n  -H \"Authorization: Bearer $API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"ids\": [\"ctx_abc123\", \"ctx_def456\"]}'"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteManyInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "All contexts deleted successfully",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/DeleteManyResponse" }
+              }
+            }
+          },
+          "207": {
+            "description": "Multi-Status — partial success (some items failed)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/DeleteManyResponse" }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request body (empty, oversized, non-string element)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          },
+          "500": {
+            "description": "All items failed (response body still contains per-item errors)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/DeleteManyResponse" }
               }
             }
           }
@@ -840,35 +916,87 @@
         ]
       },
       "DeleteInput": {
+        "description": "Either `ids` (soft-delete specific messages, versioned) or `{permanent: true}` (hard-delete entire context, irreversible). Any other body shape returns 400 to prevent typos from silently wiping a context.",
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["ids"],
+            "properties": {
+              "ids": {
+                "oneOf": [
+                  { "type": "string", "description": "Single message ID (msg_...)" },
+                  { "type": "integer", "description": "Single message index (0 = first, -1 = last)" },
+                  {
+                    "type": "array",
+                    "items": { "oneOf": [{ "type": "string" }, { "type": "integer" }] },
+                    "description": "Array of message IDs and/or indices"
+                  }
+                ]
+              },
+              "metadata": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "Audit metadata for this version (e.g., reason, ticket)"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["permanent"],
+            "properties": {
+              "permanent": { "type": "boolean", "enum": [true], "description": "Must be `true` to permanently delete the entire context" },
+              "metadata": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "Audit metadata logged server-side (context history is wiped; metadata is echoed in the response)"
+              }
+            }
+          }
+        ]
+      },
+      "PermanentDeleteResponse": {
+        "type": "object",
+        "properties": {
+          "deleted": { "type": "boolean", "description": "Whether the context was deleted" },
+          "id": { "type": "string", "description": "The deleted context ID" },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Audit metadata echoed from the request, if supplied"
+          }
+        }
+      },
+      "DeleteManyInput": {
         "type": "object",
         "required": ["ids"],
         "properties": {
           "ids": {
-            "oneOf": [
-              {
-                "type": "string",
-                "description": "Single message ID (msg_...)"
-              },
-              {
-                "type": "integer",
-                "description": "Single message index (0 = first, -1 = last)"
-              },
-              {
-                "type": "array",
-                "items": {
-                  "oneOf": [
-                    { "type": "string" },
-                    { "type": "integer" }
-                  ]
-                },
-                "description": "Array of message IDs and/or indices"
+            "type": "array",
+            "items": { "type": "string" },
+            "minItems": 1,
+            "maxItems": 100,
+            "description": "Array of context IDs to permanently delete (max 100)"
+          }
+        }
+      },
+      "DeleteManyResponse": {
+        "type": "object",
+        "description": "Status 200 when all succeeded, 207 (Multi-Status) on partial failure, 500 when every item failed.",
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string", "description": "Context ID" },
+                "deleted": { "type": "boolean", "description": "Whether the context was deleted" },
+                "error": { "type": "string", "description": "Error message if deletion failed" }
               }
-            ]
+            }
           },
-          "metadata": {
-            "type": "object",
-            "additionalProperties": true,
-            "description": "Audit metadata for this version (e.g., reason, ticket)"
+          "deleted_count": {
+            "type": "integer",
+            "description": "Number of contexts successfully deleted"
           }
         }
       },

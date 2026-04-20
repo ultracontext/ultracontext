@@ -4,8 +4,8 @@
     "version": "0.7.2",
     "scripts": {
         "dev": "tsx watch src/server.ts",
-        "test": "node --test --env-file=.env.local",
-        "test:watch": "node --test --watch --env-file=.env.local"
+        "test": "node --import tsx --test src/tests/**/*.test.ts",
+        "test:watch": "node --import tsx --test --watch src/tests/**/*.test.ts"
     },
     "dependencies": {
         "@hono/node-server": "^1.19.6",

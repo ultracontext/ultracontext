@@ -14,7 +14,7 @@
         "dev": "tsdown --watch",
         "prepack": "pnpm run build",
         "postinstall": "node postinstall.mjs",
-        "test": "node --test tests/*.test.mjs"
+        "test": "node --test tests/**/*.test.mjs"
     },
     "main": "./dist/index.mjs",
     "types": "./dist/index.d.mts",
@@ -57,9 +57,11 @@
     },
     "files": [
         "dist/",
+        "lib/",
         "ultracontext.mjs",
         "postinstall.mjs",
-        "assets/"
+        "assets/",
+        "plugin/"
     ],
     "dependencies": {
         "@mishieck/ink-titled-box": "^0.4.2",
@@ -69,6 +71,7 @@
         "react": "^19.2.4"
     },
     "devDependencies": {
+        "@ultracontext/parsers": "workspace:*",
         "@ultracontext/sync": "workspace:*",
         "node-pty": "^1.1.0",
         "tsdown": "^0.20.3",
