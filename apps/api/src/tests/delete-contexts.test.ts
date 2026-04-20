@@ -214,7 +214,7 @@ describe('DELETE /contexts/:id (permanent)', () => {
         const getBefore = await req('GET', `/contexts/${contextId}`);
         assert.equal(getBefore.status, 200);
 
-        // destroy
+        // permanent delete
         const res = await req('DELETE', `/contexts/${contextId}`);
         assert.equal(res.status, 200);
         const body = await res.json();
@@ -251,7 +251,7 @@ describe('DELETE /contexts/:id (permanent)', () => {
         assert.equal(res.status, 400);
     });
 
-    it('should not leave orphan nodes after destroying a context', async () => {
+    it('should not leave orphan nodes after permanent delete', async () => {
         const { req, storage } = await setupTestApp();
         const contextId = await createTestContext(req);
         await appendMessages(req, contextId, [
@@ -271,7 +271,7 @@ describe('DELETE /contexts/:id (permanent)', () => {
         assert.equal(contextNodes.length, 0);
     });
 
-    it('should clear parent_id on forked contexts when source is destroyed', async () => {
+    it('should clear parent_id on forked contexts when source is permanently deleted', async () => {
         const { req, storage } = await setupTestApp();
 
         // Create source context with messages
@@ -290,7 +290,7 @@ describe('DELETE /contexts/:id (permanent)', () => {
         const forkNode = storage.getNodesByPublicId(forkId);
         assert.equal(forkNode?.parent_id, sourceId);
 
-        // Destroy source
+        // permanent delete source
         await req('DELETE', `/contexts/${sourceId}`);
 
         // Verify fork's parent_id was cleared (not orphaned)
@@ -306,7 +306,7 @@ describe('DELETE /contexts/:id (permanent)', () => {
         const { req } = await setupTestApp();
         const contextId = await createTestContext(req);
         // {"id": "msg_x"} is a typo — developer meant {"ids": ["msg_x"]}.
-        // Must 400, not silently destroy.
+        // Must 400, not silently wipe.
         const res = await req('DELETE', `/contexts/${contextId}`, { id: 'msg_x' });
         assert.equal(res.status, 400);
         // Context should still exist
@@ -361,7 +361,7 @@ describe('DELETE /contexts/:id (permanent)', () => {
         assert.equal(body.deleted, true);
     });
 
-    it('should clear parent_id on forked message nodes when source is destroyed', async () => {
+    it('should clear parent_id on forked message nodes when source is permanently deleted', async () => {
         const { req, storage } = await setupTestApp();
 
         // Create source with messages
@@ -384,7 +384,7 @@ describe('DELETE /contexts/:id (permanent)', () => {
         const forkedMsg = storage.getNodesByPublicId(forkedMsgId);
         assert.equal(forkedMsg?.parent_id, originalMsgId);
 
-        // Destroy source
+        // permanent delete source
         await req('DELETE', `/contexts/${sourceId}`);
 
         // Forked message's parent_id should be cleared
