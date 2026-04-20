@@ -1,0 +1,21 @@
+{
+  "name": "@ultracontext/parsers",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.mjs",
+    "./agents": "./src/agents/index.mjs",
+    "./gstack": "./src/gstack.mjs",
+    "./generic": "./src/generic.mjs",
+    "./writers": "./src/writers/index.mjs",
+    "./compat": "./src/compat.mjs",
+    "./utils": "./src/utils.mjs"
+  },
+  "scripts": {
+    "test": "node --test tests/**/*.test.mjs"
+  },
+  "dependencies": {
+    "fast-glob": "^3.3.3"
+  }
+}

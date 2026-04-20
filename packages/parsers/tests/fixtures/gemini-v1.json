@@ -1,0 +1,44 @@
+{
+  "messages": [
+    {
+      "id": "msg-001",
+      "type": "user",
+      "content": [{"text": "Fix the database connection pool"}],
+      "timestamp": "2026-04-03T09:00:00.000Z"
+    },
+    {
+      "id": "msg-002",
+      "type": "gemini",
+      "content": "I'll fix the connection pool configuration. Let me edit the file.",
+      "toolCalls": [
+        {
+          "id": "tc-001",
+          "name": "edit_file",
+          "args": {"file_path": "/src/db.ts", "content": "pool.max = 20;"},
+          "status": "completed"
+        }
+      ],
+      "timestamp": "2026-04-03T09:00:10.000Z"
+    },
+    {
+      "id": "msg-003",
+      "type": "user",
+      "content": [{"text": "Also increase the timeout"}],
+      "timestamp": "2026-04-03T09:01:00.000Z"
+    },
+    {
+      "id": "msg-004",
+      "type": "gemini",
+      "content": "Done. I've increased the timeout to 30 seconds.",
+      "toolCalls": [
+        {
+          "id": "tc-002",
+          "name": "write_file",
+          "args": {"path": "/src/config.ts", "content": "timeout: 30000"},
+          "status": "completed"
+        }
+      ],
+      "timestamp": "2026-04-03T09:01:10.000Z"
+    }
+  ]
+}

@@ -168,6 +168,14 @@ export class SupabaseAdapter implements StorageAdapter {
         if (error) throw error;
     }
 
+    async updateApiKeyLastUsedAt(id: number, lastUsedAt: string) {
+        const { error } = await this.client
+            .from('api_keys')
+            .update({ last_used_at: lastUsedAt })
+            .eq('id', id);
+        if (error) throw error;
+    }
+
     // -- projects -------------------------------------------------------------
 
     async insertProject(name: string): Promise<ProjectRow | null> {

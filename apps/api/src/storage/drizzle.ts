@@ -125,6 +125,13 @@ export class DrizzleAdapter implements StorageAdapter {
         await this.db.insert(api_keys).values(values);
     }
 
+    async updateApiKeyLastUsedAt(id: number, lastUsedAt: string) {
+        await this.db
+            .update(api_keys)
+            .set({ last_used_at: lastUsedAt })
+            .where(eq(api_keys.id, id));
+    }
+
     // -- projects -------------------------------------------------------------
 
     async insertProject(name: string): Promise<ProjectRow | null> {

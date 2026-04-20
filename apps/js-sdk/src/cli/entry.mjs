@@ -10,6 +10,7 @@ import { spawnSync } from "node:child_process";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const command = (process.argv[2] ?? "").trim().toLowerCase().replace(/^--?/, "");
+const subcommand = (process.argv[3] ?? "").trim().toLowerCase().replace(/^--?/, "");
 const PACKAGE_NAME = "ultracontext";
 const packageRoot = path.resolve(__dirname, "..", "..");
 const cliWrapperPath = path.join(packageRoot, "ultracontext.mjs");
@@ -32,15 +33,15 @@ function printHelp() {
 Usage: ultracontext [command] [options]
 
 Commands:
-  (none)   Start daemon if needed, then open TUI
-  config   Run the setup wizard
-  start    Start the daemon in the background
-  stop     Stop a running daemon
-  status   Show daemon status
-  tui      Launch the interactive terminal UI
-  update   Update CLI globally via npm/pnpm/bun
-  version  Print version
-  help     Show this help message
+  (none)        Start sync (daemon + TUI)
+  sync          Start sync (daemon + TUI)
+  sync start    Start daemon in background (no TUI)
+  sync stop     Stop a running daemon
+  sync status   Show daemon status
+  config        Run the setup wizard
+  update        Update CLI globally via npm/pnpm/bun
+  version       Print version
+  help          Show this help message
 
 Environment:
   ULTRACONTEXT_API_KEY   Required. Your UltraContext API key.
@@ -60,7 +61,7 @@ Options:
 }
 
 // commands that need an API key
-const NEEDS_KEY = new Set(["", "start", "tui"]);
+const NEEDS_KEY = new Set(["", "sync"]);
 
 // interactive onboarding wizard (Ink-based), returns { launchTui }
 async function runOnboarding() {
@@ -228,8 +229,10 @@ function runGlobalUpdate(manager, tag) {
   }
 
   const [bin, args] = tuple;
+
+  // skip postinstall to prevent launching a new instance mid-update
   const result = spawnSync(bin, args, {
-    env: process.env,
+    env: { ...process.env, ULTRACONTEXT_SKIP_POSTINSTALL: "1" },
     stdio: "inherit",
   });
   if (result.status !== 0) {
@@ -250,7 +253,7 @@ const red = esc("38;2;220;80;80");
 const cyan = esc("36");
 const gray = esc("38;5;245");
 
-function runUpdate(rawArgs) {
+async function runUpdate(rawArgs) {
   const opts = parseUpdateOptions(rawArgs);
   if (opts.help) {
     printUpdateHelp();
@@ -272,11 +275,13 @@ function runUpdate(rawArgs) {
 
   // stop daemon before update
   const wasRunning = isDaemonRunning();
-  if (wasRunning && opts.restart) {
+  if (wasRunning) {
     console.log(`  ${gray}○${r} ${d}Stopping daemon...${r}`);
-    const stopCode = runCliSubcommand("stop");
-    if (stopCode !== 0) {
-      throw new Error(`Failed to stop daemon before update (exit ${stopCode}).`);
+    try {
+      process.argv[2] = "stop";
+      await runCtlSDK();
+    } catch {
+      console.log(`  ${gray}○${r} ${d}Could not stop daemon. Continuing update...${r}`);
     }
   }
 
@@ -289,43 +294,43 @@ function runUpdate(rawArgs) {
   console.log("");
   console.log(`  ${green}✓${r} ${b}Updated${r}  ${gray}${previousVersion} → ${newVersion}${r}`);
 
-  // restart daemon
-  if (wasRunning && opts.restart) {
+  // auto-restart daemon in background (same terminal, no new window)
+  if (wasRunning) {
     console.log(`  ${green}●${r} ${d}Restarting daemon...${r}`);
-    const startCode = runCliSubcommand("start");
-    if (startCode !== 0) {
-      throw new Error(`Update succeeded but daemon restart failed (exit ${startCode}).`);
+    try {
+      // spawn daemon directly — detached + stdio to log file (no terminal allocation)
+      const { spawn: spawnChild } = await import("node:child_process");
+      const syncEntry = fileURLToPath(new URL("./sdk-sync.mjs", import.meta.url));
+      const logDir = path.join(process.env.HOME || "~", ".ultracontext");
+      const { mkdirSync, openSync, closeSync } = await import("node:fs");
+      mkdirSync(logDir, { recursive: true });
+      const logFd = openSync(path.join(logDir, "daemon.log"), "a");
+      const child = spawnChild(process.execPath, [syncEntry, "--daemon"], {
+        detached: false,
+        stdio: ["ignore", logFd, logFd],
+        env: process.env,
+      });
+      child.unref();
+      closeSync(logFd);
+      await new Promise((r) => setTimeout(r, 500));
+      console.log(`  ${green}●${r} ${d}Daemon running (PID ${child.pid}).${r}`);
+    } catch {
+      console.log(`  ${gray}○${r} ${d}Auto-restart failed. Run:${r} ${cyan}ultracontext sync${r}`);
     }
-  } else if (wasRunning) {
-    console.log(`  ${gray}○${r} ${d}Daemon was stopped. Run:${r} ${cyan}ultracontext start${r}`);
   }
+
+  console.log("");
 
   console.log("");
 }
 
 // ── update check ────────────────────────────────────────────────
 
-const UPDATE_CHECK_INTERVAL = 3 * 60 * 60 * 1000; // 3h
-const SKIP_UPDATE_CHECK = new Set(["version", "v", "update", "upgrade", "help", "h", "stop", "status"]);
-
-function getUpdateCheckPath() {
-  const home = process.env.HOME || process.env.USERPROFILE || "~";
-  return path.join(home, ".ultracontext", "update-check.json");
-}
-
-function readUpdateCache() {
-  try { return JSON.parse(fs.readFileSync(getUpdateCheckPath(), "utf8")); }
-  catch { return null; }
-}
-
-function writeUpdateCache(data) {
-  try { fs.writeFileSync(getUpdateCheckPath(), JSON.stringify(data)); }
-  catch { /* best effort */ }
-}
+const SKIP_UPDATE_CHECK = new Set(["version", "v", "update", "upgrade", "help", "h", "stop", "sync", ""]);
 
 async function fetchLatestVersion() {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 3000);
+  const timeout = setTimeout(() => controller.abort(), 5000);
   try {
     const res = await fetch("https://registry.npmjs.org/ultracontext/latest", { signal: controller.signal });
     const data = await res.json();
@@ -350,22 +355,12 @@ function printUpdateNotice(current, latest) {
   console.log(`  Run ${cyan}ultracontext update${r} to upgrade.\n`);
 }
 
+// check on every invocation, no cache — like Claude Code
 async function checkForUpdate() {
   const current = readVersion();
   if (current === "unknown") return;
 
-  // use cache if fresh
-  const cache = readUpdateCache();
-  if (cache?.lastCheck && Date.now() - cache.lastCheck < UPDATE_CHECK_INTERVAL) {
-    if (cache.latestVersion && isNewer(cache.latestVersion, current)) {
-      printUpdateNotice(current, cache.latestVersion);
-    }
-    return;
-  }
-
-  // fetch from registry
   const latest = await fetchLatestVersion();
-  writeUpdateCache({ lastCheck: Date.now(), latestVersion: latest });
   if (latest && isNewer(latest, current)) {
     printUpdateNotice(current, latest);
   }
@@ -373,24 +368,23 @@ async function checkForUpdate() {
 
 // ── launch helpers ──────────────────────────────────────────────
 
-async function launchDaemonSDK() {
-  const { launchDaemon } = await import("@ultracontext/daemon/launcher");
+async function launchSyncDaemon() {
+  const { launchDaemon } = await import("@ultracontext/sync/launcher");
   await launchDaemon({
-    entryPath: fileURLToPath(new URL("./sdk-daemon.mjs", import.meta.url)),
-    diagnosticsHint: "DAEMON_VERBOSE=1 ultracontext start",
+    entryPath: fileURLToPath(new URL("./sdk-sync.mjs", import.meta.url)),
+    diagnosticsHint: "DAEMON_VERBOSE=1 ultracontext sync",
   });
 }
 
 async function runCtlSDK() {
-  const { runCtl } = await import("@ultracontext/daemon/ctl");
+  const { runCtl } = await import("@ultracontext/sync/ctl");
   await runCtl();
 }
 
-async function launchTuiSDK() {
-  const { tuiBoot } = await import("@ultracontext/tui/tui");
+async function launchTui() {
+  const { tuiBoot } = await import("@ultracontext/sync/tui");
   await tuiBoot({
     assetsRoot: path.resolve(__dirname, "..", ".."),
-    offlineNotice: "Daemon offline. Run: ultracontext start",
   });
 }
 
@@ -408,9 +402,38 @@ async function run() {
   }
 
   switch (command) {
+    // sync: subcommand router
+    case "sync":
+    case "": {
+      // sync start — daemon background only
+      if (subcommand === "start") {
+        await launchSyncDaemon();
+        break;
+      }
+
+      // sync stop — stop daemon
+      if (subcommand === "stop") {
+        process.argv[2] = "stop";
+        await runCtlSDK();
+        break;
+      }
+
+      // sync status — show daemon status
+      if (subcommand === "status") {
+        process.argv[2] = "status";
+        await runCtlSDK();
+        break;
+      }
+
+      // bare sync (no subcommand) — daemon bg + TUI fg
+      if (!isDaemonRunning()) await launchSyncDaemon();
+      if (onboardResult?.launchTui !== false) await launchTui();
+      break;
+    }
+
+    // legacy aliases — redirect to sync subcommands
     case "start":
-      await launchDaemonSDK();
-      if (onboardResult?.launchTui) await launchTuiSDK();
+      await launchSyncDaemon();
       break;
 
     case "stop":
@@ -418,23 +441,14 @@ async function run() {
       await runCtlSDK();
       break;
 
-    case "status":
-      process.argv[2] = "status";
-      await runCtlSDK();
-      break;
-
     case "config": {
       const configResult = await runOnboarding();
       if (configResult?.launchTui) {
-        if (!isDaemonRunning()) await launchDaemonSDK();
-        await launchTuiSDK();
+        if (!isDaemonRunning()) await launchSyncDaemon();
+        await launchTui();
       }
       break;
     }
-
-    case "tui":
-      await launchTuiSDK();
-      break;
 
     case "version":
     case "v":
@@ -443,25 +457,28 @@ async function run() {
 
     case "update":
     case "upgrade":
-      runUpdate(process.argv.slice(3));
+      await runUpdate(process.argv.slice(3));
       break;
-
-    // default: ensure daemon running, then open TUI
-    case "": {
-      if (!isDaemonRunning()) await launchDaemonSDK();
-      await launchTuiSDK();
-      break;
-    }
 
     case "help":
     case "h":
       printHelp();
       break;
 
-    default:
+    default: {
+      // migration hints for removed commands
+      if (command === "tui") {
+        console.log("The 'tui' command was removed. Use 'ultracontext sync' instead (TUI is now built-in).");
+        process.exit(0);
+      }
+      if (command === "status") {
+        console.log("Use 'ultracontext sync status' instead.");
+        process.exit(0);
+      }
       console.error(`Unknown command: ${process.argv[2]}`);
       printHelp();
       process.exit(1);
+    }
   }
 }
 

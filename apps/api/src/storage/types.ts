@@ -71,6 +71,7 @@ export interface StorageAdapter {
     // api keys
     findApiKeyByPrefix(prefix: string): Promise<ApiKeyRow | null>;
     insertApiKey(values: { project_id: number; key_prefix: string; key_hash: string }): Promise<void>;
+    updateApiKeyLastUsedAt(id: number, lastUsedAt: string): Promise<void>;
 
     // projects
     insertProject(name: string): Promise<ProjectRow | null>;

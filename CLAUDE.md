@@ -1,8 +1,10 @@
 # CLAUDE.md
 
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 ## Architecture
 
-UltraContext — version control for AI agent context. pnpm monorepo.
+UltraContext — version control for AI agent context. pnpm monorepo (`pnpm-workspace.yaml`: `apps/*`, `packages/*`).
 
 ### Context API (`apps/api`)
 
@@ -13,26 +15,33 @@ REST API. Hono + TypeScript. Two entrypoints via `createApp(options?)`:
 | `server.ts` | Node.js | dotenv → `getApiConfig()` | Drizzle or Supabase | — |
 | `worker.ts` | CF Workers | env bindings → `buildApiConfig(env)` | Supabase only | KV (optional) |
 
+Routes (`src/routes/`): `contexts.ts` (CRUD + POST messages), `keys.ts` (API key mgmt), `mcp.ts` (MCP endpoint), `root.ts`.
+
 Key internals:
 - **Storage** (`src/storage/`) — `StorageAdapter` interface. Drizzle (postgres.js) or Supabase. Selected by `DATABASE_PROVIDER`.
 - **Auth** (`src/middleware/auth.ts`) — Bearer token. Prefix lookup + hash verification. Optional `KeyCache` for caching (KV on Workers).
 - **Cache** (`src/cache/`) — `KeyCache` interface + `KvKeyCache` (CF KV). Injected via `AppOptions.keyCache`.
 - **Config** (`src/config.ts`) — `buildApiConfig(env)` takes any plain object. `getApiConfig()` loads dotenv first.
-- **Schema** (`apps/postgres/init.sql`) — tables: `projects`, `api_keys`, `nodes`. JSONB for `content`/`metadata`.
+- **Schema** (`apps/postgres/init.sql`) — tables: `projects`, `api_keys`, `nodes`. JSONB for `content`/`metadata`. Views: `project_activity_daily`, `project_activity_weekly`.
 
-### Context Hub
+### Sync (`apps/sync`)
 
-- `apps/daemon` — background ingestion of agent sessions. Node ESM + WebSocket server.
-- `apps/tui` — terminal dashboard. Ink/React 19 + WebSocket client.
+Single package for local ingestion + TUI dashboard. Two processes, JSON file IPC:
+- **Daemon** (`daemon.mjs`) — background ingestion of agent sessions. Writes `status.json` each cycle.
+- **TUI** (`tui.mjs`) — read-only terminal dashboard (Ink/React 19). Polls `status.json`.
+- **IPC** — `config.json` (CLI→daemon), `status.json` (daemon→TUI). No WebSocket, no shared SQLite.
 
-### SDKs
+### MCP Server (`apps/mcp-server`)
 
-- `apps/js-sdk` — published as `ultracontext` on npm. Bundles CLI + daemon + TUI.
-- `apps/python-sdk` — httpx, published on PyPI.
+Stdio-based MCP server for Claude/Cursor integration. Reads config from `~/.ultracontext/config.json` or env vars. Exposes tools: `list_contexts`, `get_context_messages`, `get_recent_activity`.
 
-### Shared
+### JS SDK (`apps/js-sdk`)
 
-`packages/protocol` — WS message types, env resolution, constants.
+Published as `ultracontext` on npm. Bundles SDK + CLI (`ultracontext` command) via `tsdown`. CLI dispatches to sync/daemon/TUI/onboarding.
+
+### Python SDK (`apps/python-sdk`)
+
+httpx client, published on PyPI via Hatchling. Tests: `pytest`.
 
 ## Commands
 
@@ -43,12 +52,20 @@ pnpm ultracontext:db:down                       # stop
 pnpm ultracontext:db:reset                      # reset with volumes
 pnpm ultracontext:db:migrate                    # apply schema
 pnpm ultracontext:api                           # run API (port 8787)
-pnpm dev:daemon                                 # daemon watch mode
-pnpm dev:tui                                    # TUI watch mode
-pnpm --filter ultracontext run build            # build JS SDK
+pnpm dev:sync                                   # sync watch mode (daemon + TUI)
+pnpm --filter ultracontext run build            # build JS SDK (tsdown)
 pnpm --filter ultracontext-api run test         # API tests (node --test)
 pnpm --filter ultracontext-api run test:watch   # API tests watch
 pnpm check                                      # all package checks
+
+# single test file
+cd apps/api && node --test --env-file=.env.local src/routes/contexts.test.ts
+
+# Python SDK tests
+cd apps/python-sdk && pytest
+
+# generate local dev API key
+pnpm ultracontext:key:local
 ```
 
 ## Style
@@ -58,7 +75,7 @@ No repo-wide formatter. Match local style:
 | Package | Indent | Quotes | Files |
 |---|---|---|---|
 | `apps/api` | 4 spaces | single | kebab-case |
-| `apps/daemon`, `apps/tui`, `apps/js-sdk` | 2 spaces | double | kebab-case, PascalCase for React |
+| `apps/sync`, `apps/js-sdk` | 2 spaces | double | kebab-case, PascalCase for React |
 
 ## Conventions
 
@@ -67,3 +84,27 @@ No repo-wide formatter. Match local style:
 - **Env**: `.env.example` → `.env`. Never commit secrets.
 - **PRs**: one feature/fix, target `main`, include scope
 - **Docs** (`apps/docs`): Mintlify MDX, YAML frontmatter, second-person voice
+
+## CI/CD
+
+`.github/workflows/publish.yml` — triggered on release. Publishes JS SDK to npm + Python SDK to PyPI. Version from git tag.
+
+## Skill routing
+
+When the user's request matches an available skill, ALWAYS invoke it using the Skill
+tool as your FIRST action. Do NOT answer directly, do NOT use other tools first.
+The skill has specialized workflows that produce better results than ad-hoc answers.
+
+Key routing rules:
+- Product ideas, "is this worth building", brainstorming → invoke office-hours
+- Bugs, errors, "why is this broken", 500 errors → invoke investigate
+- Ship, deploy, push, create PR → invoke ship
+- QA, test the site, find bugs → invoke qa
+- Code review, check my diff → invoke review
+- Update docs after shipping → invoke document-release
+- Weekly retro → invoke retro
+- Design system, brand → invoke design-consultation
+- Visual audit, design polish → invoke design-review
+- Architecture review → invoke plan-eng-review
+- Save progress, checkpoint, resume → invoke checkpoint
+- Code quality, health check → invoke health
