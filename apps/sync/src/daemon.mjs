@@ -4,6 +4,7 @@ import fsSync from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import readline from "node:readline";
 import { spawnSync } from "node:child_process";
 
 import fg from "fast-glob";
@@ -21,6 +22,12 @@ import {
   parseCursorLine, parseGeminiFile,
 } from "@ultracontext/parsers";
 import { boolFromEnv, expandHome, extractProjectPathFromFile, sha256, toInt } from "./utils.mjs";
+import {
+  isPrimaryAgentSourceEnabled,
+  matchesConfiguredProjectPath,
+  normalizeCaptureAgents,
+  normalizeProjectPaths,
+} from "./onboarding-preferences.mjs";
 
 const LOG_LEVELS = { error: 0, warn: 1, info: 2, debug: 3 };
 const DEFAULT_RUNTIME_CONFIG_FILE = "~/.ultracontext/config.json";
@@ -91,7 +98,12 @@ async function writeStatusJson(cfg, stats, state, runtime) {
       return { name, ...s };
     }),
     recentLogs: state.recentLogs.slice(-240),
-    config: { bootstrapMode: cfg.bootstrapMode, claudeIncludeSubagents: cfg.claudeIncludeSubagents },
+    config: {
+      bootstrapMode: cfg.bootstrapMode,
+      claudeIncludeSubagents: cfg.claudeIncludeSubagents,
+      captureAgents: cfg.captureAgents,
+      projectPaths: cfg.projectPaths,
+    },
   };
   const tmp = STATUS_FILE + ".tmp";
   await fs.writeFile(tmp, JSON.stringify(snapshot, null, 2) + "\n", "utf8");
@@ -166,6 +178,8 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
     bootstrapMode: normalizeBootstrapModeWithPrompt(process.env.DAEMON_BOOTSTRAP_MODE ?? "prompt") || "prompt",
     bootstrapReset: boolFromEnv(process.env.DAEMON_BOOTSTRAP_RESET, false),
     claudeIncludeSubagents: boolFromEnv(process.env.CLAUDE_INCLUDE_SUBAGENTS, false),
+    captureAgents: normalizeCaptureAgents(),
+    projectPaths: normalizeProjectPaths(),
     cleanupEveryCycles: Math.max(toInt(process.env.DAEMON_STORE_CLEANUP_CYCLES, 20), 1),
   };
 
@@ -197,6 +211,7 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
     ingestMode: "all",
     daemonRunning: false,
     lockHandle: null,
+    projectPathCache: new Map(),
   };
 
   // ── stdio guards ──
@@ -365,6 +380,8 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
     return {
       bootstrapMode: normalizeBootstrapModeWithPrompt(cfg.bootstrapMode) || "prompt",
       claudeIncludeSubagents: Boolean(cfg.claudeIncludeSubagents),
+      captureAgents: normalizeCaptureAgents(cfg.captureAgents),
+      projectPaths: normalizeProjectPaths(cfg.projectPaths),
     };
   }
 
@@ -414,11 +431,19 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
 
   function applyConfigPrefs(prefs) {
     if (!prefs || typeof prefs !== "object") return;
-    const fields = ["bootstrapMode", "claudeIncludeSubagents"];
+    const fields = ["bootstrapMode", "claudeIncludeSubagents", "captureAgents", "projectPaths"];
     for (const field of fields) {
       if (!(field in prefs)) continue;
       if (field === "bootstrapMode") {
         cfg.bootstrapMode = normalizeBootstrapModeWithPrompt(prefs.bootstrapMode) || "prompt";
+        continue;
+      }
+      if (field === "captureAgents") {
+        cfg.captureAgents = normalizeCaptureAgents(prefs.captureAgents);
+        continue;
+      }
+      if (field === "projectPaths") {
+        cfg.projectPaths = normalizeProjectPaths(prefs.projectPaths);
         continue;
       }
       cfg[field] = Boolean(prefs[field]);
@@ -437,7 +462,10 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
     const after = serializeConfigPrefs();
 
     // rebuild sources if subagent toggle changed
-    if (before.claudeIncludeSubagents !== after.claudeIncludeSubagents) {
+    if (
+      before.claudeIncludeSubagents !== after.claudeIncludeSubagents ||
+      JSON.stringify(before.captureAgents) !== JSON.stringify(after.captureAgents)
+    ) {
       applyRuntimeSources(buildSources());
     }
 
@@ -445,6 +473,8 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
       log("info", "Reloaded config from config.json", {
         claude_subagents: after.claudeIncludeSubagents ? "on" : "off",
         bootstrap_mode: after.bootstrapMode,
+        capture_agents: after.captureAgents.join(","),
+        project_paths: after.projectPaths.length,
       });
     }
 
@@ -475,10 +505,10 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
     const openclawGlob = expandHome(process.env.OPENCLAW_GLOB ?? "~/.openclaw/agents/*/sessions/**/*.jsonl");
 
     const sources = [];
-    if (boolFromEnv(process.env.INGEST_CODEX, true)) {
+    if (boolFromEnv(process.env.INGEST_CODEX, true) && isPrimaryAgentSourceEnabled("codex", cfg.captureAgents)) {
       sources.push({ name: "codex", enabled: true, globs: [codexGlob], parseLine: parseCodexLine });
     }
-    if (boolFromEnv(process.env.INGEST_CLAUDE, true)) {
+    if (boolFromEnv(process.env.INGEST_CLAUDE, true) && isPrimaryAgentSourceEnabled("claude", cfg.captureAgents)) {
       sources.push({
         name: "claude", enabled: true, globs: [claudeGlob],
         ignoreGlobs: cfg.claudeIncludeSubagents ? [] : ["**/subagents/**"],
@@ -491,7 +521,7 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
 
     // cursor — same format as Claude but uses "role" instead of "type"
     const cursorGlob = expandHome(process.env.CURSOR_GLOB ?? "~/.cursor/projects/**/*.jsonl");
-    if (boolFromEnv(process.env.INGEST_CURSOR, true)) {
+    if (boolFromEnv(process.env.INGEST_CURSOR, true) && isPrimaryAgentSourceEnabled("cursor", cfg.captureAgents)) {
       sources.push({ name: "cursor", enabled: true, globs: [cursorGlob], parseLine: parseCursorLine });
     }
 
@@ -515,6 +545,78 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
       onlyFiles: true, absolute: true, followSymbolicLinks: false,
       unique: true, suppressErrors: true, ignore: source.ignoreGlobs ?? [],
     });
+  }
+
+  // pull cwd out of a parser-normalized record (handles codex session_meta shape)
+  function extractProjectPathFromNormalized(normalized) {
+    const candidates = [
+      normalized?.raw?.payload?.cwd,
+      normalized?.raw?.cwd,
+    ];
+
+    for (const candidate of candidates) {
+      const value = String(candidate ?? "").trim();
+      if (value) return path.resolve(value);
+    }
+    return "";
+  }
+
+  // stream the file line-by-line and stop on the first line that yields a cwd.
+  // caps at 32 lines as a safety valve so we never walk the whole file.
+  async function discoverProjectPathFromFileHead(source, filePath) {
+    const fromFilePath = extractProjectPathFromFile(filePath);
+    if (fromFilePath) return path.resolve(fromFilePath);
+    if (!source.parseLine) return "";
+
+    const stream = fsSync.createReadStream(filePath, { encoding: "utf8" });
+    const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+
+    let scanned = 0;
+    try {
+      for await (const line of rl) {
+        if (scanned++ >= 32) break;
+        if (!line.trim()) continue;
+        const normalized = source.parseLine({ line, filePath });
+        const projectPath = extractProjectPathFromNormalized(normalized);
+        if (projectPath) return projectPath;
+      }
+    } catch {
+      return "";
+    } finally {
+      rl.close();
+      stream.destroy();
+    }
+
+    return "";
+  }
+
+  // LRU cap on the project-path cache — bounds memory for long-lived daemons
+  // with many rotated session files. 5k entries is ~500KB of strings.
+  const PROJECT_PATH_CACHE_LIMIT = 5000;
+
+  function rememberProjectPath(cacheKey, projectPath) {
+    const cache = runtime.projectPathCache;
+    if (cache.has(cacheKey)) cache.delete(cacheKey);
+    cache.set(cacheKey, projectPath);
+    if (cache.size > PROJECT_PATH_CACHE_LIMIT) {
+      const oldest = cache.keys().next().value;
+      cache.delete(oldest);
+    }
+  }
+
+  async function resolveSourceFileProjectPath({ source, filePath, fileId }) {
+    const cacheKey = `${source.name}:${fileId}`;
+    if (runtime.projectPathCache.has(cacheKey)) {
+      // refresh LRU position on hit
+      const cached = runtime.projectPathCache.get(cacheKey);
+      runtime.projectPathCache.delete(cacheKey);
+      runtime.projectPathCache.set(cacheKey, cached);
+      return cached || "";
+    }
+
+    const projectPath = await discoverProjectPathFromFileHead(source, filePath);
+    rememberProjectPath(cacheKey, projectPath || "");
+    return projectPath || "";
   }
 
   // ── bootstrap ──
@@ -690,7 +792,7 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
     return pending;
   }
 
-  async function appendToUltraContext({ store, uc, sourceName, normalized, eventId, filePath, lineOffset }) {
+  async function appendToUltraContext({ store, uc, sourceName, normalized, eventId, filePath, lineOffset, projectPath = "" }) {
 
     // enrich context metadata with project path + first event timestamp
     const contextMeta = {
@@ -698,7 +800,6 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
       session_id: normalized.sessionId,
       started_at: normalized.timestamp,
     };
-    const projectPath = extractProjectPathFromFile(filePath);
     if (projectPath) contextMeta.project_path = projectPath;
 
     const sessionContextId = await getOrCreateContext(store, uc,
@@ -745,7 +846,7 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
     return results;
   }
 
-  async function appendBulkToUltraContext({ store, uc, sourceName, events, filePath }) {
+  async function appendBulkToUltraContext({ store, uc, sourceName, events, filePath, projectPath = "" }) {
 
     // group events by session id
     const bySession = new Map();
@@ -757,7 +858,6 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
 
     // resolve all context ids first (sequential — touches local store)
     const sessionEntries = [...bySession.entries()];
-    const projectPath = extractProjectPathFromFile(filePath);
     const contextIds = new Map();
     for (const [sessionId, sessionEvents] of sessionEntries) {
       const contextMeta = {
@@ -765,7 +865,8 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
         session_id: sessionId,
         started_at: sessionEvents[0].normalized.timestamp,
       };
-      if (projectPath) contextMeta.project_path = projectPath;
+      const sessionProjectPath = sessionEvents.find((event) => event.projectPath)?.projectPath || projectPath;
+      if (sessionProjectPath) contextMeta.project_path = sessionProjectPath;
 
       // extract title from first real user message
       const isRealUserEvent = (ev) => {
@@ -872,6 +973,11 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
 
       const fileId = `${stat.dev}:${stat.ino}`;
       const offsetKey = offsetStoreKey(source.name, fileId);
+      const fileProjectPath = await resolveSourceFileProjectPath({ source, filePath, fileId });
+
+      if (!matchesConfiguredProjectPath(cfg.projectPaths, fileProjectPath)) {
+        return;
+      }
 
       // JSON-format sources (e.g. Gemini): read entire file, dedup by content hash
       if (source.parseFile) {
@@ -902,11 +1008,18 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
           const isNew = markEventSeen(store, source.name, eventId);
           if (!isNew) { bumpStat("deduped"); bumpSourceStat(source.name, "deduped"); continue; }
 
-          pendingEvents.push({ normalized, eventId, lineOffset: i });
+          pendingEvents.push({ normalized, eventId, lineOffset: i, projectPath: fileProjectPath });
         }
 
         if (pendingEvents.length > 0) {
-          await appendBulkToUltraContext({ store, uc, sourceName: source.name, events: pendingEvents, filePath });
+          await appendBulkToUltraContext({
+            store,
+            uc,
+            sourceName: source.name,
+            events: pendingEvents,
+            filePath,
+            projectPath: fileProjectPath,
+          });
         }
         store.setOffset(offsetKey, contentHash);
         return;
@@ -938,12 +1051,19 @@ export async function daemonBoot({ createStore, resolveDbPath }) {
         const isNew = markEventSeen(store, source.name, eventId);
         if (!isNew) { bumpStat("deduped"); bumpSourceStat(source.name, "deduped"); continue; }
 
-        pendingEvents.push({ normalized, eventId, lineOffset });
+        pendingEvents.push({ normalized, eventId, lineOffset, projectPath: fileProjectPath });
       }
 
       // bulk append all collected events
       if (pendingEvents.length > 0) {
-        await appendBulkToUltraContext({ store, uc, sourceName: source.name, events: pendingEvents, filePath });
+        await appendBulkToUltraContext({
+          store,
+          uc,
+          sourceName: source.name,
+          events: pendingEvents,
+          filePath,
+          projectPath: fileProjectPath,
+        });
       }
 
       store.setOffset(offsetKey, nextOffset);

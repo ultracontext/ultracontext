@@ -22,13 +22,14 @@ export function boolFromEnv(value, fallback = false) {
 }
 
 // claude: ~/.claude/projects/-Users-fabio-Code-foo/session.jsonl → /Users/fabio/Code/foo
+// cursor: ~/.cursor/projects/-Users-fabio-Code-foo/session.jsonl → /Users/fabio/Code/foo
 // codex:  ~/.codex/sessions/<uuid>.jsonl → null (cwd comes from session_meta)
 // openclaw: ~/.openclaw/agents/<name>/sessions/<uuid>.jsonl → null
 export function extractProjectPathFromFile(filePath) {
-  const match = filePath.match(/\.claude\/projects\/([^/]+)/);
+  const match = filePath.match(/\.(claude|cursor)\/projects\/([^/]+)/);
   if (!match) return null;
 
   // convert dash-separated path back to real path (leading dash = leading /)
-  const encoded = match[1];
+  const encoded = match[2];
   return encoded.replace(/-/g, "/");
 }

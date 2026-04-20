@@ -20,9 +20,21 @@ Created automatically by the setup wizard (`ultracontext config`) or on first da
     "apiKey": "uc_live_...",
     "baseUrl": "https://api.ultracontext.ai",
     "bootstrapMode": "new_only",
-    "claudeIncludeSubagents": false
+    "claudeIncludeSubagents": false,
+    "captureAgents": ["claude", "codex", "cursor"],
+    "projectPaths": []
 }
 ```
+
+### Capture preferences
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `captureAgents` | `string[]` | `["claude", "codex", "cursor"]` | Which agents the daemon ingests sessions from. Drop an agent to stop capturing it. |
+| `projectPaths` | `string[]` | `[]` | Limit capture to these absolute paths. Empty array = every project (no restriction). |
+| `bootstrapMode` | `"all" \| "new_only"` | `"all"` | `all` = ingest historical sessions on first run; `new_only` = only capture sessions started after the daemon launches. |
+
+The onboarding wizard (`ultracontext config`) writes these keys. Edit the file directly to adjust them later — the daemon hot-reloads on changes.
 
 ## Who reads this
 

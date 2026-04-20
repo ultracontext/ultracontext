@@ -73,6 +73,7 @@
     "devDependencies": {
         "@ultracontext/parsers": "workspace:*",
         "@ultracontext/sync": "workspace:*",
+        "node-pty": "^1.1.0",
         "tsdown": "^0.20.3",
         "typescript": "^5.9.3"
     },
