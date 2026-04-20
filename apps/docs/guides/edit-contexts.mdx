@@ -199,6 +199,13 @@ uc.update(context_id, index=0, content="Hi there!")
 
 ## Delete Messages
 
+<Info>
+**Soft delete vs hard delete — two different operations.**
+
+- `uc.delete(contextId, ids)` — **soft delete** of messages. Creates a new version; the deleted messages are preserved in prior versions and can be recovered via `uc.get(contextId, { version: N })`.
+- `uc.destroy(contextId)` — **hard delete** of the entire context. All versions, messages, and history are permanently removed. Irreversible.
+</Info>
+
 Delete by ID or index:
 
 <CodeGroup>
