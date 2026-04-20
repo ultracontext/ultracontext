@@ -13,7 +13,8 @@
         "build": "tsdown",
         "dev": "tsdown --watch",
         "prepack": "pnpm run build",
-        "postinstall": "node postinstall.mjs"
+        "postinstall": "node postinstall.mjs",
+        "test": "node --test tests/*.test.mjs"
     },
     "main": "./dist/index.mjs",
     "types": "./dist/index.d.mts",
@@ -69,6 +70,7 @@
     },
     "devDependencies": {
         "@ultracontext/sync": "workspace:*",
+        "node-pty": "^1.1.0",
         "tsdown": "^0.20.3",
         "typescript": "^5.9.3"
     },
