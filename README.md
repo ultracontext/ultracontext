@@ -63,6 +63,8 @@ The remote layout keeps machine and agent boundaries explicit:
 
 Sync is one-way: local agent folders are mirrored into the remote workspace. Search runs on the remote host with Claude over the synced files.
 
+UltraContext does not redact or filter source files or search output.
+
 ## CLI
 
 Initialize a machine:

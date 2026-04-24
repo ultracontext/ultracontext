@@ -39,8 +39,10 @@ fn syncs_agent_directories_to_remote_workspace() {
         .join("24")
         .join(format!("rollout-2026-04-24T00-00-00-{run_id}.jsonl"));
     let claude_root_file = home.join(".claude").join("CLAUDE.md");
+    let claude_env_file = home.join(".claude").join("session-env");
     let codex_memory_file = home.join(".codex").join("memories").join("ultracontext.md");
     let codex_auth_file = home.join(".codex").join("auth.json");
+    let codex_env_file = home.join(".codex").join(".env");
 
     fs::create_dir_all(claude_file.parent().unwrap()).unwrap();
     fs::create_dir_all(codex_file.parent().unwrap()).unwrap();
@@ -65,11 +67,25 @@ fn syncs_agent_directories_to_remote_workspace() {
     )
     .unwrap();
     fs::write(
+        &claude_env_file,
+        format!("claude env marker should sync {run_id}\n"),
+    )
+    .unwrap();
+    fs::write(
         &codex_memory_file,
         format!("memory marker from codex root {run_id}\n"),
     )
     .unwrap();
-    fs::write(&codex_auth_file, "fake auth file must not sync\n").unwrap();
+    fs::write(
+        &codex_auth_file,
+        format!("fake auth file should sync {run_id}\n"),
+    )
+    .unwrap();
+    fs::write(
+        &codex_env_file,
+        format!("codex env marker should sync {run_id}\n"),
+    )
+    .unwrap();
 
     let init = uc(&home)
         .args([
@@ -95,23 +111,32 @@ fn syncs_agent_directories_to_remote_workspace() {
         codex_file.file_name().unwrap().to_string_lossy()
     );
     let claude_root_remote = format!("{remote_root}/workspace/sessions/{host_id}/claude/CLAUDE.md");
+    let claude_env_remote =
+        format!("{remote_root}/workspace/sessions/{host_id}/claude/session-env");
     let codex_memory_remote =
         format!("{remote_root}/workspace/sessions/{host_id}/codex/memories/ultracontext.md");
     let codex_auth_remote = format!("{remote_root}/workspace/sessions/{host_id}/codex/auth.json");
+    let codex_env_remote = format!("{remote_root}/workspace/sessions/{host_id}/codex/.env");
 
     wait_for_remote_file(&remote, &claude_remote, Duration::from_secs(45));
     wait_for_remote_file(&remote, &codex_remote, Duration::from_secs(45));
     wait_for_remote_file(&remote, &claude_root_remote, Duration::from_secs(45));
+    wait_for_remote_file(&remote, &claude_env_remote, Duration::from_secs(45));
     wait_for_remote_file(&remote, &codex_memory_remote, Duration::from_secs(45));
+    wait_for_remote_file(&remote, &codex_auth_remote, Duration::from_secs(45));
+    wait_for_remote_file(&remote, &codex_env_remote, Duration::from_secs(45));
 
     let remote_cat = ssh(
         &remote,
         &format!(
-            "cat {} && cat {} && cat {} && cat {}",
+            "cat {} && cat {} && cat {} && cat {} && cat {} && cat {} && cat {}",
             remote_path_arg(&claude_remote),
             remote_path_arg(&codex_remote),
             remote_path_arg(&claude_root_remote),
-            remote_path_arg(&codex_memory_remote)
+            remote_path_arg(&claude_env_remote),
+            remote_path_arg(&codex_memory_remote),
+            remote_path_arg(&codex_auth_remote),
+            remote_path_arg(&codex_env_remote)
         ),
     )
     .output()
@@ -131,17 +156,21 @@ fn syncs_agent_directories_to_remote_workspace() {
         "{remote_text}"
     );
     assert!(
+        remote_text.contains(&format!("claude env marker should sync {run_id}")),
+        "{remote_text}"
+    );
+    assert!(
         remote_text.contains(&format!("memory marker from codex root {run_id}")),
         "{remote_text}"
     );
-
-    let ignored_auth = ssh(
-        &remote,
-        &format!("test ! -e {}", remote_path_arg(&codex_auth_remote)),
-    )
-    .output()
-    .unwrap();
-    assert_success("ignored codex auth file", ignored_auth);
+    assert!(
+        remote_text.contains(&format!("fake auth file should sync {run_id}")),
+        "{remote_text}"
+    );
+    assert!(
+        remote_text.contains(&format!("codex env marker should sync {run_id}")),
+        "{remote_text}"
+    );
 
     if env::var("UC_E2E_SEARCH").ok().as_deref() == Some("1") {
         let search = uc(&home)

@@ -219,9 +219,6 @@ fn sync_start() -> Result<()> {
             "--mode=one-way-replica".to_string(),
             "--symlink-mode=posix-raw".to_string(),
         ];
-        for ignore in sync_ignores(source) {
-            args.push(format!("--ignore={ignore}"));
-        }
         args.push(local_path.to_string_lossy().to_string());
         args.push(remote_endpoint);
         run_command("mutagen", args)?;
@@ -392,26 +389,6 @@ fn remote_endpoint(config: &Config, source: &Source) -> String {
 
 fn mutagen_session_name(config: &Config, source: &Source) -> String {
     format!("uc-{}-{}", config.host_id, source.agent)
-}
-
-fn sync_ignores(source: &Source) -> Vec<&'static str> {
-    let mut ignores = vec![
-        ".DS_Store",
-        ".env",
-        ".env.*",
-        ".credentials.json",
-        "credentials.json",
-        "*.sqlite-shm",
-        "*.sqlite-wal",
-        "*.db-shm",
-        "*.db-wal",
-    ];
-    match source.agent.as_str() {
-        "claude" => ignores.extend(["mcp-needs-auth-cache.json", "session-env"]),
-        "codex" => ignores.push("auth.json"),
-        _ => {}
-    }
-    ignores
 }
 
 fn config_dir() -> Result<PathBuf> {
