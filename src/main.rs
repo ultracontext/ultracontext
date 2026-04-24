@@ -991,6 +991,7 @@ enabled = true
         assert!(prompt.contains("/remote/workspace/sessions"));
         assert!(prompt.contains("what changed?"));
         assert!(prompt.contains("internal event timestamps"));
+        assert!(prompt.contains("subagents"));
         assert!(!prompt.contains("{{sessions_path}}"));
         assert!(!prompt.contains("{{query}}"));
     }
