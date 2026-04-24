@@ -43,10 +43,19 @@ fn syncs_agent_directories_to_remote_workspace() {
     let codex_memory_file = home.join(".codex").join("memories").join("ultracontext.md");
     let codex_auth_file = home.join(".codex").join("auth.json");
     let codex_env_file = home.join(".codex").join(".env");
+    let codex_node_module_file = home
+        .join(".codex")
+        .join("node_modules")
+        .join("ignored-package")
+        .join("index.js");
+    let codex_extra_cache_file = home.join(".codex").join("scratch-cache").join("output.txt");
 
     fs::create_dir_all(claude_file.parent().unwrap()).unwrap();
     fs::create_dir_all(codex_file.parent().unwrap()).unwrap();
     fs::create_dir_all(codex_memory_file.parent().unwrap()).unwrap();
+    fs::create_dir_all(codex_node_module_file.parent().unwrap()).unwrap();
+    fs::create_dir_all(codex_extra_cache_file.parent().unwrap()).unwrap();
+    fs::write(home.join(".ultracontextignore"), "scratch-cache/\n").unwrap();
     fs::write(
         &claude_file,
         format!(
@@ -86,6 +95,16 @@ fn syncs_agent_directories_to_remote_workspace() {
         format!("codex env marker should sync {run_id}\n"),
     )
     .unwrap();
+    fs::write(
+        &codex_node_module_file,
+        format!("node_modules marker should not sync {run_id}\n"),
+    )
+    .unwrap();
+    fs::write(
+        &codex_extra_cache_file,
+        format!("custom ignore marker should not sync {run_id}\n"),
+    )
+    .unwrap();
 
     let init = uc(&home)
         .args([
@@ -117,6 +136,11 @@ fn syncs_agent_directories_to_remote_workspace() {
         format!("{remote_root}/workspace/sessions/{host_id}/codex/memories/ultracontext.md");
     let codex_auth_remote = format!("{remote_root}/workspace/sessions/{host_id}/codex/auth.json");
     let codex_env_remote = format!("{remote_root}/workspace/sessions/{host_id}/codex/.env");
+    let codex_node_module_remote = format!(
+        "{remote_root}/workspace/sessions/{host_id}/codex/node_modules/ignored-package/index.js"
+    );
+    let codex_extra_cache_remote =
+        format!("{remote_root}/workspace/sessions/{host_id}/codex/scratch-cache/output.txt");
 
     wait_for_remote_file(&remote, &claude_remote, Duration::from_secs(45));
     wait_for_remote_file(&remote, &codex_remote, Duration::from_secs(45));
@@ -171,6 +195,18 @@ fn syncs_agent_directories_to_remote_workspace() {
         remote_text.contains(&format!("codex env marker should sync {run_id}")),
         "{remote_text}"
     );
+
+    let ignored_files = ssh(
+        &remote,
+        &format!(
+            "test ! -e {} && test ! -e {}",
+            remote_path_arg(&codex_node_module_remote),
+            remote_path_arg(&codex_extra_cache_remote),
+        ),
+    )
+    .output()
+    .unwrap();
+    assert_success("ignored generated files", ignored_files);
 
     if env::var("UC_E2E_SEARCH").ok().as_deref() == Some("1") {
         let search = uc(&home)

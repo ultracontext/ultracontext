@@ -63,7 +63,7 @@ The remote layout keeps machine and agent boundaries explicit:
 
 Sync is one-way: local agent folders are mirrored into the remote workspace. Search runs on the remote host with Claude over the synced files.
 
-UltraContext does not redact or filter source files or search output.
+UltraContext does not redact source files or search output. It does ignore generated dependency/build/cache directories by default to keep sync and search usable.
 
 ## CLI
 
@@ -118,6 +118,28 @@ Default remote root:
 ~/.ultracontext
 ```
 
+Ignore file:
+
+```text
+~/.ultracontextignore
+```
+
+Built-in ignores:
+
+```text
+node_modules/
+.git/
+target/
+dist/
+build/
+.next/
+.cache/
+```
+
+Add extra generated-noise patterns to `.ultracontextignore`. Secrets and agent context files such as `.env`, `auth.json`, `credentials.json`, and `session-env` are not ignored by default. Ignore changes apply when sync sessions are created, so run `uc sync reset` after editing `.ultracontextignore`.
+
+`uc init` and `uc sync start` create a template `.ultracontextignore` if it does not exist.
+
 Customize the remote search command in `config.toml`:
 
 ```toml
@@ -126,7 +148,7 @@ command = "claude"
 args = "--dangerously-skip-permissions --effort low --model sonnet"
 ```
 
-Config is read fresh on every `uc` command. Search command changes apply on the next `uc search`; sync source or remote changes need `uc sync reset` to recreate Mutagen sessions.
+Config is read fresh on every `uc` command. Search command changes apply on the next `uc search`; sync source, remote, or ignore changes need `uc sync reset` to recreate Mutagen sessions.
 
 ## Development
 

@@ -3,14 +3,24 @@ use std::ffi::OsStr;
 use std::fmt;
 use std::fs;
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 const APP_DIR: &str = ".ultracontext";
+const IGNORE_FILE: &str = ".ultracontextignore";
 const DEFAULT_REMOTE_ROOT: &str = "~/.ultracontext";
 const DEFAULT_SEARCH_COMMAND: &str = "claude";
 const DEFAULT_SEARCH_ARGS: &str = "--dangerously-skip-permissions";
 const CONTEXT_ENGINEER_PROMPT: &str = include_str!("prompts/context-engineer.md");
+const DEFAULT_SYNC_IGNORES: &[&str] = &[
+    "node_modules/",
+    ".git/",
+    "target/",
+    "dist/",
+    "build/",
+    ".next/",
+    ".cache/",
+];
 
 #[derive(Debug)]
 enum UcError {
@@ -156,11 +166,13 @@ fn cmd_init(args: &[String]) -> Result<()> {
 
     fs::create_dir_all(config_dir()?)?;
     fs::write(config_path()?, config.to_toml())?;
+    ensure_ignore_file()?;
 
     prepare_remote_workspace(&config)?;
 
     println!("UltraContext initialized");
     println!("  config: {}", config_path()?.display());
+    println!("  ignore: {}", ignore_path()?.display());
     println!("  remote: {}:{}", config.remote, config.remote_root);
     println!("  host:   {}", config.host_id);
     println!();
@@ -188,8 +200,10 @@ fn sync_start() -> Result<()> {
     require_command("mutagen")?;
     let config = load_config()?;
     prepare_remote_workspace(&config)?;
+    ensure_ignore_file()?;
 
     let existing = capture_command("mutagen", ["sync", "list"])?;
+    let ignore_patterns = sync_ignore_patterns()?;
 
     for source in enabled_sources(&config) {
         let local_path = expand_home(&source.local_path)?;
@@ -212,15 +226,7 @@ fn sync_start() -> Result<()> {
 
         let remote_endpoint = remote_endpoint(&config, source);
         println!("create {name}");
-        let mut args = vec![
-            "sync".to_string(),
-            "create".to_string(),
-            format!("--name={name}"),
-            "--mode=one-way-replica".to_string(),
-            "--symlink-mode=posix-raw".to_string(),
-        ];
-        args.push(local_path.to_string_lossy().to_string());
-        args.push(remote_endpoint);
+        let args = sync_create_args(&name, &local_path, remote_endpoint, &ignore_patterns);
         run_command("mutagen", args)?;
     }
 
@@ -391,12 +397,86 @@ fn mutagen_session_name(config: &Config, source: &Source) -> String {
     format!("uc-{}-{}", config.host_id, source.agent)
 }
 
+fn sync_create_args(
+    name: &str,
+    local_path: &Path,
+    remote_endpoint: String,
+    ignore_patterns: &[String],
+) -> Vec<String> {
+    let mut args = vec![
+        "sync".to_string(),
+        "create".to_string(),
+        format!("--name={name}"),
+        "--mode=one-way-replica".to_string(),
+        "--symlink-mode=posix-raw".to_string(),
+    ];
+    for ignore in ignore_patterns {
+        args.push(format!("--ignore={ignore}"));
+    }
+    args.push(local_path.to_string_lossy().to_string());
+    args.push(remote_endpoint);
+    args
+}
+
+fn sync_ignore_patterns() -> Result<Vec<String>> {
+    let mut patterns = DEFAULT_SYNC_IGNORES
+        .iter()
+        .map(|pattern| pattern.to_string())
+        .collect::<Vec<_>>();
+
+    let path = ignore_path()?;
+    if path.exists() {
+        let raw = fs::read_to_string(&path).map_err(|error| {
+            UcError::Message(format!("failed to read {}: {error}", path.display()))
+        })?;
+        patterns.extend(parse_ignore_patterns(&raw));
+    }
+
+    Ok(patterns)
+}
+
+fn parse_ignore_patterns(raw: &str) -> Vec<String> {
+    raw.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(ToString::to_string)
+        .collect()
+}
+
+fn ensure_ignore_file() -> Result<()> {
+    let path = ignore_path()?;
+    if path.exists() {
+        return Ok(());
+    }
+    fs::write(path, default_ignore_file())?;
+    Ok(())
+}
+
+fn default_ignore_file() -> &'static str {
+    "# UltraContext ignore file\n\
+# Patterns use Mutagen's default ignore syntax and apply to every synced source.\n\
+# Generated dependency/build/cache directories are ignored by default:\n\
+# node_modules/\n\
+# .git/\n\
+# target/\n\
+# dist/\n\
+# build/\n\
+# .next/\n\
+# .cache/\n\
+\n\
+# Add extra ignore patterns below.\n"
+}
+
 fn config_dir() -> Result<PathBuf> {
     Ok(home_dir()?.join(APP_DIR))
 }
 
 fn config_path() -> Result<PathBuf> {
     Ok(config_dir()?.join("config.toml"))
+}
+
+fn ignore_path() -> Result<PathBuf> {
+    Ok(home_dir()?.join(IGNORE_FILE))
 }
 
 fn load_config() -> Result<Config> {
@@ -986,6 +1066,43 @@ args = "--fast"
         let command = search_remote_command(&cfg, "~/.ultracontext/workspace/sessions", "prompt");
 
         assert!(command.contains("$HOME/.local/bin/claude"), "{command}");
+    }
+
+    #[test]
+    fn parses_ultracontextignore_patterns() {
+        let patterns = parse_ignore_patterns(
+            r#"
+# comment
+node_modules/
+
+scratch-cache/
+dist/
+"#,
+        );
+
+        assert_eq!(patterns, vec!["node_modules/", "scratch-cache/", "dist/"]);
+    }
+
+    #[test]
+    fn sync_create_args_include_generated_ignores_without_secret_ignores() {
+        let local_path = PathBuf::from("/tmp/source");
+        let ignore_patterns = DEFAULT_SYNC_IGNORES
+            .iter()
+            .map(|pattern| pattern.to_string())
+            .collect::<Vec<_>>();
+
+        let args = sync_create_args(
+            "uc-test-codex",
+            &local_path,
+            "user@vps:~/.ultracontext/workspace/sessions/test/codex".to_string(),
+            &ignore_patterns,
+        );
+
+        assert!(args.contains(&"--ignore=node_modules/".to_string()));
+        assert!(args.contains(&"--ignore=.git/".to_string()));
+        assert!(!args.contains(&"--ignore=.env".to_string()));
+        assert!(!args.contains(&"--ignore=auth.json".to_string()));
+        assert_eq!(args[args.len() - 2], "/tmp/source");
     }
 
     #[test]
