@@ -2,16 +2,16 @@
 
 UltraContext 2.0 is a context sync CLI.
 
-It syncs local agent sessions into a remote workspace so Claude, Codex, and other agents can recover context across machines.
+It syncs local agent context into a remote workspace so Claude, Codex, and other agents can recover context across machines.
 
 ## Model
 
 UltraContext runs locally, uses Mutagen for sync, and uses SSH to prepare/query the remote workspace.
 
 ```text
-~/.claude/projects  ----\
-                        \
-~/.codex/sessions   ----->  ~/.ultracontext/workspace/sessions/<host-id>/<agent>/
+~/.claude  ----\
+               \
+~/.codex   ----->  ~/.ultracontext/workspace/sessions/<host-id>/<agent>/
 ```
 
 The remote layout keeps machine and agent boundaries explicit:
@@ -22,12 +22,12 @@ The remote layout keeps machine and agent boundaries explicit:
     sessions/
       <host-id>/
         claude/
-          projects/
+          ...
         codex/
-          sessions/
+          ...
 ```
 
-Sync is one-way: local session files flow to the remote workspace. Query runs on the remote host with Claude over the synced files.
+Sync is one-way: local agent folders are mirrored into the remote workspace. Query runs on the remote host with Claude over the synced files.
 
 ## CLI
 
@@ -47,6 +47,12 @@ Check sync:
 
 ```sh
 ultracontext sync status
+```
+
+Recreate sync sessions after changing source paths:
+
+```sh
+ultracontext sync reset
 ```
 
 Query remote context:

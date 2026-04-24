@@ -37,7 +37,6 @@ type Result<T> = std::result::Result<T, UcError>;
 struct Source {
     agent: String,
     local_path: String,
-    remote_leaf: String,
     enabled: bool,
 }
 
@@ -83,7 +82,7 @@ fn run(args: Vec<String>) -> Result<()> {
 
 fn print_help() {
     println!(
-        "UltraContext {}\n\nUsage:\n  ultracontext init [remote]\n  ultracontext sync <start|status|stop>\n  ultracontext query <question>\n  ultracontext doctor\n\nAlias:\n  uc should point to the same binary as ultracontext.\n",
+        "UltraContext {}\n\nUsage:\n  ultracontext init [remote]\n  ultracontext sync <start|status|stop|reset>\n  ultracontext query <question>\n  ultracontext doctor\n\nAlias:\n  uc should point to the same binary as ultracontext.\n",
         env!("CARGO_PKG_VERSION")
     );
 }
@@ -165,8 +164,9 @@ fn cmd_sync(args: &[String]) -> Result<()> {
         Some("start") => sync_start(),
         Some("status") => sync_status(),
         Some("stop") => sync_stop(),
+        Some("reset") => sync_reset(),
         Some("-h" | "--help") | None => {
-            println!("Usage: ultracontext sync <start|status|stop>");
+            println!("Usage: ultracontext sync <start|status|stop|reset>");
             Ok(())
         }
         Some(command) => Err(UcError::Message(format!("unknown sync command: {command}"))),
@@ -201,17 +201,19 @@ fn sync_start() -> Result<()> {
 
         let remote_endpoint = remote_endpoint(&config, source);
         println!("create {name}");
-        run_command(
-            "mutagen",
-            [
-                "sync",
-                "create",
-                &format!("--name={name}"),
-                "--mode=one-way-safe",
-                local_path.to_string_lossy().as_ref(),
-                remote_endpoint.as_str(),
-            ],
-        )?;
+        let mut args = vec![
+            "sync".to_string(),
+            "create".to_string(),
+            format!("--name={name}"),
+            "--mode=one-way-replica".to_string(),
+            "--symlink-mode=posix-raw".to_string(),
+        ];
+        for ignore in sync_ignores(source) {
+            args.push(format!("--ignore={ignore}"));
+        }
+        args.push(local_path.to_string_lossy().to_string());
+        args.push(remote_endpoint);
+        run_command("mutagen", args)?;
     }
 
     Ok(())
@@ -231,6 +233,22 @@ fn sync_stop() -> Result<()> {
         run_command("mutagen", ["sync", "pause", name.as_str()])?;
     }
     Ok(())
+}
+
+fn sync_reset() -> Result<()> {
+    require_command("mutagen")?;
+    let config = load_config()?;
+    let existing = capture_command("mutagen", ["sync", "list"])?;
+
+    for source in &config.sources {
+        let name = mutagen_session_name(&config, source);
+        if existing.contains(&format!("Name: {name}")) {
+            println!("terminate {name}");
+            run_command("mutagen", ["sync", "terminate", name.as_str()])?;
+        }
+    }
+
+    sync_start()
 }
 
 fn cmd_query(args: &[String]) -> Result<()> {
@@ -322,19 +340,15 @@ fn default_sources() -> Vec<Source> {
     vec![
         Source {
             agent: "claude".to_string(),
-            local_path: "~/.claude/projects".to_string(),
-            remote_leaf: "projects".to_string(),
-            enabled: expand_home("~/.claude/projects")
+            local_path: "~/.claude".to_string(),
+            enabled: expand_home("~/.claude")
                 .map(|p| p.exists())
                 .unwrap_or(false),
         },
         Source {
             agent: "codex".to_string(),
-            local_path: "~/.codex/sessions".to_string(),
-            remote_leaf: "sessions".to_string(),
-            enabled: expand_home("~/.codex/sessions")
-                .map(|p| p.exists())
-                .unwrap_or(false),
+            local_path: "~/.codex".to_string(),
+            enabled: expand_home("~/.codex").map(|p| p.exists()).unwrap_or(false),
         },
     ]
 }
@@ -345,8 +359,8 @@ fn enabled_sources(config: &Config) -> impl Iterator<Item = &Source> {
 
 fn remote_dir(config: &Config, source: &Source) -> String {
     format!(
-        "{}/workspace/sessions/{}/{}/{}",
-        config.remote_root, config.host_id, source.agent, source.remote_leaf
+        "{}/workspace/sessions/{}/{}",
+        config.remote_root, config.host_id, source.agent
     )
 }
 
@@ -356,6 +370,26 @@ fn remote_endpoint(config: &Config, source: &Source) -> String {
 
 fn mutagen_session_name(config: &Config, source: &Source) -> String {
     format!("uc-{}-{}", config.host_id, source.agent)
+}
+
+fn sync_ignores(source: &Source) -> Vec<&'static str> {
+    let mut ignores = vec![
+        ".DS_Store",
+        ".env",
+        ".env.*",
+        ".credentials.json",
+        "credentials.json",
+        "*.sqlite-shm",
+        "*.sqlite-wal",
+        "*.db-shm",
+        "*.db-wal",
+    ];
+    match source.agent.as_str() {
+        "claude" => ignores.extend(["mcp-needs-auth-cache.json", "session-env"]),
+        "codex" => ignores.push("auth.json"),
+        _ => {}
+    }
+    ignores
 }
 
 fn config_dir() -> Result<PathBuf> {
@@ -624,10 +658,6 @@ impl Config {
         for source in &self.sources {
             out.push_str(&format!("[sources.{}]\n", source.agent));
             out.push_str(&format!("path = \"{}\"\n", escape_toml(&source.local_path)));
-            out.push_str(&format!(
-                "remote_leaf = \"{}\"\n",
-                escape_toml(&source.remote_leaf)
-            ));
             out.push_str(&format!("enabled = {}\n\n", source.enabled));
         }
         out
@@ -658,7 +688,6 @@ impl Config {
                 current_source = Some(Source {
                     agent: agent.to_string(),
                     local_path: String::new(),
-                    remote_leaf: String::new(),
                     enabled: true,
                 });
                 continue;
@@ -673,7 +702,9 @@ impl Config {
             if let Some(source) = current_source.as_mut() {
                 match key {
                     "path" => source.local_path = parse_string_value(value)?,
-                    "remote_leaf" => source.remote_leaf = parse_string_value(value)?,
+                    "remote_leaf" => {
+                        let _ = parse_string_value(value)?;
+                    }
                     "enabled" => source.enabled = parse_bool_value(value)?,
                     _ => return Err(UcError::Message(format!("unknown source key: {key}"))),
                 }
@@ -700,8 +731,13 @@ impl Config {
             return Err(UcError::Message("config missing host_id".to_string()));
         }
 
+        let sources = sources
+            .into_iter()
+            .map(normalize_legacy_source)
+            .collect::<Vec<_>>();
+
         for source in &sources {
-            if source.local_path.is_empty() || source.remote_leaf.is_empty() {
+            if source.local_path.is_empty() {
                 return Err(UcError::Message(format!(
                     "source {} is incomplete",
                     source.agent
@@ -717,6 +753,15 @@ impl Config {
             sources,
         })
     }
+}
+
+fn normalize_legacy_source(mut source: Source) -> Source {
+    match (source.agent.as_str(), source.local_path.as_str()) {
+        ("claude", "~/.claude/projects") => source.local_path = "~/.claude".to_string(),
+        ("codex", "~/.codex/sessions") => source.local_path = "~/.codex".to_string(),
+        _ => {}
+    }
+    source
 }
 
 fn escape_toml(value: &str) -> String {
@@ -751,23 +796,19 @@ mod tests {
 
     #[test]
     fn sanitizes_host_id() {
-        assert_eq!(
-            sanitize_id("Fabio's MacBook Pro.local"),
-            "fabio-s-macbook-pro-local"
-        );
+        assert_eq!(sanitize_id("User's Laptop.local"), "user-s-laptop-local");
     }
 
     #[test]
     fn roundtrips_config() {
         let cfg = Config {
-            remote: "fabio@vps".to_string(),
+            remote: "user@vps".to_string(),
             remote_root: "~/.ultracontext".to_string(),
-            host_id: "fabio-macbook".to_string(),
+            host_id: "work-laptop".to_string(),
             search_agent: "claude".to_string(),
             sources: vec![Source {
                 agent: "claude".to_string(),
-                local_path: "~/.claude/projects".to_string(),
-                remote_leaf: "projects".to_string(),
+                local_path: "~/.claude".to_string(),
                 enabled: true,
             }],
         };
@@ -778,23 +819,47 @@ mod tests {
     #[test]
     fn builds_remote_paths() {
         let cfg = Config {
-            remote: "fabio@vps".to_string(),
+            remote: "user@vps".to_string(),
             remote_root: "~/.ultracontext".to_string(),
-            host_id: "fabio-macbook".to_string(),
+            host_id: "work-laptop".to_string(),
             search_agent: "claude".to_string(),
             sources: vec![],
         };
         let source = Source {
             agent: "codex".to_string(),
-            local_path: "~/.codex/sessions".to_string(),
-            remote_leaf: "sessions".to_string(),
+            local_path: "~/.codex".to_string(),
             enabled: true,
         };
 
         assert_eq!(
             remote_dir(&cfg, &source),
-            "~/.ultracontext/workspace/sessions/fabio-macbook/codex/sessions"
+            "~/.ultracontext/workspace/sessions/work-laptop/codex"
         );
+    }
+
+    #[test]
+    fn upgrades_legacy_session_only_sources() {
+        let raw = r#"
+remote = "user@vps"
+remote_root = "~/.ultracontext"
+host_id = "work-laptop"
+search_agent = "claude"
+
+[sources.claude]
+path = "~/.claude/projects"
+remote_leaf = "projects"
+enabled = true
+
+[sources.codex]
+path = "~/.codex/sessions"
+remote_leaf = "sessions"
+enabled = true
+"#;
+
+        let cfg = Config::from_toml(raw).unwrap();
+
+        assert_eq!(cfg.sources[0].local_path, "~/.claude");
+        assert_eq!(cfg.sources[1].local_path, "~/.codex");
     }
 
     #[test]

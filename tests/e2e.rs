@@ -8,7 +8,7 @@ const BIN: &str = env!("CARGO_BIN_EXE_ultracontext");
 
 #[test]
 #[ignore = "requires UC_E2E_REMOTE=user@host plus ssh/mutagen access"]
-fn syncs_sessions_to_remote_workspace() {
+fn syncs_agent_directories_to_remote_workspace() {
     let remote =
         env::var("UC_E2E_REMOTE").expect("set UC_E2E_REMOTE=user@host to run the e2e test");
 
@@ -38,9 +38,13 @@ fn syncs_sessions_to_remote_workspace() {
         .join("04")
         .join("24")
         .join(format!("rollout-2026-04-24T00-00-00-{run_id}.jsonl"));
+    let claude_root_file = home.join(".claude").join("CLAUDE.md");
+    let codex_memory_file = home.join(".codex").join("memories").join("ultracontext.md");
+    let codex_auth_file = home.join(".codex").join("auth.json");
 
     fs::create_dir_all(claude_file.parent().unwrap()).unwrap();
     fs::create_dir_all(codex_file.parent().unwrap()).unwrap();
+    fs::create_dir_all(codex_memory_file.parent().unwrap()).unwrap();
     fs::write(
         &claude_file,
         format!(
@@ -55,6 +59,17 @@ fn syncs_sessions_to_remote_workspace() {
         ),
     )
     .unwrap();
+    fs::write(
+        &claude_root_file,
+        format!("project context marker from claude root {run_id}\n"),
+    )
+    .unwrap();
+    fs::write(
+        &codex_memory_file,
+        format!("memory marker from codex root {run_id}\n"),
+    )
+    .unwrap();
+    fs::write(&codex_auth_file, "fake auth file must not sync\n").unwrap();
 
     let init = uc(&home)
         .args([
@@ -79,16 +94,24 @@ fn syncs_sessions_to_remote_workspace() {
         "{remote_root}/workspace/sessions/{host_id}/codex/sessions/2026/04/24/{}",
         codex_file.file_name().unwrap().to_string_lossy()
     );
+    let claude_root_remote = format!("{remote_root}/workspace/sessions/{host_id}/claude/CLAUDE.md");
+    let codex_memory_remote =
+        format!("{remote_root}/workspace/sessions/{host_id}/codex/memories/ultracontext.md");
+    let codex_auth_remote = format!("{remote_root}/workspace/sessions/{host_id}/codex/auth.json");
 
     wait_for_remote_file(&remote, &claude_remote, Duration::from_secs(45));
     wait_for_remote_file(&remote, &codex_remote, Duration::from_secs(45));
+    wait_for_remote_file(&remote, &claude_root_remote, Duration::from_secs(45));
+    wait_for_remote_file(&remote, &codex_memory_remote, Duration::from_secs(45));
 
     let remote_cat = ssh(
         &remote,
         &format!(
-            "cat {} && cat {}",
+            "cat {} && cat {} && cat {} && cat {}",
             remote_path_arg(&claude_remote),
-            remote_path_arg(&codex_remote)
+            remote_path_arg(&codex_remote),
+            remote_path_arg(&claude_root_remote),
+            remote_path_arg(&codex_memory_remote)
         ),
     )
     .output()
@@ -103,6 +126,22 @@ fn syncs_sessions_to_remote_workspace() {
         remote_text.contains(&format!("hello from codex {run_id}")),
         "{remote_text}"
     );
+    assert!(
+        remote_text.contains(&format!("project context marker from claude root {run_id}")),
+        "{remote_text}"
+    );
+    assert!(
+        remote_text.contains(&format!("memory marker from codex root {run_id}")),
+        "{remote_text}"
+    );
+
+    let ignored_auth = ssh(
+        &remote,
+        &format!("test ! -e {}", remote_path_arg(&codex_auth_remote)),
+    )
+    .output()
+    .unwrap();
+    assert_success("ignored codex auth file", ignored_auth);
 
     if env::var("UC_E2E_QUERY").ok().as_deref() == Some("1") {
         let query = uc(&home)
