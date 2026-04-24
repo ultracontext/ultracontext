@@ -274,7 +274,10 @@ fn cmd_search(args: &[String]) -> Result<()> {
     let prompt = search_prompt(&sessions_path, &search_query);
     let remote_command = search_remote_command(&config, &sessions_path, &prompt);
 
-    run_command("ssh", [config.remote.as_str(), remote_command.as_str()])
+    run_command(
+        "ssh",
+        ["-n", config.remote.as_str(), remote_command.as_str()],
+    )
 }
 
 fn search_remote_command(config: &Config, sessions_path: &str, prompt: &str) -> String {
@@ -297,7 +300,7 @@ if [ -z \"$SEARCH_BIN\" ]; then echo {} >&2; exit 127; fi",
 
     format!(
         "{}; \
-cd {} && \"$SEARCH_BIN\" -p {} {}",
+cd {} && \"$SEARCH_BIN\" -p {} {} < /dev/null",
         command_setup,
         remote_path_arg(&sessions_path),
         sh_quote(&prompt),
@@ -346,7 +349,7 @@ fn prepare_remote_workspace(config: &Config) -> Result<()> {
         .collect::<Vec<_>>()
         .join(" ");
     let command = format!("mkdir -p {mkdirs}");
-    run_command("ssh", [config.remote.as_str(), command.as_str()])
+    run_command("ssh", ["-n", config.remote.as_str(), command.as_str()])
 }
 
 fn search_prompt(sessions_path: &str, search_query: &str) -> String {
@@ -514,8 +517,10 @@ fn check_local_command(name: &str) {
 
 fn check_remote(config: &Config, label: &str, command: &str) {
     let status = external_command("ssh")
+        .arg("-n")
         .arg(&config.remote)
         .arg(command)
+        .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
@@ -928,6 +933,7 @@ enabled = true
 
         assert!(prompt.contains("/remote/workspace/sessions"));
         assert!(prompt.contains("what changed?"));
+        assert!(prompt.contains("internal event timestamps"));
         assert!(!prompt.contains("{{sessions_path}}"));
         assert!(!prompt.contains("{{query}}"));
     }
@@ -1003,6 +1009,24 @@ args = "--fast"
         let command = search_remote_command(&cfg, "~/.ultracontext/workspace/sessions", "prompt");
 
         assert!(command.contains("$HOME/.local/bin/claude"), "{command}");
+    }
+
+    #[test]
+    fn search_command_does_not_read_stdin() {
+        let cfg = Config {
+            remote: "user@vps".to_string(),
+            remote_root: "~/.ultracontext".to_string(),
+            host_id: "work-laptop".to_string(),
+            search: SearchConfig {
+                command: "claude".to_string(),
+                args: "--dangerously-skip-permissions".to_string(),
+            },
+            sources: vec![],
+        };
+
+        let command = search_remote_command(&cfg, "~/.ultracontext/workspace/sessions", "prompt");
+
+        assert!(command.ends_with("< /dev/null"), "{command}");
     }
 
     #[test]

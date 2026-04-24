@@ -124,6 +124,8 @@ command = "claude"
 args = "--dangerously-skip-permissions --effort low --model sonnet"
 ```
 
+Config is read fresh on every `uc` command. Search command changes apply on the next `uc search`; sync source or remote changes need `uc sync reset` to recreate Mutagen sessions.
+
 ## Development
 
 Run unit and integration tests:

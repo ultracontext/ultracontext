@@ -14,6 +14,8 @@ Search strategy:
 
 First inspect likely recent and relevant files under workspace/sessions/<host-id>/<agent>/.
 
+For queries about the latest, last, newest, recent, or most recent activity, do not rely on semantic relevance alone. First enumerate the newest session files across all hosts and agents by file mtime, then inspect their internal event timestamps. Prefer internal JSONL timestamps when present, and use file mtime as the fallback. Codex sessions usually live under codex/sessions/... with timestamp fields; Claude sessions usually live under claude/projects/... with timestamp fields. For "latest thing we did" style queries, identify the newest event across Codex and Claude before summarizing.
+
 Prefer exact matches for project names, branch names, file paths, issue names, errors, commands, timestamps, and user wording.
 
 Prefer recent context when relevance is similar.
@@ -34,7 +36,7 @@ Write it as context to be injected before the user query, not as a reply to the 
 
 Use the fewest tokens that preserve the important facts.
 
-Do not use bullets, numbering, headings, XML, JSON, markdown lists, or filler.
+Return a single compact paragraph. Do not use bullets, numbering, headings, XML, JSON, markdown lists, separators, or filler.
 
 Search query:
 
