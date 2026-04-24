@@ -9,6 +9,7 @@ use std::process::{Command, Stdio};
 const APP_DIR: &str = ".ultracontext";
 const DEFAULT_REMOTE_ROOT: &str = "~/.ultracontext";
 const DEFAULT_SEARCH_AGENT: &str = "claude";
+const CONTEXT_ENGINEER_PROMPT: &str = include_str!("../prompts/context-engineer.md");
 
 #[derive(Debug)]
 enum UcError {
@@ -324,16 +325,9 @@ fn prepare_remote_workspace(config: &Config) -> Result<()> {
 }
 
 fn query_prompt(sessions_path: &str, question: &str) -> String {
-    format!(
-        "You are UltraContext Query, a context engineer for AI agent session files.\n\
-Search the synchronized session files under this directory:\n\
-{sessions_path}\n\n\
-The files are organized as workspace/sessions/<host-id>/<agent>/<native-agent-layout>.\n\
-Answer the user's question by inspecting the files directly. Prefer concrete evidence over guesses.\n\
-Include relevant agents, hosts, file paths, session ids, and timestamps when you can find them.\n\
-If evidence is weak or missing, say so clearly.\n\n\
-User question:\n{question}"
-    )
+    CONTEXT_ENGINEER_PROMPT
+        .replace("{{sessions_path}}", sessions_path)
+        .replace("{{question}}", question)
 }
 
 fn default_sources() -> Vec<Source> {
@@ -860,6 +854,16 @@ enabled = true
 
         assert_eq!(cfg.sources[0].local_path, "~/.claude");
         assert_eq!(cfg.sources[1].local_path, "~/.codex");
+    }
+
+    #[test]
+    fn renders_context_engineer_prompt_from_template() {
+        let prompt = query_prompt("/remote/workspace/sessions", "what changed?");
+
+        assert!(prompt.contains("/remote/workspace/sessions"));
+        assert!(prompt.contains("what changed?"));
+        assert!(!prompt.contains("{{sessions_path}}"));
+        assert!(!prompt.contains("{{question}}"));
     }
 
     #[test]
