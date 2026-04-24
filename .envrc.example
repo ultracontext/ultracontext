@@ -1,0 +1,4 @@
+export UC_E2E_REMOTE=user@host
+
+# Enable the query step when the remote host has Claude authenticated.
+# export UC_E2E_QUERY=1

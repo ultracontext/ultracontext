@@ -7,10 +7,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 const BIN: &str = env!("CARGO_BIN_EXE_ultracontext");
 
 #[test]
-#[ignore = "requires UC_E2E_REMOTE=user@host and real ssh/mutagen access"]
-fn syncs_real_session_files_to_remote_over_mutagen() {
+#[ignore = "requires UC_E2E_REMOTE=user@host plus ssh/mutagen access"]
+fn syncs_sessions_to_remote_workspace() {
     let remote =
-        env::var("UC_E2E_REMOTE").expect("set UC_E2E_REMOTE=user@host to run the real e2e test");
+        env::var("UC_E2E_REMOTE").expect("set UC_E2E_REMOTE=user@host to run the e2e test");
 
     require("ssh");
     require("mutagen");
