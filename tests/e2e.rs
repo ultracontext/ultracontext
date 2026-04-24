@@ -143,15 +143,15 @@ fn syncs_agent_directories_to_remote_workspace() {
     .unwrap();
     assert_success("ignored codex auth file", ignored_auth);
 
-    if env::var("UC_E2E_QUERY").ok().as_deref() == Some("1") {
-        let query = uc(&home)
+    if env::var("UC_E2E_SEARCH").ok().as_deref() == Some("1") {
+        let search = uc(&home)
             .args([
-                "query",
+                "search",
                 &format!("Find the e2e marker {run_id}. Which agents mention it?"),
             ])
             .output()
             .unwrap();
-        assert_success("uc query", query);
+        assert_success("uc search", search);
     }
 
     drop(_cleanup);

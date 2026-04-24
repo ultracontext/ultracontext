@@ -6,7 +6,7 @@ It syncs local agent context into a remote workspace so Claude, Codex, and other
 
 ## Model
 
-UltraContext runs locally, uses Mutagen for sync, and uses SSH to prepare/query the remote workspace.
+UltraContext runs locally, uses Mutagen for sync, and uses SSH to prepare/search the remote workspace.
 
 ```text
 ~/.claude  ----\
@@ -27,7 +27,7 @@ The remote layout keeps machine and agent boundaries explicit:
           ...
 ```
 
-Sync is one-way: local agent folders are mirrored into the remote workspace. Query runs on the remote host with Claude over the synced files.
+Sync is one-way: local agent folders are mirrored into the remote workspace. Search runs on the remote host with Claude over the synced files.
 
 ## CLI
 
@@ -55,17 +55,17 @@ Recreate sync sessions after changing source paths:
 ultracontext sync reset
 ```
 
-Query remote context:
+Search remote context:
 
 ```sh
-ultracontext query "what changed in the sync CLI?"
+ultracontext search "what changed in the sync CLI?"
 ```
 
 `uc` should point to the same binary as `ultracontext`:
 
 ```sh
 uc sync start
-uc query "what changed?"
+uc search "what changed?"
 ```
 
 ## Config
@@ -102,10 +102,10 @@ The E2E test needs a remote SSH target:
 export UC_E2E_REMOTE=user@host
 ```
 
-Enable the remote Claude query step:
+Enable the remote Claude search step:
 
 ```sh
-export UC_E2E_QUERY=1
+export UC_E2E_SEARCH=1
 ```
 
 For local development, copy `.envrc.example` to `.envrc`. `.envrc` is ignored by git.

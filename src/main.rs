@@ -9,7 +9,7 @@ use std::process::{Command, Stdio};
 const APP_DIR: &str = ".ultracontext";
 const DEFAULT_REMOTE_ROOT: &str = "~/.ultracontext";
 const DEFAULT_SEARCH_AGENT: &str = "claude";
-const CONTEXT_ENGINEER_PROMPT: &str = include_str!("../prompts/context-engineer.md");
+const CONTEXT_ENGINEER_PROMPT: &str = include_str!("prompts/context-engineer.md");
 
 #[derive(Debug)]
 enum UcError {
@@ -71,7 +71,7 @@ fn run(args: Vec<String>) -> Result<()> {
         }
         Some("init") => cmd_init(&args[2..]),
         Some("sync") => cmd_sync(&args[2..]),
-        Some("query") => cmd_query(&args[2..]),
+        Some("search") => cmd_search(&args[2..]),
         Some("doctor") => cmd_doctor(),
         Some("version" | "-V" | "--version") => {
             println!("{}", env!("CARGO_PKG_VERSION"));
@@ -83,7 +83,7 @@ fn run(args: Vec<String>) -> Result<()> {
 
 fn print_help() {
     println!(
-        "UltraContext {}\n\nUsage:\n  ultracontext init [remote]\n  ultracontext sync <start|status|stop|reset>\n  ultracontext query <question>\n  ultracontext doctor\n\nAlias:\n  uc should point to the same binary as ultracontext.\n",
+        "UltraContext {}\n\nUsage:\n  ultracontext init [remote]\n  ultracontext sync <start|status|stop|reset>\n  ultracontext search <query>\n  ultracontext doctor\n\nAlias:\n  uc should point to the same binary as ultracontext.\n",
         env!("CARGO_PKG_VERSION")
     );
 }
@@ -156,7 +156,7 @@ fn cmd_init(args: &[String]) -> Result<()> {
     println!();
     println!("Next:");
     println!("  ultracontext sync start");
-    println!("  ultracontext query \"what happened?\"");
+    println!("  ultracontext search \"what happened?\"");
     Ok(())
 }
 
@@ -252,9 +252,9 @@ fn sync_reset() -> Result<()> {
     sync_start()
 }
 
-fn cmd_query(args: &[String]) -> Result<()> {
+fn cmd_search(args: &[String]) -> Result<()> {
     if args.is_empty() || args.iter().any(|arg| arg == "-h" || arg == "--help") {
-        println!("Usage: ultracontext query <question>");
+        println!("Usage: ultracontext search <query>");
         return Ok(());
     }
 
@@ -265,9 +265,9 @@ fn cmd_query(args: &[String]) -> Result<()> {
         ));
     }
 
-    let question = args.join(" ");
+    let search_query = args.join(" ");
     let sessions_path = format!("{}/workspace/sessions", config.remote_root);
-    let prompt = query_prompt(&sessions_path, &question);
+    let prompt = search_prompt(&sessions_path, &search_query);
     let remote_command = format!(
         "CLAUDE_BIN=$(command -v claude || true); \
 if [ -z \"$CLAUDE_BIN\" ] && [ -x \"$HOME/.local/bin/claude\" ]; then CLAUDE_BIN=\"$HOME/.local/bin/claude\"; fi; \
@@ -324,10 +324,10 @@ fn prepare_remote_workspace(config: &Config) -> Result<()> {
     run_command("ssh", [config.remote.as_str(), command.as_str()])
 }
 
-fn query_prompt(sessions_path: &str, question: &str) -> String {
+fn search_prompt(sessions_path: &str, search_query: &str) -> String {
     CONTEXT_ENGINEER_PROMPT
         .replace("{{sessions_path}}", sessions_path)
-        .replace("{{question}}", question)
+        .replace("{{query}}", search_query)
 }
 
 fn default_sources() -> Vec<Source> {
@@ -858,12 +858,12 @@ enabled = true
 
     #[test]
     fn renders_context_engineer_prompt_from_template() {
-        let prompt = query_prompt("/remote/workspace/sessions", "what changed?");
+        let prompt = search_prompt("/remote/workspace/sessions", "what changed?");
 
         assert!(prompt.contains("/remote/workspace/sessions"));
         assert!(prompt.contains("what changed?"));
         assert!(!prompt.contains("{{sessions_path}}"));
-        assert!(!prompt.contains("{{question}}"));
+        assert!(!prompt.contains("{{query}}"));
     }
 
     #[test]

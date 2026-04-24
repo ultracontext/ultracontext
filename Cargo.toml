@@ -2,7 +2,7 @@
 name = "ultracontext"
 version = "2.0.0-alpha.0"
 edition = "2024"
-description = "Remote sync and query for AI agent sessions"
+description = "Remote sync and search for AI agent context"
 license = "Apache-2.0"
 
 [[bin]]
