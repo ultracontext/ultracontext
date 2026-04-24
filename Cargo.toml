@@ -8,3 +8,7 @@ license = "Apache-2.0"
 [[bin]]
 name = "ultracontext"
 path = "src/main.rs"
+
+[[test]]
+name = "real_e2e"
+path = "tests/real_e2e.rs"

@@ -207,7 +207,7 @@ fn sync_start() -> Result<()> {
                 "sync",
                 "create",
                 &format!("--name={name}"),
-                "--sync-mode=one-way-safe",
+                "--mode=one-way-safe",
                 local_path.to_string_lossy().as_ref(),
                 remote_endpoint.as_str(),
             ],
@@ -250,7 +250,10 @@ fn cmd_query(args: &[String]) -> Result<()> {
     let sessions_path = format!("{}/workspace/sessions", config.remote_root);
     let prompt = query_prompt(&sessions_path, &question);
     let remote_command = format!(
-        "cd {} && claude -p {} --dangerously-skip-permissions",
+        "CLAUDE_BIN=$(command -v claude || true); \
+if [ -z \"$CLAUDE_BIN\" ] && [ -x \"$HOME/.local/bin/claude\" ]; then CLAUDE_BIN=\"$HOME/.local/bin/claude\"; fi; \
+if [ -z \"$CLAUDE_BIN\" ]; then echo 'claude not found on remote PATH or ~/.local/bin/claude' >&2; exit 127; fi; \
+cd {} && \"$CLAUDE_BIN\" -p {} --dangerously-skip-permissions",
         remote_path_arg(&sessions_path),
         sh_quote(&prompt)
     );
@@ -435,7 +438,8 @@ fn require_value<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a
 }
 
 fn require_command(name: &str) -> Result<()> {
-    let status = Command::new("sh")
+    let mut command = external_command("sh");
+    let status = command
         .arg("-c")
         .arg(format!("command -v {} >/dev/null 2>&1", sh_quote(name)))
         .status()?;
@@ -456,7 +460,7 @@ fn check_local_command(name: &str) {
 }
 
 fn check_remote(config: &Config, label: &str, command: &str) {
-    let status = Command::new("ssh")
+    let status = external_command("ssh")
         .arg(&config.remote)
         .arg(command)
         .stdout(Stdio::null())
@@ -473,11 +477,19 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    let status = Command::new(program).args(args).status()?;
+    let args = args
+        .into_iter()
+        .map(|arg| arg.as_ref().to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    let status = external_command(program).args(&args).status()?;
     if status.success() {
         Ok(())
     } else {
-        Err(UcError::Message(format!("{program} exited with {status}")))
+        Err(UcError::Message(format!(
+            "{} exited with {}",
+            command_display(program, &args),
+            status
+        )))
     }
 }
 
@@ -486,14 +498,47 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    let output = Command::new(program).args(args).output()?;
+    let args = args
+        .into_iter()
+        .map(|arg| arg.as_ref().to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    let output = external_command(program).args(&args).output()?;
     if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(UcError::Message(format!(
-            "{program} exited with {}",
-            output.status
+            "{} exited with {}\nstdout:\n{}\nstderr:\n{}",
+            command_display(program, &args),
+            output.status,
+            stdout.trim_end(),
+            stderr.trim_end()
         )));
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn external_command(program: &str) -> Command {
+    let mut command = Command::new(program);
+    if let Some(home) = env::var_os("ULTRACONTEXT_EXTERNAL_HOME") {
+        command.env("HOME", home);
+    }
+    command
+}
+
+fn command_display(program: &str, args: &[String]) -> String {
+    std::iter::once(program.to_string())
+        .chain(args.iter().map(|arg| {
+            if arg
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || "-_./:=@~".contains(ch))
+            {
+                arg.clone()
+            } else {
+                sh_quote(arg)
+            }
+        }))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn sh_quote(value: &str) -> String {
