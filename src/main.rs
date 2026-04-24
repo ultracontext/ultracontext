@@ -8,8 +8,8 @@ use std::process::{Command, Stdio};
 
 const APP_DIR: &str = ".ultracontext";
 const DEFAULT_REMOTE_ROOT: &str = "~/.ultracontext";
-const DEFAULT_SEARCH_AGENT: &str = "claude";
-const DEFAULT_CLAUDE_ARGS: &str = "--dangerously-skip-permissions";
+const DEFAULT_SEARCH_COMMAND: &str = "claude";
+const DEFAULT_SEARCH_ARGS: &str = "--dangerously-skip-permissions";
 const CONTEXT_ENGINEER_PROMPT: &str = include_str!("prompts/context-engineer.md");
 
 #[derive(Debug)]
@@ -43,12 +43,17 @@ struct Source {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+struct SearchConfig {
+    command: String,
+    args: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct Config {
     remote: String,
     remote_root: String,
     host_id: String,
-    search_agent: String,
-    claude_args: String,
+    search: SearchConfig,
     sources: Vec<Source>,
 }
 
@@ -142,8 +147,10 @@ fn cmd_init(args: &[String]) -> Result<()> {
         remote: remote.target,
         remote_root: remote.root,
         host_id,
-        search_agent: DEFAULT_SEARCH_AGENT.to_string(),
-        claude_args: DEFAULT_CLAUDE_ARGS.to_string(),
+        search: SearchConfig {
+            command: DEFAULT_SEARCH_COMMAND.to_string(),
+            args: DEFAULT_SEARCH_ARGS.to_string(),
+        },
         sources,
     };
 
@@ -262,12 +269,6 @@ fn cmd_search(args: &[String]) -> Result<()> {
     }
 
     let config = load_config()?;
-    if config.search_agent != "claude" {
-        return Err(UcError::Message(
-            "only Claude is supported as search_agent in this MVP".to_string(),
-        ));
-    }
-
     let search_query = args.join(" ");
     let sessions_path = format!("{}/workspace/sessions", config.remote_root);
     let prompt = search_prompt(&sessions_path, &search_query);
@@ -277,14 +278,30 @@ fn cmd_search(args: &[String]) -> Result<()> {
 }
 
 fn search_remote_command(config: &Config, sessions_path: &str, prompt: &str) -> String {
+    let command_setup = if config.search.command == "claude" {
+        "SEARCH_BIN=$(command -v claude || true); \
+if [ -z \"$SEARCH_BIN\" ] && [ -x \"$HOME/.local/bin/claude\" ]; then SEARCH_BIN=\"$HOME/.local/bin/claude\"; fi; \
+if [ -z \"$SEARCH_BIN\" ]; then echo 'claude not found on remote PATH or ~/.local/bin/claude' >&2; exit 127; fi"
+            .to_string()
+    } else {
+        format!(
+            "SEARCH_BIN=$(command -v {} || true); \
+if [ -z \"$SEARCH_BIN\" ]; then echo {} >&2; exit 127; fi",
+            sh_quote(&config.search.command),
+            sh_quote(&format!(
+                "{} not found on remote PATH",
+                config.search.command
+            ))
+        )
+    };
+
     format!(
-        "CLAUDE_BIN=$(command -v claude || true); \
-if [ -z \"$CLAUDE_BIN\" ] && [ -x \"$HOME/.local/bin/claude\" ]; then CLAUDE_BIN=\"$HOME/.local/bin/claude\"; fi; \
-if [ -z \"$CLAUDE_BIN\" ]; then echo 'claude not found on remote PATH or ~/.local/bin/claude' >&2; exit 127; fi; \
-cd {} && \"$CLAUDE_BIN\" -p {} {}",
+        "{}; \
+cd {} && \"$SEARCH_BIN\" -p {} {}",
+        command_setup,
         remote_path_arg(&sessions_path),
         sh_quote(&prompt),
-        config.claude_args
+        config.search.args
     )
 }
 
@@ -652,14 +669,13 @@ impl Config {
             escape_toml(&self.remote_root)
         ));
         out.push_str(&format!("host_id = \"{}\"\n", escape_toml(&self.host_id)));
+        out.push('\n');
+        out.push_str("[search]\n");
         out.push_str(&format!(
-            "search_agent = \"{}\"\n",
-            escape_toml(&self.search_agent)
+            "command = \"{}\"\n",
+            escape_toml(&self.search.command)
         ));
-        out.push_str(&format!(
-            "claude_args = \"{}\"\n",
-            escape_toml(&self.claude_args)
-        ));
+        out.push_str(&format!("args = \"{}\"\n", escape_toml(&self.search.args)));
         out.push('\n');
         for source in &self.sources {
             out.push_str(&format!("[sources.{}]\n", source.agent));
@@ -673,10 +689,13 @@ impl Config {
         let mut remote = String::new();
         let mut remote_root = DEFAULT_REMOTE_ROOT.to_string();
         let mut host_id = String::new();
-        let mut search_agent = DEFAULT_SEARCH_AGENT.to_string();
-        let mut claude_args = DEFAULT_CLAUDE_ARGS.to_string();
+        let mut search = SearchConfig {
+            command: DEFAULT_SEARCH_COMMAND.to_string(),
+            args: DEFAULT_SEARCH_ARGS.to_string(),
+        };
         let mut sources = Vec::<Source>::new();
         let mut current_source: Option<Source> = None;
+        let mut section = ConfigSection::Root;
 
         for line in raw.lines() {
             let line = line.split('#').next().unwrap_or("").trim();
@@ -688,15 +707,21 @@ impl Config {
                 if let Some(source) = current_source.take() {
                     sources.push(source);
                 }
-                let section = &line[1..line.len() - 1];
-                let agent = section
-                    .strip_prefix("sources.")
-                    .ok_or_else(|| UcError::Message(format!("unsupported section: {section}")))?;
-                current_source = Some(Source {
-                    agent: agent.to_string(),
-                    local_path: String::new(),
-                    enabled: true,
-                });
+                let section_name = &line[1..line.len() - 1];
+                if section_name == "search" {
+                    section = ConfigSection::Search;
+                } else if let Some(agent) = section_name.strip_prefix("sources.") {
+                    section = ConfigSection::Source;
+                    current_source = Some(Source {
+                        agent: agent.to_string(),
+                        local_path: String::new(),
+                        enabled: true,
+                    });
+                } else {
+                    return Err(UcError::Message(format!(
+                        "unsupported section: {section_name}"
+                    )));
+                }
                 continue;
             }
 
@@ -706,25 +731,33 @@ impl Config {
             let key = key.trim();
             let value = value.trim();
 
-            if let Some(source) = current_source.as_mut() {
-                match key {
-                    "path" => source.local_path = parse_string_value(value)?,
-                    "remote_leaf" => {
-                        let _ = parse_string_value(value)?;
+            match section {
+                ConfigSection::Root => match key {
+                    "remote" => remote = parse_string_value(value)?,
+                    "remote_root" => remote_root = parse_string_value(value)?,
+                    "host_id" => host_id = parse_string_value(value)?,
+                    "search_agent" => search.command = parse_string_value(value)?,
+                    "claude_args" => search.args = parse_string_value(value)?,
+                    _ => return Err(UcError::Message(format!("unknown config key: {key}"))),
+                },
+                ConfigSection::Search => match key {
+                    "command" => search.command = parse_string_value(value)?,
+                    "args" => search.args = parse_string_value(value)?,
+                    _ => return Err(UcError::Message(format!("unknown search key: {key}"))),
+                },
+                ConfigSection::Source => {
+                    let source = current_source.as_mut().ok_or_else(|| {
+                        UcError::Message("source key outside source section".to_string())
+                    })?;
+                    match key {
+                        "path" => source.local_path = parse_string_value(value)?,
+                        "remote_leaf" => {
+                            let _ = parse_string_value(value)?;
+                        }
+                        "enabled" => source.enabled = parse_bool_value(value)?,
+                        _ => return Err(UcError::Message(format!("unknown source key: {key}"))),
                     }
-                    "enabled" => source.enabled = parse_bool_value(value)?,
-                    _ => return Err(UcError::Message(format!("unknown source key: {key}"))),
                 }
-                continue;
-            }
-
-            match key {
-                "remote" => remote = parse_string_value(value)?,
-                "remote_root" => remote_root = parse_string_value(value)?,
-                "host_id" => host_id = parse_string_value(value)?,
-                "search_agent" => search_agent = parse_string_value(value)?,
-                "claude_args" => claude_args = parse_string_value(value)?,
-                _ => return Err(UcError::Message(format!("unknown config key: {key}"))),
             }
         }
 
@@ -757,11 +790,17 @@ impl Config {
             remote,
             remote_root,
             host_id,
-            search_agent,
-            claude_args,
+            search,
             sources,
         })
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ConfigSection {
+    Root,
+    Search,
+    Source,
 }
 
 fn normalize_legacy_source(mut source: Source) -> Source {
@@ -814,8 +853,10 @@ mod tests {
             remote: "user@vps".to_string(),
             remote_root: "~/.ultracontext".to_string(),
             host_id: "work-laptop".to_string(),
-            search_agent: "claude".to_string(),
-            claude_args: "--dangerously-skip-permissions --effort low".to_string(),
+            search: SearchConfig {
+                command: "claude".to_string(),
+                args: "--dangerously-skip-permissions --effort low".to_string(),
+            },
             sources: vec![Source {
                 agent: "claude".to_string(),
                 local_path: "~/.claude".to_string(),
@@ -832,8 +873,10 @@ mod tests {
             remote: "user@vps".to_string(),
             remote_root: "~/.ultracontext".to_string(),
             host_id: "work-laptop".to_string(),
-            search_agent: "claude".to_string(),
-            claude_args: "--dangerously-skip-permissions".to_string(),
+            search: SearchConfig {
+                command: "claude".to_string(),
+                args: "--dangerously-skip-permissions".to_string(),
+            },
             sources: vec![],
         };
         let source = Source {
@@ -855,6 +898,7 @@ remote = "user@vps"
 remote_root = "~/.ultracontext"
 host_id = "work-laptop"
 search_agent = "claude"
+claude_args = "--dangerously-skip-permissions --effort low"
 
 [sources.claude]
 path = "~/.claude/projects"
@@ -871,7 +915,11 @@ enabled = true
 
         assert_eq!(cfg.sources[0].local_path, "~/.claude");
         assert_eq!(cfg.sources[1].local_path, "~/.codex");
-        assert_eq!(cfg.claude_args, "--dangerously-skip-permissions");
+        assert_eq!(cfg.search.command, "claude");
+        assert_eq!(
+            cfg.search.args,
+            "--dangerously-skip-permissions --effort low"
+        );
     }
 
     #[test]
@@ -885,22 +933,76 @@ enabled = true
     }
 
     #[test]
-    fn uses_configured_claude_args_for_search() {
+    fn uses_configured_search_command_and_args() {
         let cfg = Config {
             remote: "user@vps".to_string(),
             remote_root: "~/.ultracontext".to_string(),
             host_id: "work-laptop".to_string(),
-            search_agent: "claude".to_string(),
-            claude_args: "--dangerously-skip-permissions --effort low --model sonnet".to_string(),
+            search: SearchConfig {
+                command: "custom-search".to_string(),
+                args: "--effort low --model sonnet".to_string(),
+            },
             sources: vec![],
         };
 
         let command = search_remote_command(&cfg, "~/.ultracontext/workspace/sessions", "prompt");
 
-        assert!(
-            command.contains("--dangerously-skip-permissions --effort low --model sonnet"),
-            "{command}"
+        assert!(command.contains("command -v 'custom-search'"), "{command}");
+        assert!(command.contains("--effort low --model sonnet"), "{command}");
+    }
+
+    #[test]
+    fn defaults_search_config_when_missing() {
+        let raw = r#"
+remote = "user@vps"
+remote_root = "~/.ultracontext"
+host_id = "work-laptop"
+"#;
+
+        let cfg = Config::from_toml(raw).unwrap();
+
+        assert_eq!(cfg.search.command, "claude");
+        assert_eq!(cfg.search.args, "--dangerously-skip-permissions");
+    }
+
+    #[test]
+    fn parses_search_section() {
+        let raw = r#"
+remote = "user@vps"
+remote_root = "~/.ultracontext"
+host_id = "work-laptop"
+
+[search]
+command = "custom-search"
+args = "--fast"
+"#;
+
+        let cfg = Config::from_toml(raw).unwrap();
+
+        assert_eq!(cfg.search.command, "custom-search");
+        assert_eq!(cfg.search.args, "--fast");
+        assert_eq!(
+            cfg.to_toml(),
+            "remote = \"user@vps\"\nremote_root = \"~/.ultracontext\"\nhost_id = \"work-laptop\"\n\n[search]\ncommand = \"custom-search\"\nargs = \"--fast\"\n\n"
         );
+    }
+
+    #[test]
+    fn keeps_claude_path_fallback_for_default_search_command() {
+        let cfg = Config {
+            remote: "user@vps".to_string(),
+            remote_root: "~/.ultracontext".to_string(),
+            host_id: "work-laptop".to_string(),
+            search: SearchConfig {
+                command: "claude".to_string(),
+                args: "--dangerously-skip-permissions".to_string(),
+            },
+            sources: vec![],
+        };
+
+        let command = search_remote_command(&cfg, "~/.ultracontext/workspace/sessions", "prompt");
+
+        assert!(command.contains("$HOME/.local/bin/claude"), "{command}");
     }
 
     #[test]

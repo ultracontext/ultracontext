@@ -82,10 +82,12 @@ Default remote root:
 ~/.ultracontext
 ```
 
-Customize Claude search flags in `config.toml`:
+Customize the remote search command in `config.toml`:
 
 ```toml
-claude_args = "--dangerously-skip-permissions --effort low --model sonnet"
+[search]
+command = "claude"
+args = "--dangerously-skip-permissions --effort low --model sonnet"
 ```
 
 ## Development
