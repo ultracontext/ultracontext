@@ -4,6 +4,40 @@ UltraContext 2.0 is a context sync CLI.
 
 It syncs local agent context into a remote workspace so Claude, Codex, and other agents can recover context across machines.
 
+## Quickstart
+
+Install the CLI from this checkout:
+
+```sh
+cargo install --path . --force
+ln -sf ~/.cargo/bin/ultracontext ~/.cargo/bin/uc
+```
+
+Initialize this machine:
+
+```sh
+uc init user@host --host-id my-mac
+```
+
+Start syncing local agent context:
+
+```sh
+uc sync start
+uc sync status
+```
+
+Search your UltraContext:
+
+```sh
+uc search "what changed in the sync CLI?"
+```
+
+If sync source paths or sync settings change, recreate the sync sessions:
+
+```sh
+uc sync reset
+```
+
 ## Model
 
 UltraContext runs locally, uses Mutagen for sync, and uses SSH to prepare/search the remote workspace.
