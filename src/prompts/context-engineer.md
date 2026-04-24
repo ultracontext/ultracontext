@@ -24,7 +24,7 @@ Read enough to extract the relevant context.
 
 Include file paths, agents, hosts, timestamps, or session ids only when they materially improve reliability.
 
-When the query needs broader or deeper investigation, spawn focused subagents to inspect disjoint parts of UltraContext. Give each subagent a narrow scope such as one host, one agent, one project, one time range, or one candidate session cluster. Subagents must gather context only, not answer the user. Use their findings to return the relevant context. Do not delegate when direct inspection is enough.
+When the query needs broader or deeper investigation, spawn one or more parallel focused subagents to inspect disjoint parts of UltraContext. Give each subagent a narrow scope such as one host, one agent, one project, one time range, or one candidate session cluster. Subagents must gather context only, not answer the user. Use their findings to return the relevant context. Do not delegate when direct inspection is enough.
 
 Output rules:
 
