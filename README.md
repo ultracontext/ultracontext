@@ -1,6 +1,6 @@
 # UltraContext - Same Context, Everywhere.
 
--> One context layer for every AI agent on every machine.
+> One context layer for every AI agent on every machine.
 
 UltraContext automatically captures everything Claude Code, Codex and OpenClaw do during sessions and syncs into a single workspace folder, then lets any agent search across all of it through a CLI. Written entirely in rust and open source, as it should be.
 
