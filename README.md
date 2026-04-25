@@ -23,15 +23,15 @@ Agents forget across sessions, machines, and tools. UltraContext makes their mem
 
 ```text
 ~/.claude   ─┐
-~/.codex    ─┼─ Mutagen ─▶  ~/.ultracontext/workspace/sessions/<host>/<agent>/
-~/.openclaw ─┘                              │
-                                            ▼
-                                        uc search  ──▶  Claude (or any agent)
+~/.codex    ─┼──▶  ~/.ultracontext/workspace/sessions/<host>/<agent>/
+~/.openclaw ─┘                       │
+                                     ▼
+                                 uc search  ──▶  Claude (or any agent)
 ```
 
-- **Mutagen** does the sync. One-way, real-time, conflict-free.
-- **SSH** is the only transport. Works with any VPS or local machine.
-- **Claude** is the default search agent. Swap it for any CLI tool that takes a prompt.
+- One-way sync, real-time, conflict-free.
+- SSH is the only transport. Works with any VPS or local machine.
+- Claude is the default search agent. Swap it for any CLI tool that takes a prompt.
 
 ## Install
 
