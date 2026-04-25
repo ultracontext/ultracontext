@@ -136,6 +136,105 @@ fn manages_sources_from_cli() {
 }
 
 #[test]
+#[ignore = "requires local mutagen access"]
+fn syncs_custom_source_lifecycle_over_local_mutagen() {
+    require("mutagen");
+
+    let run_id = unique_run_id();
+    let host_id = format!("uc-source-real-{run_id}");
+    let home = env::temp_dir().join(format!("uc-source-real-home-{run_id}"));
+    let remote_root = home.join("ultracontext-root");
+    let source_root = home.join("OpenClaw");
+    let source_file = source_root.join("notes").join("context.txt");
+    let source_session = format!("uc-{host_id}-openclaw");
+    let _cleanup = LocalSourceCleanup {
+        home: home.clone(),
+        host_id: host_id.clone(),
+    };
+
+    fs::create_dir_all(source_file.parent().unwrap()).unwrap();
+    fs::write(&source_file, format!("custom source marker {run_id}\n")).unwrap();
+
+    let init = uc(&home)
+        .args([
+            "init",
+            "local",
+            "--host-id",
+            host_id.as_str(),
+            "--remote-root",
+            remote_root.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert_success("uc init local", init);
+
+    let add = uc(&home)
+        .args(["source", "add", "openclaw", "~/OpenClaw"])
+        .output()
+        .unwrap();
+    assert_success("uc source add", add);
+
+    let start = uc(&home).args(["sync", "start"]).output().unwrap();
+    assert_success("uc sync start", start);
+
+    let synced_file = remote_root
+        .join("workspace")
+        .join("sessions")
+        .join(&host_id)
+        .join("openclaw")
+        .join("notes")
+        .join("context.txt");
+    wait_for_local_file(&synced_file, Duration::from_secs(30));
+    let synced_text = fs::read_to_string(&synced_file).unwrap();
+    assert!(synced_text.contains(&run_id), "{synced_text}");
+
+    let disable = uc(&home)
+        .args(["source", "disable", "openclaw"])
+        .output()
+        .unwrap();
+    assert_success("uc source disable", disable);
+
+    let reset = uc(&home).args(["sync", "reset"]).output().unwrap();
+    assert_success("uc sync reset after disable", reset);
+
+    let status = uc(&home).args(["sync", "status"]).output().unwrap();
+    let status_text = String::from_utf8_lossy(&status.stdout).to_string();
+    assert_success("uc sync status after disable", status);
+    assert!(!status_text.contains(&source_session), "{status_text}");
+
+    let enable = uc(&home)
+        .args(["source", "enable", "openclaw"])
+        .output()
+        .unwrap();
+    assert_success("uc source enable", enable);
+    fs::write(&source_file, format!("custom source re-enabled {run_id}\n")).unwrap();
+
+    let restart = uc(&home).args(["sync", "start"]).output().unwrap();
+    assert_success("uc sync start after enable", restart);
+    wait_for_local_file_text(
+        &synced_file,
+        &format!("re-enabled {run_id}"),
+        Duration::from_secs(30),
+    );
+
+    let remove = uc(&home)
+        .args(["source", "remove", "openclaw"])
+        .output()
+        .unwrap();
+    assert_success("uc source remove", remove);
+
+    let reset = uc(&home).args(["sync", "reset"]).output().unwrap();
+    assert_success("uc sync reset after remove", reset);
+
+    let status = uc(&home).args(["sync", "status"]).output().unwrap();
+    let status_text = String::from_utf8_lossy(&status.stdout).to_string();
+    assert_success("uc sync status after remove", status);
+    assert!(!status_text.contains(&source_session), "{status_text}");
+
+    drop(_cleanup);
+}
+
+#[test]
 #[ignore = "requires UC_E2E_REMOTE=user@host plus ssh/mutagen access"]
 fn syncs_agent_directories_to_remote_workspace() {
     let remote =
@@ -376,6 +475,24 @@ impl Drop for E2eCleanup {
     }
 }
 
+struct LocalSourceCleanup {
+    home: PathBuf,
+    host_id: String,
+}
+
+impl Drop for LocalSourceCleanup {
+    fn drop(&mut self) {
+        let _ = mutagen_with_home(&self.home)
+            .args([
+                "sync",
+                "terminate",
+                &format!("uc-{}-openclaw", self.host_id),
+            ])
+            .output();
+        let _ = fs::remove_dir_all(&self.home);
+    }
+}
+
 fn uc(home: &Path) -> Command {
     let mut command = Command::new(BIN);
     command.env("HOME", home);
@@ -434,6 +551,39 @@ fn wait_for_remote_file(remote: &str, path: &str, timeout: Duration) {
         std::thread::sleep(Duration::from_millis(750));
     }
     panic!("remote file did not appear within {:?}: {path}", timeout);
+}
+
+fn wait_for_local_file(path: &Path, timeout: Duration) {
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        if path.is_file() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    panic!(
+        "local file did not appear within {:?}: {}",
+        timeout,
+        path.display()
+    );
+}
+
+fn wait_for_local_file_text(path: &Path, expected: &str, timeout: Duration) {
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        if fs::read_to_string(path)
+            .map(|text| text.contains(expected))
+            .unwrap_or(false)
+        {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    panic!(
+        "local file did not contain expected text within {:?}: {}",
+        timeout,
+        path.display()
+    );
 }
 
 fn assert_success(label: &str, output: Output) {
