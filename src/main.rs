@@ -13,15 +13,8 @@ const DEFAULT_REMOTE_ROOT: &str = "~/.ultracontext";
 const DEFAULT_SEARCH_COMMAND: &str = "claude";
 const DEFAULT_SEARCH_ARGS: &str = "--dangerously-skip-permissions --effort medium --model sonnet";
 const CONTEXT_ENGINEER_PROMPT: &str = include_str!("prompts/context-engineer.md");
-const DEFAULT_SYNC_IGNORES: &[&str] = &[
-    "node_modules/",
-    ".git/",
-    "target/",
-    "dist/",
-    "build/",
-    ".next/",
-    ".cache/",
-];
+// All ignore patterns live in the user-editable .ultracontextignore.
+const DEFAULT_SYNC_IGNORES: &[&str] = &[];
 
 #[derive(Debug)]
 enum UcError {
@@ -794,14 +787,37 @@ fn ensure_ignore_file() -> Result<()> {
 fn default_ignore_file() -> &'static str {
     "# UltraContext ignore file\n\
 # Patterns use Mutagen's default ignore syntax and apply to every synced source.\n\
-# Generated dependency/build/cache directories are ignored by default:\n\
-# node_modules/\n\
-# .git/\n\
-# target/\n\
-# dist/\n\
-# build/\n\
-# .next/\n\
-# .cache/\n\
+# Comment, edit, or extend any rule. Run `uc sync reset` after edits.\n\
+\n\
+# Source control\n\
+.git/\n\
+\n\
+# Build and dependency dirs\n\
+node_modules/\n\
+target/\n\
+dist/\n\
+build/\n\
+.next/\n\
+.cache/\n\
+\n\
+# Runtime logs\n\
+logs/\n\
+*.log\n\
+*.log.*\n\
+\n\
+# Browser/electron caches (gstack, openclaw, codex web UI)\n\
+Cache/\n\
+Cache_Data/\n\
+GPUCache/\n\
+Code Cache/\n\
+blob_storage/\n\
+\n\
+# Sqlite write-ahead and shared-memory sidecars (the .sqlite itself still syncs)\n\
+*.sqlite-wal\n\
+*.sqlite-shm\n\
+\n\
+# OS noise\n\
+.DS_Store\n\
 \n\
 # Add extra ignore patterns below.\n"
 }
@@ -1686,12 +1702,9 @@ dist/
     }
 
     #[test]
-    fn sync_create_args_include_generated_ignores_without_secret_ignores() {
+    fn sync_create_args_use_user_ignore_template_without_secret_ignores() {
         let local_path = PathBuf::from("/tmp/source");
-        let ignore_patterns = DEFAULT_SYNC_IGNORES
-            .iter()
-            .map(|pattern| pattern.to_string())
-            .collect::<Vec<_>>();
+        let ignore_patterns = parse_ignore_patterns(default_ignore_file());
 
         let args = sync_create_args(
             "uc-test-codex",
@@ -1700,11 +1713,17 @@ dist/
             &ignore_patterns,
         );
 
-        assert!(args.contains(&"--ignore=node_modules/".to_string()));
         assert!(args.contains(&"--ignore=.git/".to_string()));
+        assert!(args.contains(&"--ignore=node_modules/".to_string()));
+        assert!(args.contains(&"--ignore=logs/".to_string()));
+        assert!(args.contains(&"--ignore=*.log".to_string()));
+        assert!(args.contains(&"--ignore=Cache/".to_string()));
+        assert!(args.contains(&"--ignore=*.sqlite-wal".to_string()));
+        assert!(args.contains(&"--ignore=.DS_Store".to_string()));
         assert!(!args.contains(&"--ignore=.env".to_string()));
         assert!(!args.contains(&"--ignore=auth.json".to_string()));
         assert_eq!(args[args.len() - 2], "/tmp/source");
+        assert!(DEFAULT_SYNC_IGNORES.is_empty());
     }
 
     #[test]
