@@ -1,8 +1,10 @@
 # UltraContext
 
-> One context layer for every AI agent on every machine.
+> Same Context, Everywhere.
 
-UltraContext syncs your Claude, Codex, and other agent session folders into a single workspace, then lets any agent search across all of it. Local-first. SSH-backed. No servers, no databases, no lock-in.
+One context layer for every AI agent on every machine.
+
+UltraContext automatically captures everything Claude Code, Codex and OpenClaw do during sessions and syncs into a single workspace folder, then lets any agent search across all of it through a CLI. Written entirely in rust and open source, as it should be.
 
 ```sh
 uc init user@vps --host-id macbook
@@ -22,15 +24,21 @@ Agents forget across sessions, machines, and tools. UltraContext makes their mem
 ## How it works
 
 ```text
-~/.claude   ─┐
-~/.codex    ─┼──▶  ~/.ultracontext/workspace/sessions/<host>/<agent>/
-~/.openclaw ─┘                       │
-                                     ▼
-                                 uc search  ──▶  Claude (or any agent)
+                                       local  or  remote
+                           ┌──────────────────────────────────────┐
+~/.claude    ─┐            │  ~/.ultracontext/                    │
+~/.codex     ─┼─ realtime ▶│   └── workspace/                     │
+~/.openclaw  ─┘            │        └── sessions/                 │
+                           │             └── <host>/              │
+                           │                  └── <agent>/        │
+                           └──────────────────────────────────────┘
+                                           │
+                                           ▼
+                                       uc search  ──▶  Claude (or any agent)
 ```
 
-- One-way sync, real-time, conflict-free.
-- SSH is the only transport. Works with any VPS or local machine.
+- Conflict-free, one-way sync.
+- Workspace lives wherever you want — your laptop, your VPS, your homelab.
 - Claude is the default search agent. Swap it for any CLI tool that takes a prompt.
 
 ## Install
