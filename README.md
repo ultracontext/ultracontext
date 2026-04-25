@@ -4,29 +4,6 @@
 
 UltraContext automatically captures everything Claude Code, Codex and OpenClaw do during sessions and syncs into a single workspace folder, then lets any agent search across all of it through a CLI. Written entirely in rust and open source, as it should be.
 
-## Why
-
-Agents forget across sessions, machines, and tools. UltraContext makes their memory portable:
-
-- **Unified workspace** — Claude on your laptop, Codex on your desktop, OpenClaw on a VPS, all in one tree.
-- **Files are truth** — raw session files, no proprietary format, no migration risk.
-- **Agentic search** — Claude recursively reads the workspace and gets the relevant context on demand. No index to rebuild.
-- **Self-hosted by default** — your machine, your VPS, your data.
-
-## How it works
-
-```text
-~/.claude   ─┐
-~/.codex    ─┼──▶  ~/.ultracontext/workspace/sessions/<host>/<agent>/
-~/.openclaw ─┘                       │
-                                     ▼
-                                 uc search  ──▶  Claude (or any agent)
-```
-
-- One-way sync, real-time, conflict-free.
-- Workspace lives wherever you want — your laptop, your VPS, your homelab.
-- Claude is the default search agent. Swap it for any CLI tool that takes a prompt.
-
 ## Install
 
 ```sh
@@ -67,6 +44,29 @@ uc source add openclaw ~/.openclaw
 ```
 
 Sync starts immediately.
+
+## Why
+
+Agents forget across sessions, machines, and tools. UltraContext makes their memory portable:
+
+- **Unified workspace** — Claude on your laptop, Codex on your desktop, OpenClaw on a VPS, all in one tree.
+- **Files are truth** — raw session files, no proprietary format, no migration risk.
+- **Agentic search** — Claude recursively reads the workspace and gets the relevant context on demand. No index to rebuild.
+- **Self-hosted by default** — your machine, your VPS, your data.
+
+## How it works
+
+```text
+~/.claude   ─┐
+~/.codex    ─┼──▶  ~/.ultracontext/workspace/sessions/<host>/<agent>/
+~/.openclaw ─┘                       │
+                                     ▼
+                                 uc search  ──▶  Claude (or any agent)
+```
+
+- One-way sync, real-time, conflict-free.
+- Workspace lives wherever you want — your laptop, your VPS, your homelab.
+- Claude is the default search agent. Swap it for any CLI tool that takes a prompt.
 
 ## Commands
 
