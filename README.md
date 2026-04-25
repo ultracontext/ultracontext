@@ -137,7 +137,7 @@ Config reloads on every command. Source changes apply immediately. Global settin
 
 ## Search
 
-`uc search` runs your configured search command against the workspace with a context-engineer prompt. The agent returns relevant context to inject into another agent's prompt — not a final answer.
+`uc search` runs your configured search command against the workspace with a context-engineer prompt. The agent returns relevant context on demand to inject into another agent's prompt — not a final answer.
 
 Customize the prompt:
 
