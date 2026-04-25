@@ -47,7 +47,7 @@ Sync starts immediately.
 
 ## Why
 
-Agents forget across sessions, machines, and tools. UltraContext makes their memory portable:
+Agents need horizontal intelligence, so they remain sharp and lean across sessions, machines, and tools by getting relevant context on demand.
 
 - **Unified workspace** — Claude on your laptop, Codex on your desktop, OpenClaw on a VPS, all in one tree.
 - **Files are truth** — raw session files, no proprietary format, no migration risk.
