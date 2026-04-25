@@ -208,31 +208,9 @@ fn sync_start() -> Result<()> {
     ensure_ignore_file()?;
 
     let existing = capture_command("mutagen", ["sync", "list"])?;
-    let ignore_patterns = sync_ignore_patterns()?;
 
     for source in enabled_sources(&config) {
-        let local_path = expand_home(&source.local_path)?;
-        if !local_path.exists() {
-            println!(
-                "skip {}: local path does not exist ({})",
-                source.agent,
-                local_path.display()
-            );
-            continue;
-        }
-
-        let name = mutagen_session_name(&config, source);
-        if existing.contains(&format!("Name: {name}")) {
-            println!("resume {name}");
-            run_command("mutagen", ["sync", "resume", name.as_str()])?;
-            run_command("mutagen", ["sync", "flush", name.as_str()])?;
-            continue;
-        }
-
-        let remote_endpoint = remote_endpoint(&config, source);
-        println!("create {name}");
-        let args = sync_create_args(&name, &local_path, remote_endpoint, &ignore_patterns);
-        run_command("mutagen", args)?;
+        sync_start_source(&config, source, &existing)?;
     }
 
     Ok(())
@@ -247,9 +225,7 @@ fn sync_stop() -> Result<()> {
     require_command("mutagen")?;
     let config = load_config()?;
     for source in enabled_sources(&config) {
-        let name = mutagen_session_name(&config, source);
-        println!("pause {name}");
-        run_command("mutagen", ["sync", "pause", name.as_str()])?;
+        sync_pause_source(&config, source)?;
     }
     Ok(())
 }
@@ -345,26 +321,48 @@ fn source_add(args: &[String]) -> Result<()> {
     }
 
     let mut config = load_config()?;
+    let old_source = config
+        .sources
+        .iter()
+        .find(|source| source.agent == name)
+        .cloned();
     let existed = upsert_source(&mut config, name, path, enabled)?;
     save_config(&config)?;
+    let source = find_source(&config, name)?.clone();
+    let path_changed = old_source
+        .as_ref()
+        .map(|source| source.local_path != path)
+        .unwrap_or(false);
 
     if existed {
         println!("source {name}: updated");
     } else {
         println!("source {name}: added");
     }
-    println!("Run `uc sync reset` to apply source changes.");
+    if path_changed {
+        if let Some(old_source) = old_source.as_ref() {
+            apply_source_sync_terminate(&config, old_source);
+        }
+    }
+    if enabled {
+        apply_source_sync_start(&config, &source);
+    } else if existed && !path_changed {
+        apply_source_sync_pause(&config, &source);
+    } else {
+        println!("source {name}: sync not started because source is disabled");
+    }
     Ok(())
 }
 
 fn source_remove(args: &[String]) -> Result<()> {
     let name = single_source_name_arg(args, "remove")?;
     let mut config = load_config()?;
+    let source = find_source(&config, name)?.clone();
     remove_source(&mut config, name)?;
     save_config(&config)?;
 
     println!("source {name}: removed");
-    println!("Run `uc sync reset` to terminate old sync sessions.");
+    apply_source_sync_terminate(&config, &source);
     Ok(())
 }
 
@@ -374,9 +372,14 @@ fn source_set_enabled(args: &[String], enabled: bool) -> Result<()> {
     let mut config = load_config()?;
     set_source_enabled(&mut config, name, enabled)?;
     save_config(&config)?;
+    let source = find_source(&config, name)?.clone();
 
     println!("source {name}: {action}d");
-    println!("Run `uc sync reset` to apply source changes.");
+    if enabled {
+        apply_source_sync_start(&config, &source);
+    } else {
+        apply_source_sync_pause(&config, &source);
+    }
     Ok(())
 }
 
@@ -581,6 +584,14 @@ fn enabled_sources(config: &Config) -> impl Iterator<Item = &Source> {
     config.sources.iter().filter(|source| source.enabled)
 }
 
+fn find_source<'a>(config: &'a Config, name: &str) -> Result<&'a Source> {
+    config
+        .sources
+        .iter()
+        .find(|source| source.agent == name)
+        .ok_or_else(|| UcError::Message(format!("source not found: {name}")))
+}
+
 fn upsert_source(config: &mut Config, name: &str, path: &str, enabled: bool) -> Result<bool> {
     validate_source_name(name)?;
     if let Some(source) = config
@@ -652,6 +663,77 @@ fn owned_mutagen_session_names(config: &Config, mutagen_list: &str) -> Vec<Strin
         .filter(|name| name.starts_with(&prefix))
         .map(ToString::to_string)
         .collect()
+}
+
+fn sync_start_source(config: &Config, source: &Source, existing: &str) -> Result<()> {
+    let local_path = expand_home(&source.local_path)?;
+    if !local_path.exists() {
+        println!(
+            "skip {}: local path does not exist ({})",
+            source.agent,
+            local_path.display()
+        );
+        return Ok(());
+    }
+
+    let name = mutagen_session_name(config, source);
+    if existing.contains(&format!("Name: {name}")) {
+        println!("resume {name}");
+        run_command("mutagen", ["sync", "resume", name.as_str()])?;
+        run_command("mutagen", ["sync", "flush", name.as_str()])?;
+        return Ok(());
+    }
+
+    prepare_remote_workspace(config)?;
+    ensure_ignore_file()?;
+
+    let remote_endpoint = remote_endpoint(config, source);
+    println!("create {name}");
+    let ignore_patterns = sync_ignore_patterns()?;
+    let args = sync_create_args(&name, &local_path, remote_endpoint, &ignore_patterns);
+    run_command("mutagen", args)
+}
+
+fn sync_pause_source(config: &Config, source: &Source) -> Result<()> {
+    let name = mutagen_session_name(config, source);
+    println!("pause {name}");
+    run_command("mutagen", ["sync", "pause", name.as_str()])
+}
+
+fn sync_terminate_source(config: &Config, source: &Source) -> Result<()> {
+    let existing = capture_command("mutagen", ["sync", "list"])?;
+    let name = mutagen_session_name(config, source);
+    if existing.contains(&format!("Name: {name}")) {
+        println!("terminate {name}");
+        run_command("mutagen", ["sync", "terminate", name.as_str()])?;
+    } else {
+        println!("source {}: no sync session to terminate", source.agent);
+    }
+    Ok(())
+}
+
+fn apply_source_sync_start(config: &Config, source: &Source) {
+    if let Err(error) = require_command("mutagen")
+        .and_then(|()| capture_command("mutagen", ["sync", "list"]))
+        .and_then(|existing| sync_start_source(config, source, &existing))
+    {
+        println!("source {}: sync not started ({error})", source.agent);
+    }
+}
+
+fn apply_source_sync_pause(config: &Config, source: &Source) {
+    if let Err(error) = require_command("mutagen").and_then(|()| sync_pause_source(config, source))
+    {
+        println!("source {}: sync not paused ({error})", source.agent);
+    }
+}
+
+fn apply_source_sync_terminate(config: &Config, source: &Source) {
+    if let Err(error) =
+        require_command("mutagen").and_then(|()| sync_terminate_source(config, source))
+    {
+        println!("source {}: sync not terminated ({error})", source.agent);
+    }
 }
 
 fn sync_create_args(

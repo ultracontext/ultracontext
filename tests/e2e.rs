@@ -146,6 +146,8 @@ fn syncs_custom_source_lifecycle_over_local_mutagen() {
     let remote_root = home.join("ultracontext-root");
     let source_root = home.join("OpenClaw");
     let source_file = source_root.join("notes").join("context.txt");
+    let moved_source_root = home.join("OpenClawMoved");
+    let moved_source_file = moved_source_root.join("notes").join("moved.txt");
     let source_session = format!("uc-{host_id}-openclaw");
     let _cleanup = LocalSourceCleanup {
         home: home.clone(),
@@ -153,7 +155,13 @@ fn syncs_custom_source_lifecycle_over_local_mutagen() {
     };
 
     fs::create_dir_all(source_file.parent().unwrap()).unwrap();
+    fs::create_dir_all(moved_source_file.parent().unwrap()).unwrap();
     fs::write(&source_file, format!("custom source marker {run_id}\n")).unwrap();
+    fs::write(
+        &moved_source_file,
+        format!("custom source moved {run_id}\n"),
+    )
+    .unwrap();
 
     let init = uc(&home)
         .args([
@@ -174,9 +182,6 @@ fn syncs_custom_source_lifecycle_over_local_mutagen() {
         .unwrap();
     assert_success("uc source add", add);
 
-    let start = uc(&home).args(["sync", "start"]).output().unwrap();
-    assert_success("uc sync start", start);
-
     let synced_file = remote_root
         .join("workspace")
         .join("sessions")
@@ -188,31 +193,50 @@ fn syncs_custom_source_lifecycle_over_local_mutagen() {
     let synced_text = fs::read_to_string(&synced_file).unwrap();
     assert!(synced_text.contains(&run_id), "{synced_text}");
 
+    let update = uc(&home)
+        .args(["source", "add", "openclaw", "~/OpenClawMoved"])
+        .output()
+        .unwrap();
+    assert_success("uc source add existing source", update);
+
+    let moved_synced_file = remote_root
+        .join("workspace")
+        .join("sessions")
+        .join(&host_id)
+        .join("openclaw")
+        .join("notes")
+        .join("moved.txt");
+    wait_for_local_file_text(
+        &moved_synced_file,
+        &format!("moved {run_id}"),
+        Duration::from_secs(30),
+    );
+
     let disable = uc(&home)
         .args(["source", "disable", "openclaw"])
         .output()
         .unwrap();
     assert_success("uc source disable", disable);
 
-    let reset = uc(&home).args(["sync", "reset"]).output().unwrap();
-    assert_success("uc sync reset after disable", reset);
-
     let status = uc(&home).args(["sync", "status"]).output().unwrap();
     let status_text = String::from_utf8_lossy(&status.stdout).to_string();
     assert_success("uc sync status after disable", status);
-    assert!(!status_text.contains(&source_session), "{status_text}");
+    assert!(status_text.contains(&source_session), "{status_text}");
+    assert!(status_text.contains("Paused"), "{status_text}");
 
     let enable = uc(&home)
         .args(["source", "enable", "openclaw"])
         .output()
         .unwrap();
     assert_success("uc source enable", enable);
-    fs::write(&source_file, format!("custom source re-enabled {run_id}\n")).unwrap();
+    fs::write(
+        &moved_source_file,
+        format!("custom source re-enabled {run_id}\n"),
+    )
+    .unwrap();
 
-    let restart = uc(&home).args(["sync", "start"]).output().unwrap();
-    assert_success("uc sync start after enable", restart);
     wait_for_local_file_text(
-        &synced_file,
+        &moved_synced_file,
         &format!("re-enabled {run_id}"),
         Duration::from_secs(30),
     );
@@ -222,9 +246,6 @@ fn syncs_custom_source_lifecycle_over_local_mutagen() {
         .output()
         .unwrap();
     assert_success("uc source remove", remove);
-
-    let reset = uc(&home).args(["sync", "reset"]).output().unwrap();
-    assert_success("uc sync reset after remove", reset);
 
     let status = uc(&home).args(["sync", "status"]).output().unwrap();
     let status_text = String::from_utf8_lossy(&status.stdout).to_string();

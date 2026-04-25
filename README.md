@@ -36,8 +36,9 @@ Add another source:
 
 ```sh
 uc source add openclaw ~/.openclaw
-uc sync reset
 ```
+
+Adding a source starts that source sync immediately when Mutagen is available.
 
 Search your UltraContext:
 
@@ -45,7 +46,7 @@ Search your UltraContext:
 uc search "what changed in the sync CLI?"
 ```
 
-If sync source paths or sync settings change, recreate the sync sessions:
+After changing global sync settings or ignore rules, recreate all sync sessions:
 
 ```sh
 uc sync reset
@@ -116,6 +117,8 @@ Add or update a source:
 ultracontext source add openclaw ~/.openclaw
 ```
 
+Adding or enabling a source starts its sync immediately when Mutagen is available. Updating an existing source path recreates that source sync.
+
 Disable or remove a source:
 
 ```sh
@@ -123,7 +126,9 @@ ultracontext source disable openclaw
 ultracontext source remove openclaw
 ```
 
-Recreate sync sessions after changing source paths:
+Disabling pauses that source sync. Removing terminates that source sync.
+
+Recreate all sync sessions after changing global sync settings or ignore rules:
 
 ```sh
 ultracontext sync reset
@@ -171,7 +176,7 @@ path = "~/.openclaw"
 enabled = true
 ```
 
-Source names become folder names and Mutagen session names, so they are intentionally restricted to letters, numbers, hyphens, and underscores. Source changes affect Mutagen sessions; run `uc sync reset` after adding, removing, disabling, or changing a source.
+Source names become folder names and Mutagen session names, so they are intentionally restricted to letters, numbers, hyphens, and underscores.
 
 Ignore file:
 
@@ -203,7 +208,7 @@ command = "claude"
 args = "--dangerously-skip-permissions --effort medium --model sonnet"
 ```
 
-Config is read fresh on every `uc` command. Search command changes apply on the next `uc search`; sync source, remote, or ignore changes need `uc sync reset` to recreate Mutagen sessions.
+Config is read fresh on every `uc` command. Search command changes apply on the next `uc search`. `uc source` commands apply their own source sync changes immediately when Mutagen is available. Manual config edits to sources, remote settings, or ignore rules need `uc sync reset` to recreate Mutagen sessions.
 
 ## Development
 
