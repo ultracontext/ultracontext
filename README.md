@@ -1,239 +1,184 @@
 # UltraContext
 
-UltraContext 2.0 is a context sync CLI.
+> One context layer for every AI agent on every machine.
 
-It syncs local agent context into one UltraContext workspace so Claude, Codex, and other agents can recover context across machines.
-
-## Quickstart
-
-Install the CLI from this checkout:
+UltraContext syncs your Claude, Codex, and other agent session folders into a single workspace, then lets any agent search across all of it. Local-first. SSH-backed. No servers, no databases, no lock-in.
 
 ```sh
-cargo install --path . --force
+uc init user@vps --host-id macbook
+uc sync start
+uc search "what did we ship in the rewrite branch?"
+```
+
+## Why
+
+Agents forget across sessions, machines, and tools. UltraContext makes their memory portable:
+
+- **Unified workspace** — Claude on your laptop, Codex on your desktop, OpenClaw on a VPS, all in one tree.
+- **Files are truth** — raw session files, no proprietary format, no migration risk.
+- **Agentic search** — Claude reads the workspace and returns the relevant context. No index to rebuild.
+- **Self-hosted by default** — your machine, your VPS, your data.
+
+## How it works
+
+```text
+~/.claude   ─┐
+~/.codex    ─┼─ Mutagen ─▶  ~/.ultracontext/workspace/sessions/<host>/<agent>/
+~/.openclaw ─┘                              │
+                                            ▼
+                                        uc search  ──▶  Claude (or any agent)
+```
+
+- **Mutagen** does the sync. One-way, real-time, conflict-free.
+- **SSH** is the only transport. Works with any VPS or local machine.
+- **Claude** is the default search agent. Swap it for any CLI tool that takes a prompt.
+
+## Install
+
+```sh
+cargo install ultracontext
 ln -sf ~/.cargo/bin/ultracontext ~/.cargo/bin/uc
 ```
 
-Initialize this machine:
+Requirements: [Mutagen](https://mutagen.io/) (`brew install mutagen-io/mutagen/mutagen`), SSH, and [Claude Code](https://docs.claude.com/en/docs/claude-code) for search.
+
+Verify:
 
 ```sh
-uc init user@host --host-id my-mac
+uc doctor
 ```
 
-Initialize on the machine that owns the UltraContext folder:
+## Quickstart
+
+**Remote workspace** (recommended — sync from many machines into one VPS):
+
+```sh
+uc init user@vps --host-id macbook
+uc sync start
+uc search "where did we leave off on the rewrite?"
+```
+
+**Local workspace** (single machine):
 
 ```sh
 uc init local --host-id mini
-```
-
-Start syncing local agent context:
-
-```sh
 uc sync start
-uc sync status
+uc search "latest codex session"
 ```
 
-Add another source:
+**Add another source**:
 
 ```sh
 uc source add openclaw ~/.openclaw
 ```
 
-Adding a source starts that source sync immediately when Mutagen is available.
+Sync starts immediately.
 
-Search your UltraContext:
+## Commands
 
-```sh
-uc search "what changed in the sync CLI?"
-```
+| Command | What it does |
+|---|---|
+| `uc init [local\|user@host]` | Configure workspace target and detect agent folders |
+| `uc sync start` | Start syncing every enabled source |
+| `uc sync status` | Show Mutagen session state |
+| `uc sync stop` | Pause all sync sessions |
+| `uc sync reset` | Recreate sessions after editing global settings or ignore rules |
+| `uc source add <name> <path>` | Add and start a new source |
+| `uc source list` | List configured sources and their state |
+| `uc source enable <name>` / `disable <name>` | Toggle a single source |
+| `uc source remove <name>` | Stop and remove a source |
+| `uc search "<query>"` | Ask the search agent for relevant context |
+| `uc doctor` | Verify dependencies, config, and remote access |
 
-After changing global sync settings or ignore rules, recreate all sync sessions:
+`uc` and `ultracontext` are the same binary.
 
-```sh
-uc sync reset
-```
-
-## Model
-
-UltraContext runs locally, uses Mutagen for sync, and searches the UltraContext workspace with Claude. The workspace can be local (`uc init local`) or remote over SSH (`uc init user@host`).
-
-```text
-~/.claude  ----\
-               \
-~/.codex   ----->  ~/.ultracontext/workspace/sessions/<host-id>/<agent>/
-```
-
-The remote layout keeps machine and agent boundaries explicit:
+## Workspace layout
 
 ```text
 ~/.ultracontext/
+  config.toml
   workspace/
     sessions/
       <host-id>/
         claude/
-          ...
         codex/
-          ...
+        <custom-source>/
 ```
 
-Sync is one-way: local agent folders are mirrored into the UltraContext workspace. In remote mode, search runs over SSH on the remote host. In local mode, search runs directly against the local workspace.
-
-UltraContext does not redact source files or search output. It does ignore generated dependency/build/cache directories by default to keep sync and search usable.
-
-## CLI
-
-Initialize a machine:
-
-```sh
-ultracontext init user@host --host-id my-mac
-```
-
-Initialize local workspace mode:
-
-```sh
-ultracontext init local --host-id mini
-```
-
-Start sync:
-
-```sh
-ultracontext sync start
-```
-
-Check sync:
-
-```sh
-ultracontext sync status
-```
-
-List sources:
-
-```sh
-ultracontext source list
-```
-
-Add or update a source:
-
-```sh
-ultracontext source add openclaw ~/.openclaw
-```
-
-Adding or enabling a source starts its sync immediately when Mutagen is available. Updating an existing source path recreates that source sync.
-
-Disable or remove a source:
-
-```sh
-ultracontext source disable openclaw
-ultracontext source remove openclaw
-```
-
-Disabling pauses that source sync. Removing terminates that source sync.
-
-Recreate all sync sessions after changing global sync settings or ignore rules:
-
-```sh
-ultracontext sync reset
-```
-
-Search context:
-
-```sh
-ultracontext search "what changed in the sync CLI?"
-```
-
-`uc` should point to the same binary as `ultracontext`:
-
-```sh
-uc sync start
-uc search "what changed?"
-```
+Host comes first, then agent. Source names become folder names, so they are limited to letters, numbers, hyphens, and underscores.
 
 ## Config
 
-Local config:
-
-```text
-~/.ultracontext/config.toml
-```
-
-Default remote root:
-
-```text
-~/.ultracontext
-```
-
-Local mode stores and searches the workspace on the same machine:
+`~/.ultracontext/config.toml`:
 
 ```toml
-remote = "local"
+remote      = "user@vps"        # or "local"
 remote_root = "~/.ultracontext"
-```
+host_id     = "macbook"
 
-Sources are configured under `[sources.<name>]`:
+[search]
+command = "claude"
+args    = "--dangerously-skip-permissions --effort medium --model sonnet"
 
-```toml
-[sources.openclaw]
-path = "~/.openclaw"
+[sources.claude]
+path    = "~/.claude"
+enabled = true
+
+[sources.codex]
+path    = "~/.codex"
 enabled = true
 ```
 
-Source names become folder names and Mutagen session names, so they are intentionally restricted to letters, numbers, hyphens, and underscores.
+Config reloads on every command. Source changes apply immediately. Global setting and ignore changes apply on `uc sync reset`.
 
-Ignore file:
+## Ignore rules
 
-```text
-~/.ultracontextignore
-```
-
-Built-in ignores:
+Every ignore lives in `~/.ultracontextignore`. Nothing is hardcoded. `uc init` and `uc sync start` seed the file with opinionated defaults you can comment out, edit, or extend:
 
 ```text
-node_modules/
 .git/
-target/
-dist/
-build/
-.next/
-.cache/
+node_modules/   target/   dist/   build/   .next/   .cache/
+logs/   *.log   *.log.*
+Cache/   Cache_Data/   GPUCache/   Code Cache/   blob_storage/
+*.sqlite-wal   *.sqlite-shm
+.DS_Store
 ```
 
-Add extra generated-noise patterns to `.ultracontextignore`. Secrets and agent context files such as `.env`, `auth.json`, `credentials.json`, and `session-env` are not ignored by default. Ignore changes apply when sync sessions are created, so run `uc sync reset` after editing `.ultracontextignore`.
+Run `uc sync reset` after editing the file.
 
-`uc init` and `uc sync start` create a template `.ultracontextignore` if it does not exist.
+Secrets and agent context (`.env`, `auth.json`, `credentials.json`) are **never** redacted. Files are the truth.
 
-Customize the remote search command in `config.toml`:
+## Search
+
+`uc search` runs your configured search command against the workspace with a context-engineer prompt. The agent returns relevant context to inject into another agent's prompt — not a final answer.
+
+Customize the prompt:
+
+```text
+src/prompts/context-engineer.md
+```
+
+Customize the agent:
 
 ```toml
 [search]
-command = "claude"
-args = "--dangerously-skip-permissions --effort medium --model sonnet"
+command = "codex"               # or any CLI that accepts a prompt
+args    = "--model gpt-5"
 ```
 
-Config is read fresh on every `uc` command. Search command changes apply on the next `uc search`. `uc source` commands apply their own source sync changes immediately when Mutagen is available. Manual config edits to sources, remote settings, or ignore rules need `uc sync reset` to recreate Mutagen sessions.
+## Status
+
+UltraContext 2.0 is in alpha. The sync engine, source management, ignore rules, and remote/local search work end-to-end. The next milestones are sharper install/bootstrap, deeper ignore defaults, and `uc source status`.
 
 ## Development
 
-Run unit and integration tests:
-
 ```sh
-cargo test
+cargo test                                       # unit + integration
+cargo test --test e2e -- --ignored --nocapture   # real Mutagen E2E
 ```
 
-Run the real E2E test:
+Real E2E needs `UC_E2E_REMOTE=user@host`. Optional `UC_E2E_SEARCH=1` exercises remote Claude search. Copy `.envrc.example` to `.envrc` for local runs.
 
-```sh
-cargo test --test e2e -- --ignored --nocapture
-```
+## License
 
-The E2E test needs a remote SSH target:
-
-```sh
-export UC_E2E_REMOTE=user@host
-```
-
-Enable the remote Claude search step:
-
-```sh
-export UC_E2E_SEARCH=1
-```
-
-For local development, copy `.envrc.example` to `.envrc`. `.envrc` is ignored by git.
+Apache-2.0.
