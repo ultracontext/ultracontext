@@ -32,6 +32,13 @@ uc sync start
 uc sync status
 ```
 
+Add another source:
+
+```sh
+uc source add openclaw ~/.openclaw
+uc sync reset
+```
+
 Search your UltraContext:
 
 ```sh
@@ -97,6 +104,25 @@ Check sync:
 ultracontext sync status
 ```
 
+List sources:
+
+```sh
+ultracontext source list
+```
+
+Add or update a source:
+
+```sh
+ultracontext source add openclaw ~/.openclaw
+```
+
+Disable or remove a source:
+
+```sh
+ultracontext source disable openclaw
+ultracontext source remove openclaw
+```
+
 Recreate sync sessions after changing source paths:
 
 ```sh
@@ -136,6 +162,16 @@ Local mode stores and searches the workspace on the same machine:
 remote = "local"
 remote_root = "~/.ultracontext"
 ```
+
+Sources are configured under `[sources.<name>]`:
+
+```toml
+[sources.openclaw]
+path = "~/.openclaw"
+enabled = true
+```
+
+Source names become folder names and Mutagen session names, so they are intentionally restricted to letters, numbers, hyphens, and underscores. Source changes affect Mutagen sessions; run `uc sync reset` after adding, removing, disabling, or changing a source.
 
 Ignore file:
 

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::env;
 use std::ffi::OsStr;
 use std::fmt;
@@ -88,6 +89,7 @@ fn run(args: Vec<String>) -> Result<()> {
         }
         Some("init") => cmd_init(&args[2..]),
         Some("sync") => cmd_sync(&args[2..]),
+        Some("source" | "sources") => cmd_source(&args[2..]),
         Some("search") => cmd_search(&args[2..]),
         Some("doctor") => cmd_doctor(),
         Some("version" | "-V" | "--version") => {
@@ -100,7 +102,7 @@ fn run(args: Vec<String>) -> Result<()> {
 
 fn print_help() {
     println!(
-        "UltraContext {}\n\nUsage:\n  ultracontext init [local|user@host]\n  ultracontext sync <start|status|stop|reset>\n  ultracontext search <query>\n  ultracontext doctor\n\nAlias:\n  uc should point to the same binary as ultracontext.\n",
+        "UltraContext {}\n\nUsage:\n  ultracontext init [local|user@host]\n  ultracontext sync <start|status|stop|reset>\n  ultracontext source <list|add|remove|enable|disable>\n  ultracontext search <query>\n  ultracontext doctor\n\nAlias:\n  uc should point to the same binary as ultracontext.\n",
         env!("CARGO_PKG_VERSION")
     );
 }
@@ -257,8 +259,7 @@ fn sync_reset() -> Result<()> {
     let config = load_config()?;
     let existing = capture_command("mutagen", ["sync", "list"])?;
 
-    for source in &config.sources {
-        let name = mutagen_session_name(&config, source);
+    for name in owned_mutagen_session_names(&config, &existing) {
         if existing.contains(&format!("Name: {name}")) {
             println!("terminate {name}");
             run_command("mutagen", ["sync", "terminate", name.as_str()])?;
@@ -266,6 +267,127 @@ fn sync_reset() -> Result<()> {
     }
 
     sync_start()
+}
+
+fn cmd_source(args: &[String]) -> Result<()> {
+    match args.first().map(String::as_str) {
+        Some("list" | "ls") => source_list(),
+        Some("add") => source_add(&args[1..]),
+        Some("remove" | "rm") => source_remove(&args[1..]),
+        Some("enable") => source_set_enabled(&args[1..], true),
+        Some("disable") => source_set_enabled(&args[1..], false),
+        Some("-h" | "--help") | None => {
+            print_source_help();
+            Ok(())
+        }
+        Some(command) => Err(UcError::Message(format!(
+            "unknown source command: {command}"
+        ))),
+    }
+}
+
+fn print_source_help() {
+    println!(
+        "Usage:\n  ultracontext source list\n  ultracontext source add <name> <path> [--disabled]\n  ultracontext source remove <name>\n  ultracontext source enable <name>\n  ultracontext source disable <name>\n\nSource names may contain letters, numbers, hyphens, and underscores."
+    );
+}
+
+fn source_list() -> Result<()> {
+    let config = load_config()?;
+    if config.sources.is_empty() {
+        println!("no sources configured");
+        return Ok(());
+    }
+
+    for source in &config.sources {
+        let state = if source.enabled {
+            "enabled"
+        } else {
+            "disabled"
+        };
+        println!("{:<16} {:<8} {}", source.agent, state, source.local_path);
+    }
+    Ok(())
+}
+
+fn source_add(args: &[String]) -> Result<()> {
+    let mut enabled = true;
+    let mut positional = Vec::<&str>::new();
+
+    for arg in args {
+        match arg.as_str() {
+            "--disabled" => enabled = false,
+            "--enabled" => enabled = true,
+            "-h" | "--help" => {
+                println!("Usage: ultracontext source add <name> <path> [--disabled]");
+                return Ok(());
+            }
+            value if value.starts_with('-') => {
+                return Err(UcError::Message(format!(
+                    "unknown source add option: {value}"
+                )));
+            }
+            value => positional.push(value),
+        }
+    }
+
+    if positional.len() != 2 {
+        return Err(UcError::Message(
+            "usage: ultracontext source add <name> <path> [--disabled]".to_string(),
+        ));
+    }
+
+    let name = positional[0];
+    let path = positional[1];
+    validate_source_name(name)?;
+    if path.trim().is_empty() {
+        return Err(UcError::Message("source path cannot be empty".to_string()));
+    }
+
+    let mut config = load_config()?;
+    let existed = upsert_source(&mut config, name, path, enabled)?;
+    save_config(&config)?;
+
+    if existed {
+        println!("source {name}: updated");
+    } else {
+        println!("source {name}: added");
+    }
+    println!("Run `uc sync reset` to apply source changes.");
+    Ok(())
+}
+
+fn source_remove(args: &[String]) -> Result<()> {
+    let name = single_source_name_arg(args, "remove")?;
+    let mut config = load_config()?;
+    remove_source(&mut config, name)?;
+    save_config(&config)?;
+
+    println!("source {name}: removed");
+    println!("Run `uc sync reset` to terminate old sync sessions.");
+    Ok(())
+}
+
+fn source_set_enabled(args: &[String], enabled: bool) -> Result<()> {
+    let action = if enabled { "enable" } else { "disable" };
+    let name = single_source_name_arg(args, action)?;
+    let mut config = load_config()?;
+    set_source_enabled(&mut config, name, enabled)?;
+    save_config(&config)?;
+
+    println!("source {name}: {action}d");
+    println!("Run `uc sync reset` to apply source changes.");
+    Ok(())
+}
+
+fn single_source_name_arg<'a>(args: &'a [String], command: &str) -> Result<&'a str> {
+    if args.len() != 1 || args[0] == "-h" || args[0] == "--help" {
+        return Err(UcError::Message(format!(
+            "usage: ultracontext source {command} <name>"
+        )));
+    }
+    validate_source_name(&args[0])?;
+    Ok(&args[0])
 }
 
 fn cmd_search(args: &[String]) -> Result<()> {
@@ -459,6 +581,47 @@ fn enabled_sources(config: &Config) -> impl Iterator<Item = &Source> {
     config.sources.iter().filter(|source| source.enabled)
 }
 
+fn upsert_source(config: &mut Config, name: &str, path: &str, enabled: bool) -> Result<bool> {
+    validate_source_name(name)?;
+    if let Some(source) = config
+        .sources
+        .iter_mut()
+        .find(|source| source.agent == name)
+    {
+        source.local_path = path.to_string();
+        source.enabled = enabled;
+        Ok(true)
+    } else {
+        config.sources.push(Source {
+            agent: name.to_string(),
+            local_path: path.to_string(),
+            enabled,
+        });
+        Ok(false)
+    }
+}
+
+fn remove_source(config: &mut Config, name: &str) -> Result<()> {
+    validate_source_name(name)?;
+    let before = config.sources.len();
+    config.sources.retain(|source| source.agent != name);
+    if config.sources.len() == before {
+        return Err(UcError::Message(format!("source not found: {name}")));
+    }
+    Ok(())
+}
+
+fn set_source_enabled(config: &mut Config, name: &str, enabled: bool) -> Result<()> {
+    validate_source_name(name)?;
+    let source = config
+        .sources
+        .iter_mut()
+        .find(|source| source.agent == name)
+        .ok_or_else(|| UcError::Message(format!("source not found: {name}")))?;
+    source.enabled = enabled;
+    Ok(())
+}
+
 fn remote_dir(config: &Config, source: &Source) -> String {
     format!(
         "{}/workspace/sessions/{}/{}",
@@ -479,6 +642,16 @@ fn remote_endpoint(config: &Config, source: &Source) -> String {
 
 fn mutagen_session_name(config: &Config, source: &Source) -> String {
     format!("uc-{}-{}", config.host_id, source.agent)
+}
+
+fn owned_mutagen_session_names(config: &Config, mutagen_list: &str) -> Vec<String> {
+    let prefix = format!("uc-{}-", config.host_id);
+    mutagen_list
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("Name: "))
+        .filter(|name| name.starts_with(&prefix))
+        .map(ToString::to_string)
+        .collect()
 }
 
 fn sync_create_args(
@@ -561,6 +734,12 @@ fn config_path() -> Result<PathBuf> {
 
 fn ignore_path() -> Result<PathBuf> {
     Ok(home_dir()?.join(IGNORE_FILE))
+}
+
+fn save_config(config: &Config) -> Result<()> {
+    fs::create_dir_all(config_dir()?)?;
+    fs::write(config_path()?, config.to_toml())?;
+    Ok(())
 }
 
 fn check_local_workspace(config: &Config) {
@@ -646,6 +825,28 @@ fn sanitize_id(value: &str) -> String {
     } else {
         trimmed
     }
+}
+
+fn validate_source_name(name: &str) -> Result<()> {
+    if name.is_empty() {
+        return Err(UcError::Message("source name cannot be empty".to_string()));
+    }
+    if name.len() > 64 {
+        return Err(UcError::Message(format!("source name too long: {name}")));
+    }
+    let mut chars = name.chars();
+    let first = chars.next().unwrap();
+    if !first.is_ascii_alphanumeric() {
+        return Err(UcError::Message(format!(
+            "invalid source name: {name}. Use letters, numbers, hyphens, and underscores; start with a letter or number."
+        )));
+    }
+    if !chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_') {
+        return Err(UcError::Message(format!(
+            "invalid source name: {name}. Use letters, numbers, hyphens, and underscores."
+        )));
+    }
+    Ok(())
 }
 
 fn require_value<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a str> {
@@ -918,6 +1119,7 @@ impl Config {
                 if section_name == "search" {
                     section = ConfigSection::Search;
                 } else if let Some(agent) = section_name.strip_prefix("sources.") {
+                    validate_source_name(agent)?;
                     section = ConfigSection::Source;
                     current_source = Some(Source {
                         agent: agent.to_string(),
@@ -985,9 +1187,19 @@ impl Config {
             .collect::<Vec<_>>();
 
         for source in &sources {
+            validate_source_name(&source.agent)?;
             if source.local_path.is_empty() {
                 return Err(UcError::Message(format!(
                     "source {} is incomplete",
+                    source.agent
+                )));
+            }
+        }
+        let mut seen_sources = HashSet::new();
+        for source in &sources {
+            if !seen_sources.insert(source.agent.as_str()) {
+                return Err(UcError::Message(format!(
+                    "duplicate source: {}",
                     source.agent
                 )));
             }
@@ -1120,6 +1332,103 @@ mod tests {
         assert_eq!(
             remote_endpoint(&cfg, &source),
             "/tmp/uc/workspace/sessions/mini/codex"
+        );
+    }
+
+    #[test]
+    fn validates_source_names_for_paths_and_session_names() {
+        for name in ["openclaw", "agent_1", "agent-1", "a1"] {
+            validate_source_name(name).unwrap();
+        }
+
+        for name in ["", ".hidden", "../bad", "bad/name", "bad name", "bad$name"] {
+            assert!(validate_source_name(name).is_err(), "{name}");
+        }
+    }
+
+    #[test]
+    fn parses_custom_source_sections() {
+        let raw = r#"
+remote = "local"
+remote_root = "~/.ultracontext"
+host_id = "mini"
+
+[sources.openclaw]
+path = "~/.openclaw"
+enabled = true
+
+[sources.project_notes]
+path = "~/notes"
+enabled = false
+"#;
+
+        let cfg = Config::from_toml(raw).unwrap();
+
+        assert_eq!(cfg.sources.len(), 2);
+        assert_eq!(cfg.sources[0].agent, "openclaw");
+        assert_eq!(cfg.sources[0].local_path, "~/.openclaw");
+        assert!(cfg.sources[0].enabled);
+        assert_eq!(cfg.sources[1].agent, "project_notes");
+        assert!(!cfg.sources[1].enabled);
+    }
+
+    #[test]
+    fn rejects_invalid_source_sections() {
+        let raw = r#"
+remote = "local"
+remote_root = "~/.ultracontext"
+host_id = "mini"
+
+[sources.bad/name]
+path = "~/.bad"
+enabled = true
+"#;
+
+        assert!(Config::from_toml(raw).is_err());
+    }
+
+    #[test]
+    fn updates_and_removes_sources() {
+        let mut cfg = Config {
+            remote: "local".to_string(),
+            remote_root: "~/.ultracontext".to_string(),
+            host_id: "mini".to_string(),
+            search: SearchConfig {
+                command: "claude".to_string(),
+                args: "--dangerously-skip-permissions".to_string(),
+            },
+            sources: vec![],
+        };
+
+        assert!(!upsert_source(&mut cfg, "openclaw", "~/.openclaw", true).unwrap());
+        assert!(upsert_source(&mut cfg, "openclaw", "~/OpenClaw", false).unwrap());
+        assert_eq!(cfg.sources.len(), 1);
+        assert_eq!(cfg.sources[0].local_path, "~/OpenClaw");
+        assert!(!cfg.sources[0].enabled);
+
+        set_source_enabled(&mut cfg, "openclaw", true).unwrap();
+        assert!(cfg.sources[0].enabled);
+        remove_source(&mut cfg, "openclaw").unwrap();
+        assert!(cfg.sources.is_empty());
+    }
+
+    #[test]
+    fn finds_all_owned_mutagen_sessions_for_reset() {
+        let cfg = Config {
+            remote: "local".to_string(),
+            remote_root: "~/.ultracontext".to_string(),
+            host_id: "mini".to_string(),
+            search: SearchConfig {
+                command: "claude".to_string(),
+                args: "--dangerously-skip-permissions".to_string(),
+            },
+            sources: vec![],
+        };
+        let existing = "Name: uc-mini-claude\nName: uc-mini-oldsource\nName: uc-other-codex\n";
+
+        assert_eq!(
+            owned_mutagen_session_names(&cfg, existing),
+            vec!["uc-mini-claude", "uc-mini-oldsource"]
         );
     }
 

@@ -81,6 +81,61 @@ fn initializes_and_searches_local_workspace() {
 }
 
 #[test]
+fn manages_sources_from_cli() {
+    let run_id = unique_run_id();
+    let host_id = format!("uc-source-{run_id}");
+    let home = env::temp_dir().join(format!("uc-source-home-{run_id}"));
+    let remote_root = home.join("ultracontext-root");
+
+    let init = uc(&home)
+        .args([
+            "init",
+            "local",
+            "--host-id",
+            host_id.as_str(),
+            "--remote-root",
+            remote_root.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert_success("uc init local", init);
+
+    let add = uc(&home)
+        .args(["source", "add", "openclaw", "~/.openclaw"])
+        .output()
+        .unwrap();
+    assert_success("uc source add", add);
+
+    let list = uc(&home).args(["source", "list"]).output().unwrap();
+    let list_stdout = String::from_utf8_lossy(&list.stdout).to_string();
+    assert_success("uc source list", list);
+    assert!(list_stdout.contains("openclaw"), "{list_stdout}");
+    assert!(list_stdout.contains("~/.openclaw"), "{list_stdout}");
+
+    let disable = uc(&home)
+        .args(["source", "disable", "openclaw"])
+        .output()
+        .unwrap();
+    assert_success("uc source disable", disable);
+
+    let config_path = home.join(".ultracontext").join("config.toml");
+    let config = fs::read_to_string(&config_path).unwrap();
+    assert!(config.contains("[sources.openclaw]"), "{config}");
+    assert!(config.contains("enabled = false"), "{config}");
+
+    let remove = uc(&home)
+        .args(["source", "remove", "openclaw"])
+        .output()
+        .unwrap();
+    assert_success("uc source remove", remove);
+
+    let config = fs::read_to_string(&config_path).unwrap();
+    assert!(!config.contains("[sources.openclaw]"), "{config}");
+
+    let _ = fs::remove_dir_all(&home);
+}
+
+#[test]
 #[ignore = "requires UC_E2E_REMOTE=user@host plus ssh/mutagen access"]
 fn syncs_agent_directories_to_remote_workspace() {
     let remote =
