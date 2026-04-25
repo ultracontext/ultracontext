@@ -135,8 +135,6 @@ Config reloads on every command. Source changes apply immediately. Global settin
 
 `~/.ultracontextignore` works like `.gitignore`. Seeded with sensible defaults on `uc init`. Run `uc sync reset` after editing.
 
-Secrets are never redacted. Files are the truth.
-
 ## Search
 
 `uc search` runs your configured search command against the workspace with a context-engineer prompt. The agent returns relevant context to inject into another agent's prompt — not a final answer.
