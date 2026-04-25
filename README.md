@@ -4,46 +4,20 @@
 
 UltraContext automatically captures everything Claude Code, Codex and OpenClaw do during sessions and syncs into a single workspace folder, then lets any agent search across all of it through a CLI. Written entirely in rust and open source, as it should be.
 
-## Install
+## Quickstart
 
 ```sh
 cargo install ultracontext
 ln -sf ~/.cargo/bin/ultracontext ~/.cargo/bin/uc
-```
 
-Requirements: [Mutagen](https://mutagen.io/) (`brew install mutagen-io/mutagen/mutagen`), SSH, and [Claude Code](https://docs.claude.com/en/docs/claude-code) for search.
-
-Verify:
-
-```sh
-uc doctor
-```
-
-## Quickstart
-
-**Remote workspace** (recommended — sync from many machines into one VPS):
-
-```sh
-uc init user@vps --host-id macbook
+uc init user@vps --host-id macbook   # or `uc init local --host-id mini`
 uc sync start
-uc search "where did we leave off on the rewrite?"
+uc search "what did we ship in the rewrite?"
 ```
 
-**Local workspace** (single machine):
+Add more sources with `uc source add <name> <path>`.
 
-```sh
-uc init local --host-id mini
-uc sync start
-uc search "latest codex session"
-```
-
-**Add another source**:
-
-```sh
-uc source add openclaw ~/.openclaw
-```
-
-Sync starts immediately.
+Requires [Mutagen](https://mutagen.io/), SSH, and [Claude Code](https://docs.claude.com/en/docs/claude-code). Run `uc doctor` to verify.
 
 ## Why
 
