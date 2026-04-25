@@ -133,20 +133,9 @@ Config reloads on every command. Source changes apply immediately. Global settin
 
 ## Ignore rules
 
-Every ignore lives in `~/.ultracontextignore`. Nothing is hardcoded. `uc init` and `uc sync start` seed the file with opinionated defaults you can comment out, edit, or extend:
+`~/.ultracontextignore` works like `.gitignore`. Seeded with sensible defaults on `uc init`. Run `uc sync reset` after editing.
 
-```text
-.git/
-node_modules/   target/   dist/   build/   .next/   .cache/
-logs/   *.log   *.log.*
-Cache/   Cache_Data/   GPUCache/   Code Cache/   blob_storage/
-*.sqlite-wal   *.sqlite-shm
-.DS_Store
-```
-
-Run `uc sync reset` after editing the file.
-
-Secrets and agent context (`.env`, `auth.json`, `credentials.json`) are **never** redacted. Files are the truth.
+Secrets are never redacted. Files are the truth.
 
 ## Search
 
