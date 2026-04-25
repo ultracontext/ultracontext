@@ -4,12 +4,6 @@
 
 UltraContext automatically captures everything Claude Code, Codex and OpenClaw do during sessions and syncs into a single workspace folder, then lets any agent search across all of it through a CLI. Written entirely in rust and open source, as it should be.
 
-```sh
-uc init user@vps --host-id macbook
-uc sync start
-uc search "what did we ship in the rewrite branch?"
-```
-
 ## Why
 
 Agents forget across sessions, machines, and tools. UltraContext makes their memory portable:
