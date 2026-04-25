@@ -386,7 +386,7 @@ fn cmd_doctor() -> Result<()> {
 
         if config.is_local() {
             check_local_workspace(&config);
-            check_local_command(&config.search.command);
+            check_local_search_command(&config.search.command);
         } else {
             check_remote(&config, "ssh", "true");
             check_remote(
@@ -568,6 +568,19 @@ fn check_local_workspace(config: &Config) {
         Ok(path) if path.is_dir() => println!("local workspace: ok"),
         Ok(path) => println!("local workspace: missing ({})", path.display()),
         Err(error) => println!("local workspace: failed ({error})"),
+    }
+}
+
+fn check_local_search_command(name: &str) {
+    match resolve_local_search_command(name) {
+        Ok(command) if command.contains('/') && Path::new(&command).is_file() => {
+            println!("local {name}: ok ({command})")
+        }
+        Ok(command) if command.contains('/') => {
+            println!("local {name}: missing ({command})")
+        }
+        Ok(command) => check_local_command(&command),
+        Err(_) => println!("local {name}: missing"),
     }
 }
 
