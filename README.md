@@ -22,20 +22,14 @@ Agents forget across sessions, machines, and tools. UltraContext makes their mem
 ## How it works
 
 ```text
-                                       local  or  remote
-                           ┌──────────────────────────────────────┐
-~/.claude    ─┐            │  ~/.ultracontext/                    │
-~/.codex     ─┼─ realtime ▶│   └── workspace/                     │
-~/.openclaw  ─┘            │        └── sessions/                 │
-                           │             └── <host>/              │
-                           │                  └── <agent>/        │
-                           └──────────────────────────────────────┘
-                                           │
-                                           ▼
-                                       uc search  ──▶  Claude (or any agent)
+~/.claude   ─┐
+~/.codex    ─┼──▶  ~/.ultracontext/workspace/sessions/<host>/<agent>/
+~/.openclaw ─┘                       │
+                                     ▼
+                                 uc search  ──▶  Claude (or any agent)
 ```
 
-- Conflict-free, one-way sync.
+- One-way sync, real-time, conflict-free.
 - Workspace lives wherever you want — your laptop, your VPS, your homelab.
 - Claude is the default search agent. Swap it for any CLI tool that takes a prompt.
 
