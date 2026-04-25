@@ -166,10 +166,6 @@ command = "codex"               # or any CLI that accepts a prompt
 args    = "--model gpt-5"
 ```
 
-## Status
-
-UltraContext 2.0 is in alpha. The sync engine, source management, ignore rules, and remote/local search work end-to-end. The next milestones are sharper install/bootstrap, deeper ignore defaults, and `uc source status`.
-
 ## Development
 
 ```sh
