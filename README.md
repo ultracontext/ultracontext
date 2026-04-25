@@ -164,7 +164,7 @@ Customize the remote search command in `config.toml`:
 ```toml
 [search]
 command = "claude"
-args = "--dangerously-skip-permissions --effort low --model sonnet"
+args = "--dangerously-skip-permissions --effort medium --model sonnet"
 ```
 
 Config is read fresh on every `uc` command. Search command changes apply on the next `uc search`; sync source, remote, or ignore changes need `uc sync reset` to recreate Mutagen sessions.

@@ -49,7 +49,7 @@ fn initializes_and_searches_local_workspace() {
     );
 
     let config = config.replace(
-        "command = \"claude\"\nargs = \"--dangerously-skip-permissions\"",
+        "command = \"claude\"\nargs = \"--dangerously-skip-permissions --effort medium --model sonnet\"",
         &format!(
             "command = \"{}\"\nargs = \"--mode local\"",
             search_bin.display()

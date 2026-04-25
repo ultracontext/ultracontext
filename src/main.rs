@@ -10,7 +10,7 @@ const APP_DIR: &str = ".ultracontext";
 const IGNORE_FILE: &str = ".ultracontextignore";
 const DEFAULT_REMOTE_ROOT: &str = "~/.ultracontext";
 const DEFAULT_SEARCH_COMMAND: &str = "claude";
-const DEFAULT_SEARCH_ARGS: &str = "--dangerously-skip-permissions";
+const DEFAULT_SEARCH_ARGS: &str = "--dangerously-skip-permissions --effort medium --model sonnet";
 const CONTEXT_ENGINEER_PROMPT: &str = include_str!("prompts/context-engineer.md");
 const DEFAULT_SYNC_IGNORES: &[&str] = &[
     "node_modules/",
@@ -1220,7 +1220,10 @@ host_id = "work-laptop"
         let cfg = Config::from_toml(raw).unwrap();
 
         assert_eq!(cfg.search.command, "claude");
-        assert_eq!(cfg.search.args, "--dangerously-skip-permissions");
+        assert_eq!(
+            cfg.search.args,
+            "--dangerously-skip-permissions --effort medium --model sonnet"
+        );
     }
 
     #[test]
