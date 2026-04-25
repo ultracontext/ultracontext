@@ -1,32 +1,31 @@
 # UltraContext
 
-> Your AI agents share one memory. Across every machine, every tool, every session.
+> Same context everywhere.
 
-You spent four hours pairing with Claude on your laptop. Sit down at your desktop, open Codex — it knows nothing. UltraContext fixes that.
+A unified source of truth that gives every agent instant context across your entire system. Fully open source.
+
+You spend four hours pairing with Claude on your laptop. You sit down at your desktop, open Codex, and it knows nothing. UltraContext fixes that.
 
 ```sh
+npm i -g ultracontext
 uc init user@vps --host-id macbook
 uc sync start
-uc search "what did we ship in the rewrite branch?"
+uc search "where did we leave off on the rewrite?"
 ```
 
-Every Claude conversation, every Codex session, every agent folder you add syncs to one workspace. Any agent on any machine can search across all of it.
+## How it works
 
-## Install
+**1. Ingest** — sessions from every agent on every machine sync to one workspace, in real time.
 
-```sh
-cargo install ultracontext
-ln -sf ~/.cargo/bin/ultracontext ~/.cargo/bin/uc
-uc doctor
-```
+**2. Store** — you own the files. Plain session files on your server, ready for agentic search. Bring QMD, GBrain, or your own tools.
 
-Needs [Mutagen](https://mutagen.io), SSH, and [Claude Code](https://docs.claude.com/en/docs/claude-code) for search.
+**3. Consume** — `uc search` gives any agent the right context on demand. Search runs on the server. Your context window stays lean.
 
 ## Commands
 
 | | |
 |---|---|
-| `uc init [local\|user@host]` | Pick a workspace target |
+| `uc init [local\|user@host]` | Pick where the workspace lives |
 | `uc sync start` | Sync every source |
 | `uc source add <name> <path>` | Add another folder |
 | `uc search "..."` | Ask anything |
@@ -36,12 +35,12 @@ Needs [Mutagen](https://mutagen.io), SSH, and [Claude Code](https://docs.claude.
 
 ## Config
 
-`~/.ultracontext/config.toml` — remote target, host id, search agent, sources.
+`~/.ultracontext/config.toml` — workspace target, host id, search agent, sources.
 `~/.ultracontextignore` — every ignore rule, fully editable.
 
-Files are truth. No database, no index, no proprietary format. Move it, copy it, grep it. It's just files.
+Files are truth. No database, no index, no proprietary format. Move it, copy it, grep it.
 
-Swap Claude for any CLI that accepts a prompt:
+Swap Claude for any CLI that takes a prompt:
 
 ```toml
 [search]
