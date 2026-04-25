@@ -22,7 +22,7 @@ uc init user@host --host-id my-mac
 Initialize on the machine that owns the UltraContext folder:
 
 ```sh
-uc init local --host-id workspace-host
+uc init local --host-id mini
 ```
 
 Start syncing local agent context:
@@ -82,7 +82,7 @@ ultracontext init user@host --host-id my-mac
 Initialize local workspace mode:
 
 ```sh
-ultracontext init local --host-id workspace-host
+ultracontext init local --host-id mini
 ```
 
 Start sync:
@@ -164,7 +164,7 @@ Customize the remote search command in `config.toml`:
 ```toml
 [search]
 command = "claude"
-args = "--dangerously-skip-permissions"
+args = "--dangerously-skip-permissions --effort low --model sonnet"
 ```
 
 Config is read fresh on every `uc` command. Search command changes apply on the next `uc search`; sync source, remote, or ignore changes need `uc sync reset` to recreate Mutagen sessions.

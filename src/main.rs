@@ -1048,8 +1048,8 @@ mod tests {
             remote_root: "~/.ultracontext".to_string(),
             host_id: "work-laptop".to_string(),
             search: SearchConfig {
-                command: "context-search".to_string(),
-                args: "--mode deep --label 'two words'".to_string(),
+                command: "claude".to_string(),
+                args: "--dangerously-skip-permissions --effort low".to_string(),
             },
             sources: vec![Source {
                 agent: "claude".to_string(),
@@ -1090,23 +1090,23 @@ mod tests {
         let cfg = Config {
             remote: "local".to_string(),
             remote_root: "/tmp/uc".to_string(),
-            host_id: "workspace-host".to_string(),
+            host_id: "mini".to_string(),
             search: SearchConfig {
-                command: "context-search".to_string(),
-                args: "--mode local".to_string(),
+                command: "claude".to_string(),
+                args: "--dangerously-skip-permissions".to_string(),
             },
             sources: vec![],
         };
         let source = Source {
-            agent: "agent-a".to_string(),
-            local_path: "/tmp/agent-a".to_string(),
+            agent: "codex".to_string(),
+            local_path: "~/.codex".to_string(),
             enabled: true,
         };
 
         assert!(cfg.is_local());
         assert_eq!(
             remote_endpoint(&cfg, &source),
-            "/tmp/uc/workspace/sessions/workspace-host/agent-a"
+            "/tmp/uc/workspace/sessions/mini/codex"
         );
     }
 
@@ -1117,7 +1117,7 @@ remote = "user@vps"
 remote_root = "~/.ultracontext"
 host_id = "work-laptop"
 search_agent = "claude"
-claude_args = "--legacy-mode enabled"
+claude_args = "--dangerously-skip-permissions --effort low"
 
 [sources.claude]
 path = "~/.claude/projects"
@@ -1135,7 +1135,10 @@ enabled = true
         assert_eq!(cfg.sources[0].local_path, "~/.claude");
         assert_eq!(cfg.sources[1].local_path, "~/.codex");
         assert_eq!(cfg.search.command, "claude");
-        assert_eq!(cfg.search.args, "--legacy-mode enabled");
+        assert_eq!(
+            cfg.search.args,
+            "--dangerously-skip-permissions --effort low"
+        );
     }
 
     #[test]
@@ -1158,7 +1161,7 @@ enabled = true
             host_id: "work-laptop".to_string(),
             search: SearchConfig {
                 command: "custom-search".to_string(),
-                args: "--mode deep --label 'two words'".to_string(),
+                args: "--dangerously-skip-permissions --effort low --model sonnet".to_string(),
             },
             sources: vec![],
         };
@@ -1167,7 +1170,7 @@ enabled = true
 
         assert!(command.contains("command -v 'custom-search'"), "{command}");
         assert!(
-            command.contains("--mode deep --label 'two words'"),
+            command.contains("--dangerously-skip-permissions --effort low --model sonnet"),
             "{command}"
         );
     }
@@ -1175,9 +1178,35 @@ enabled = true
     #[test]
     fn splits_search_args_for_local_execution() {
         assert_eq!(
-            shell_words("--mode deep --label 'two words' --limit 3"),
-            vec!["--mode", "deep", "--label", "two words", "--limit", "3"]
+            shell_words("--dangerously-skip-permissions --model 'sonnet 4' --effort low"),
+            vec![
+                "--dangerously-skip-permissions",
+                "--model",
+                "sonnet 4",
+                "--effort",
+                "low"
+            ]
         );
+    }
+
+    #[test]
+    fn search_section_overrides_legacy_search_keys() {
+        let raw = r#"
+remote = "user@vps"
+remote_root = "~/.ultracontext"
+host_id = "work-laptop"
+search_agent = "claude"
+claude_args = "--dangerously-skip-permissions"
+
+[search]
+command = "custom-search"
+args = "--custom-flag"
+"#;
+
+        let cfg = Config::from_toml(raw).unwrap();
+
+        assert_eq!(cfg.search.command, "custom-search");
+        assert_eq!(cfg.search.args, "--custom-flag");
     }
 
     #[test]
