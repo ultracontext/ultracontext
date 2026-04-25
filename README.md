@@ -129,11 +129,7 @@ path    = "~/.codex"
 enabled = true
 ```
 
-Config reloads on every command. Source changes apply immediately. Global setting and ignore changes apply on `uc sync reset`.
-
-## Ignore rules
-
-`~/.ultracontextignore` works like `.gitignore`. Seeded with sensible defaults on `uc init`. Run `uc sync reset` after editing.
+`~/.ultracontextignore` works like `.gitignore`, seeded on `uc init`. Source changes apply immediately. Global settings and ignore edits apply on `uc sync reset`.
 
 ## Search
 
