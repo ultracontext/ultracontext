@@ -1048,8 +1048,8 @@ mod tests {
             remote_root: "~/.ultracontext".to_string(),
             host_id: "work-laptop".to_string(),
             search: SearchConfig {
-                command: "claude".to_string(),
-                args: "--dangerously-skip-permissions --effort low".to_string(),
+                command: "context-search".to_string(),
+                args: "--mode deep --label 'two words'".to_string(),
             },
             sources: vec![Source {
                 agent: "claude".to_string(),
@@ -1090,23 +1090,23 @@ mod tests {
         let cfg = Config {
             remote: "local".to_string(),
             remote_root: "/tmp/uc".to_string(),
-            host_id: "mini".to_string(),
+            host_id: "workspace-host".to_string(),
             search: SearchConfig {
-                command: "claude".to_string(),
-                args: "--dangerously-skip-permissions".to_string(),
+                command: "context-search".to_string(),
+                args: "--mode local".to_string(),
             },
             sources: vec![],
         };
         let source = Source {
-            agent: "codex".to_string(),
-            local_path: "~/.codex".to_string(),
+            agent: "agent-a".to_string(),
+            local_path: "/tmp/agent-a".to_string(),
             enabled: true,
         };
 
         assert!(cfg.is_local());
         assert_eq!(
             remote_endpoint(&cfg, &source),
-            "/tmp/uc/workspace/sessions/mini/codex"
+            "/tmp/uc/workspace/sessions/workspace-host/agent-a"
         );
     }
 
@@ -1117,7 +1117,7 @@ remote = "user@vps"
 remote_root = "~/.ultracontext"
 host_id = "work-laptop"
 search_agent = "claude"
-claude_args = "--dangerously-skip-permissions --effort low"
+claude_args = "--legacy-mode enabled"
 
 [sources.claude]
 path = "~/.claude/projects"
@@ -1135,10 +1135,7 @@ enabled = true
         assert_eq!(cfg.sources[0].local_path, "~/.claude");
         assert_eq!(cfg.sources[1].local_path, "~/.codex");
         assert_eq!(cfg.search.command, "claude");
-        assert_eq!(
-            cfg.search.args,
-            "--dangerously-skip-permissions --effort low"
-        );
+        assert_eq!(cfg.search.args, "--legacy-mode enabled");
     }
 
     #[test]
@@ -1161,7 +1158,7 @@ enabled = true
             host_id: "work-laptop".to_string(),
             search: SearchConfig {
                 command: "custom-search".to_string(),
-                args: "--effort low --model sonnet".to_string(),
+                args: "--mode deep --label 'two words'".to_string(),
             },
             sources: vec![],
         };
@@ -1169,20 +1166,17 @@ enabled = true
         let command = search_remote_command(&cfg, "~/.ultracontext/workspace/sessions", "prompt");
 
         assert!(command.contains("command -v 'custom-search'"), "{command}");
-        assert!(command.contains("--effort low --model sonnet"), "{command}");
+        assert!(
+            command.contains("--mode deep --label 'two words'"),
+            "{command}"
+        );
     }
 
     #[test]
     fn splits_search_args_for_local_execution() {
         assert_eq!(
-            shell_words("--dangerously-skip-permissions --model 'sonnet 4' --effort low"),
-            vec![
-                "--dangerously-skip-permissions",
-                "--model",
-                "sonnet 4",
-                "--effort",
-                "low"
-            ]
+            shell_words("--mode deep --label 'two words' --limit 3"),
+            vec!["--mode", "deep", "--label", "two words", "--limit", "3"]
         );
     }
 
