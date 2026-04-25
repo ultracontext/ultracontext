@@ -100,7 +100,7 @@ fn run(args: Vec<String>) -> Result<()> {
 
 fn print_help() {
     println!(
-        "UltraContext {}\n\nUsage:\n  ultracontext init [remote]\n  ultracontext sync <start|status|stop|reset>\n  ultracontext search <query>\n  ultracontext doctor\n\nAlias:\n  uc should point to the same binary as ultracontext.\n",
+        "UltraContext {}\n\nUsage:\n  ultracontext init [local|user@host]\n  ultracontext sync <start|status|stop|reset>\n  ultracontext search <query>\n  ultracontext doctor\n\nAlias:\n  uc should point to the same binary as ultracontext.\n",
         env!("CARGO_PKG_VERSION")
     );
 }
@@ -123,7 +123,7 @@ fn cmd_init(args: &[String]) -> Result<()> {
             }
             "-h" | "--help" => {
                 println!(
-                    "Usage: ultracontext init [user@host[:remote-root]] [--host-id <id>] [--remote-root <path>]"
+                    "Usage: ultracontext init [local|user@host[:remote-root]] [--host-id <id>] [--remote-root <path>]"
                 );
                 return Ok(());
             }
@@ -144,7 +144,7 @@ fn cmd_init(args: &[String]) -> Result<()> {
 
     let remote_input = match remote_arg {
         Some(value) => value,
-        None => prompt("Remote SSH target (example: user@vps): ")?,
+        None => prompt("Workspace target (local or user@vps): ")?,
     };
     let mut remote = RemoteSpec::parse(&remote_input)?;
     if let Some(remote_root) = remote_root_arg {
@@ -165,6 +165,9 @@ fn cmd_init(args: &[String]) -> Result<()> {
     };
 
     fs::create_dir_all(config_dir()?)?;
+    if config.is_local() {
+        fs::create_dir_all(expand_home(&config.remote_root)?)?;
+    }
     fs::write(config_path()?, config.to_toml())?;
     ensure_ignore_file()?;
 
@@ -275,15 +278,74 @@ fn cmd_search(args: &[String]) -> Result<()> {
     let search_query = args.join(" ");
     let sessions_path = format!("{}/workspace/sessions", config.remote_root);
     let prompt = search_prompt(&sessions_path, &search_query);
-    let remote_command = search_remote_command(&config, &sessions_path, &prompt);
 
-    run_command(
-        "ssh",
-        ["-n", config.remote.as_str(), remote_command.as_str()],
-    )
+    if config.is_local() {
+        run_local_search(&config, &sessions_path, &prompt)
+    } else {
+        let remote_command = search_remote_command(&config, &sessions_path, &prompt);
+        run_command(
+            "ssh",
+            ["-n", config.remote.as_str(), remote_command.as_str()],
+        )
+    }
 }
 
 fn search_remote_command(config: &Config, sessions_path: &str, prompt: &str) -> String {
+    let command_setup = search_command_setup(config);
+    format!(
+        "{}; \
+cd {} && \"$SEARCH_BIN\" -p {} {} < /dev/null",
+        command_setup,
+        remote_path_arg(&sessions_path),
+        sh_quote(prompt),
+        config.search.args
+    )
+}
+
+fn run_local_search(config: &Config, sessions_path: &str, prompt: &str) -> Result<()> {
+    let sessions_dir = expand_home(sessions_path)?;
+    if !sessions_dir.exists() {
+        return Err(UcError::Message(format!(
+            "local sessions directory does not exist: {}",
+            sessions_dir.display()
+        )));
+    }
+
+    let command = resolve_local_search_command(&config.search.command)?;
+    let args = shell_words(&config.search.args);
+    let mut child = external_command(&command)
+        .arg("-p")
+        .arg(prompt)
+        .args(args)
+        .current_dir(sessions_dir)
+        .stdin(Stdio::null())
+        .spawn()?;
+    let status = child.wait()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(UcError::Message(format!(
+            "{} exited with {}",
+            command_display(&command, &["-p".to_string(), "<prompt>".to_string()]),
+            status
+        )))
+    }
+}
+
+fn resolve_local_search_command(command: &str) -> Result<String> {
+    if command.contains('/') {
+        return Ok(command.to_string());
+    }
+    if command == "claude" {
+        let local_bin = home_dir()?.join(".local/bin/claude");
+        if local_bin.exists() {
+            return Ok(local_bin.to_string_lossy().to_string());
+        }
+    }
+    Ok(command.to_string())
+}
+
+fn search_command_setup(config: &Config) -> String {
     let command_setup = if config.search.command == "claude" {
         "SEARCH_BIN=$(command -v claude || true); \
 if [ -z \"$SEARCH_BIN\" ] && [ -x \"$HOME/.local/bin/claude\" ]; then SEARCH_BIN=\"$HOME/.local/bin/claude\"; fi; \
@@ -300,39 +362,47 @@ if [ -z \"$SEARCH_BIN\" ]; then echo {} >&2; exit 127; fi",
             ))
         )
     };
-
-    format!(
-        "{}; \
-cd {} && \"$SEARCH_BIN\" -p {} {} < /dev/null",
-        command_setup,
-        remote_path_arg(&sessions_path),
-        sh_quote(&prompt),
-        config.search.args
-    )
+    command_setup
 }
 
 fn cmd_doctor() -> Result<()> {
     let config = load_config().ok();
 
-    check_local_command("ssh");
-    check_local_command("scp");
-    check_local_command("mutagen");
+    match &config {
+        Some(config) if config.is_local() => {
+            check_local_command("mutagen");
+        }
+        _ => {
+            check_local_command("ssh");
+            check_local_command("scp");
+            check_local_command("mutagen");
+        }
+    }
 
     if let Some(config) = config {
         println!("config: {}", config_path()?.display());
         println!("remote: {}:{}", config.remote, config.remote_root);
         println!("host: {}", config.host_id);
 
-        check_remote(&config, "ssh", "true");
-        check_remote(
-            &config,
-            "remote workspace",
-            &format!(
-                "test -d {}",
-                remote_path_arg(&format!("{}/workspace", config.remote_root))
-            ),
-        );
-        check_remote(&config, "claude", "command -v claude >/dev/null");
+        if config.is_local() {
+            check_local_workspace(&config);
+            check_local_command(&config.search.command);
+        } else {
+            check_remote(&config, "ssh", "true");
+            check_remote(
+                &config,
+                "remote workspace",
+                &format!(
+                    "test -d {}",
+                    remote_path_arg(&format!("{}/workspace", config.remote_root))
+                ),
+            );
+            check_remote(
+                &config,
+                &config.search.command,
+                &format!("command -v {} >/dev/null", sh_quote(&config.search.command)),
+            );
+        }
     } else {
         println!("config: missing ({})", config_path()?.display());
     }
@@ -344,6 +414,13 @@ fn prepare_remote_workspace(config: &Config) -> Result<()> {
     let mut dirs = vec![format!("{}/workspace/sessions", config.remote_root)];
     for source in enabled_sources(config) {
         dirs.push(remote_dir(config, source));
+    }
+
+    if config.is_local() {
+        for dir in dirs {
+            fs::create_dir_all(expand_home(&dir)?)?;
+        }
+        return Ok(());
     }
 
     let mkdirs = dirs
@@ -390,7 +467,14 @@ fn remote_dir(config: &Config, source: &Source) -> String {
 }
 
 fn remote_endpoint(config: &Config, source: &Source) -> String {
-    format!("{}:{}", config.remote, remote_dir(config, source))
+    if config.is_local() {
+        expand_home(&remote_dir(config, source))
+            .unwrap_or_else(|_| PathBuf::from(remote_dir(config, source)))
+            .to_string_lossy()
+            .to_string()
+    } else {
+        format!("{}:{}", config.remote, remote_dir(config, source))
+    }
 }
 
 fn mutagen_session_name(config: &Config, source: &Source) -> String {
@@ -477,6 +561,14 @@ fn config_path() -> Result<PathBuf> {
 
 fn ignore_path() -> Result<PathBuf> {
     Ok(home_dir()?.join(IGNORE_FILE))
+}
+
+fn check_local_workspace(config: &Config) {
+    match expand_home(&format!("{}/workspace", config.remote_root)) {
+        Ok(path) if path.is_dir() => println!("local workspace: ok"),
+        Ok(path) => println!("local workspace: missing ({})", path.display()),
+        Err(error) => println!("local workspace: failed ({error})"),
+    }
 }
 
 fn load_config() -> Result<Config> {
@@ -632,6 +724,42 @@ where
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+fn shell_words(input: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut chars = input.chars().peekable();
+    let mut quote: Option<char> = None;
+
+    while let Some(ch) = chars.next() {
+        match (quote, ch) {
+            (Some(q), c) if c == q => quote = None,
+            (Some(_), '\\') => {
+                if let Some(next) = chars.next() {
+                    current.push(next);
+                }
+            }
+            (Some(_), c) => current.push(c),
+            (None, '\'' | '"') => quote = Some(ch),
+            (None, '\\') => {
+                if let Some(next) = chars.next() {
+                    current.push(next);
+                }
+            }
+            (None, c) if c.is_whitespace() => {
+                if !current.is_empty() {
+                    words.push(std::mem::take(&mut current));
+                }
+            }
+            (None, c) => current.push(c),
+        }
+    }
+
+    if !current.is_empty() {
+        words.push(current);
+    }
+    words
+}
+
 fn external_command(program: &str) -> Command {
     let mut command = Command::new(program);
     if let Some(home) = env::var_os("ULTRACONTEXT_EXTERNAL_HOME") {
@@ -723,6 +851,10 @@ fn split_remote_root(input: &str) -> Option<(&str, &str)> {
 }
 
 impl Config {
+    fn is_local(&self) -> bool {
+        self.remote == "local"
+    }
+
     fn to_toml(&self) -> String {
         let mut out = String::new();
         out.push_str(&format!("remote = \"{}\"\n", escape_toml(&self.remote)));
@@ -954,6 +1086,31 @@ mod tests {
     }
 
     #[test]
+    fn local_remote_uses_plain_filesystem_endpoint() {
+        let cfg = Config {
+            remote: "local".to_string(),
+            remote_root: "/tmp/uc".to_string(),
+            host_id: "mini".to_string(),
+            search: SearchConfig {
+                command: "claude".to_string(),
+                args: "--dangerously-skip-permissions".to_string(),
+            },
+            sources: vec![],
+        };
+        let source = Source {
+            agent: "codex".to_string(),
+            local_path: "~/.codex".to_string(),
+            enabled: true,
+        };
+
+        assert!(cfg.is_local());
+        assert_eq!(
+            remote_endpoint(&cfg, &source),
+            "/tmp/uc/workspace/sessions/mini/codex"
+        );
+    }
+
+    #[test]
     fn upgrades_legacy_session_only_sources() {
         let raw = r#"
 remote = "user@vps"
@@ -1013,6 +1170,20 @@ enabled = true
 
         assert!(command.contains("command -v 'custom-search'"), "{command}");
         assert!(command.contains("--effort low --model sonnet"), "{command}");
+    }
+
+    #[test]
+    fn splits_search_args_for_local_execution() {
+        assert_eq!(
+            shell_words("--dangerously-skip-permissions --model 'sonnet 4' --effort low"),
+            vec![
+                "--dangerously-skip-permissions",
+                "--model",
+                "sonnet 4",
+                "--effort",
+                "low"
+            ]
+        );
     }
 
     #[test]

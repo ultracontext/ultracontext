@@ -2,7 +2,7 @@
 
 UltraContext 2.0 is a context sync CLI.
 
-It syncs local agent context into a remote workspace so Claude, Codex, and other agents can recover context across machines.
+It syncs local agent context into one UltraContext workspace so Claude, Codex, and other agents can recover context across machines.
 
 ## Quickstart
 
@@ -17,6 +17,12 @@ Initialize this machine:
 
 ```sh
 uc init user@host --host-id my-mac
+```
+
+Initialize on the machine that owns the UltraContext folder:
+
+```sh
+uc init local --host-id mini
 ```
 
 Start syncing local agent context:
@@ -40,7 +46,7 @@ uc sync reset
 
 ## Model
 
-UltraContext runs locally, uses Mutagen for sync, and uses SSH to prepare/search the remote workspace.
+UltraContext runs locally, uses Mutagen for sync, and searches the UltraContext workspace with Claude. The workspace can be local (`uc init local`) or remote over SSH (`uc init user@host`).
 
 ```text
 ~/.claude  ----\
@@ -61,7 +67,7 @@ The remote layout keeps machine and agent boundaries explicit:
           ...
 ```
 
-Sync is one-way: local agent folders are mirrored into the remote workspace. Search runs on the remote host with Claude over the synced files.
+Sync is one-way: local agent folders are mirrored into the UltraContext workspace. In remote mode, search runs over SSH on the remote host. In local mode, search runs directly against the local workspace.
 
 UltraContext does not redact source files or search output. It does ignore generated dependency/build/cache directories by default to keep sync and search usable.
 
@@ -71,6 +77,12 @@ Initialize a machine:
 
 ```sh
 ultracontext init user@host --host-id my-mac
+```
+
+Initialize local workspace mode:
+
+```sh
+ultracontext init local --host-id mini
 ```
 
 Start sync:
@@ -91,7 +103,7 @@ Recreate sync sessions after changing source paths:
 ultracontext sync reset
 ```
 
-Search remote context:
+Search context:
 
 ```sh
 ultracontext search "what changed in the sync CLI?"
@@ -116,6 +128,13 @@ Default remote root:
 
 ```text
 ~/.ultracontext
+```
+
+Local mode stores and searches the workspace on the same machine:
+
+```toml
+remote = "local"
+remote_root = "~/.ultracontext"
 ```
 
 Ignore file:

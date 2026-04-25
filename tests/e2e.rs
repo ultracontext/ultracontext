@@ -7,6 +7,80 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 const BIN: &str = env!("CARGO_BIN_EXE_ultracontext");
 
 #[test]
+fn initializes_and_searches_local_workspace() {
+    let run_id = unique_run_id();
+    let host_id = format!("uc-local-{run_id}");
+    let home = env::temp_dir().join(format!("uc-local-home-{run_id}"));
+    let remote_root = home.join("ultracontext-root");
+    let search_bin = home.join("search-capture");
+
+    fs::create_dir_all(home.join(".claude")).unwrap();
+    fs::write(
+        &search_bin,
+        "#!/bin/sh\nprintf 'cwd=%s\\n' \"$PWD\"\nprintf 'args=%s\\n' \"$*\"\n",
+    )
+    .unwrap();
+    make_executable(&search_bin);
+
+    let init = uc(&home)
+        .args([
+            "init",
+            "local",
+            "--host-id",
+            host_id.as_str(),
+            "--remote-root",
+            remote_root.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert_success("uc init local", init);
+
+    let config_path = home.join(".ultracontext").join("config.toml");
+    let config = fs::read_to_string(&config_path).unwrap();
+    assert!(config.contains("remote = \"local\""), "{config}");
+    assert!(remote_root.join("workspace").join("sessions").is_dir());
+    assert!(
+        remote_root
+            .join("workspace")
+            .join("sessions")
+            .join(&host_id)
+            .join("claude")
+            .is_dir()
+    );
+
+    let config = config.replace(
+        "command = \"claude\"\nargs = \"--dangerously-skip-permissions\"",
+        &format!(
+            "command = \"{}\"\nargs = \"--mode local\"",
+            search_bin.display()
+        ),
+    );
+    fs::write(&config_path, config).unwrap();
+
+    let marker = format!("latest local context marker {run_id}");
+    let search = uc(&home)
+        .args(["search", marker.as_str()])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&search.stdout).to_string();
+    assert_success("uc search local", search);
+    assert!(
+        stdout.contains(
+            remote_root
+                .join("workspace")
+                .join("sessions")
+                .to_str()
+                .unwrap()
+        ),
+        "{stdout}"
+    );
+    assert!(stdout.contains(&marker), "{stdout}");
+    assert!(stdout.contains("--mode local"), "{stdout}");
+
+    let _ = fs::remove_dir_all(&home);
+}
+
+#[test]
 #[ignore = "requires UC_E2E_REMOTE=user@host plus ssh/mutagen access"]
 fn syncs_agent_directories_to_remote_workspace() {
     let remote =
@@ -271,6 +345,18 @@ fn mutagen_with_home(home: &Path) -> Command {
     }
     command
 }
+
+#[cfg(unix)]
+fn make_executable(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut permissions = fs::metadata(path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions).unwrap();
+}
+
+#[cfg(not(unix))]
+fn make_executable(_path: &Path) {}
 
 fn require(program: &str) {
     let status = Command::new("sh")
