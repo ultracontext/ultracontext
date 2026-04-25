@@ -16,7 +16,7 @@ Agents forget across sessions, machines, and tools. UltraContext makes their mem
 
 - **Unified workspace** — Claude on your laptop, Codex on your desktop, OpenClaw on a VPS, all in one tree.
 - **Files are truth** — raw session files, no proprietary format, no migration risk.
-- **Agentic search** — Claude reads the workspace and returns the relevant context. No index to rebuild.
+- **Agentic search** — Claude recursively reads the workspace and gets the relevant context on demand. No index to rebuild.
 - **Self-hosted by default** — your machine, your VPS, your data.
 
 ## How it works
