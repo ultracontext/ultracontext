@@ -356,7 +356,7 @@ delegate_existing_install_if_needed() {
   fi
 
   existing="$(find_existing_other_install)"
-  [ -n "$existing" ] || return
+  [ -n "$existing" ] || return 0
 
   manager="$(infer_manager_from_path "$existing")"
   case "$manager" in
