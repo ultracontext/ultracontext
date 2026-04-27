@@ -884,7 +884,211 @@ fn sync_start() -> Result<()> {
 
 fn sync_status() -> Result<()> {
     require_command("mutagen")?;
-    run_command("mutagen", ["sync", "list", "--long"])
+    let output = capture_command("mutagen", ["sync", "list", "--long"])?;
+    let sessions = parse_mutagen_sessions(&output);
+
+    if sessions.is_empty() {
+        println!("No sync sessions. Run `uc sync start`.");
+        return Ok(());
+    }
+
+    for (i, s) in sessions.iter().enumerate() {
+        if i > 0 {
+            println!();
+        }
+        render_session(s);
+    }
+    Ok(())
+}
+
+#[derive(Debug, Default, Clone)]
+struct SessionInfo {
+    name: String,
+    alpha_url: String,
+    beta_url: String,
+    alpha_files: Option<u64>,
+    beta_files: Option<u64>,
+    alpha_size: String,
+    beta_size: String,
+    alpha_connected: bool,
+    beta_connected: bool,
+    status: String,
+    progress_pct: Option<u8>,
+}
+
+fn parse_mutagen_sessions(out: &str) -> Vec<SessionInfo> {
+    let mut sessions = Vec::new();
+    let mut cur: Option<SessionInfo> = None;
+    let mut side: Option<&'static str> = None;
+
+    for raw in out.lines() {
+        let line = raw.trim_end();
+        let trimmed = line.trim_start();
+
+        if let Some(name) = trimmed.strip_prefix("Name: ") {
+            if let Some(s) = cur.take() {
+                sessions.push(s);
+            }
+            cur = Some(SessionInfo {
+                name: name.to_string(),
+                ..Default::default()
+            });
+            side = None;
+            continue;
+        }
+        let Some(s) = cur.as_mut() else {
+            continue;
+        };
+
+        if trimmed == "Alpha:" {
+            side = Some("alpha");
+            continue;
+        }
+        if trimmed == "Beta:" {
+            side = Some("beta");
+            continue;
+        }
+        if let Some(url) = trimmed.strip_prefix("URL: ") {
+            match side {
+                Some("alpha") => s.alpha_url = url.to_string(),
+                Some("beta") => s.beta_url = url.to_string(),
+                _ => {}
+            }
+            continue;
+        }
+        if let Some(connected) = trimmed.strip_prefix("Connected: ") {
+            let c = connected.eq_ignore_ascii_case("yes");
+            match side {
+                Some("alpha") => s.alpha_connected = c,
+                Some("beta") => s.beta_connected = c,
+                _ => {}
+            }
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_suffix(" symbolic links") {
+            let _ = rest;
+            continue;
+        }
+        if trimmed.ends_with(" files") || trimmed.contains(" files (") {
+            let count: u64 = trimmed
+                .split_whitespace()
+                .next()
+                .and_then(|n| n.parse().ok())
+                .unwrap_or(0);
+            let size = trimmed
+                .split_once('(')
+                .and_then(|(_, r)| r.split_once(')'))
+                .map(|(s, _)| s.to_string())
+                .unwrap_or_default();
+            match side {
+                Some("alpha") => {
+                    s.alpha_files = Some(count);
+                    s.alpha_size = size;
+                }
+                Some("beta") => {
+                    s.beta_files = Some(count);
+                    s.beta_size = size;
+                }
+                _ => {}
+            }
+            continue;
+        }
+        if let Some(status) = trimmed.strip_prefix("Status: ") {
+            s.status = status.to_string();
+            s.progress_pct = parse_progress_pct(status);
+            continue;
+        }
+    }
+    if let Some(s) = cur {
+        sessions.push(s);
+    }
+    sessions
+}
+
+fn parse_progress_pct(status: &str) -> Option<u8> {
+    let pct_idx = status.find('%')?;
+    let prefix = &status[..pct_idx];
+    let num: String = prefix
+        .chars()
+        .rev()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    num.parse().ok()
+}
+
+fn render_bar(pct: u8, width: usize) -> String {
+    let pct = pct.min(100) as usize;
+    let filled = (pct * width) / 100;
+    let empty = width.saturating_sub(filled);
+    format!("{}{}", "█".repeat(filled), "░".repeat(empty))
+}
+
+fn short_source_name(session_name: &str) -> &str {
+    session_name.rsplit('-').next().unwrap_or(session_name)
+}
+
+fn render_session(s: &SessionInfo) {
+    let label = short_source_name(&s.name);
+    let (color, glyph) = status_style(&s.status);
+
+    println!(
+        "{} {}  {}",
+        style(glyph).fg(color),
+        style(label).bold(),
+        style(&s.status).fg(color)
+    );
+
+    if let Some(pct) = s.progress_pct {
+        println!("  {} {:>3}%", render_bar(pct, 32), pct);
+    }
+
+    let conn_a = if s.alpha_connected { "●" } else { "○" };
+    let conn_b = if s.beta_connected { "●" } else { "○" };
+    println!(
+        "  {} alpha {}  →  {} beta {}",
+        style(conn_a)
+            .fg(if s.alpha_connected {
+                console::Color::Green
+            } else {
+                console::Color::Red
+            }),
+        style(&s.alpha_url).dim(),
+        style(conn_b)
+            .fg(if s.beta_connected {
+                console::Color::Green
+            } else {
+                console::Color::Red
+            }),
+        style(&s.beta_url).dim()
+    );
+
+    let a_f = s.alpha_files.map(|n| n.to_string()).unwrap_or_default();
+    let b_f = s.beta_files.map(|n| n.to_string()).unwrap_or_default();
+    println!(
+        "  {} files ({}) on alpha · {} files ({}) on beta",
+        style(&a_f).bold(),
+        s.alpha_size,
+        style(&b_f).bold(),
+        s.beta_size
+    );
+}
+
+fn status_style(status: &str) -> (console::Color, &'static str) {
+    let s = status.to_lowercase();
+    if s.contains("watching") {
+        (console::Color::Green, "✓")
+    } else if s.contains("paused") {
+        (console::Color::Yellow, "⏸")
+    } else if s.contains("staging") || s.contains("transitioning") || s.contains("scanning") {
+        (console::Color::Cyan, "↻")
+    } else if s.contains("error") || s.contains("conflict") {
+        (console::Color::Red, "✗")
+    } else {
+        (console::Color::White, "·")
+    }
 }
 
 fn sync_stop() -> Result<()> {
