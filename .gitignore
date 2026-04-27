@@ -1,3 +1,6 @@
 /target/
 /.DS_Store
 /.envrc
+/npm/native/
+/dist/
+/*.tgz

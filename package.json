@@ -1,0 +1,40 @@
+{
+  "name": "ultracontext",
+  "version": "2.0.0-alpha.0",
+  "description": "Remote sync and query for AI agent context",
+  "license": "Apache-2.0",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ultracontext/ultracontext.git"
+  },
+  "homepage": "https://github.com/ultracontext/ultracontext#readme",
+  "bugs": {
+    "url": "https://github.com/ultracontext/ultracontext/issues"
+  },
+  "bin": {
+    "ultracontext": "npm/bin/ultracontext.js",
+    "uc": "npm/bin/uc.js"
+  },
+  "files": [
+    "npm",
+    "skills",
+    "README.md",
+    "install.sh"
+  ],
+  "scripts": {
+    "postinstall": "node npm/install.mjs",
+    "test:npm": "node npm/test.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "cpu": [
+    "arm64",
+    "x64"
+  ]
+}

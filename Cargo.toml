@@ -2,13 +2,21 @@
 name = "ultracontext"
 version = "2.0.0-alpha.0"
 edition = "2024"
-description = "Remote sync and search for AI agent context"
+description = "Remote sync and query for AI agent context"
 license = "Apache-2.0"
 
 [[bin]]
 name = "ultracontext"
 path = "src/main.rs"
 
+[[bin]]
+name = "uc"
+path = "src/bin/uc.rs"
+
 [[test]]
 name = "e2e"
 path = "tests/e2e.rs"
+
+[dependencies]
+cliclack = "0.5.4"
+console = "0.16.3"

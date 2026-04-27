@@ -7,33 +7,35 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 const BIN: &str = env!("CARGO_BIN_EXE_ultracontext");
 
 #[test]
-fn initializes_and_searches_local_workspace() {
+fn initializes_and_queries_local_workspace() {
     let run_id = unique_run_id();
     let host_id = format!("uc-local-{run_id}");
     let home = env::temp_dir().join(format!("uc-local-home-{run_id}"));
     let remote_root = home.join("ultracontext-root");
-    let search_bin = home.join("search-capture");
+    let query_bin = home.join("query-capture");
 
     fs::create_dir_all(home.join(".claude")).unwrap();
     fs::write(
-        &search_bin,
+        &query_bin,
         "#!/bin/sh\nprintf 'cwd=%s\\n' \"$PWD\"\nprintf 'args=%s\\n' \"$*\"\n",
     )
     .unwrap();
-    make_executable(&search_bin);
+    make_executable(&query_bin);
 
-    let init = uc(&home)
+    let setup = uc(&home)
         .args([
-            "init",
+            "setup",
             "local",
             "--host-id",
             host_id.as_str(),
             "--remote-root",
             remote_root.to_str().unwrap(),
+            "--no-sync",
+            "--yes",
         ])
         .output()
         .unwrap();
-    assert_success("uc init local", init);
+    assert_success("uc setup local", setup);
 
     let config_path = home.join(".ultracontext").join("config.toml");
     let config = fs::read_to_string(&config_path).unwrap();
@@ -48,34 +50,86 @@ fn initializes_and_searches_local_workspace() {
             .is_dir()
     );
 
+    let status = uc(&home).args(["status"]).output().unwrap();
+    let status_stdout = String::from_utf8_lossy(&status.stdout).to_string();
+    assert_success("uc status", status);
+    assert!(status_stdout.contains("workspace"), "{status_stdout}");
+    assert!(status_stdout.contains("host"), "{status_stdout}");
+    assert!(status_stdout.contains("sync"), "{status_stdout}");
+    assert!(status_stdout.contains("claude"), "{status_stdout}");
+
     let config = config.replace(
         "command = \"claude\"\nargs = \"--dangerously-skip-permissions --effort medium --model sonnet\"",
         &format!(
             "command = \"{}\"\nargs = \"--mode local\"",
-            search_bin.display()
+            query_bin.display()
         ),
     );
     fs::write(&config_path, config).unwrap();
 
     let marker = format!("latest local context marker {run_id}");
-    let search = uc(&home)
-        .args(["search", marker.as_str()])
-        .output()
-        .unwrap();
-    let stdout = String::from_utf8_lossy(&search.stdout).to_string();
-    assert_success("uc search local", search);
+    let query = uc(&home).args(["query", marker.as_str()]).output().unwrap();
+    let stdout = String::from_utf8_lossy(&query.stdout).to_string();
+    assert_success("uc query local", query);
     assert!(
-        stdout.contains(
-            remote_root
-                .join("workspace")
-                .join("sessions")
-                .to_str()
-                .unwrap()
-        ),
+        stdout.contains(remote_root.join("workspace").to_str().unwrap()),
         "{stdout}"
     );
     assert!(stdout.contains(&marker), "{stdout}");
     assert!(stdout.contains("--mode local"), "{stdout}");
+
+    let _ = fs::remove_dir_all(&home);
+}
+
+#[test]
+fn setup_configures_skills_sources_and_workspace() {
+    let run_id = unique_run_id();
+    let host_id = format!("uc-setup-{run_id}");
+    let home = env::temp_dir().join(format!("uc-setup-home-{run_id}"));
+    let remote_root = home.join("ultracontext-root");
+
+    fs::create_dir_all(home.join(".claude")).unwrap();
+    fs::create_dir_all(home.join(".codex")).unwrap();
+    fs::create_dir_all(home.join(".openclaw")).unwrap();
+    fs::create_dir_all(home.join(".hermes")).unwrap();
+
+    let setup = uc(&home)
+        .args([
+            "setup",
+            "local",
+            "--host-id",
+            host_id.as_str(),
+            "--remote-root",
+            remote_root.to_str().unwrap(),
+            "--no-sync",
+            "--yes",
+        ])
+        .output()
+        .unwrap();
+    assert_success("uc setup local", setup);
+
+    let config_path = home.join(".ultracontext").join("config.toml");
+    let config = fs::read_to_string(&config_path).unwrap();
+    assert!(config.contains("remote = \"local\""), "{config}");
+    assert!(config.contains("[sources.claude]"), "{config}");
+    assert!(config.contains("[sources.codex]"), "{config}");
+    assert!(config.contains("[sources.openclaw]"), "{config}");
+    assert!(config.contains("[sources.hermes]"), "{config}");
+    assert!(
+        home.join(".claude")
+            .join("skills")
+            .join("ultracontext")
+            .join("SKILL.md")
+            .is_file()
+    );
+    assert!(
+        home.join(".agents")
+            .join("skills")
+            .join("ultracontext")
+            .join("SKILL.md")
+            .is_file()
+    );
+    assert!(remote_root.join("workspace").join("sessions").is_dir());
 
     let _ = fs::remove_dir_all(&home);
 }
@@ -87,18 +141,20 @@ fn manages_sources_from_cli() {
     let home = env::temp_dir().join(format!("uc-source-home-{run_id}"));
     let remote_root = home.join("ultracontext-root");
 
-    let init = uc(&home)
+    let setup = uc(&home)
         .args([
-            "init",
+            "setup",
             "local",
             "--host-id",
             host_id.as_str(),
             "--remote-root",
             remote_root.to_str().unwrap(),
+            "--no-sync",
+            "--yes",
         ])
         .output()
         .unwrap();
-    assert_success("uc init local", init);
+    assert_success("uc setup local", setup);
 
     let add = uc(&home)
         .args(["source", "add", "openclaw", "~/.openclaw"])
@@ -136,6 +192,24 @@ fn manages_sources_from_cli() {
 }
 
 #[test]
+fn update_respects_npm_installer_env() {
+    let run_id = unique_run_id();
+    let home = env::temp_dir().join(format!("uc-update-home-{run_id}"));
+
+    let update = uc(&home)
+        .env("ULTRACONTEXT_INSTALLER", "npm")
+        .args(["update"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&update.stdout).to_string();
+    assert_success("uc update", update);
+    assert!(stdout.contains("managed by npm"), "{stdout}");
+    assert!(stdout.contains("npm update -g ultracontext"), "{stdout}");
+
+    let _ = fs::remove_dir_all(&home);
+}
+
+#[test]
 #[ignore = "requires local mutagen access"]
 fn syncs_custom_source_lifecycle_over_local_mutagen() {
     require("mutagen");
@@ -163,18 +237,20 @@ fn syncs_custom_source_lifecycle_over_local_mutagen() {
     )
     .unwrap();
 
-    let init = uc(&home)
+    let setup = uc(&home)
         .args([
-            "init",
+            "setup",
             "local",
             "--host-id",
             host_id.as_str(),
             "--remote-root",
             remote_root.to_str().unwrap(),
+            "--no-sync",
+            "--yes",
         ])
         .output()
         .unwrap();
-    assert_success("uc init local", init);
+    assert_success("uc setup local", setup);
 
     let add = uc(&home)
         .args(["source", "add", "openclaw", "~/OpenClaw"])
@@ -304,7 +380,12 @@ fn syncs_agent_directories_to_remote_workspace() {
     fs::create_dir_all(codex_memory_file.parent().unwrap()).unwrap();
     fs::create_dir_all(codex_node_module_file.parent().unwrap()).unwrap();
     fs::create_dir_all(codex_extra_cache_file.parent().unwrap()).unwrap();
-    fs::write(home.join(".ultracontextignore"), "scratch-cache/\n").unwrap();
+    fs::create_dir_all(home.join(".ultracontext")).unwrap();
+    fs::write(
+        home.join(".ultracontext").join(".ultracontextignore"),
+        "scratch-cache/\n",
+    )
+    .unwrap();
     fs::write(
         &claude_file,
         format!(
@@ -355,21 +436,20 @@ fn syncs_agent_directories_to_remote_workspace() {
     )
     .unwrap();
 
-    let init = uc(&home)
+    let setup = uc(&home)
         .args([
-            "init",
+            "setup",
             remote.as_str(),
             "--host-id",
             host_id.as_str(),
             "--remote-root",
             remote_root.as_str(),
+            "--sync",
+            "--yes",
         ])
         .output()
         .unwrap();
-    assert_success("uc init", init);
-
-    let start = uc(&home).args(["sync", "start"]).output().unwrap();
-    assert_success("uc sync start", start);
+    assert_success("uc setup", setup);
 
     let claude_remote = format!(
         "{remote_root}/workspace/sessions/{host_id}/claude/projects/-tmp-ultracontext-e2e/session.jsonl"
@@ -457,15 +537,15 @@ fn syncs_agent_directories_to_remote_workspace() {
     .unwrap();
     assert_success("ignored generated files", ignored_files);
 
-    if env::var("UC_E2E_SEARCH").ok().as_deref() == Some("1") {
-        let search = uc(&home)
+    if env::var("UC_E2E_QUERY").ok().as_deref() == Some("1") {
+        let query = uc(&home)
             .args([
-                "search",
+                "query",
                 &format!("Find the e2e marker {run_id}. Which agents mention it?"),
             ])
             .output()
             .unwrap();
-        assert_success("uc search", search);
+        assert_success("uc query", query);
     }
 
     drop(_cleanup);
