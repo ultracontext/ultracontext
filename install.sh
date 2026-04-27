@@ -663,14 +663,13 @@ run_setup() {
   fi
 
   say ""
-  if has_interactive_tty; then
-    info "starting uc setup"
-    if [ -t 0 ]; then
-      PATH="$INSTALL_DIR:$PATH" "$bin" setup || warn "uc setup did not complete"
-    else
-      PATH="$INSTALL_DIR:$PATH" "$bin" setup < /dev/tty || warn "uc setup did not complete"
-    fi
+  info "starting uc setup"
+  if [ -t 0 ]; then
+    PATH="$INSTALL_DIR:$PATH" "$bin" setup || warn "uc setup did not complete"
+  elif [ -r /dev/tty ]; then
+    PATH="$INSTALL_DIR:$PATH" "$bin" setup < /dev/tty || warn "uc setup did not complete"
   else
+    warn "no TTY available — run \`uc setup\` manually"
     print_next_step
   fi
 }
