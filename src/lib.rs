@@ -884,7 +884,7 @@ fn sync_start() -> Result<()> {
 
 fn sync_status() -> Result<()> {
     require_command("mutagen")?;
-    run_command("mutagen", ["sync", "list"])
+    run_command("mutagen", ["sync", "list", "--long"])
 }
 
 fn sync_stop() -> Result<()> {
