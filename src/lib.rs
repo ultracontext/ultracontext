@@ -2014,6 +2014,7 @@ fn skill_targets() -> Result<Vec<PathBuf>> {
     Ok(vec![
         home.join(".claude/skills"),
         home.join(".agents/skills"),
+        home.join(".openclaw/skills"),
     ])
 }
 

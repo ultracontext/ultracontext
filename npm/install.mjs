@@ -192,7 +192,7 @@ async function installSkill(extractDir) {
 
   const home = process.env.HOME || process.env.USERPROFILE;
   if (!home) return;
-  const defaults = `${home}/.claude/skills ${home}/.agents/skills`;
+  const defaults = `${home}/.claude/skills ${home}/.agents/skills ${home}/.openclaw/skills`;
   const targets = (process.env.ULTRACONTEXT_SKILL_TARGETS || defaults)
     .split(/\s+/)
     .filter(Boolean);
@@ -336,7 +336,7 @@ async function main() {
     }
 
     const home = process.env.HOME || process.env.USERPROFILE || "";
-    const skillTargets = (process.env.ULTRACONTEXT_SKILL_TARGETS || `${home}/.claude/skills ${home}/.agents/skills`)
+    const skillTargets = (process.env.ULTRACONTEXT_SKILL_TARGETS || `${home}/.claude/skills ${home}/.agents/skills ${home}/.openclaw/skills`)
       .split(/\s+/)
       .filter(Boolean);
     printSummary({ ultracontextDestination, mutagenDestination, skillTargets });
