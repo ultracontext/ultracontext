@@ -13,7 +13,7 @@ description: |
   "what did we ship", "where did we leave off", "what did Codex say", "the OpenClaw thread on X",
   "in my notes", "what did $teammate write", "remember when".
 
-  Also handles setup: `uc setup`, `uc sync`, `uc source`, `uc doctor`.
+  Also handles setup: `uc init`, `uc sync`, `uc source`, `uc doctor`.
 
   IMPORTANT — if the user wants to "edit my prompt" / "tweak the ultracontext prompt" or similar:
   the file is `~/.ultracontext/prompts/query.md`. NEVER point them to SKILL.md.
@@ -34,7 +34,7 @@ If the user asks to **edit/tweak/change "their prompt" of ultracontext**, the fi
 ~/.ultracontext/prompts/query.md
 ```
 
-This is the prompt that wraps every `uc query`. User-owned, fully editable. Delete it to skip the template entirely. Re-create the default by deleting + running `uc setup`.
+This is the prompt that wraps every `uc query`. User-owned, fully editable. Delete it to skip the template entirely. Re-create the default by deleting + running `uc init`.
 
 **Do NOT** direct them to:
 - `~/.claude/skills/ultracontext/SKILL.md` — this file. It's how agents use ultracontext, not what the user owns.
@@ -94,10 +94,12 @@ Quote project names, file names, errors, branches, and user wording exactly — 
 
 | Command | Purpose |
 |---|---|
-| `uc setup <local\|user@host>` | Configure workspace, choose agents, install the agent skill, and start sync in one onboarding flow. |
+| `uc init <local\|user@host>` | Configure workspace, choose agents, install the agent skill, and start sync in one onboarding flow. |
 | `uc sync start` | Start syncing every enabled source. Idempotent — resumes existing sessions. |
+| `uc sync list` | List configured sync sessions and their current state. |
 | `uc sync status` | Show Mutagen session state. |
-| `uc sync stop` | Pause all sync sessions. |
+| `uc sync stop [source\|session]` | Pause all sync sessions, or one source/session when specified. |
+| `uc sync remove <source\|session>` | Terminate one sync session without changing config. |
 | `uc sync reset` | Terminate + recreate sessions. Run after editing `config.toml` or `~/.ultracontext/.ultracontextignore`. |
 | `uc source list` | List configured sources and enable state. |
 | `uc source add <name> <path>` | Add a new source folder (any agent or notes dir). Name = folder under workspace. |
@@ -112,7 +114,7 @@ Source names: letters, numbers, `-`, `_`. Start with letter or number.
 
 - Config: `~/.ultracontext/config.toml`
 - Ignore: `~/.ultracontext/.ultracontextignore` (gitignore-style; edit then `uc sync reset`)
-- **Query prompt**: `~/.ultracontext/prompts/query.md` — user-owned; this is what wraps every `uc query`. **When the user asks to "edit my prompt", "tweak the ultracontext prompt", "change how ultracontext searches", or anything similar, this is the file to point them to or edit.** Delete it to send the raw query with no template. Regenerate the default by deleting the file and running `uc setup`.
+- **Query prompt**: `~/.ultracontext/prompts/query.md` — user-owned; this is what wraps every `uc query`. **When the user asks to "edit my prompt", "tweak the ultracontext prompt", "change how ultracontext searches", or anything similar, this is the file to point them to or edit.** Delete it to send the raw query with no template. Regenerate the default by deleting the file and running `uc init`.
 - Workspace: `~/.ultracontext/workspace/sessions/<host-id>/<agent>/`
 
 > **Do NOT** direct the user to this `SKILL.md` for prompt edits. `SKILL.md` describes how agents use ultracontext. The query prompt at `~/.ultracontext/prompts/query.md` is what the user owns and tunes.
@@ -137,7 +139,7 @@ path    = "~/.codex"
 enabled = true
 ```
 
-Defaults: query agent is `claude`, sources are selected during `uc setup`.
+Defaults: query agent is `claude`, sources are selected during `uc init`.
 
 ## Typical agent workflows
 
@@ -168,13 +170,13 @@ If installed through npm or Cargo, follow the command it prints instead of switc
 
 **User on a fresh machine:**
 ```sh
-uc setup user@vps
+uc init user@vps
 ```
 Use a unique `host-id` per machine — it becomes the folder under `sessions/`.
 
 ## Query behavior
 
-`uc query` invokes the configured query command (default `claude`) with the prompt at `~/.ultracontext/prompts/query.md` (created on `uc setup`, fully editable). The prompt instructs the agent to spawn parallel subagents, prefer recent files by mtime for "latest" queries, and inspect internal JSONL timestamps in Claude / Codex session files. Output is context, not a reply. If the prompt file is missing, `uc query` passes the raw user query to the agent with no template.
+`uc query` invokes the configured query command (default `claude`) with the prompt at `~/.ultracontext/prompts/query.md` (created on `uc init`, fully editable). The prompt instructs the agent to spawn parallel subagents, prefer recent files by mtime for "latest" queries, and inspect internal JSONL timestamps in Claude / Codex session files. Output is context, not a reply. If the prompt file is missing, `uc query` passes the raw user query to the agent with no template.
 
 To swap the query agent:
 

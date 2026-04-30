@@ -10,11 +10,11 @@ UltraContext automatically captures everything Claude Code, Codex and OpenClaw d
 curl -fsSL https://ultracontext.com/install.sh | sh
 # or: npm install -g ultracontext
 
-uc setup
+uc init
 uc query "what did we ship in the rewrite?"
 ```
 
-The install script starts `uc setup` when it can use your terminal. With npm, run `uc setup` after install.
+The install script starts `uc init` when it can use your terminal. With npm, run `uc init` after install.
 
 Add more sources with `uc source add <name> <path>`.
 
@@ -49,7 +49,7 @@ Main commands:
 
 | Command | What it does |
 |---|---|
-| `uc setup [local\|user@host]` | Interactive onboarding: choose where UltraContext lives, choose agents, install skill, start sync |
+| `uc init [local\|user@host]` | Interactive onboarding: choose where UltraContext lives, choose agents, install skill, start sync |
 | `uc status` | Show compact workspace and source sync overview |
 | `uc query "<query>"` | Ask the query agent for relevant context |
 | `uc doctor` | Verify dependencies, config, and remote access |
@@ -69,17 +69,19 @@ Sync commands:
 | Command | What it does |
 |---|---|
 | `uc sync start` | Start syncing every enabled source |
+| `uc sync list` | List configured sync sessions and their current state |
 | `uc sync status` | Show Mutagen session state |
-| `uc sync stop` | Pause all sync sessions |
+| `uc sync stop [source\|session]` | Pause all sync sessions, or one source/session when specified |
+| `uc sync remove <source\|session>` | Terminate one sync session without changing config |
 | `uc sync reset` | Recreate sessions after editing global settings or ignore rules |
 
 Advanced:
 
 | Command | What it does |
 |---|---|
-| `uc setup local --no-sync` | Configure a local workspace without starting sync |
-| `uc setup user@vps --yes` | Non-interactive setup for scripts |
-| `uc setup user@vps --host-id macbook --remote-root ~/.ultracontext --yes` | Fully explicit non-interactive setup |
+| `uc init local --no-sync` | Configure a local workspace without starting sync |
+| `uc init user@vps --yes` | Non-interactive init for scripts |
+| `uc init user@vps --host-id macbook --remote-root ~/.ultracontext --yes` | Fully explicit non-interactive init |
 
 `uc` and `ultracontext` are the same binary.
 
@@ -99,7 +101,7 @@ npm install -g ultracontext
 
 Both paths install the Rust binary and make `uc` available. Both also ensure Mutagen is available, because `uc sync` is a wrapper over Mutagen sync.
 
-Re-running the install command is an update. `uc setup` can be rerun to reconfigure the workspace and agents. `uc doctor` warns if multiple installs are on PATH.
+Re-running the install command is an update. `uc init` can be rerun to reconfigure the workspace and agents. `uc doctor` warns if multiple installs are on PATH.
 
 ## Workspace layout
 
@@ -138,7 +140,7 @@ path    = "~/.codex"
 enabled = true
 ```
 
-`~/.ultracontext/.ultracontextignore` works like `.gitignore`, seeded on `uc setup`. Source changes apply immediately. Global settings and ignore edits apply on `uc sync reset`.
+`~/.ultracontext/.ultracontextignore` works like `.gitignore`, seeded on `uc init`. Source changes apply immediately. Global settings and ignore edits apply on `uc sync reset`.
 
 ## Query
 

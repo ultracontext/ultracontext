@@ -24,7 +24,7 @@ fn initializes_and_queries_local_workspace() {
 
     let setup = uc(&home)
         .args([
-            "setup",
+            "init",
             "local",
             "--host-id",
             host_id.as_str(),
@@ -35,7 +35,7 @@ fn initializes_and_queries_local_workspace() {
         ])
         .output()
         .unwrap();
-    assert_success("uc setup local", setup);
+    assert_success("uc init local", setup);
 
     let config_path = home.join(".ultracontext").join("config.toml");
     let config = fs::read_to_string(&config_path).unwrap();
@@ -82,10 +82,10 @@ fn initializes_and_queries_local_workspace() {
 }
 
 #[test]
-fn setup_configures_skills_sources_and_workspace() {
+fn init_configures_skills_sources_and_workspace() {
     let run_id = unique_run_id();
-    let host_id = format!("uc-setup-{run_id}");
-    let home = env::temp_dir().join(format!("uc-setup-home-{run_id}"));
+    let host_id = format!("uc-init-{run_id}");
+    let home = env::temp_dir().join(format!("uc-init-home-{run_id}"));
     let remote_root = home.join("ultracontext-root");
 
     fs::create_dir_all(home.join(".claude")).unwrap();
@@ -95,7 +95,7 @@ fn setup_configures_skills_sources_and_workspace() {
 
     let setup = uc(&home)
         .args([
-            "setup",
+            "init",
             "local",
             "--host-id",
             host_id.as_str(),
@@ -106,7 +106,7 @@ fn setup_configures_skills_sources_and_workspace() {
         ])
         .output()
         .unwrap();
-    assert_success("uc setup local", setup);
+    assert_success("uc init local", setup);
 
     let config_path = home.join(".ultracontext").join("config.toml");
     let config = fs::read_to_string(&config_path).unwrap();
@@ -143,7 +143,7 @@ fn manages_sources_from_cli() {
 
     let setup = uc(&home)
         .args([
-            "setup",
+            "init",
             "local",
             "--host-id",
             host_id.as_str(),
@@ -154,7 +154,7 @@ fn manages_sources_from_cli() {
         ])
         .output()
         .unwrap();
-    assert_success("uc setup local", setup);
+    assert_success("uc init local", setup);
 
     let add = uc(&home)
         .args(["source", "add", "openclaw", "~/.openclaw"])
@@ -239,7 +239,7 @@ fn syncs_custom_source_lifecycle_over_local_mutagen() {
 
     let setup = uc(&home)
         .args([
-            "setup",
+            "init",
             "local",
             "--host-id",
             host_id.as_str(),
@@ -250,7 +250,7 @@ fn syncs_custom_source_lifecycle_over_local_mutagen() {
         ])
         .output()
         .unwrap();
-    assert_success("uc setup local", setup);
+    assert_success("uc init local", setup);
 
     let add = uc(&home)
         .args(["source", "add", "openclaw", "~/OpenClaw"])
@@ -438,7 +438,7 @@ fn syncs_agent_directories_to_remote_workspace() {
 
     let setup = uc(&home)
         .args([
-            "setup",
+            "init",
             remote.as_str(),
             "--host-id",
             host_id.as_str(),
@@ -449,7 +449,7 @@ fn syncs_agent_directories_to_remote_workspace() {
         ])
         .output()
         .unwrap();
-    assert_success("uc setup", setup);
+    assert_success("uc init", setup);
 
     let claude_remote = format!(
         "{remote_root}/workspace/sessions/{host_id}/claude/projects/-tmp-ultracontext-e2e/session.jsonl"

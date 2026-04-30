@@ -16,7 +16,7 @@ const DEFAULT_QUERY_COMMAND: &str = "claude";
 const QUERY_PROMPT_PLACEHOLDER: &str = "{{prompt}}";
 const DEFAULT_QUERY_ARGS: &str =
     "-p {{prompt}} --dangerously-skip-permissions --effort medium --model sonnet";
-// Seed contents shipped with the binary; written to disk on `uc setup` so users
+// Seed contents shipped with the binary; written to disk on `uc init` so users
 // can edit it without rebuilding. At runtime we read from disk; if the file is
 // missing we send the raw user query straight to the query agent.
 const DEFAULT_QUERY_PROMPT: &str = include_str!("prompts/query.md");
@@ -178,7 +178,7 @@ fn run(args: Vec<String>) -> Result<()> {
             print_help();
             Ok(())
         }
-        Some("setup") => cmd_setup(&args[2..]),
+        Some("init") => cmd_init(&args[2..]),
         Some("sync") => cmd_sync(&args[2..]),
         Some("source" | "sources") => cmd_source(&args[2..]),
         Some("query") => cmd_query(&args[2..]),
@@ -195,7 +195,7 @@ fn run(args: Vec<String>) -> Result<()> {
 
 fn print_help() {
     println!(
-        "UltraContext {}\n\nUsage:\n  uc setup [local|user@host]\n  uc status\n  uc sync <start|status|stop|reset>\n  uc source <list|add|remove|enable|disable>\n  uc query <query>\n  uc doctor\n  uc update\n",
+        "UltraContext {}\n\nUsage:\n  uc init [local|user@host]\n  uc status\n  uc sync <start|list|status|stop|remove|reset>\n  uc source <list|add|remove|enable|disable>\n  uc query <query>\n  uc doctor\n  uc update\n",
         env!("CARGO_PKG_VERSION")
     );
 }
@@ -284,7 +284,7 @@ fn ui_error(message: impl fmt::Display) {
     }
 }
 
-fn cmd_setup(args: &[String]) -> Result<()> {
+fn cmd_init(args: &[String]) -> Result<()> {
     let mut remote_arg: Option<String> = None;
     let mut host_id_arg: Option<String> = None;
     let mut remote_root_arg: Option<String> = None;
@@ -306,16 +306,16 @@ fn cmd_setup(args: &[String]) -> Result<()> {
             "--no-sync" => sync_arg = Some(false),
             "-y" | "--yes" => yes = true,
             "-h" | "--help" => {
-                print_setup_help();
+                print_init_help();
                 return Ok(());
             }
             value if value.starts_with('-') => {
-                return Err(UcError::Message(format!("unknown setup option: {value}")));
+                return Err(UcError::Message(format!("unknown init option: {value}")));
             }
             value => {
                 if remote_arg.is_some() {
                     return Err(UcError::Message(
-                        "setup accepts only one remote argument".to_string(),
+                        "init accepts only one remote argument".to_string(),
                     ));
                 }
                 remote_arg = Some(value.to_string());
@@ -379,7 +379,7 @@ fn cmd_setup(args: &[String]) -> Result<()> {
             Some(value) => value,
             None => {
                 return Err(UcError::Message(
-                    "usage: uc setup [local|user@host]".to_string(),
+                    "usage: uc init [local|user@host]".to_string(),
                 ));
             }
         };
@@ -450,9 +450,9 @@ fn finish_setup() -> Result<()> {
     Ok(())
 }
 
-fn print_setup_help() {
+fn print_init_help() {
     println!(
-        "Usage: uc setup [local|user@host] [--host-id <id>] [--remote-root <path>] [--no-sync] [--yes]"
+        "Usage: uc init [local|user@host] [--host-id <id>] [--remote-root <path>] [--no-sync] [--yes]"
     );
 }
 
@@ -858,11 +858,13 @@ fn initialize_config(remote: RemoteSpec, host_id: String, sources: Vec<Source>) 
 fn cmd_sync(args: &[String]) -> Result<()> {
     match args.first().map(String::as_str) {
         Some("start") => sync_start(),
+        Some("list" | "ls") => sync_list(),
         Some("status") => sync_status(),
-        Some("stop") => sync_stop(),
+        Some("stop" | "pause") => sync_stop(&args[1..]),
+        Some("remove" | "rm" | "terminate") => sync_remove(&args[1..]),
         Some("reset") => sync_reset(),
         Some("-h" | "--help") | None => {
-            println!("Usage: uc sync <start|status|stop|reset>");
+            println!("Usage: uc sync <start|list|status|stop|remove|reset>");
             Ok(())
         }
         Some(command) => Err(UcError::Message(format!("unknown sync command: {command}"))),
@@ -882,6 +884,64 @@ fn sync_start() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn sync_list() -> Result<()> {
+    require_command("mutagen")?;
+    let config = load_config()?;
+    let output = capture_command("mutagen", ["sync", "list"])?;
+    let lines = sync_list_lines(&config, &output);
+
+    if lines.is_empty() {
+        println!("No sync sources configured. Run `uc init`.");
+        return Ok(());
+    }
+
+    for line in lines {
+        println!("{line}");
+    }
+    Ok(())
+}
+
+fn sync_list_lines(config: &Config, mutagen_list: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut seen = HashSet::new();
+
+    for source in &config.sources {
+        let session = mutagen_session_name(config, source);
+        seen.insert(session.clone());
+        let source_state = if source.enabled {
+            "enabled"
+        } else {
+            "disabled"
+        };
+        let sync_state =
+            mutagen_session_status(mutagen_list, &session).unwrap_or_else(|| "missing".to_string());
+        lines.push(format!(
+            "{:<16} {:<8} {:<32} {}",
+            source.agent, source_state, session, sync_state
+        ));
+        lines.push(format!(
+            "  {} -> {}",
+            source.local_path,
+            remote_endpoint(config, source)
+        ));
+    }
+
+    for session in owned_mutagen_session_names(config, mutagen_list) {
+        if seen.contains(&session) {
+            continue;
+        }
+        let source = short_source_name(&session);
+        let sync_state =
+            mutagen_session_status(mutagen_list, &session).unwrap_or_else(|| "unknown".to_string());
+        lines.push(format!(
+            "{:<16} {:<8} {:<32} {}",
+            source, "orphan", session, sync_state
+        ));
+    }
+
+    lines
 }
 
 fn sync_status() -> Result<()> {
@@ -1091,13 +1151,47 @@ fn status_style(status: &str) -> (console::Color, &'static str) {
     }
 }
 
-fn sync_stop() -> Result<()> {
+fn sync_stop(args: &[String]) -> Result<()> {
+    if args.iter().any(|arg| arg == "-h" || arg == "--help") {
+        println!("Usage: uc sync stop [source|session]");
+        return Ok(());
+    }
+    if args.len() > 1 {
+        return Err(UcError::Message(
+            "usage: uc sync stop [source|session]".to_string(),
+        ));
+    }
+
     require_command("mutagen")?;
     let config = load_config()?;
+    if let Some(target) = args.first() {
+        let existing = capture_command("mutagen", ["sync", "list"])?;
+        let session = resolve_sync_session_target(&config, target, &existing)?;
+        return sync_pause_session(&session, &existing);
+    }
+
     for source in enabled_sources(&config) {
         sync_pause_source(&config, source)?;
     }
     Ok(())
+}
+
+fn sync_remove(args: &[String]) -> Result<()> {
+    if args.iter().any(|arg| arg == "-h" || arg == "--help") {
+        println!("Usage: uc sync remove <source|session>");
+        return Ok(());
+    }
+    if args.len() != 1 {
+        return Err(UcError::Message(
+            "usage: uc sync remove <source|session>".to_string(),
+        ));
+    }
+
+    require_command("mutagen")?;
+    let config = load_config()?;
+    let existing = capture_command("mutagen", ["sync", "list"])?;
+    let session = resolve_sync_session_target(&config, &args[0], &existing)?;
+    sync_terminate_session(&session, &existing)
 }
 
 fn sync_reset() -> Result<()> {
@@ -1106,7 +1200,7 @@ fn sync_reset() -> Result<()> {
     let existing = capture_command("mutagen", ["sync", "list"])?;
 
     for name in owned_mutagen_session_names(&config, &existing) {
-        if existing.contains(&format!("Name: {name}")) {
+        if mutagen_session_exists(&existing, &name) {
             ui_step(format!("terminate {name}"));
             run_command("mutagen", ["sync", "terminate", name.as_str()])?;
         }
@@ -1297,7 +1391,7 @@ fn cmd_status(args: &[String]) -> Result<()> {
         Ok(config) => config,
         Err(error) => {
             ui_warn(format!("config: missing ({error})"));
-            ui_info("next: uc setup");
+            ui_info("next: uc init");
             return Ok(());
         }
     };
@@ -1812,6 +1906,46 @@ fn mutagen_session_status(mutagen_list: &str, name: &str) -> Option<String> {
     }
 }
 
+fn mutagen_session_exists(mutagen_list: &str, name: &str) -> bool {
+    mutagen_list
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("Name: "))
+        .any(|session_name| session_name == name)
+}
+
+fn resolve_sync_session_target(
+    config: &Config,
+    target: &str,
+    mutagen_list: &str,
+) -> Result<String> {
+    let target = target.trim();
+    if target.is_empty() {
+        return Err(UcError::Message("sync target cannot be empty".to_string()));
+    }
+
+    if let Some(source) = config.sources.iter().find(|source| source.agent == target) {
+        return Ok(mutagen_session_name(config, source));
+    }
+
+    let prefix = format!("uc-{}-", config.host_id);
+    if target.starts_with("uc-") {
+        if target.starts_with(&prefix) {
+            return Ok(target.to_string());
+        }
+        return Err(UcError::Message(format!(
+            "sync session {target} is not owned by host {}",
+            config.host_id
+        )));
+    }
+
+    let session = format!("{prefix}{target}");
+    if mutagen_session_exists(mutagen_list, &session) {
+        return Ok(session);
+    }
+
+    Ok(session)
+}
+
 fn sync_start_source(config: &Config, source: &Source, existing: &str) -> Result<()> {
     let local_path = expand_home(&source.local_path)?;
     if !local_path.exists() {
@@ -1824,7 +1958,7 @@ fn sync_start_source(config: &Config, source: &Source, existing: &str) -> Result
     }
 
     let name = mutagen_session_name(config, source);
-    if existing.contains(&format!("Name: {name}")) {
+    if mutagen_session_exists(existing, &name) {
         ui_step(format!("resume {name}"));
         run_command("mutagen", ["sync", "resume", name.as_str()])?;
         run_command("mutagen", ["sync", "flush", name.as_str()])?;
@@ -1843,23 +1977,34 @@ fn sync_start_source(config: &Config, source: &Source, existing: &str) -> Result
 
 fn sync_pause_source(config: &Config, source: &Source) -> Result<()> {
     let name = mutagen_session_name(config, source);
+    let existing = capture_command("mutagen", ["sync", "list"])?;
+    sync_pause_session(&name, &existing)
+}
+
+fn sync_pause_session(name: &str, existing: &str) -> Result<()> {
+    if !mutagen_session_exists(existing, name) {
+        ui_info(format!("sync session {name}: missing"));
+        return Ok(());
+    }
+
     ui_step(format!("pause {name}"));
-    run_command("mutagen", ["sync", "pause", name.as_str()])
+    run_command("mutagen", ["sync", "pause", name])
 }
 
 fn sync_terminate_source(config: &Config, source: &Source) -> Result<()> {
     let existing = capture_command("mutagen", ["sync", "list"])?;
     let name = mutagen_session_name(config, source);
-    if existing.contains(&format!("Name: {name}")) {
-        ui_step(format!("terminate {name}"));
-        run_command("mutagen", ["sync", "terminate", name.as_str()])?;
-    } else {
-        ui_info(format!(
-            "source {}: no sync session to terminate",
-            source.agent
-        ));
+    sync_terminate_session(&name, &existing)
+}
+
+fn sync_terminate_session(name: &str, existing: &str) -> Result<()> {
+    if !mutagen_session_exists(existing, name) {
+        ui_info(format!("sync session {name}: missing"));
+        return Ok(());
     }
-    Ok(())
+
+    ui_step(format!("terminate {name}"));
+    run_command("mutagen", ["sync", "terminate", name])
 }
 
 fn apply_source_sync_start(config: &Config, source: &Source) {
@@ -2950,6 +3095,89 @@ enabled = true
             owned_mutagen_session_names(&cfg, existing),
             vec!["uc-mini-claude", "uc-mini-oldsource"]
         );
+    }
+
+    #[test]
+    fn renders_sync_list_for_configured_and_orphan_sessions() {
+        let cfg = Config {
+            remote: "user@vps".to_string(),
+            remote_root: "/srv/uc".to_string(),
+            host_id: "work-laptop".to_string(),
+            query: QueryConfig {
+                command: "claude".to_string(),
+                args: DEFAULT_QUERY_ARGS.to_string(),
+            },
+            sources: vec![
+                Source {
+                    agent: "claude".to_string(),
+                    local_path: "~/.claude".to_string(),
+                    enabled: true,
+                },
+                Source {
+                    agent: "codex".to_string(),
+                    local_path: "~/.codex".to_string(),
+                    enabled: false,
+                },
+            ],
+        };
+        let existing = r#"
+Name: uc-work-laptop-claude
+Status: Watching for changes
+
+Name: uc-work-laptop-old
+Status: Paused
+
+Name: uc-other-codex
+Status: Watching for changes
+"#;
+
+        let lines = sync_list_lines(&cfg, existing);
+
+        assert_eq!(lines.len(), 5);
+        assert!(lines[0].starts_with("claude           enabled"));
+        assert!(lines[0].contains("uc-work-laptop-claude"));
+        assert!(lines[0].contains("Watching for changes"));
+        assert_eq!(
+            lines[1],
+            "  ~/.claude -> user@vps:/srv/uc/workspace/sessions/work-laptop/claude"
+        );
+        assert!(lines[2].starts_with("codex            disabled"));
+        assert!(lines[2].contains("missing"));
+        assert!(lines[4].starts_with("old              orphan"));
+        assert!(lines[4].contains("Paused"));
+    }
+
+    #[test]
+    fn resolves_single_sync_session_targets() {
+        let cfg = Config {
+            remote: "user@vps".to_string(),
+            remote_root: "/srv/uc".to_string(),
+            host_id: "work-laptop".to_string(),
+            query: QueryConfig {
+                command: "claude".to_string(),
+                args: DEFAULT_QUERY_ARGS.to_string(),
+            },
+            sources: vec![Source {
+                agent: "codex".to_string(),
+                local_path: "~/.codex".to_string(),
+                enabled: true,
+            }],
+        };
+        let existing = "Name: uc-work-laptop-old\nStatus: Paused\n";
+
+        assert_eq!(
+            resolve_sync_session_target(&cfg, "codex", existing).unwrap(),
+            "uc-work-laptop-codex"
+        );
+        assert_eq!(
+            resolve_sync_session_target(&cfg, "old", existing).unwrap(),
+            "uc-work-laptop-old"
+        );
+        assert_eq!(
+            resolve_sync_session_target(&cfg, "uc-work-laptop-old", existing).unwrap(),
+            "uc-work-laptop-old"
+        );
+        assert!(resolve_sync_session_target(&cfg, "uc-other-codex", existing).is_err());
     }
 
     #[test]

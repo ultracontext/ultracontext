@@ -258,7 +258,7 @@ function printSummary({ ultracontextDestination, mutagenDestination, skillTarget
   }
 
   console.error("");
-  console.error(failed ? "Install completed with errors above." : "Install OK. Run: uc setup");
+  console.error(failed ? "Install completed with errors above." : "Install OK. Run: uc init");
 }
 
 async function main() {

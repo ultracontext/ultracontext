@@ -10,7 +10,7 @@ INSTALL_DIR="${ULTRACONTEXT_INSTALL_DIR:-$HOME/.local/bin}"
 MUTAGEN_VERSION="${ULTRACONTEXT_MUTAGEN_VERSION:-v0.18.1}"
 GUM_VERSION="${ULTRACONTEXT_GUM_VERSION:-0.17.0}"
 INSTALL_MUTAGEN="${ULTRACONTEXT_INSTALL_MUTAGEN:-1}"
-RUN_SETUP="${ULTRACONTEXT_RUN_SETUP:-1}"
+RUN_INIT="${ULTRACONTEXT_RUN_INIT:-1}"
 
 DEV_MODE=0
 SUMMARY_FAILED=0
@@ -97,8 +97,8 @@ Environment:
   ULTRACONTEXT_INSTALL_DIR      Install directory (default: ~/.local/bin)
   ULTRACONTEXT_VERSION          Release tag or "latest" (default: latest)
   ULTRACONTEXT_INSTALL_MUTAGEN  Set to 0 to skip Mutagen install
-  ULTRACONTEXT_INSTALL_SKILL    Set to 0 to make uc setup skip agent skill install
-  ULTRACONTEXT_RUN_SETUP        Set to 0 to skip uc setup after install
+  ULTRACONTEXT_INSTALL_SKILL    Set to 0 to make uc init skip agent skill install
+  ULTRACONTEXT_RUN_INIT         Set to 0 to skip uc init after install
   ULTRACONTEXT_FORCE            Set to 1 to ignore another install on PATH
   ULTRACONTEXT_USE_GUM          Set to 0 to force plain text UI
 EOF
@@ -378,7 +378,7 @@ delegate_existing_install_if_needed() {
         info "installing this checkout through Cargo instead of creating a standalone install"
         run_step "installing Cargo package" cargo install --path . --force
         ok "install complete"
-        run_setup
+        run_init
         exit 0
       else
         info "updating through Cargo instead of creating a standalone install"
@@ -472,7 +472,7 @@ show_plan() {
   kv "target" "$ULTRACONTEXT_TARGET"
   kv "install dir" "$INSTALL_DIR"
   kv "mutagen" "$(if [ "$INSTALL_MUTAGEN" = "0" ]; then printf 'skip'; else printf '%s' "$MUTAGEN_VERSION"; fi)"
-  kv "setup" "$(if [ "$RUN_SETUP" = "0" ]; then printf 'skip'; else printf 'run'; fi)"
+  kv "init" "$(if [ "$RUN_INIT" = "0" ]; then printf 'skip'; else printf 'run'; fi)"
 }
 
 prepare_dev_release() {
@@ -649,8 +649,8 @@ has_interactive_tty() {
   { : < /dev/tty; } 2>/dev/null
 }
 
-run_setup() {
-  if [ "$RUN_SETUP" != "1" ]; then
+run_init() {
+  if [ "$RUN_INIT" != "1" ]; then
     print_next_step
     return
   fi
@@ -663,20 +663,20 @@ run_setup() {
   fi
 
   say ""
-  info "starting uc setup"
+  info "starting uc init"
   if [ -t 0 ]; then
-    PATH="$INSTALL_DIR:$PATH" "$bin" setup || warn "uc setup did not complete"
+    PATH="$INSTALL_DIR:$PATH" "$bin" init || warn "uc init did not complete"
   elif [ -r /dev/tty ]; then
-    PATH="$INSTALL_DIR:$PATH" "$bin" setup < /dev/tty || warn "uc setup did not complete"
+    PATH="$INSTALL_DIR:$PATH" "$bin" init < /dev/tty || warn "uc init did not complete"
   else
-    warn "no TTY available — run \`uc setup\` manually"
+    warn "no TTY available — run \`uc init\` manually"
     print_next_step
   fi
 }
 
 print_next_step() {
   say ""
-  printf '%sNext:%s uc setup\n' "$BOLD" "$RESET" >&2
+  printf '%sNext:%s uc init\n' "$BOLD" "$RESET" >&2
 }
 
 main() {
@@ -701,7 +701,7 @@ main() {
 
   section "Finish"
   print_summary
-  run_setup
+  run_init
 }
 
 main "$@"
