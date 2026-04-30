@@ -1161,6 +1161,48 @@ fn parse_progress_pct(status: &str) -> Option<u8> {
     num.parse().ok()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SessionProgress {
+    pct: u8,
+    current_files: Option<u64>,
+    total_files: Option<u64>,
+}
+
+fn session_progress(s: &SessionInfo) -> Option<SessionProgress> {
+    if let Some(pct) = s.progress_pct {
+        return Some(SessionProgress {
+            pct,
+            current_files: None,
+            total_files: None,
+        });
+    }
+
+    if !is_progress_status(&s.status) {
+        return None;
+    }
+
+    let total = s.alpha_files?;
+    if total == 0 {
+        return None;
+    }
+    let current = s.beta_files.unwrap_or(0);
+    let pct = current.saturating_mul(100).checked_div(total).unwrap_or(0);
+
+    Some(SessionProgress {
+        pct: pct.min(100) as u8,
+        current_files: Some(current),
+        total_files: Some(total),
+    })
+}
+
+fn is_progress_status(status: &str) -> bool {
+    let status = status.to_lowercase();
+    status.contains("staging")
+        || status.contains("transitioning")
+        || status.contains("scanning")
+        || status.contains("reconciling")
+}
+
 fn render_bar(pct: u8, width: usize) -> String {
     let pct = pct.min(100) as usize;
     let filled = (pct * width) / 100;
@@ -1183,8 +1225,15 @@ fn render_session(s: &SessionInfo) {
         style(&s.status).fg(color)
     );
 
-    if let Some(pct) = s.progress_pct {
-        println!("  {} {:>3}%", render_bar(pct, 32), pct);
+    if let Some(progress) = session_progress(s) {
+        match (progress.current_files, progress.total_files) {
+            (Some(current), Some(total)) => println!(
+                "  {} {:>3}%  {current}/{total} files",
+                render_bar(progress.pct, 32),
+                progress.pct
+            ),
+            _ => println!("  {} {:>3}%", render_bar(progress.pct, 32), progress.pct),
+        }
     }
 
     let conn_a = if s.alpha_connected { "●" } else { "○" };
@@ -3782,6 +3831,37 @@ Status: Paused
             Some("Paused".to_string())
         );
         assert_eq!(mutagen_session_status(list, "uc-host-openclaw"), None);
+    }
+
+    #[test]
+    fn derives_progress_from_mutagen_file_counts() {
+        let session = SessionInfo {
+            status: "Staging files on beta".to_string(),
+            alpha_files: Some(100),
+            beta_files: Some(25),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            session_progress(&session),
+            Some(SessionProgress {
+                pct: 25,
+                current_files: Some(25),
+                total_files: Some(100)
+            })
+        );
+    }
+
+    #[test]
+    fn hides_count_progress_for_stable_sessions() {
+        let session = SessionInfo {
+            status: "Watching for changes".to_string(),
+            alpha_files: Some(100),
+            beta_files: Some(100),
+            ..Default::default()
+        };
+
+        assert_eq!(session_progress(&session), None);
     }
 
     #[test]
