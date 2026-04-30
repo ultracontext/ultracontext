@@ -332,29 +332,33 @@ fn cmd_init(args: &[String]) -> Result<()> {
         remote_arg.is_some() || host_id_arg.is_some() || remote_root_arg.is_some();
     let mut intro_printed = false;
 
-    if existing_config.is_some() && !has_config_args {
-        if interactive {
-            ui_intro("UltraContext setup");
-            intro_printed = true;
-            ui_info(format!("config: {}", config_path()?.display()));
-            let action =
-                cliclack::select("UltraContext is already set up here. What should we do?")
-                    .initial_value("reconfigure")
-                    .item(
-                        "reconfigure",
-                        "Reconfigure",
-                        "choose workspace and agents again",
-                    )
-                    .item("quit", "Quit", "")
-                    .interact()?;
-            if action == "quit" {
-                ui_outro("Setup unchanged");
-                return Ok(());
-            }
+    if existing_config.is_some() {
+        if has_config_args {
             reconfigure_defaults = existing_config.clone();
         } else {
-            setup_existing(sync_arg, interactive)?;
-            return Ok(());
+            if interactive {
+                ui_intro("UltraContext setup");
+                intro_printed = true;
+                ui_info(format!("config: {}", config_path()?.display()));
+                let action =
+                    cliclack::select("UltraContext is already set up here. What should we do?")
+                        .initial_value("reconfigure")
+                        .item(
+                            "reconfigure",
+                            "Reconfigure",
+                            "choose workspace and agents again",
+                        )
+                        .item("quit", "Quit", "")
+                        .interact()?;
+                if action == "quit" {
+                    ui_outro("Setup unchanged");
+                    return Ok(());
+                }
+                reconfigure_defaults = existing_config.clone();
+            } else {
+                setup_existing(sync_arg, interactive)?;
+                return Ok(());
+            }
         }
     }
 
@@ -383,7 +387,10 @@ fn cmd_init(args: &[String]) -> Result<()> {
                 ));
             }
         };
-        (remote_input, default_sources())
+        (
+            remote_input,
+            noninteractive_init_sources(reconfigure_defaults.as_ref()),
+        )
     };
 
     let mut remote = RemoteSpec::parse(&remote_input)?;
@@ -402,6 +409,10 @@ fn cmd_init(args: &[String]) -> Result<()> {
             .map(|config| config.host_id.clone())
             .unwrap_or_else(default_host_id)
     });
+
+    if let Some(previous) = reconfigure_defaults.as_ref() {
+        prepare_reconfigured_workspace(previous, &remote, &host_id)?;
+    }
 
     let config = setup_task("Configure workspace", "Workspace configured", || {
         initialize_config(remote, host_id, sources)
@@ -1739,6 +1750,83 @@ fn prepare_remote_workspace(config: &Config) -> Result<()> {
     run_command("ssh", [config.remote.as_str(), command.as_str()])
 }
 
+fn prepare_reconfigured_workspace(
+    previous: &Config,
+    remote: &RemoteSpec,
+    host_id: &str,
+) -> Result<()> {
+    if previous.remote == remote.target
+        && previous.remote_root == remote.root
+        && previous.host_id == host_id
+    {
+        return Ok(());
+    }
+
+    terminate_owned_sync_sessions(previous)?;
+
+    if previous.remote == remote.target
+        && previous.remote_root == remote.root
+        && previous.host_id != host_id
+    {
+        move_host_workspace(previous, host_id)?;
+    }
+
+    Ok(())
+}
+
+fn terminate_owned_sync_sessions(config: &Config) -> Result<()> {
+    match require_command("mutagen") {
+        Ok(()) => {}
+        Err(error) => {
+            ui_warn(format!("old sync sessions not terminated ({error})"));
+            return Ok(());
+        }
+    }
+
+    let existing = capture_command("mutagen", ["sync", "list"])?;
+    for name in owned_mutagen_session_names(config, &existing) {
+        sync_terminate_session(&name, &existing)?;
+    }
+    Ok(())
+}
+
+fn move_host_workspace(config: &Config, new_host_id: &str) -> Result<()> {
+    let old_dir = format!(
+        "{}/workspace/sessions/{}",
+        config.remote_root, config.host_id
+    );
+    let new_dir = format!("{}/workspace/sessions/{new_host_id}", config.remote_root);
+
+    if config.is_local() {
+        let old_path = expand_home(&old_dir)?;
+        let new_path = expand_home(&new_dir)?;
+        if old_path.exists() {
+            if new_path.exists() {
+                ui_step(format!("remove old workspace {}", config.host_id));
+                fs::remove_dir_all(old_path)?;
+            } else {
+                if let Some(parent) = new_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                ui_step(format!(
+                    "move workspace {} -> {}",
+                    config.host_id, new_host_id
+                ));
+                fs::rename(old_path, new_path)?;
+            }
+        }
+        return Ok(());
+    }
+
+    let old_arg = remote_path_arg(&old_dir);
+    let new_arg = remote_path_arg(&new_dir);
+    let command = format!(
+        "if [ -d {old_arg} ] && [ ! -e {new_arg} ]; then mv {old_arg} {new_arg}; \
+elif [ -d {old_arg} ] && [ -e {new_arg} ]; then rm -rf {old_arg}; fi"
+    );
+    run_command("ssh", [config.remote.as_str(), command.as_str()])
+}
+
 // Render the prompt the query agent will receive.
 // If the user has a prompt file at ~/.ultracontext/prompts/query.md,
 // substitute {{workspace_path}} and {{query}} into it. If not, return the bare
@@ -1790,6 +1878,12 @@ fn default_sources() -> Vec<Source> {
             enabled: source_path_exists(source.path),
         })
         .collect()
+}
+
+fn noninteractive_init_sources(config: Option<&Config>) -> Vec<Source> {
+    config
+        .map(|config| config.sources.clone())
+        .unwrap_or_else(default_sources)
 }
 
 fn setup_source_defaults(config: Option<&Config>) -> Vec<Source> {
@@ -3138,6 +3232,26 @@ enabled = true
             vec!["codex", "project_notes", "openclaw", "claude", "hermes"]
         );
         assert_eq!(sources[0].local_path, "~/CustomCodex");
+    }
+
+    #[test]
+    fn noninteractive_init_preserves_existing_sources() {
+        let cfg = Config {
+            remote: "user@vps".to_string(),
+            remote_root: "/srv/ultracontext".to_string(),
+            host_id: "work-laptop".to_string(),
+            query: QueryConfig {
+                command: "claude".to_string(),
+                args: DEFAULT_QUERY_ARGS.to_string(),
+            },
+            sources: vec![Source {
+                agent: "codex".to_string(),
+                local_path: "~/CustomCodex".to_string(),
+                enabled: true,
+            }],
+        };
+
+        assert_eq!(noninteractive_init_sources(Some(&cfg)), cfg.sources);
     }
 
     #[test]
