@@ -1056,12 +1056,14 @@ struct SessionInfo {
     beta_connected: bool,
     status: String,
     progress_pct: Option<u8>,
+    transition_problems: Vec<String>,
 }
 
 fn parse_mutagen_sessions(out: &str) -> Vec<SessionInfo> {
     let mut sessions = Vec::new();
     let mut cur: Option<SessionInfo> = None;
     let mut side: Option<&'static str> = None;
+    let mut in_transition_problems = false;
 
     for raw in out.lines() {
         let line = raw.trim_end();
@@ -1076,12 +1078,29 @@ fn parse_mutagen_sessions(out: &str) -> Vec<SessionInfo> {
                 ..Default::default()
             });
             side = None;
+            in_transition_problems = false;
             continue;
         }
         let Some(s) = cur.as_mut() else {
             continue;
         };
 
+        if let Some(status) = trimmed.strip_prefix("Status: ") {
+            s.status = status.to_string();
+            s.progress_pct = parse_progress_pct(status);
+            in_transition_problems = false;
+            continue;
+        }
+        if trimmed == "Transition problems:" {
+            in_transition_problems = true;
+            continue;
+        }
+        if in_transition_problems {
+            if !trimmed.is_empty() {
+                s.transition_problems.push(trimmed.to_string());
+            }
+            continue;
+        }
         if trimmed == "Alpha:" {
             side = Some("alpha");
             continue;
@@ -1133,11 +1152,6 @@ fn parse_mutagen_sessions(out: &str) -> Vec<SessionInfo> {
                 }
                 _ => {}
             }
-            continue;
-        }
-        if let Some(status) = trimmed.strip_prefix("Status: ") {
-            s.status = status.to_string();
-            s.progress_pct = parse_progress_pct(status);
             continue;
         }
     }
@@ -1197,7 +1211,8 @@ fn session_progress(s: &SessionInfo) -> Option<SessionProgress> {
 
 fn is_progress_status(status: &str) -> bool {
     let status = status.to_lowercase();
-    status.contains("staging")
+    status.contains("applying")
+        || status.contains("staging")
         || status.contains("transitioning")
         || status.contains("scanning")
         || status.contains("reconciling")
@@ -1236,6 +1251,14 @@ fn render_session(s: &SessionInfo) {
         }
     }
 
+    for problem in &s.transition_problems {
+        println!(
+            "  {} {}",
+            style("problem").fg(console::Color::Red),
+            style(elide(problem, 180)).fg(console::Color::Red)
+        );
+    }
+
     let conn_a = if s.alpha_connected { "●" } else { "○" };
     let conn_b = if s.beta_connected { "●" } else { "○" };
     println!(
@@ -1271,13 +1294,26 @@ fn status_style(status: &str) -> (console::Color, &'static str) {
         (console::Color::Green, "✓")
     } else if s.contains("paused") {
         (console::Color::Yellow, "⏸")
-    } else if s.contains("staging") || s.contains("transitioning") || s.contains("scanning") {
+    } else if s.contains("applying")
+        || s.contains("reconciling")
+        || s.contains("staging")
+        || s.contains("transitioning")
+        || s.contains("scanning")
+    {
         (console::Color::Cyan, "↻")
     } else if s.contains("error") || s.contains("conflict") {
         (console::Color::Red, "✗")
     } else {
         (console::Color::White, "·")
     }
+}
+
+fn elide(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+    let keep = max_chars.saturating_sub(3);
+    format!("{}...", value.chars().take(keep).collect::<String>())
 }
 
 fn sync_stop(args: &[String]) -> Result<()> {
@@ -3831,6 +3867,50 @@ Status: Paused
             Some("Paused".to_string())
         );
         assert_eq!(mutagen_session_status(list, "uc-host-openclaw"), None);
+    }
+
+    #[test]
+    fn parses_status_lines_that_end_with_files() {
+        let list = r#"
+Name: uc-host-openclaw
+Alpha:
+	URL: /Users/fabioroma/.openclaw
+	Connected: Yes
+Beta:
+	URL: uc:~/.ultracontext/workspace/sessions/host/openclaw
+	Connected: Yes
+Status: Scanning files
+"#;
+
+        let sessions = parse_mutagen_sessions(list);
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].status, "Scanning files");
+        assert_eq!(sessions[0].beta_files, None);
+    }
+
+    #[test]
+    fn parses_mutagen_transition_problems() {
+        let list = r#"
+Name: uc-host-openclaw
+Alpha:
+	URL: /Users/fabioroma/.openclaw
+	Connected: Yes
+Beta:
+	URL: uc:~/.ultracontext/workspace/sessions/host/openclaw
+	Connected: Yes
+	Transition problems:
+		nodes/paired.json: unable to create file
+Status: Scanning files
+"#;
+
+        let sessions = parse_mutagen_sessions(list);
+
+        assert_eq!(
+            sessions[0].transition_problems,
+            vec!["nodes/paired.json: unable to create file".to_string()]
+        );
+        assert_eq!(sessions[0].status, "Scanning files");
     }
 
     #[test]
