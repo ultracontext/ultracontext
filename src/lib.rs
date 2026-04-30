@@ -13,7 +13,9 @@ const APP_DIR: &str = ".ultracontext";
 const IGNORE_FILE: &str = ".ultracontextignore";
 const DEFAULT_REMOTE_ROOT: &str = "~/.ultracontext";
 const DEFAULT_QUERY_COMMAND: &str = "claude";
-const DEFAULT_QUERY_ARGS: &str = "--dangerously-skip-permissions --effort medium --model sonnet";
+const QUERY_PROMPT_PLACEHOLDER: &str = "{{prompt}}";
+const DEFAULT_QUERY_ARGS: &str =
+    "-p {{prompt}} --dangerously-skip-permissions --effort medium --model sonnet";
 // Seed contents shipped with the binary; written to disk on `uc setup` so users
 // can edit it without rebuilding. At runtime we read from disk; if the file is
 // missing we send the raw user query straight to the query agent.
@@ -1049,19 +1051,17 @@ fn render_session(s: &SessionInfo) {
     let conn_b = if s.beta_connected { "●" } else { "○" };
     println!(
         "  {} alpha {}  →  {} beta {}",
-        style(conn_a)
-            .fg(if s.alpha_connected {
-                console::Color::Green
-            } else {
-                console::Color::Red
-            }),
+        style(conn_a).fg(if s.alpha_connected {
+            console::Color::Green
+        } else {
+            console::Color::Red
+        }),
         style(&s.alpha_url).dim(),
-        style(conn_b)
-            .fg(if s.beta_connected {
-                console::Color::Green
-            } else {
-                console::Color::Red
-            }),
+        style(conn_b).fg(if s.beta_connected {
+            console::Color::Green
+        } else {
+            console::Color::Red
+        }),
         style(&s.beta_url).dim()
     );
 
@@ -1279,11 +1279,8 @@ fn cmd_query(args: &[String]) -> Result<()> {
     if config.is_local() {
         run_local_query(&config, &workspace_path, &prompt)
     } else {
-        let remote_command = query_remote_command(&config, &workspace_path, &prompt);
-        run_command(
-            "ssh",
-            ["-n", config.remote.as_str(), remote_command.as_str()],
-        )
+        let remote_command = query_remote_command(&config, &workspace_path, &prompt)?;
+        run_command("ssh", [config.remote.as_str(), remote_command.as_str()])
     }
 }
 
@@ -1377,16 +1374,16 @@ fn status_source(config: &Config, source: &Source, mutagen_list: Option<&str>) {
     }
 }
 
-fn query_remote_command(config: &Config, workspace_path: &str, prompt: &str) -> String {
+fn query_remote_command(config: &Config, workspace_path: &str, prompt: &str) -> Result<String> {
     let command_setup = query_command_setup(config);
-    format!(
+    let args = query_command_shell_args(&config.query, prompt)?;
+    Ok(format!(
         "{}; \
-cd {} && \"$QUERY_BIN\" -p {} {} < /dev/null",
+cd {} && \"$QUERY_BIN\" {} < /dev/null",
         command_setup,
         remote_path_arg(&workspace_path),
-        sh_quote(prompt),
-        config.query.args
-    )
+        args
+    ))
 }
 
 fn run_local_query(config: &Config, workspace_path: &str, prompt: &str) -> Result<()> {
@@ -1399,11 +1396,9 @@ fn run_local_query(config: &Config, workspace_path: &str, prompt: &str) -> Resul
     }
 
     let command = resolve_local_query_command(&config.query.command)?;
-    let args = shell_words(&config.query.args);
+    let args = query_command_args(&config.query, prompt)?;
     let mut child = external_command(&command)
-        .arg("-p")
-        .arg(prompt)
-        .args(args)
+        .args(&args)
         .current_dir(workspace_dir)
         .stdin(Stdio::null())
         .spawn()?;
@@ -1413,10 +1408,42 @@ fn run_local_query(config: &Config, workspace_path: &str, prompt: &str) -> Resul
     } else {
         Err(UcError::Message(format!(
             "{} exited with {}",
-            command_display(&command, &["-p".to_string(), "<prompt>".to_string()]),
+            command_display(&command, &query_command_display_args(&config.query)),
             status
         )))
     }
+}
+
+fn query_command_args(config: &QueryConfig, prompt: &str) -> Result<Vec<String>> {
+    let args = shell_words(&config.args);
+    if !args
+        .iter()
+        .any(|arg| arg.contains(QUERY_PROMPT_PLACEHOLDER))
+    {
+        return Err(UcError::Message(format!(
+            "[query].args must include {QUERY_PROMPT_PLACEHOLDER}; for Claude use: args = \"{DEFAULT_QUERY_ARGS}\""
+        )));
+    }
+
+    Ok(args
+        .into_iter()
+        .map(|arg| arg.replace(QUERY_PROMPT_PLACEHOLDER, prompt))
+        .collect())
+}
+
+fn query_command_display_args(config: &QueryConfig) -> Vec<String> {
+    shell_words(&config.args)
+        .into_iter()
+        .map(|arg| arg.replace(QUERY_PROMPT_PLACEHOLDER, "<prompt>"))
+        .collect()
+}
+
+fn query_command_shell_args(config: &QueryConfig, prompt: &str) -> Result<String> {
+    Ok(query_command_args(config, prompt)?
+        .iter()
+        .map(|arg| sh_quote(arg))
+        .collect::<Vec<_>>()
+        .join(" "))
 }
 
 fn resolve_local_query_command(command: &str) -> Result<String> {
@@ -1560,7 +1587,7 @@ fn prepare_remote_workspace(config: &Config) -> Result<()> {
         .collect::<Vec<_>>()
         .join(" ");
     let command = format!("mkdir -p {mkdirs}");
-    run_command("ssh", ["-n", config.remote.as_str(), command.as_str()])
+    run_command("ssh", [config.remote.as_str(), command.as_str()])
 }
 
 // Render the prompt the query agent will receive.
@@ -2222,12 +2249,8 @@ fn check_local_command(name: &str) {
 
 fn check_remote(config: &Config, label: &str, command: &str) {
     let status = external_command("ssh")
-        .arg("-n")
         .arg(&config.remote)
         .arg(command)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
         .status();
     match status {
         Ok(status) if status.success() => ui_success(format!("remote {label}: ok")),
@@ -2957,18 +2980,22 @@ enabled = true
             host_id: "work-laptop".to_string(),
             query: QueryConfig {
                 command: "custom-query".to_string(),
-                args: "--dangerously-skip-permissions --effort low --model sonnet".to_string(),
+                args: "-p {{prompt}} --dangerously-skip-permissions --effort low --model sonnet"
+                    .to_string(),
             },
             sources: vec![],
         };
 
-        let command = query_remote_command(&cfg, "~/.ultracontext/workspace", "prompt");
+        let command = query_remote_command(&cfg, "~/.ultracontext/workspace", "prompt").unwrap();
 
         assert!(command.contains("command -v 'custom-query'"), "{command}");
+        assert!(command.contains("'-p' 'prompt'"), "{command}");
         assert!(
-            command.contains("--dangerously-skip-permissions --effort low --model sonnet"),
+            command.contains("'--dangerously-skip-permissions'"),
             "{command}"
         );
+        assert!(command.contains("'--effort' 'low'"), "{command}");
+        assert!(command.contains("'--model' 'sonnet'"), "{command}");
     }
 
     #[test]
@@ -2986,6 +3013,47 @@ enabled = true
     }
 
     #[test]
+    fn query_args_require_prompt_placeholder() {
+        let query = QueryConfig {
+            command: "custom-query".to_string(),
+            args: "--mode local".to_string(),
+        };
+
+        let error = query_command_args(&query, "find context").unwrap_err();
+
+        assert!(
+            error.to_string().contains("must include {{prompt}}"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn query_args_can_place_prompt_with_template() {
+        let query = QueryConfig {
+            command: "pi".to_string(),
+            args: "--thinking high -p {{prompt}}".to_string(),
+        };
+
+        assert_eq!(
+            query_command_args(&query, "find context").unwrap(),
+            vec!["--thinking", "high", "-p", "find context"]
+        );
+    }
+
+    #[test]
+    fn query_args_template_can_embed_prompt_in_arg() {
+        let query = QueryConfig {
+            command: "custom-query".to_string(),
+            args: "--prompt={{prompt}}".to_string(),
+        };
+
+        assert_eq!(
+            query_command_args(&query, "find context").unwrap(),
+            vec!["--prompt=find context"]
+        );
+    }
+
+    #[test]
     fn defaults_query_config_when_missing() {
         let raw = r#"
 remote = "user@vps"
@@ -2996,10 +3064,7 @@ host_id = "work-laptop"
         let cfg = Config::from_toml(raw).unwrap();
 
         assert_eq!(cfg.query.command, "claude");
-        assert_eq!(
-            cfg.query.args,
-            "--dangerously-skip-permissions --effort medium --model sonnet"
-        );
+        assert_eq!(cfg.query.args, DEFAULT_QUERY_ARGS);
     }
 
     #[test]
@@ -3032,12 +3097,12 @@ args = "--fast"
             host_id: "work-laptop".to_string(),
             query: QueryConfig {
                 command: "claude".to_string(),
-                args: "--dangerously-skip-permissions".to_string(),
+                args: DEFAULT_QUERY_ARGS.to_string(),
             },
             sources: vec![],
         };
 
-        let command = query_remote_command(&cfg, "~/.ultracontext/workspace", "prompt");
+        let command = query_remote_command(&cfg, "~/.ultracontext/workspace", "prompt").unwrap();
 
         assert!(command.contains("$HOME/.local/bin/claude"), "{command}");
     }
@@ -3090,12 +3155,12 @@ dist/
             host_id: "work-laptop".to_string(),
             query: QueryConfig {
                 command: "claude".to_string(),
-                args: "--dangerously-skip-permissions".to_string(),
+                args: DEFAULT_QUERY_ARGS.to_string(),
             },
             sources: vec![],
         };
 
-        let command = query_remote_command(&cfg, "~/.ultracontext/workspace", "prompt");
+        let command = query_remote_command(&cfg, "~/.ultracontext/workspace", "prompt").unwrap();
 
         assert!(command.ends_with("< /dev/null"), "{command}");
     }

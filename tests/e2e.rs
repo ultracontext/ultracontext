@@ -59,9 +59,9 @@ fn initializes_and_queries_local_workspace() {
     assert!(status_stdout.contains("claude"), "{status_stdout}");
 
     let config = config.replace(
-        "command = \"claude\"\nargs = \"--dangerously-skip-permissions --effort medium --model sonnet\"",
+        "command = \"claude\"\nargs = \"-p {{prompt}} --dangerously-skip-permissions --effort medium --model sonnet\"",
         &format!(
-            "command = \"{}\"\nargs = \"--mode local\"",
+            "command = \"{}\"\nargs = \"--mode local --prompt {{{{prompt}}}}\"",
             query_bin.display()
         ),
     );

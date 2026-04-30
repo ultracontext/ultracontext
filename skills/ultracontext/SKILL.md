@@ -126,7 +126,7 @@ host_id     = "macbook"
 
 [query]
 command = "claude"
-args    = "--dangerously-skip-permissions --effort medium --model sonnet"
+args    = "-p {{prompt}} --dangerously-skip-permissions --effort medium --model sonnet"
 
 [sources.claude]
 path    = "~/.claude"
@@ -181,10 +181,19 @@ To swap the query agent:
 ```toml
 [query]
 command = "codex"
-args    = "--model gpt-5"
+args    = "-p {{prompt}} --model gpt-5"
 ```
 
-Any CLI that takes `-p <prompt>` and accepts a working directory works.
+`uc query` replaces `{{prompt}}` in `args` with the rendered prompt. That
+keeps the command shape configurable instead of hardcoding one prompt flag.
+
+```toml
+[query]
+command = "pi"
+args    = "--thinking high -p {{prompt}}"
+```
+
+Any CLI that accepts a prompt and a working directory can work.
 
 ## Expectations
 

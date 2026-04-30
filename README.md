@@ -127,7 +127,7 @@ host_id     = "macbook"
 
 [query]
 command = "claude"
-args    = "--dangerously-skip-permissions --effort medium --model sonnet"
+args    = "-p {{prompt}} --dangerously-skip-permissions --effort medium --model sonnet"
 
 [sources.claude]
 path    = "~/.claude"
@@ -157,7 +157,16 @@ Customize the agent:
 ```toml
 [query]
 command = "codex"               # or any CLI that accepts a prompt
-args    = "--model gpt-5"
+args    = "-p {{prompt}} --model gpt-5"
+```
+
+UltraContext replaces `{{prompt}}` in `args` with the rendered prompt. That
+keeps the command shape configurable instead of hardcoding one prompt flag:
+
+```toml
+[query]
+command = "pi"
+args    = "--thinking high -p {{prompt}}"
 ```
 
 ## Development
