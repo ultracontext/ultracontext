@@ -62,7 +62,7 @@ Source commands:
 | `uc source add <name> <path> [--disabled]` | Add a source and start syncing it unless disabled |
 | `uc source list` | List configured sources and their state |
 | `uc source enable <name>` / `disable <name>` | Toggle one source |
-| `uc source remove <name>` | Stop and remove one source |
+| `uc source remove <name> [--yes]` | Confirm, terminate sync, delete the remote copy, and remove the source from config. Local files stay in place |
 
 Sync commands:
 
@@ -71,8 +71,7 @@ Sync commands:
 | `uc sync start` | Start syncing every enabled source |
 | `uc sync list` | List configured sync sessions and their current state |
 | `uc sync status` | Show Mutagen session state |
-| `uc sync stop [source\|session]` | Pause all sync sessions, or one source/session when specified |
-| `uc sync remove <source\|session>` | Remove a configured source and terminate its sync session; orphan sessions are terminated only |
+| `uc sync stop` | Pause every enabled source |
 | `uc sync reset` | Recreate sessions after editing global settings or ignore rules |
 
 Advanced:

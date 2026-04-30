@@ -180,7 +180,7 @@ fn manages_sources_from_cli() {
     assert!(config.contains("enabled = false"), "{config}");
 
     let remove = uc(&home)
-        .args(["source", "remove", "openclaw"])
+        .args(["source", "remove", "openclaw", "--yes"])
         .output()
         .unwrap();
     assert_success("uc source remove", remove);
@@ -318,7 +318,7 @@ fn syncs_custom_source_lifecycle_over_local_mutagen() {
     );
 
     let remove = uc(&home)
-        .args(["source", "remove", "openclaw"])
+        .args(["source", "remove", "openclaw", "--yes"])
         .output()
         .unwrap();
     assert_success("uc source remove", remove);
@@ -327,6 +327,14 @@ fn syncs_custom_source_lifecycle_over_local_mutagen() {
     let status_text = String::from_utf8_lossy(&status.stdout).to_string();
     assert_success("uc sync status after remove", status);
     assert!(!status_text.contains(&source_session), "{status_text}");
+    assert!(
+        !remote_root
+            .join("workspace")
+            .join("sessions")
+            .join(&host_id)
+            .join("openclaw")
+            .exists()
+    );
 
     drop(_cleanup);
 }

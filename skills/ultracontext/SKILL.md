@@ -98,12 +98,11 @@ Quote project names, file names, errors, branches, and user wording exactly — 
 | `uc sync start` | Start syncing every enabled source. Idempotent — resumes existing sessions. |
 | `uc sync list` | List configured sync sessions and their current state. |
 | `uc sync status` | Show Mutagen session state. |
-| `uc sync stop [source\|session]` | Pause all sync sessions, or one source/session when specified. |
-| `uc sync remove <source\|session>` | Remove a configured source and terminate its sync session; orphan sessions are terminated only. |
+| `uc sync stop` | Pause every enabled source. |
 | `uc sync reset` | Terminate + recreate sessions. Run after editing `config.toml` or `~/.ultracontext/.ultracontextignore`. |
 | `uc source list` | List configured sources and enable state. |
 | `uc source add <name> <path>` | Add a new source folder (any agent or notes dir). Name = folder under workspace. |
-| `uc source remove <name>` | Stop + delete a source. |
+| `uc source remove <name> [--yes]` | Confirm, terminate sync, delete the remote copy, and remove the source from config. Local files stay in place. |
 | `uc source enable <name>` / `disable <name>` | Toggle one source. |
 | `uc doctor` | Verify deps (mutagen, ssh), config, remote reachability, query agent. |
 | `uc update` | Update using the active install manager without switching managers silently. |
