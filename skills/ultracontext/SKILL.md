@@ -99,7 +99,7 @@ Quote project names, file names, errors, branches, and user wording exactly — 
 | `uc sync list` | List configured sync sessions and their current state. |
 | `uc sync status` | Show Mutagen session state. |
 | `uc sync stop [source\|session]` | Pause all sync sessions, or one source/session when specified. |
-| `uc sync remove <source\|session>` | Terminate one sync session without changing config. |
+| `uc sync remove <source\|session>` | Remove a configured source and terminate its sync session; orphan sessions are terminated only. |
 | `uc sync reset` | Terminate + recreate sessions. Run after editing `config.toml` or `~/.ultracontext/.ultracontextignore`. |
 | `uc source list` | List configured sources and enable state. |
 | `uc source add <name> <path>` | Add a new source folder (any agent or notes dir). Name = folder under workspace. |

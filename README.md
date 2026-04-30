@@ -72,7 +72,7 @@ Sync commands:
 | `uc sync list` | List configured sync sessions and their current state |
 | `uc sync status` | Show Mutagen session state |
 | `uc sync stop [source\|session]` | Pause all sync sessions, or one source/session when specified |
-| `uc sync remove <source\|session>` | Terminate one sync session without changing config |
+| `uc sync remove <source\|session>` | Remove a configured source and terminate its sync session; orphan sessions are terminated only |
 | `uc sync reset` | Recreate sessions after editing global settings or ignore rules |
 
 Advanced:

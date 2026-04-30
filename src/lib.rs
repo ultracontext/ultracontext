@@ -1188,8 +1188,17 @@ fn sync_remove(args: &[String]) -> Result<()> {
     }
 
     require_command("mutagen")?;
-    let config = load_config()?;
+    let mut config = load_config()?;
     let existing = capture_command("mutagen", ["sync", "list"])?;
+    if let Some(source) = configured_source_for_sync_target(&config, &args[0])? {
+        let session = mutagen_session_name(&config, &source);
+        sync_terminate_session(&session, &existing)?;
+        remove_source(&mut config, &source.agent)?;
+        save_config(&config)?;
+        ui_success(format!("source {}: removed", source.agent));
+        return Ok(());
+    }
+
     let session = resolve_sync_session_target(&config, &args[0], &existing)?;
     sync_terminate_session(&session, &existing)
 }
@@ -1944,6 +1953,35 @@ fn resolve_sync_session_target(
     }
 
     Ok(session)
+}
+
+fn configured_source_for_sync_target(config: &Config, target: &str) -> Result<Option<Source>> {
+    let target = target.trim();
+    if target.is_empty() {
+        return Err(UcError::Message("sync target cannot be empty".to_string()));
+    }
+
+    if let Some(source) = config.sources.iter().find(|source| source.agent == target) {
+        return Ok(Some(source.clone()));
+    }
+
+    let prefix = format!("uc-{}-", config.host_id);
+    if target.starts_with("uc-") {
+        if !target.starts_with(&prefix) {
+            return Err(UcError::Message(format!(
+                "sync session {target} is not owned by host {}",
+                config.host_id
+            )));
+        }
+        let agent = &target[prefix.len()..];
+        return Ok(config
+            .sources
+            .iter()
+            .find(|source| source.agent == agent)
+            .cloned());
+    }
+
+    Ok(None)
 }
 
 fn sync_start_source(config: &Config, source: &Source, existing: &str) -> Result<()> {
@@ -3178,6 +3216,45 @@ Status: Watching for changes
             "uc-work-laptop-old"
         );
         assert!(resolve_sync_session_target(&cfg, "uc-other-codex", existing).is_err());
+    }
+
+    #[test]
+    fn finds_configured_source_for_sync_remove_targets() {
+        let cfg = Config {
+            remote: "user@vps".to_string(),
+            remote_root: "/srv/uc".to_string(),
+            host_id: "work-laptop".to_string(),
+            query: QueryConfig {
+                command: "claude".to_string(),
+                args: DEFAULT_QUERY_ARGS.to_string(),
+            },
+            sources: vec![Source {
+                agent: "codex".to_string(),
+                local_path: "~/.codex".to_string(),
+                enabled: true,
+            }],
+        };
+
+        assert_eq!(
+            configured_source_for_sync_target(&cfg, "codex")
+                .unwrap()
+                .unwrap()
+                .agent,
+            "codex"
+        );
+        assert_eq!(
+            configured_source_for_sync_target(&cfg, "uc-work-laptop-codex")
+                .unwrap()
+                .unwrap()
+                .agent,
+            "codex"
+        );
+        assert!(
+            configured_source_for_sync_target(&cfg, "uc-work-laptop-old")
+                .unwrap()
+                .is_none()
+        );
+        assert!(configured_source_for_sync_target(&cfg, "uc-other-codex").is_err());
     }
 
     #[test]
