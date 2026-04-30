@@ -890,21 +890,34 @@ fn sync_list() -> Result<()> {
     require_command("mutagen")?;
     let config = load_config()?;
     let output = capture_command("mutagen", ["sync", "list"])?;
-    let lines = sync_list_lines(&config, &output);
+    let entries = sync_list_entries(&config, &output);
 
-    if lines.is_empty() {
+    if entries.is_empty() {
         println!("No sync sources configured. Run `uc init`.");
         return Ok(());
     }
 
-    for line in lines {
-        println!("{line}");
+    for (i, entry) in entries.iter().enumerate() {
+        if i > 0 {
+            println!();
+        }
+        render_sync_list_entry(entry);
     }
     Ok(())
 }
 
-fn sync_list_lines(config: &Config, mutagen_list: &str) -> Vec<String> {
-    let mut lines = Vec::new();
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SyncListEntry {
+    source: String,
+    source_state: String,
+    session: String,
+    sync_state: String,
+    local_path: Option<String>,
+    remote_endpoint: Option<String>,
+}
+
+fn sync_list_entries(config: &Config, mutagen_list: &str) -> Vec<SyncListEntry> {
+    let mut entries = Vec::new();
     let mut seen = HashSet::new();
 
     for source in &config.sources {
@@ -917,15 +930,14 @@ fn sync_list_lines(config: &Config, mutagen_list: &str) -> Vec<String> {
         };
         let sync_state =
             mutagen_session_status(mutagen_list, &session).unwrap_or_else(|| "missing".to_string());
-        lines.push(format!(
-            "{:<16} {:<8} {:<32} {}",
-            source.agent, source_state, session, sync_state
-        ));
-        lines.push(format!(
-            "  {} -> {}",
-            source.local_path,
-            remote_endpoint(config, source)
-        ));
+        entries.push(SyncListEntry {
+            source: source.agent.clone(),
+            source_state: source_state.to_string(),
+            session,
+            sync_state,
+            local_path: Some(source.local_path.clone()),
+            remote_endpoint: Some(remote_endpoint(config, source)),
+        });
     }
 
     for session in owned_mutagen_session_names(config, mutagen_list) {
@@ -935,13 +947,47 @@ fn sync_list_lines(config: &Config, mutagen_list: &str) -> Vec<String> {
         let source = short_source_name(&session);
         let sync_state =
             mutagen_session_status(mutagen_list, &session).unwrap_or_else(|| "unknown".to_string());
-        lines.push(format!(
-            "{:<16} {:<8} {:<32} {}",
-            source, "orphan", session, sync_state
-        ));
+        entries.push(SyncListEntry {
+            source: source.to_string(),
+            source_state: "orphan".to_string(),
+            session,
+            sync_state,
+            local_path: None,
+            remote_endpoint: None,
+        });
     }
 
-    lines
+    entries
+}
+
+fn render_sync_list_entry(entry: &SyncListEntry) {
+    let (color, glyph) = sync_list_entry_style(entry);
+    println!(
+        "{} {}  {}  {}",
+        style(glyph).fg(color),
+        style(&entry.source).bold(),
+        style(&entry.sync_state).fg(color),
+        style(&entry.source_state).dim()
+    );
+    println!("  session {}", style(&entry.session).dim());
+
+    if let (Some(local), Some(remote)) = (&entry.local_path, &entry.remote_endpoint) {
+        println!("  {}  →  {}", style(local).dim(), style(remote).dim());
+    }
+}
+
+fn sync_list_entry_style(entry: &SyncListEntry) -> (console::Color, &'static str) {
+    let state = entry.source_state.to_lowercase();
+    if state == "disabled" {
+        return (console::Color::Yellow, "⏸");
+    }
+    if state == "orphan" {
+        return (console::Color::White, "·");
+    }
+    if entry.sync_state.eq_ignore_ascii_case("missing") {
+        return (console::Color::Red, "✗");
+    }
+    status_style(&entry.sync_state)
 }
 
 fn sync_status() -> Result<()> {
@@ -3136,7 +3182,7 @@ enabled = true
     }
 
     #[test]
-    fn renders_sync_list_for_configured_and_orphan_sessions() {
+    fn builds_sync_list_entries_for_configured_and_orphan_sessions() {
         let cfg = Config {
             remote: "user@vps".to_string(),
             remote_root: "/srv/uc".to_string(),
@@ -3169,20 +3215,25 @@ Name: uc-other-codex
 Status: Watching for changes
 "#;
 
-        let lines = sync_list_lines(&cfg, existing);
+        let entries = sync_list_entries(&cfg, existing);
 
-        assert_eq!(lines.len(), 5);
-        assert!(lines[0].starts_with("claude           enabled"));
-        assert!(lines[0].contains("uc-work-laptop-claude"));
-        assert!(lines[0].contains("Watching for changes"));
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].source, "claude");
+        assert_eq!(entries[0].source_state, "enabled");
+        assert_eq!(entries[0].session, "uc-work-laptop-claude");
+        assert_eq!(entries[0].sync_state, "Watching for changes");
+        assert_eq!(entries[0].local_path.as_deref(), Some("~/.claude"));
         assert_eq!(
-            lines[1],
-            "  ~/.claude -> user@vps:/srv/uc/workspace/sessions/work-laptop/claude"
+            entries[0].remote_endpoint.as_deref(),
+            Some("user@vps:/srv/uc/workspace/sessions/work-laptop/claude")
         );
-        assert!(lines[2].starts_with("codex            disabled"));
-        assert!(lines[2].contains("missing"));
-        assert!(lines[4].starts_with("old              orphan"));
-        assert!(lines[4].contains("Paused"));
+        assert_eq!(entries[1].source, "codex");
+        assert_eq!(entries[1].source_state, "disabled");
+        assert_eq!(entries[1].sync_state, "missing");
+        assert_eq!(entries[2].source, "old");
+        assert_eq!(entries[2].source_state, "orphan");
+        assert_eq!(entries[2].sync_state, "Paused");
+        assert_eq!(entries[2].local_path, None);
     }
 
     #[test]
