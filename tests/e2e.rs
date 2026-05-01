@@ -119,9 +119,26 @@ fn init_configures_skills_sources_and_workspace() {
     let global_ignore = fs::read_to_string(ignores_dir.join(".ultracontextignore")).unwrap();
     let openclaw_ignore =
         fs::read_to_string(ignores_dir.join("openclaw").join(".ultracontextignore")).unwrap();
+    let claude_ignore =
+        fs::read_to_string(ignores_dir.join("claude").join(".ultracontextignore")).unwrap();
     let codex_ignore =
         fs::read_to_string(ignores_dir.join("codex").join(".ultracontextignore")).unwrap();
     assert!(global_ignore.contains("node_modules/"), "{global_ignore}");
+    assert!(claude_ignore.contains("*\n"), "{claude_ignore}");
+    assert!(claude_ignore.contains("!projects/**"), "{claude_ignore}");
+    assert!(claude_ignore.contains("!todos/**"), "{claude_ignore}");
+    assert!(claude_ignore.contains("!plans/**"), "{claude_ignore}");
+    assert!(claude_ignore.contains("!CLAUDE.md"), "{claude_ignore}");
+    assert!(!claude_ignore.contains("!skills/"), "{claude_ignore}");
+    assert!(!claude_ignore.contains("!session-env/"), "{claude_ignore}");
+    assert!(codex_ignore.contains("*\n"), "{codex_ignore}");
+    assert!(codex_ignore.contains("!sessions/**"), "{codex_ignore}");
+    assert!(codex_ignore.contains("!memories/**"), "{codex_ignore}");
+    assert!(codex_ignore.contains("!rules/**"), "{codex_ignore}");
+    assert!(codex_ignore.contains("!config.toml"), "{codex_ignore}");
+    assert!(!codex_ignore.contains("!auth.json"), "{codex_ignore}");
+    assert!(!codex_ignore.contains("!.env"), "{codex_ignore}");
+    assert!(!codex_ignore.contains("!skills/"), "{codex_ignore}");
     assert!(openclaw_ignore.contains("!agents/*/sessions/**"));
     assert!(openclaw_ignore.contains("workspace memory directories"));
     assert!(openclaw_ignore.contains("!workspace/AGENTS.md"));
@@ -146,7 +163,6 @@ fn init_configures_skills_sources_and_workspace() {
     assert!(openclaw_ignore.contains("!workspace-*/memory/**"));
     assert!(!openclaw_ignore.contains("!workspace/memory/**/*.md"));
     assert!(!openclaw_ignore.contains("!workspace-*/memory/**/*.md"));
-    assert!(!codex_ignore.contains("*\n"), "{codex_ignore}");
     assert!(
         home.join(".claude")
             .join("skills")
@@ -436,7 +452,14 @@ fn syncs_agent_directories_to_remote_workspace() {
         .join(format!("rollout-2026-04-24T00-00-00-{run_id}.jsonl"));
     let claude_root_file = home.join(".claude").join("CLAUDE.md");
     let claude_env_file = home.join(".claude").join("session-env");
+    let claude_plan_file = home.join(".claude").join("plans").join("launch.md");
+    let claude_todo_file = home
+        .join(".claude")
+        .join("todos")
+        .join(format!("{run_id}.json"));
     let codex_memory_file = home.join(".codex").join("memories").join("ultracontext.md");
+    let codex_config_file = home.join(".codex").join("config.toml");
+    let codex_rule_file = home.join(".codex").join("rules").join("ultracontext.md");
     let codex_auth_file = home.join(".codex").join("auth.json");
     let codex_env_file = home.join(".codex").join(".env");
     let codex_node_module_file = home
@@ -448,7 +471,10 @@ fn syncs_agent_directories_to_remote_workspace() {
 
     fs::create_dir_all(claude_file.parent().unwrap()).unwrap();
     fs::create_dir_all(codex_file.parent().unwrap()).unwrap();
+    fs::create_dir_all(claude_plan_file.parent().unwrap()).unwrap();
+    fs::create_dir_all(claude_todo_file.parent().unwrap()).unwrap();
     fs::create_dir_all(codex_memory_file.parent().unwrap()).unwrap();
+    fs::create_dir_all(codex_rule_file.parent().unwrap()).unwrap();
     fs::create_dir_all(codex_node_module_file.parent().unwrap()).unwrap();
     fs::create_dir_all(codex_extra_cache_file.parent().unwrap()).unwrap();
     fs::create_dir_all(home.join(".ultracontext").join("ignores")).unwrap();
@@ -480,7 +506,17 @@ fn syncs_agent_directories_to_remote_workspace() {
     .unwrap();
     fs::write(
         &claude_env_file,
-        format!("claude env marker should sync {run_id}\n"),
+        format!("claude env marker should not sync {run_id}\n"),
+    )
+    .unwrap();
+    fs::write(
+        &claude_plan_file,
+        format!("claude plan marker should sync {run_id}\n"),
+    )
+    .unwrap();
+    fs::write(
+        &claude_todo_file,
+        format!("claude todo marker should sync {run_id}\n"),
     )
     .unwrap();
     fs::write(
@@ -488,14 +524,20 @@ fn syncs_agent_directories_to_remote_workspace() {
         format!("memory marker from codex root {run_id}\n"),
     )
     .unwrap();
+    fs::write(&codex_config_file, format!("model = \"test-{run_id}\"\n")).unwrap();
+    fs::write(
+        &codex_rule_file,
+        format!("rule marker from codex root {run_id}\n"),
+    )
+    .unwrap();
     fs::write(
         &codex_auth_file,
-        format!("fake auth file should sync {run_id}\n"),
+        format!("fake auth file should not sync {run_id}\n"),
     )
     .unwrap();
     fs::write(
         &codex_env_file,
-        format!("codex env marker should sync {run_id}\n"),
+        format!("codex env marker should not sync {run_id}\n"),
     )
     .unwrap();
     fs::write(
@@ -534,8 +576,18 @@ fn syncs_agent_directories_to_remote_workspace() {
     let claude_root_remote = format!("{remote_root}/workspace/sessions/{host_id}/claude/CLAUDE.md");
     let claude_env_remote =
         format!("{remote_root}/workspace/sessions/{host_id}/claude/session-env");
+    let claude_plan_remote =
+        format!("{remote_root}/workspace/sessions/{host_id}/claude/plans/launch.md");
+    let claude_todo_remote = format!(
+        "{remote_root}/workspace/sessions/{host_id}/claude/todos/{}.json",
+        run_id
+    );
     let codex_memory_remote =
         format!("{remote_root}/workspace/sessions/{host_id}/codex/memories/ultracontext.md");
+    let codex_config_remote =
+        format!("{remote_root}/workspace/sessions/{host_id}/codex/config.toml");
+    let codex_rule_remote =
+        format!("{remote_root}/workspace/sessions/{host_id}/codex/rules/ultracontext.md");
     let codex_auth_remote = format!("{remote_root}/workspace/sessions/{host_id}/codex/auth.json");
     let codex_env_remote = format!("{remote_root}/workspace/sessions/{host_id}/codex/.env");
     let codex_node_module_remote = format!(
@@ -547,22 +599,24 @@ fn syncs_agent_directories_to_remote_workspace() {
     wait_for_remote_file(&remote, &claude_remote, Duration::from_secs(45));
     wait_for_remote_file(&remote, &codex_remote, Duration::from_secs(45));
     wait_for_remote_file(&remote, &claude_root_remote, Duration::from_secs(45));
-    wait_for_remote_file(&remote, &claude_env_remote, Duration::from_secs(45));
+    wait_for_remote_file(&remote, &claude_plan_remote, Duration::from_secs(45));
+    wait_for_remote_file(&remote, &claude_todo_remote, Duration::from_secs(45));
     wait_for_remote_file(&remote, &codex_memory_remote, Duration::from_secs(45));
-    wait_for_remote_file(&remote, &codex_auth_remote, Duration::from_secs(45));
-    wait_for_remote_file(&remote, &codex_env_remote, Duration::from_secs(45));
+    wait_for_remote_file(&remote, &codex_config_remote, Duration::from_secs(45));
+    wait_for_remote_file(&remote, &codex_rule_remote, Duration::from_secs(45));
 
     let remote_cat = ssh(
         &remote,
         &format!(
-            "cat {} && cat {} && cat {} && cat {} && cat {} && cat {} && cat {}",
+            "cat {} && cat {} && cat {} && cat {} && cat {} && cat {} && cat {} && cat {}",
             remote_path_arg(&claude_remote),
             remote_path_arg(&codex_remote),
             remote_path_arg(&claude_root_remote),
-            remote_path_arg(&claude_env_remote),
+            remote_path_arg(&claude_plan_remote),
+            remote_path_arg(&claude_todo_remote),
             remote_path_arg(&codex_memory_remote),
-            remote_path_arg(&codex_auth_remote),
-            remote_path_arg(&codex_env_remote)
+            remote_path_arg(&codex_config_remote),
+            remote_path_arg(&codex_rule_remote)
         ),
     )
     .output()
@@ -582,7 +636,11 @@ fn syncs_agent_directories_to_remote_workspace() {
         "{remote_text}"
     );
     assert!(
-        remote_text.contains(&format!("claude env marker should sync {run_id}")),
+        remote_text.contains(&format!("claude plan marker should sync {run_id}")),
+        "{remote_text}"
+    );
+    assert!(
+        remote_text.contains(&format!("claude todo marker should sync {run_id}")),
         "{remote_text}"
     );
     assert!(
@@ -590,18 +648,21 @@ fn syncs_agent_directories_to_remote_workspace() {
         "{remote_text}"
     );
     assert!(
-        remote_text.contains(&format!("fake auth file should sync {run_id}")),
+        remote_text.contains(&format!("model = \"test-{run_id}\"")),
         "{remote_text}"
     );
     assert!(
-        remote_text.contains(&format!("codex env marker should sync {run_id}")),
+        remote_text.contains(&format!("rule marker from codex root {run_id}")),
         "{remote_text}"
     );
 
     let ignored_files = ssh(
         &remote,
         &format!(
-            "test ! -e {} && test ! -e {}",
+            "test ! -e {} && test ! -e {} && test ! -e {} && test ! -e {} && test ! -e {}",
+            remote_path_arg(&claude_env_remote),
+            remote_path_arg(&codex_auth_remote),
+            remote_path_arg(&codex_env_remote),
             remote_path_arg(&codex_node_module_remote),
             remote_path_arg(&codex_extra_cache_remote),
         ),

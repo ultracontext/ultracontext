@@ -139,7 +139,7 @@ path    = "~/.codex"
 enabled = true
 ```
 
-Ignore files live under `~/.ultracontext/ignores/` and use Mutagen's gitignore-style syntax. The global file is `~/.ultracontext/ignores/.ultracontextignore`; source-specific files live at `~/.ultracontext/ignores/<source>/.ultracontextignore`. `uc init` seeds these files, with OpenClaw set to conversations plus workspace memory directories by default. Source changes apply immediately. Global settings and ignore edits apply on `uc sync reset`.
+Ignore files live under `~/.ultracontext/ignores/` and use Mutagen's gitignore-style syntax. The global file is `~/.ultracontext/ignores/.ultracontextignore`; source-specific files live at `~/.ultracontext/ignores/<source>/.ultracontextignore`. `uc init` seeds searchable-context defaults for Claude, Codex, and OpenClaw while leaving caches, dependencies, auth, and env files out. Source changes apply immediately. Global settings and ignore edits apply on `uc sync reset`.
 
 ## Query
 

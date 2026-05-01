@@ -2513,6 +2513,52 @@ blob_storage/\n\
 }
 
 fn default_source_ignore_file(source: &str) -> String {
+    if source.eq_ignore_ascii_case("claude") {
+        return "# Claude UltraContext ignore file\n\
+# Conversations, task state, plans, and root instructions by default. Edit this file and run `uc sync reset`\n\
+# to change what UltraContext syncs for Claude.\n\
+\n\
+# Ignore everything first.\n\
+*\n\
+\n\
+# Keep Claude project conversation transcripts and project memory.\n\
+!projects/\n\
+!projects/**\n\
+\n\
+# Keep lightweight task state.\n\
+!todos/\n\
+!todos/**\n\
+!plans/\n\
+!plans/**\n\
+\n\
+# Keep root-level Claude instructions.\n\
+!CLAUDE.md\n"
+            .to_string();
+    }
+
+    if source.eq_ignore_ascii_case("codex") {
+        return "# Codex UltraContext ignore file\n\
+# Conversations, memories, rules, and config by default. Edit this file and run `uc sync reset`\n\
+# to change what UltraContext syncs for Codex.\n\
+\n\
+# Ignore everything first.\n\
+*\n\
+\n\
+# Keep Codex session transcripts.\n\
+!sessions/\n\
+!sessions/**\n\
+\n\
+# Keep user-owned memory and rule files.\n\
+!memories/\n\
+!memories/**\n\
+!rules/\n\
+!rules/**\n\
+\n\
+# Keep Codex preferences. Auth and env files remain ignored.\n\
+!config.toml\n"
+            .to_string();
+    }
+
     if source.eq_ignore_ascii_case("openclaw") {
         return "# OpenClaw UltraContext ignore file\n\
 # Conversations and workspace memory directories by default. Edit this file and run `uc sync reset`\n\
@@ -3923,8 +3969,43 @@ dist/
     }
 
     #[test]
-    fn non_openclaw_source_ignore_defaults_to_comments_only() {
-        assert!(parse_ignore_patterns(&default_source_ignore_file("codex")).is_empty());
+    fn claude_source_ignore_defaults_to_searchable_context() {
+        let patterns = parse_ignore_patterns(&default_source_ignore_file("claude"));
+
+        assert_eq!(patterns[0], "*");
+        assert!(patterns.contains(&"!projects/".to_string()));
+        assert!(patterns.contains(&"!projects/**".to_string()));
+        assert!(patterns.contains(&"!todos/".to_string()));
+        assert!(patterns.contains(&"!todos/**".to_string()));
+        assert!(patterns.contains(&"!plans/".to_string()));
+        assert!(patterns.contains(&"!plans/**".to_string()));
+        assert!(patterns.contains(&"!CLAUDE.md".to_string()));
+        assert!(!patterns.contains(&"!skills/".to_string()));
+        assert!(!patterns.contains(&"!session-env/".to_string()));
+        assert!(!patterns.contains(&"!cache/".to_string()));
+    }
+
+    #[test]
+    fn codex_source_ignore_defaults_to_searchable_context() {
+        let patterns = parse_ignore_patterns(&default_source_ignore_file("codex"));
+
+        assert_eq!(patterns[0], "*");
+        assert!(patterns.contains(&"!sessions/".to_string()));
+        assert!(patterns.contains(&"!sessions/**".to_string()));
+        assert!(patterns.contains(&"!memories/".to_string()));
+        assert!(patterns.contains(&"!memories/**".to_string()));
+        assert!(patterns.contains(&"!rules/".to_string()));
+        assert!(patterns.contains(&"!rules/**".to_string()));
+        assert!(patterns.contains(&"!config.toml".to_string()));
+        assert!(!patterns.contains(&"!auth.json".to_string()));
+        assert!(!patterns.contains(&"!.env".to_string()));
+        assert!(!patterns.contains(&"!skills/".to_string()));
+        assert!(!patterns.contains(&"!cache/".to_string()));
+    }
+
+    #[test]
+    fn custom_source_ignore_defaults_to_comments_only() {
+        assert!(parse_ignore_patterns(&default_source_ignore_file("project_notes")).is_empty());
     }
 
     #[test]
