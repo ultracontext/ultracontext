@@ -2515,48 +2515,43 @@ blob_storage/\n\
 fn default_source_ignore_file(source: &str) -> String {
     if source.eq_ignore_ascii_case("claude") {
         return "# Claude UltraContext ignore file\n\
-# Conversations, task state, plans, and root instructions by default. Edit this file and run `uc sync reset`\n\
-# to change what UltraContext syncs for Claude.\n\
+# Claude syncs agent context by default. Add patterns here and run `uc sync reset`\n\
+# to exclude machine-local state or secrets from Claude.\n\
 \n\
-# Ignore everything first.\n\
-*\n\
+# Auth/env and machine-local state.\n\
+mcp-needs-auth-cache.json\n\
+session-env/\n\
 \n\
-# Keep Claude project conversation transcripts and project memory.\n\
-!projects/\n\
-!projects/**\n\
-\n\
-# Keep lightweight task state.\n\
-!todos/\n\
-!todos/**\n\
-!plans/\n\
-!plans/**\n\
-\n\
-# Keep root-level Claude instructions.\n\
-!CLAUDE.md\n"
+# Generated caches and temporary/runtime files.\n\
+backups/\n\
+cache/\n\
+debug/\n\
+downloads/\n\
+paste-cache/\n\
+shell-snapshots/\n\
+telemetry/\n"
             .to_string();
     }
 
     if source.eq_ignore_ascii_case("codex") {
         return "# Codex UltraContext ignore file\n\
-# Conversations, memories, rules, and config by default. Edit this file and run `uc sync reset`\n\
-# to change what UltraContext syncs for Codex.\n\
+# Codex syncs agent context by default. Add patterns here and run `uc sync reset`\n\
+# to exclude machine-local state or secrets from Codex.\n\
 \n\
-# Ignore everything first.\n\
-*\n\
+# Auth/env and secret material.\n\
+auth.json\n\
+.env\n\
+.env.*\n\
+*.pem\n\
+*.key\n\
 \n\
-# Keep Codex session transcripts.\n\
-!sessions/\n\
-!sessions/**\n\
-\n\
-# Keep user-owned memory and rule files.\n\
-!memories/\n\
-!memories/**\n\
-!rules/\n\
-!rules/**\n\
-\n\
-# Keep Codex preferences and version metadata. Auth and env files remain ignored.\n\
-!config.toml\n\
-!version.json\n"
+# Generated caches and temporary/runtime files.\n\
+.tmp/\n\
+tmp/\n\
+cache/\n\
+log/\n\
+logs/\n\
+shell_snapshots/\n"
             .to_string();
     }
 
@@ -3973,36 +3968,42 @@ dist/
     fn claude_source_ignore_defaults_to_searchable_context() {
         let patterns = parse_ignore_patterns(&default_source_ignore_file("claude"));
 
-        assert_eq!(patterns[0], "*");
-        assert!(patterns.contains(&"!projects/".to_string()));
-        assert!(patterns.contains(&"!projects/**".to_string()));
-        assert!(patterns.contains(&"!todos/".to_string()));
-        assert!(patterns.contains(&"!todos/**".to_string()));
-        assert!(patterns.contains(&"!plans/".to_string()));
-        assert!(patterns.contains(&"!plans/**".to_string()));
-        assert!(patterns.contains(&"!CLAUDE.md".to_string()));
+        assert!(!patterns.contains(&"*".to_string()));
+        assert!(patterns.contains(&"mcp-needs-auth-cache.json".to_string()));
+        assert!(patterns.contains(&"session-env/".to_string()));
+        assert!(patterns.contains(&"backups/".to_string()));
+        assert!(patterns.contains(&"cache/".to_string()));
+        assert!(patterns.contains(&"debug/".to_string()));
+        assert!(patterns.contains(&"downloads/".to_string()));
+        assert!(patterns.contains(&"paste-cache/".to_string()));
+        assert!(patterns.contains(&"shell-snapshots/".to_string()));
+        assert!(patterns.contains(&"telemetry/".to_string()));
+        assert!(!patterns.contains(&"!history.jsonl".to_string()));
+        assert!(!patterns.contains(&"!file-history/".to_string()));
+        assert!(!patterns.contains(&"!projects/".to_string()));
         assert!(!patterns.contains(&"!skills/".to_string()));
-        assert!(!patterns.contains(&"!session-env/".to_string()));
-        assert!(!patterns.contains(&"!cache/".to_string()));
     }
 
     #[test]
     fn codex_source_ignore_defaults_to_searchable_context() {
         let patterns = parse_ignore_patterns(&default_source_ignore_file("codex"));
 
-        assert_eq!(patterns[0], "*");
-        assert!(patterns.contains(&"!sessions/".to_string()));
-        assert!(patterns.contains(&"!sessions/**".to_string()));
-        assert!(patterns.contains(&"!memories/".to_string()));
-        assert!(patterns.contains(&"!memories/**".to_string()));
-        assert!(patterns.contains(&"!rules/".to_string()));
-        assert!(patterns.contains(&"!rules/**".to_string()));
-        assert!(patterns.contains(&"!config.toml".to_string()));
-        assert!(patterns.contains(&"!version.json".to_string()));
-        assert!(!patterns.contains(&"!auth.json".to_string()));
-        assert!(!patterns.contains(&"!.env".to_string()));
+        assert!(!patterns.contains(&"*".to_string()));
+        assert!(patterns.contains(&"auth.json".to_string()));
+        assert!(patterns.contains(&".env".to_string()));
+        assert!(patterns.contains(&".env.*".to_string()));
+        assert!(patterns.contains(&"*.pem".to_string()));
+        assert!(patterns.contains(&"*.key".to_string()));
+        assert!(patterns.contains(&".tmp/".to_string()));
+        assert!(patterns.contains(&"tmp/".to_string()));
+        assert!(patterns.contains(&"cache/".to_string()));
+        assert!(patterns.contains(&"log/".to_string()));
+        assert!(patterns.contains(&"logs/".to_string()));
+        assert!(patterns.contains(&"shell_snapshots/".to_string()));
+        assert!(!patterns.contains(&"!history.jsonl".to_string()));
+        assert!(!patterns.contains(&"!sessions/".to_string()));
+        assert!(!patterns.contains(&"!config.toml".to_string()));
         assert!(!patterns.contains(&"!skills/".to_string()));
-        assert!(!patterns.contains(&"!cache/".to_string()));
     }
 
     #[test]

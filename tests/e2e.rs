@@ -124,21 +124,33 @@ fn init_configures_skills_sources_and_workspace() {
     let codex_ignore =
         fs::read_to_string(ignores_dir.join("codex").join(".ultracontextignore")).unwrap();
     assert!(global_ignore.contains("node_modules/"), "{global_ignore}");
-    assert!(claude_ignore.contains("*\n"), "{claude_ignore}");
-    assert!(claude_ignore.contains("!projects/**"), "{claude_ignore}");
-    assert!(claude_ignore.contains("!todos/**"), "{claude_ignore}");
-    assert!(claude_ignore.contains("!plans/**"), "{claude_ignore}");
-    assert!(claude_ignore.contains("!CLAUDE.md"), "{claude_ignore}");
+    assert!(
+        !claude_ignore.lines().any(|line| line == "*"),
+        "{claude_ignore}"
+    );
+    assert!(claude_ignore.contains("session-env/"), "{claude_ignore}");
+    assert!(claude_ignore.contains("cache/"), "{claude_ignore}");
+    assert!(claude_ignore.contains("paste-cache/"), "{claude_ignore}");
+    assert!(
+        claude_ignore.contains("shell-snapshots/"),
+        "{claude_ignore}"
+    );
+    assert!(!claude_ignore.contains("!history.jsonl"), "{claude_ignore}");
+    assert!(!claude_ignore.contains("!file-history/"), "{claude_ignore}");
     assert!(!claude_ignore.contains("!skills/"), "{claude_ignore}");
-    assert!(!claude_ignore.contains("!session-env/"), "{claude_ignore}");
-    assert!(codex_ignore.contains("*\n"), "{codex_ignore}");
-    assert!(codex_ignore.contains("!sessions/**"), "{codex_ignore}");
-    assert!(codex_ignore.contains("!memories/**"), "{codex_ignore}");
-    assert!(codex_ignore.contains("!rules/**"), "{codex_ignore}");
-    assert!(codex_ignore.contains("!config.toml"), "{codex_ignore}");
-    assert!(codex_ignore.contains("!version.json"), "{codex_ignore}");
-    assert!(!codex_ignore.contains("!auth.json"), "{codex_ignore}");
-    assert!(!codex_ignore.contains("!.env"), "{codex_ignore}");
+    assert!(
+        !codex_ignore.lines().any(|line| line == "*"),
+        "{codex_ignore}"
+    );
+    assert!(codex_ignore.contains("auth.json"), "{codex_ignore}");
+    assert!(codex_ignore.contains(".env"), "{codex_ignore}");
+    assert!(codex_ignore.contains(".tmp/"), "{codex_ignore}");
+    assert!(codex_ignore.contains("tmp/"), "{codex_ignore}");
+    assert!(codex_ignore.contains("cache/"), "{codex_ignore}");
+    assert!(codex_ignore.contains("shell_snapshots/"), "{codex_ignore}");
+    assert!(!codex_ignore.contains("!history.jsonl"), "{codex_ignore}");
+    assert!(!codex_ignore.contains("!sessions/**"), "{codex_ignore}");
+    assert!(!codex_ignore.contains("!config.toml"), "{codex_ignore}");
     assert!(!codex_ignore.contains("!skills/"), "{codex_ignore}");
     assert!(openclaw_ignore.contains("!agents/*/sessions/**"));
     assert!(openclaw_ignore.contains("workspace memory directories"));
@@ -452,6 +464,12 @@ fn syncs_agent_directories_to_remote_workspace() {
         .join("24")
         .join(format!("rollout-2026-04-24T00-00-00-{run_id}.jsonl"));
     let claude_root_file = home.join(".claude").join("CLAUDE.md");
+    let claude_history_file = home.join(".claude").join("history.jsonl");
+    let claude_file_history_file = home
+        .join(".claude")
+        .join("file-history")
+        .join(format!("claude-{run_id}"))
+        .join("source@v1");
     let claude_env_file = home.join(".claude").join("session-env");
     let claude_plan_file = home.join(".claude").join("plans").join("launch.md");
     let claude_todo_file = home
@@ -461,6 +479,7 @@ fn syncs_agent_directories_to_remote_workspace() {
     let codex_memory_file = home.join(".codex").join("memories").join("ultracontext.md");
     let codex_config_file = home.join(".codex").join("config.toml");
     let codex_version_file = home.join(".codex").join("version.json");
+    let codex_history_file = home.join(".codex").join("history.jsonl");
     let codex_rule_file = home.join(".codex").join("rules").join("ultracontext.md");
     let codex_auth_file = home.join(".codex").join("auth.json");
     let codex_env_file = home.join(".codex").join(".env");
@@ -473,6 +492,7 @@ fn syncs_agent_directories_to_remote_workspace() {
 
     fs::create_dir_all(claude_file.parent().unwrap()).unwrap();
     fs::create_dir_all(codex_file.parent().unwrap()).unwrap();
+    fs::create_dir_all(claude_file_history_file.parent().unwrap()).unwrap();
     fs::create_dir_all(claude_plan_file.parent().unwrap()).unwrap();
     fs::create_dir_all(claude_todo_file.parent().unwrap()).unwrap();
     fs::create_dir_all(codex_memory_file.parent().unwrap()).unwrap();
@@ -507,6 +527,18 @@ fn syncs_agent_directories_to_remote_workspace() {
     )
     .unwrap();
     fs::write(
+        &claude_history_file,
+        format!(
+            "{{\"sessionId\":\"claude-{run_id}\",\"timestamp\":1777075200000,\"display\":\"claude history marker should sync {run_id}\"}}\n"
+        ),
+    )
+    .unwrap();
+    fs::write(
+        &claude_file_history_file,
+        format!("claude file history marker should sync {run_id}\n"),
+    )
+    .unwrap();
+    fs::write(
         &claude_env_file,
         format!("claude env marker should not sync {run_id}\n"),
     )
@@ -530,6 +562,13 @@ fn syncs_agent_directories_to_remote_workspace() {
     fs::write(
         &codex_version_file,
         format!("{{\"latest_version\":\"test-{run_id}\"}}\n"),
+    )
+    .unwrap();
+    fs::write(
+        &codex_history_file,
+        format!(
+            "{{\"session_id\":\"codex-{run_id}\",\"ts\":1777075200,\"text\":\"codex history marker should sync {run_id}\"}}\n"
+        ),
     )
     .unwrap();
     fs::write(
@@ -581,6 +620,11 @@ fn syncs_agent_directories_to_remote_workspace() {
         codex_file.file_name().unwrap().to_string_lossy()
     );
     let claude_root_remote = format!("{remote_root}/workspace/sessions/{host_id}/claude/CLAUDE.md");
+    let claude_history_remote =
+        format!("{remote_root}/workspace/sessions/{host_id}/claude/history.jsonl");
+    let claude_file_history_remote = format!(
+        "{remote_root}/workspace/sessions/{host_id}/claude/file-history/claude-{run_id}/source@v1"
+    );
     let claude_env_remote =
         format!("{remote_root}/workspace/sessions/{host_id}/claude/session-env");
     let claude_plan_remote =
@@ -595,6 +639,8 @@ fn syncs_agent_directories_to_remote_workspace() {
         format!("{remote_root}/workspace/sessions/{host_id}/codex/config.toml");
     let codex_version_remote =
         format!("{remote_root}/workspace/sessions/{host_id}/codex/version.json");
+    let codex_history_remote =
+        format!("{remote_root}/workspace/sessions/{host_id}/codex/history.jsonl");
     let codex_rule_remote =
         format!("{remote_root}/workspace/sessions/{host_id}/codex/rules/ultracontext.md");
     let codex_auth_remote = format!("{remote_root}/workspace/sessions/{host_id}/codex/auth.json");
@@ -608,25 +654,35 @@ fn syncs_agent_directories_to_remote_workspace() {
     wait_for_remote_file(&remote, &claude_remote, Duration::from_secs(45));
     wait_for_remote_file(&remote, &codex_remote, Duration::from_secs(45));
     wait_for_remote_file(&remote, &claude_root_remote, Duration::from_secs(45));
+    wait_for_remote_file(&remote, &claude_history_remote, Duration::from_secs(45));
+    wait_for_remote_file(
+        &remote,
+        &claude_file_history_remote,
+        Duration::from_secs(45),
+    );
     wait_for_remote_file(&remote, &claude_plan_remote, Duration::from_secs(45));
     wait_for_remote_file(&remote, &claude_todo_remote, Duration::from_secs(45));
     wait_for_remote_file(&remote, &codex_memory_remote, Duration::from_secs(45));
     wait_for_remote_file(&remote, &codex_config_remote, Duration::from_secs(45));
     wait_for_remote_file(&remote, &codex_version_remote, Duration::from_secs(45));
+    wait_for_remote_file(&remote, &codex_history_remote, Duration::from_secs(45));
     wait_for_remote_file(&remote, &codex_rule_remote, Duration::from_secs(45));
 
     let remote_cat = ssh(
         &remote,
         &format!(
-            "cat {} && cat {} && cat {} && cat {} && cat {} && cat {} && cat {} && cat {} && cat {}",
+            "cat {} && cat {} && cat {} && cat {} && cat {} && cat {} && cat {} && cat {} && cat {} && cat {} && cat {} && cat {}",
             remote_path_arg(&claude_remote),
             remote_path_arg(&codex_remote),
             remote_path_arg(&claude_root_remote),
+            remote_path_arg(&claude_history_remote),
+            remote_path_arg(&claude_file_history_remote),
             remote_path_arg(&claude_plan_remote),
             remote_path_arg(&claude_todo_remote),
             remote_path_arg(&codex_memory_remote),
             remote_path_arg(&codex_config_remote),
             remote_path_arg(&codex_version_remote),
+            remote_path_arg(&codex_history_remote),
             remote_path_arg(&codex_rule_remote)
         ),
     )
@@ -647,6 +703,14 @@ fn syncs_agent_directories_to_remote_workspace() {
         "{remote_text}"
     );
     assert!(
+        remote_text.contains(&format!("claude history marker should sync {run_id}")),
+        "{remote_text}"
+    );
+    assert!(
+        remote_text.contains(&format!("claude file history marker should sync {run_id}")),
+        "{remote_text}"
+    );
+    assert!(
         remote_text.contains(&format!("claude plan marker should sync {run_id}")),
         "{remote_text}"
     );
@@ -664,6 +728,10 @@ fn syncs_agent_directories_to_remote_workspace() {
     );
     assert!(
         remote_text.contains(&format!("\"latest_version\":\"test-{run_id}\"")),
+        "{remote_text}"
+    );
+    assert!(
+        remote_text.contains(&format!("codex history marker should sync {run_id}")),
         "{remote_text}"
     );
     assert!(
