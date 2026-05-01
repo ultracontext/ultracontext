@@ -2529,17 +2529,29 @@ fn default_source_ignore_file(source: &str) -> String {
 # Keep every OpenClaw session artifact, including reset/deleted files and trajectory metadata.\n\
 !agents/*/sessions/**\n\
 \n\
-# Keep OpenClaw workspace memory markdown.\n\
+# Keep OpenClaw workspace identity and memory files.\n\
 !workspace/\n\
+!workspace/AGENTS.md\n\
+!workspace/SOUL.md\n\
+!workspace/DREAMS.md\n\
+!workspace/HEARTBEAT.md\n\
+!workspace/IDENTITY.md\n\
+!workspace/TOOLS.md\n\
+!workspace/USER.md\n\
 !workspace/MEMORY.md\n\
-!workspace/MEMORY.MD\n\
 !workspace/memory/\n\
 !workspace/memory/**/\n\
 !workspace/memory/*.md\n\
 !workspace/memory/**/*.md\n\
 !workspace-*/\n\
+!workspace-*/AGENTS.md\n\
+!workspace-*/SOUL.md\n\
+!workspace-*/DREAMS.md\n\
+!workspace-*/HEARTBEAT.md\n\
+!workspace-*/IDENTITY.md\n\
+!workspace-*/TOOLS.md\n\
+!workspace-*/USER.md\n\
 !workspace-*/MEMORY.md\n\
-!workspace-*/MEMORY.MD\n\
 !workspace-*/memory/\n\
 !workspace-*/memory/**/\n\
 !workspace-*/memory/*.md\n\
@@ -3889,12 +3901,26 @@ dist/
         assert!(patterns.contains(&"!agents/".to_string()));
         assert!(patterns.contains(&"!agents/*/sessions/".to_string()));
         assert!(patterns.contains(&"!agents/*/sessions/**".to_string()));
+        assert!(patterns.contains(&"!workspace/AGENTS.md".to_string()));
+        assert!(patterns.contains(&"!workspace/SOUL.md".to_string()));
+        assert!(patterns.contains(&"!workspace/DREAMS.md".to_string()));
+        assert!(patterns.contains(&"!workspace/HEARTBEAT.md".to_string()));
+        assert!(patterns.contains(&"!workspace/IDENTITY.md".to_string()));
+        assert!(patterns.contains(&"!workspace/TOOLS.md".to_string()));
+        assert!(patterns.contains(&"!workspace/USER.md".to_string()));
         assert!(patterns.contains(&"!workspace/MEMORY.md".to_string()));
-        assert!(patterns.contains(&"!workspace/MEMORY.MD".to_string()));
         assert!(patterns.contains(&"!workspace/memory/**/*.md".to_string()));
+        assert!(patterns.contains(&"!workspace-*/AGENTS.md".to_string()));
+        assert!(patterns.contains(&"!workspace-*/SOUL.md".to_string()));
+        assert!(patterns.contains(&"!workspace-*/DREAMS.md".to_string()));
+        assert!(patterns.contains(&"!workspace-*/HEARTBEAT.md".to_string()));
+        assert!(patterns.contains(&"!workspace-*/IDENTITY.md".to_string()));
+        assert!(patterns.contains(&"!workspace-*/TOOLS.md".to_string()));
+        assert!(patterns.contains(&"!workspace-*/USER.md".to_string()));
         assert!(patterns.contains(&"!workspace-*/MEMORY.md".to_string()));
-        assert!(patterns.contains(&"!workspace-*/MEMORY.MD".to_string()));
         assert!(patterns.contains(&"!workspace-*/memory/**/*.md".to_string()));
+        assert!(!patterns.contains(&"!workspace/MEMORY.MD".to_string()));
+        assert!(!patterns.contains(&"!workspace-*/MEMORY.MD".to_string()));
         assert!(!patterns.contains(&"!agents/*/qmd/".to_string()));
     }
 
