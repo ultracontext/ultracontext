@@ -2515,7 +2515,7 @@ blob_storage/\n\
 fn default_source_ignore_file(source: &str) -> String {
     if source.eq_ignore_ascii_case("openclaw") {
         return "# OpenClaw UltraContext ignore file\n\
-# Conversations only by default. Edit this file and run `uc sync reset`\n\
+# Conversations and workspace memory notes by default. Edit this file and run `uc sync reset`\n\
 # to change what UltraContext syncs for OpenClaw.\n\
 \n\
 # Ignore everything first.\n\
@@ -2529,7 +2529,19 @@ fn default_source_ignore_file(source: &str) -> String {
 # Keep conversation/session files.\n\
 !agents/*/sessions/*.jsonl\n\
 !agents/*/sessions/*.trajectory.jsonl\n\
-!agents/*/sessions/sessions.json\n"
+!agents/*/sessions/sessions.json\n\
+\n\
+# Keep OpenClaw workspace memory markdown.\n\
+!workspace/\n\
+!workspace/memory/\n\
+!workspace/memory/**/\n\
+!workspace/memory/*.md\n\
+!workspace/memory/**/*.md\n\
+!workspace-*/\n\
+!workspace-*/memory/\n\
+!workspace-*/memory/**/\n\
+!workspace-*/memory/*.md\n\
+!workspace-*/memory/**/*.md\n"
             .to_string();
     }
 
@@ -3868,7 +3880,7 @@ dist/
     }
 
     #[test]
-    fn openclaw_source_ignore_defaults_to_conversations_only() {
+    fn openclaw_source_ignore_defaults_to_conversations_and_workspace_memory() {
         let patterns = parse_ignore_patterns(&default_source_ignore_file("openclaw"));
 
         assert_eq!(patterns[0], "*");
@@ -3877,6 +3889,8 @@ dist/
         assert!(patterns.contains(&"!agents/*/sessions/*.jsonl".to_string()));
         assert!(patterns.contains(&"!agents/*/sessions/*.trajectory.jsonl".to_string()));
         assert!(patterns.contains(&"!agents/*/sessions/sessions.json".to_string()));
+        assert!(patterns.contains(&"!workspace/memory/**/*.md".to_string()));
+        assert!(patterns.contains(&"!workspace-*/memory/**/*.md".to_string()));
         assert!(!patterns.contains(&"!agents/*/qmd/".to_string()));
     }
 
