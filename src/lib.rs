@@ -2526,18 +2526,20 @@ fn default_source_ignore_file(source: &str) -> String {
 !agents/*/\n\
 !agents/*/sessions/\n\
 \n\
-# Keep conversation/session files.\n\
-!agents/*/sessions/*.jsonl\n\
-!agents/*/sessions/*.trajectory.jsonl\n\
-!agents/*/sessions/sessions.json\n\
+# Keep every OpenClaw session artifact, including reset/deleted files and trajectory metadata.\n\
+!agents/*/sessions/**\n\
 \n\
 # Keep OpenClaw workspace memory markdown.\n\
 !workspace/\n\
+!workspace/MEMORY.md\n\
+!workspace/MEMORY.MD\n\
 !workspace/memory/\n\
 !workspace/memory/**/\n\
 !workspace/memory/*.md\n\
 !workspace/memory/**/*.md\n\
 !workspace-*/\n\
+!workspace-*/MEMORY.md\n\
+!workspace-*/MEMORY.MD\n\
 !workspace-*/memory/\n\
 !workspace-*/memory/**/\n\
 !workspace-*/memory/*.md\n\
@@ -3886,10 +3888,12 @@ dist/
         assert_eq!(patterns[0], "*");
         assert!(patterns.contains(&"!agents/".to_string()));
         assert!(patterns.contains(&"!agents/*/sessions/".to_string()));
-        assert!(patterns.contains(&"!agents/*/sessions/*.jsonl".to_string()));
-        assert!(patterns.contains(&"!agents/*/sessions/*.trajectory.jsonl".to_string()));
-        assert!(patterns.contains(&"!agents/*/sessions/sessions.json".to_string()));
+        assert!(patterns.contains(&"!agents/*/sessions/**".to_string()));
+        assert!(patterns.contains(&"!workspace/MEMORY.md".to_string()));
+        assert!(patterns.contains(&"!workspace/MEMORY.MD".to_string()));
         assert!(patterns.contains(&"!workspace/memory/**/*.md".to_string()));
+        assert!(patterns.contains(&"!workspace-*/MEMORY.md".to_string()));
+        assert!(patterns.contains(&"!workspace-*/MEMORY.MD".to_string()));
         assert!(patterns.contains(&"!workspace-*/memory/**/*.md".to_string()));
         assert!(!patterns.contains(&"!agents/*/qmd/".to_string()));
     }

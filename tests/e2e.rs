@@ -122,8 +122,10 @@ fn init_configures_skills_sources_and_workspace() {
     let codex_ignore =
         fs::read_to_string(ignores_dir.join("codex").join(".ultracontextignore")).unwrap();
     assert!(global_ignore.contains("node_modules/"), "{global_ignore}");
-    assert!(openclaw_ignore.contains("!agents/*/sessions/*.jsonl"));
+    assert!(openclaw_ignore.contains("!agents/*/sessions/**"));
     assert!(openclaw_ignore.contains("workspace memory notes"));
+    assert!(openclaw_ignore.contains("!workspace/MEMORY.md"));
+    assert!(openclaw_ignore.contains("!workspace-*/MEMORY.MD"));
     assert!(openclaw_ignore.contains("!workspace/memory/**/*.md"));
     assert!(openclaw_ignore.contains("!workspace-*/memory/**/*.md"));
     assert!(!codex_ignore.contains("*\n"), "{codex_ignore}");
@@ -181,6 +183,9 @@ fn manages_sources_from_cli() {
     )
     .unwrap();
     assert!(openclaw_ignore.contains("workspace memory notes"));
+    assert!(openclaw_ignore.contains("!agents/*/sessions/**"));
+    assert!(openclaw_ignore.contains("!workspace/MEMORY.md"));
+    assert!(openclaw_ignore.contains("!workspace-*/MEMORY.MD"));
     assert!(openclaw_ignore.contains("!workspace/memory/**/*.md"));
     assert!(openclaw_ignore.contains("!workspace-*/memory/**/*.md"));
 
