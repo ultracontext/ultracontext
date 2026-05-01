@@ -139,7 +139,7 @@ path    = "~/.codex"
 enabled = true
 ```
 
-`~/.ultracontext/.ultracontextignore` works like `.gitignore`, seeded on `uc init`. Source changes apply immediately. Global settings and ignore edits apply on `uc sync reset`.
+`~/.ultracontext/.ultracontextignore` works like `.gitignore`, seeded on `uc init`, and applies to every source. A source can also define its own `<source>/.ultracontextignore`; UltraContext reads it only for that source and never creates it automatically. Source changes apply immediately. Global settings and ignore edits apply on `uc sync reset`.
 
 ## Query
 

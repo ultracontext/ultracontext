@@ -23,7 +23,8 @@ const DEFAULT_QUERY_PROMPT: &str = include_str!("prompts/query.md");
 const PROMPT_FILE: &str = "prompts/query.md";
 const ULTRACONTEXT_SKILL: &str = include_str!("../skills/ultracontext/SKILL.md");
 const INSTALL_URL: &str = "https://ultracontext.com/install.sh";
-// All ignore patterns live in the user-editable .ultracontextignore.
+// Ignore patterns live in the user-editable global .ultracontextignore,
+// optionally extended by a source-local .ultracontextignore at the source root.
 const DEFAULT_SYNC_IGNORES: &[&str] = &[];
 
 static CLICLACK_THEME: Once = Once::new();
@@ -2296,7 +2297,7 @@ fn sync_start_source(config: &Config, source: &Source, existing: &str) -> Result
 
     let remote_endpoint = remote_endpoint(config, source);
     ui_step(format!("create {name}"));
-    let ignore_patterns = sync_ignore_patterns()?;
+    let ignore_patterns = sync_ignore_patterns(&local_path)?;
     let args = sync_create_args(&name, &local_path, remote_endpoint, &ignore_patterns);
     run_command("mutagen", args)
 }
@@ -2400,21 +2401,31 @@ fn sync_create_args(
     args
 }
 
-fn sync_ignore_patterns() -> Result<Vec<String>> {
+fn sync_ignore_patterns(source_root: &Path) -> Result<Vec<String>> {
+    collect_sync_ignore_patterns(&ignore_path()?, &source_root.join(IGNORE_FILE))
+}
+
+fn collect_sync_ignore_patterns(global_path: &Path, source_path: &Path) -> Result<Vec<String>> {
     let mut patterns = DEFAULT_SYNC_IGNORES
         .iter()
         .map(|pattern| pattern.to_string())
         .collect::<Vec<_>>();
 
-    let path = ignore_path()?;
-    if path.exists() {
-        let raw = fs::read_to_string(&path).map_err(|error| {
-            UcError::Message(format!("failed to read {}: {error}", path.display()))
-        })?;
-        patterns.extend(parse_ignore_patterns(&raw));
-    }
+    extend_ignore_patterns_from_file(&mut patterns, global_path)?;
+    extend_ignore_patterns_from_file(&mut patterns, source_path)?;
 
     Ok(patterns)
+}
+
+fn extend_ignore_patterns_from_file(patterns: &mut Vec<String>, path: &Path) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let raw = fs::read_to_string(path)
+        .map_err(|error| UcError::Message(format!("failed to read {}: {error}", path.display())))?;
+    patterns.extend(parse_ignore_patterns(&raw));
+    Ok(())
 }
 
 fn parse_ignore_patterns(raw: &str) -> Vec<String> {
@@ -2440,7 +2451,8 @@ fn ensure_ignore_file() -> Result<()> {
 fn default_ignore_file() -> &'static str {
     "# UltraContext ignore file\n\
 # Patterns use Mutagen's default ignore syntax and apply to every synced source.\n\
-# Comment, edit, or extend any rule. Run `uc sync reset` after edits.\n\
+# You can also add a .ultracontextignore inside any source folder for source-specific rules.\n\
+# Comment, edit, or extend any rule. Run `uc sync reset` after ignore edits.\n\
 \n\
 # Source control\n\
 .git/\n\
@@ -3743,6 +3755,56 @@ dist/
         );
 
         assert_eq!(patterns, vec!["node_modules/", "scratch-cache/", "dist/"]);
+    }
+
+    #[test]
+    fn combines_global_and_source_ignore_patterns_in_order() {
+        let root = env::temp_dir().join(format!(
+            "uc-source-ignore-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let global = root.join("global.ignore");
+        let source = root.join("source").join(IGNORE_FILE);
+        fs::create_dir_all(source.parent().unwrap()).unwrap();
+        fs::write(&global, "node_modules/\nlogs/\n").unwrap();
+        fs::write(&source, "*\n!sessions/\n!sessions/**\n").unwrap();
+
+        let patterns = collect_sync_ignore_patterns(&global, &source).unwrap();
+
+        assert_eq!(
+            patterns,
+            vec![
+                "node_modules/".to_string(),
+                "logs/".to_string(),
+                "*".to_string(),
+                "!sessions/".to_string(),
+                "!sessions/**".to_string(),
+            ]
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ignores_missing_source_ignore_file() {
+        let root = env::temp_dir().join(format!(
+            "uc-missing-source-ignore-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let global = root.join("global.ignore");
+        let missing_source = root.join("source").join(IGNORE_FILE);
+        fs::write(&global, "node_modules/\n").unwrap();
+
+        let patterns = collect_sync_ignore_patterns(&global, &missing_source).unwrap();
+
+        assert_eq!(patterns, vec!["node_modules/".to_string()]);
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
