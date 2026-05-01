@@ -2198,11 +2198,31 @@ fn set_source_enabled(config: &mut Config, name: &str, enabled: bool) -> Result<
     Ok(())
 }
 
-fn remote_dir(config: &Config, source: &Source) -> String {
+fn remote_source_dir_name(source: &Source) -> String {
+    known_source(&source.agent)
+        .and_then(|known| known.path.rsplit('/').next())
+        .unwrap_or(source.agent.as_str())
+        .to_string()
+}
+
+fn remote_dir_for_name(config: &Config, dir_name: &str) -> String {
     format!(
         "{}/workspace/sessions/{}/{}",
-        config.remote_root, config.host_id, source.agent
+        config.remote_root, config.host_id, dir_name
     )
+}
+
+fn remote_dir(config: &Config, source: &Source) -> String {
+    remote_dir_for_name(config, &remote_source_dir_name(source))
+}
+
+fn remote_dirs_to_delete(config: &Config, source: &Source) -> Vec<String> {
+    let current = remote_source_dir_name(source);
+    let mut dirs = vec![remote_dir_for_name(config, &current)];
+    if current != source.agent {
+        dirs.push(remote_dir_for_name(config, &source.agent));
+    }
+    dirs
 }
 
 fn remote_endpoint(config: &Config, source: &Source) -> String {
@@ -2217,22 +2237,27 @@ fn remote_endpoint(config: &Config, source: &Source) -> String {
 }
 
 fn delete_remote_source_dir(config: &Config, source: &Source) -> Result<()> {
-    let dir = remote_dir(config, source);
     if config.is_local() {
-        let path = expand_home(&dir)?;
-        if path.exists() {
-            ui_step(format!("delete remote {}", path.display()));
-            fs::remove_dir_all(path)?;
-        } else {
-            ui_info(format!("remote copy {}: missing", path.display()));
+        for dir in remote_dirs_to_delete(config, source) {
+            let path = expand_home(&dir)?;
+            if path.exists() {
+                ui_step(format!("delete remote {}", path.display()));
+                fs::remove_dir_all(path)?;
+            } else {
+                ui_info(format!("remote copy {}: missing", path.display()));
+            }
         }
         return Ok(());
     }
 
-    ui_step(format!("delete remote {}", remote_endpoint(config, source)));
-    let dir_arg = remote_path_arg(&dir);
-    let command = format!("if [ -e {dir_arg} ]; then rm -rf {dir_arg}; fi");
-    run_command("ssh", [config.remote.as_str(), command.as_str()])
+    for dir in remote_dirs_to_delete(config, source) {
+        let endpoint = format!("{}:{dir}", config.remote);
+        ui_step(format!("delete remote {endpoint}"));
+        let dir_arg = remote_path_arg(&dir);
+        let command = format!("if [ -e {dir_arg} ]; then rm -rf {dir_arg}; fi");
+        run_command("ssh", [config.remote.as_str(), command.as_str()])?;
+    }
+    Ok(())
 }
 
 fn mutagen_session_name(config: &Config, source: &Source) -> String {
@@ -3384,7 +3409,17 @@ mod tests {
 
         assert_eq!(
             remote_dir(&cfg, &source),
-            "~/.ultracontext/workspace/sessions/work-laptop/codex"
+            "~/.ultracontext/workspace/sessions/work-laptop/.codex"
+        );
+
+        let custom_source = Source {
+            agent: "project_notes".to_string(),
+            local_path: "~/notes".to_string(),
+            enabled: true,
+        };
+        assert_eq!(
+            remote_dir(&cfg, &custom_source),
+            "~/.ultracontext/workspace/sessions/work-laptop/project_notes"
         );
     }
 
@@ -3409,7 +3444,7 @@ mod tests {
         assert!(cfg.is_local());
         assert_eq!(
             remote_endpoint(&cfg, &source),
-            "/tmp/uc/workspace/sessions/mini/codex"
+            "/tmp/uc/workspace/sessions/mini/.codex"
         );
     }
 
@@ -3438,12 +3473,20 @@ mod tests {
             enabled: true,
         };
         let copy = PathBuf::from(remote_dir(&cfg, &source));
+        let legacy_copy = root
+            .join("workspace")
+            .join("sessions")
+            .join("mini")
+            .join("codex");
         fs::create_dir_all(copy.join("nested")).unwrap();
         fs::write(copy.join("nested").join("session.jsonl"), "{}").unwrap();
+        fs::create_dir_all(legacy_copy.join("nested")).unwrap();
+        fs::write(legacy_copy.join("nested").join("session.jsonl"), "{}").unwrap();
 
         delete_remote_source_dir(&cfg, &source).unwrap();
 
         assert!(!copy.exists());
+        assert!(!legacy_copy.exists());
         let _ = fs::remove_dir_all(root);
     }
 
@@ -3670,7 +3713,7 @@ Status: Watching for changes
         assert_eq!(entries[0].local_path.as_deref(), Some("~/.claude"));
         assert_eq!(
             entries[0].remote_endpoint.as_deref(),
-            Some("user@vps:/srv/uc/workspace/sessions/work-laptop/claude")
+            Some("user@vps:/srv/uc/workspace/sessions/work-laptop/.claude")
         );
         assert_eq!(entries[1].source, "codex");
         assert_eq!(entries[1].source_state, "disabled");
@@ -4019,7 +4062,7 @@ dist/
         let args = sync_create_args(
             "uc-test-codex",
             &local_path,
-            "user@vps:~/.ultracontext/workspace/sessions/test/codex".to_string(),
+            "user@vps:~/.ultracontext/workspace/sessions/test/.codex".to_string(),
             &ignore_patterns,
         );
 
@@ -4143,7 +4186,7 @@ Alpha:
 	URL: /Users/fabioroma/.openclaw
 	Connected: Yes
 Beta:
-	URL: uc:~/.ultracontext/workspace/sessions/host/openclaw
+	URL: uc:~/.ultracontext/workspace/sessions/host/.openclaw
 	Connected: Yes
 Status: Scanning files
 "#;
@@ -4163,7 +4206,7 @@ Alpha:
 	URL: /Users/fabioroma/.openclaw
 	Connected: Yes
 Beta:
-	URL: uc:~/.ultracontext/workspace/sessions/host/openclaw
+	URL: uc:~/.ultracontext/workspace/sessions/host/.openclaw
 	Connected: Yes
 	Transition problems:
 		nodes/paired.json: unable to create file

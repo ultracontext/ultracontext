@@ -33,7 +33,7 @@ Agents need horizontal intelligence, so they remain sharp and lean across sessio
 
 ```text
 ~/.claude   ─┐
-~/.codex    ─┼──▶  ~/.ultracontext/workspace/sessions/<host>/<agent>/
+~/.codex    ─┼──▶  ~/.ultracontext/workspace/sessions/<host>/<agent-folder>/
 ~/.openclaw ─┘                       │
                                      ▼
                                  uc query   ──▶  Claude (or any agent)
@@ -110,12 +110,13 @@ Re-running the install command is an update. `uc init` can be rerun to reconfigu
   workspace/
     sessions/
       <host-id>/
-        claude/
-        codex/
+        .claude/
+        .codex/
+        .openclaw/
         <custom-source>/
 ```
 
-Host comes first, then agent. Source names become folder names, so they are limited to letters, numbers, hyphens, and underscores.
+Host comes first, then source folder. Built-in agent sources keep their native dot-folder names (`.claude`, `.codex`, `.openclaw`, `.hermes`) in the workspace; custom source names become folder names, so they are limited to letters, numbers, hyphens, and underscores.
 
 ## Config
 
