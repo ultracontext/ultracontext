@@ -135,29 +135,13 @@ fn init_configures_skills_sources_and_workspace() {
     );
     assert!(codex_ignore.contains("Codex has no source-specific default ignores"));
     assert!(openclaw_ignore.contains("!agents/*/sessions/**"));
-    assert!(openclaw_ignore.contains("workspace memory directories"));
-    assert!(openclaw_ignore.contains("!workspace/AGENTS.md"));
-    assert!(openclaw_ignore.contains("!workspace/SOUL.md"));
-    assert!(openclaw_ignore.contains("!workspace/DREAMS.md"));
-    assert!(openclaw_ignore.contains("!workspace/HEARTBEAT.md"));
-    assert!(openclaw_ignore.contains("!workspace/IDENTITY.md"));
-    assert!(openclaw_ignore.contains("!workspace/TOOLS.md"));
-    assert!(openclaw_ignore.contains("!workspace/USER.md"));
-    assert!(openclaw_ignore.contains("!workspace/MEMORY.md"));
-    assert!(openclaw_ignore.contains("!workspace-*/AGENTS.md"));
-    assert!(openclaw_ignore.contains("!workspace-*/SOUL.md"));
-    assert!(openclaw_ignore.contains("!workspace-*/DREAMS.md"));
-    assert!(openclaw_ignore.contains("!workspace-*/HEARTBEAT.md"));
-    assert!(openclaw_ignore.contains("!workspace-*/IDENTITY.md"));
-    assert!(openclaw_ignore.contains("!workspace-*/TOOLS.md"));
-    assert!(openclaw_ignore.contains("!workspace-*/USER.md"));
-    assert!(openclaw_ignore.contains("!workspace-*/MEMORY.md"));
-    assert!(!openclaw_ignore.contains("!workspace/MEMORY.MD"));
-    assert!(!openclaw_ignore.contains("!workspace-*/MEMORY.MD"));
-    assert!(openclaw_ignore.contains("!workspace/memory/**"));
-    assert!(openclaw_ignore.contains("!workspace-*/memory/**"));
-    assert!(!openclaw_ignore.contains("!workspace/memory/**/*.md"));
-    assert!(!openclaw_ignore.contains("!workspace-*/memory/**/*.md"));
+    assert!(openclaw_ignore.contains("complete workspace directories"));
+    assert!(openclaw_ignore.contains("!workspace/**"));
+    assert!(openclaw_ignore.contains("!workspace-*/**"));
+    assert!(!openclaw_ignore.contains("!workspace/AGENTS.md"));
+    assert!(!openclaw_ignore.contains("!workspace-*/AGENTS.md"));
+    assert!(!openclaw_ignore.contains("!workspace/memory/**"));
+    assert!(!openclaw_ignore.contains("!workspace-*/memory/**"));
     assert!(
         home.join(".claude")
             .join("skills")
@@ -211,30 +195,14 @@ fn manages_sources_from_cli() {
             .join(".ultracontextignore"),
     )
     .unwrap();
-    assert!(openclaw_ignore.contains("workspace memory directories"));
+    assert!(openclaw_ignore.contains("complete workspace directories"));
     assert!(openclaw_ignore.contains("!agents/*/sessions/**"));
-    assert!(openclaw_ignore.contains("!workspace/AGENTS.md"));
-    assert!(openclaw_ignore.contains("!workspace/SOUL.md"));
-    assert!(openclaw_ignore.contains("!workspace/DREAMS.md"));
-    assert!(openclaw_ignore.contains("!workspace/HEARTBEAT.md"));
-    assert!(openclaw_ignore.contains("!workspace/IDENTITY.md"));
-    assert!(openclaw_ignore.contains("!workspace/TOOLS.md"));
-    assert!(openclaw_ignore.contains("!workspace/USER.md"));
-    assert!(openclaw_ignore.contains("!workspace/MEMORY.md"));
-    assert!(openclaw_ignore.contains("!workspace-*/AGENTS.md"));
-    assert!(openclaw_ignore.contains("!workspace-*/SOUL.md"));
-    assert!(openclaw_ignore.contains("!workspace-*/DREAMS.md"));
-    assert!(openclaw_ignore.contains("!workspace-*/HEARTBEAT.md"));
-    assert!(openclaw_ignore.contains("!workspace-*/IDENTITY.md"));
-    assert!(openclaw_ignore.contains("!workspace-*/TOOLS.md"));
-    assert!(openclaw_ignore.contains("!workspace-*/USER.md"));
-    assert!(openclaw_ignore.contains("!workspace-*/MEMORY.md"));
-    assert!(!openclaw_ignore.contains("!workspace/MEMORY.MD"));
-    assert!(!openclaw_ignore.contains("!workspace-*/MEMORY.MD"));
-    assert!(openclaw_ignore.contains("!workspace/memory/**"));
-    assert!(openclaw_ignore.contains("!workspace-*/memory/**"));
-    assert!(!openclaw_ignore.contains("!workspace/memory/**/*.md"));
-    assert!(!openclaw_ignore.contains("!workspace-*/memory/**/*.md"));
+    assert!(openclaw_ignore.contains("!workspace/**"));
+    assert!(openclaw_ignore.contains("!workspace-*/**"));
+    assert!(!openclaw_ignore.contains("!workspace/AGENTS.md"));
+    assert!(!openclaw_ignore.contains("!workspace-*/AGENTS.md"));
+    assert!(!openclaw_ignore.contains("!workspace/memory/**"));
+    assert!(!openclaw_ignore.contains("!workspace-*/memory/**"));
 
     let list = uc(&home).args(["source", "list"]).output().unwrap();
     let list_stdout = String::from_utf8_lossy(&list.stdout).to_string();

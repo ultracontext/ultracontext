@@ -2554,8 +2554,8 @@ fn default_source_ignore_file(source: &str) -> String {
 
     if source.eq_ignore_ascii_case("openclaw") {
         return "# OpenClaw UltraContext ignore file\n\
-# Conversations and workspace memory directories by default. Edit this file and run `uc sync reset`\n\
-# to change what UltraContext syncs for OpenClaw.\n\
+# Conversations and complete workspace directories by default. Edit this file and\n\
+# run `uc sync reset` to change what UltraContext syncs for OpenClaw.\n\
 \n\
 # Ignore everything first.\n\
 *\n\
@@ -2568,29 +2568,11 @@ fn default_source_ignore_file(source: &str) -> String {
 # Keep every OpenClaw session artifact, including reset/deleted files and trajectory metadata.\n\
 !agents/*/sessions/**\n\
 \n\
-# Keep OpenClaw workspace identity files and full memory directories.\n\
+# Keep complete OpenClaw workspace directories.\n\
 !workspace/\n\
-!workspace/AGENTS.md\n\
-!workspace/SOUL.md\n\
-!workspace/DREAMS.md\n\
-!workspace/HEARTBEAT.md\n\
-!workspace/IDENTITY.md\n\
-!workspace/TOOLS.md\n\
-!workspace/USER.md\n\
-!workspace/MEMORY.md\n\
-!workspace/memory/\n\
-!workspace/memory/**\n\
+!workspace/**\n\
 !workspace-*/\n\
-!workspace-*/AGENTS.md\n\
-!workspace-*/SOUL.md\n\
-!workspace-*/DREAMS.md\n\
-!workspace-*/HEARTBEAT.md\n\
-!workspace-*/IDENTITY.md\n\
-!workspace-*/TOOLS.md\n\
-!workspace-*/USER.md\n\
-!workspace-*/MEMORY.md\n\
-!workspace-*/memory/\n\
-!workspace-*/memory/**\n"
+!workspace-*/**\n"
             .to_string();
     }
 
@@ -3947,35 +3929,21 @@ dist/
     }
 
     #[test]
-    fn openclaw_source_ignore_defaults_to_conversations_and_workspace_memory() {
+    fn openclaw_source_ignore_defaults_to_conversations_and_workspaces() {
         let patterns = parse_ignore_patterns(&default_source_ignore_file("openclaw"));
 
         assert_eq!(patterns[0], "*");
         assert!(patterns.contains(&"!agents/".to_string()));
         assert!(patterns.contains(&"!agents/*/sessions/".to_string()));
         assert!(patterns.contains(&"!agents/*/sessions/**".to_string()));
-        assert!(patterns.contains(&"!workspace/AGENTS.md".to_string()));
-        assert!(patterns.contains(&"!workspace/SOUL.md".to_string()));
-        assert!(patterns.contains(&"!workspace/DREAMS.md".to_string()));
-        assert!(patterns.contains(&"!workspace/HEARTBEAT.md".to_string()));
-        assert!(patterns.contains(&"!workspace/IDENTITY.md".to_string()));
-        assert!(patterns.contains(&"!workspace/TOOLS.md".to_string()));
-        assert!(patterns.contains(&"!workspace/USER.md".to_string()));
-        assert!(patterns.contains(&"!workspace/MEMORY.md".to_string()));
-        assert!(patterns.contains(&"!workspace/memory/**".to_string()));
-        assert!(!patterns.contains(&"!workspace/memory/**/*.md".to_string()));
-        assert!(patterns.contains(&"!workspace-*/AGENTS.md".to_string()));
-        assert!(patterns.contains(&"!workspace-*/SOUL.md".to_string()));
-        assert!(patterns.contains(&"!workspace-*/DREAMS.md".to_string()));
-        assert!(patterns.contains(&"!workspace-*/HEARTBEAT.md".to_string()));
-        assert!(patterns.contains(&"!workspace-*/IDENTITY.md".to_string()));
-        assert!(patterns.contains(&"!workspace-*/TOOLS.md".to_string()));
-        assert!(patterns.contains(&"!workspace-*/USER.md".to_string()));
-        assert!(patterns.contains(&"!workspace-*/MEMORY.md".to_string()));
-        assert!(patterns.contains(&"!workspace-*/memory/**".to_string()));
-        assert!(!patterns.contains(&"!workspace-*/memory/**/*.md".to_string()));
-        assert!(!patterns.contains(&"!workspace/MEMORY.MD".to_string()));
-        assert!(!patterns.contains(&"!workspace-*/MEMORY.MD".to_string()));
+        assert!(patterns.contains(&"!workspace/".to_string()));
+        assert!(patterns.contains(&"!workspace/**".to_string()));
+        assert!(patterns.contains(&"!workspace-*/".to_string()));
+        assert!(patterns.contains(&"!workspace-*/**".to_string()));
+        assert!(!patterns.contains(&"!workspace/AGENTS.md".to_string()));
+        assert!(!patterns.contains(&"!workspace-*/AGENTS.md".to_string()));
+        assert!(!patterns.contains(&"!workspace/memory/**".to_string()));
+        assert!(!patterns.contains(&"!workspace-*/memory/**".to_string()));
         assert!(!patterns.contains(&"!agents/*/qmd/".to_string()));
     }
 
