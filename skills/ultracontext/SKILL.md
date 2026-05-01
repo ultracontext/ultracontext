@@ -99,7 +99,7 @@ Quote project names, file names, errors, branches, and user wording exactly — 
 | `uc sync list` | List configured sync sessions and their current state. |
 | `uc sync status` | Show Mutagen session state. |
 | `uc sync stop` | Pause every enabled source. |
-| `uc sync reset` | Terminate + recreate sessions. Run after editing `config.toml`, `~/.ultracontext/.ultracontextignore`, or a source-local `.ultracontextignore`. |
+| `uc sync reset` | Terminate + recreate sessions. Run after editing `config.toml` or files under `~/.ultracontext/ignores/`. |
 | `uc source list` | List configured sources and enable state. |
 | `uc source add <name> <path>` | Add a new source folder (any agent or notes dir). Name = folder under workspace. |
 | `uc source remove <name> [--yes]` | Confirm, terminate sync, delete the remote copy, and remove the source from config. Local files stay in place. |
@@ -112,7 +112,7 @@ Source names: letters, numbers, `-`, `_`. Start with letter or number.
 ## Files
 
 - Config: `~/.ultracontext/config.toml`
-- Ignore: `~/.ultracontext/.ultracontextignore` (global, gitignore-style) plus optional `<source>/.ultracontextignore` files for source-specific rules. UltraContext reads source-local ignore files when present but never creates them automatically. Edit then `uc sync reset`.
+- Ignores: `~/.ultracontext/ignores/.ultracontextignore` for global rules and `~/.ultracontext/ignores/<source>/.ultracontextignore` for source-specific rules. `uc init` seeds these files; OpenClaw starts as conversations-only by default. Edit then `uc sync reset`.
 - **Query prompt**: `~/.ultracontext/prompts/query.md` — user-owned; this is what wraps every `uc query`. **When the user asks to "edit my prompt", "tweak the ultracontext prompt", "change how ultracontext searches", or anything similar, this is the file to point them to or edit.** Delete it to send the raw query with no template. Regenerate the default by deleting the file and running `uc init`.
 - Workspace: `~/.ultracontext/workspace/sessions/<host-id>/<agent>/`
 

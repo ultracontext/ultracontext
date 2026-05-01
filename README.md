@@ -139,7 +139,7 @@ path    = "~/.codex"
 enabled = true
 ```
 
-`~/.ultracontext/.ultracontextignore` works like `.gitignore`, seeded on `uc init`, and applies to every source. A source can also define its own `<source>/.ultracontextignore`; UltraContext reads it only for that source and never creates it automatically. Source changes apply immediately. Global settings and ignore edits apply on `uc sync reset`.
+Ignore files live under `~/.ultracontext/ignores/` and use Mutagen's gitignore-style syntax. The global file is `~/.ultracontext/ignores/.ultracontextignore`; source-specific files live at `~/.ultracontext/ignores/<source>/.ultracontextignore`. `uc init` seeds these files, with OpenClaw set to conversations-only by default. Source changes apply immediately. Global settings and ignore edits apply on `uc sync reset`.
 
 ## Query
 

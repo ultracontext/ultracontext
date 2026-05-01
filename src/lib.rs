@@ -11,6 +11,7 @@ use std::sync::{Mutex, Once};
 
 const APP_DIR: &str = ".ultracontext";
 const IGNORE_FILE: &str = ".ultracontextignore";
+const IGNORES_DIR: &str = "ignores";
 const DEFAULT_REMOTE_ROOT: &str = "~/.ultracontext";
 const DEFAULT_QUERY_COMMAND: &str = "claude";
 const QUERY_PROMPT_PLACEHOLDER: &str = "{{prompt}}";
@@ -23,8 +24,9 @@ const DEFAULT_QUERY_PROMPT: &str = include_str!("prompts/query.md");
 const PROMPT_FILE: &str = "prompts/query.md";
 const ULTRACONTEXT_SKILL: &str = include_str!("../skills/ultracontext/SKILL.md");
 const INSTALL_URL: &str = "https://ultracontext.com/install.sh";
-// Ignore patterns live in the user-editable global .ultracontextignore,
-// optionally extended by a source-local .ultracontextignore at the source root.
+// Ignore patterns live under ~/.ultracontext/ignores:
+// - .ultracontextignore for global rules
+// - <source>/.ultracontextignore for source-specific rules
 const DEFAULT_SYNC_IGNORES: &[&str] = &[];
 
 static CLICLACK_THEME: Once = Once::new();
@@ -862,6 +864,7 @@ fn initialize_config(remote: RemoteSpec, host_id: String, sources: Vec<Source>) 
     }
     fs::write(config_path()?, config.to_toml())?;
     ensure_ignore_file()?;
+    ensure_source_ignore_files(&config.sources)?;
     ensure_prompt_file()?;
     prepare_remote_workspace(&config)?;
     Ok(config)
@@ -897,6 +900,7 @@ fn sync_start(args: &[String]) -> Result<()> {
     let config = load_config()?;
     prepare_remote_workspace(&config)?;
     ensure_ignore_file()?;
+    ensure_source_ignore_files(&config.sources)?;
 
     let existing = capture_command("mutagen", ["sync", "list"])?;
 
@@ -1479,6 +1483,7 @@ fn source_add(args: &[String]) -> Result<()> {
     let existed = upsert_source(&mut config, name, path, enabled)?;
     save_config(&config)?;
     let source = find_source(&config, name)?.clone();
+    ensure_source_ignore_file(&source)?;
     let path_changed = old_source
         .as_ref()
         .map(|source| source.local_path != path)
@@ -2294,10 +2299,11 @@ fn sync_start_source(config: &Config, source: &Source, existing: &str) -> Result
 
     prepare_remote_workspace(config)?;
     ensure_ignore_file()?;
+    ensure_source_ignore_file(source)?;
 
     let remote_endpoint = remote_endpoint(config, source);
     ui_step(format!("create {name}"));
-    let ignore_patterns = sync_ignore_patterns(&local_path)?;
+    let ignore_patterns = sync_ignore_patterns(source)?;
     let args = sync_create_args(&name, &local_path, remote_endpoint, &ignore_patterns);
     run_command("mutagen", args)
 }
@@ -2401,8 +2407,8 @@ fn sync_create_args(
     args
 }
 
-fn sync_ignore_patterns(source_root: &Path) -> Result<Vec<String>> {
-    collect_sync_ignore_patterns(&ignore_path()?, &source_root.join(IGNORE_FILE))
+fn sync_ignore_patterns(source: &Source) -> Result<Vec<String>> {
+    collect_sync_ignore_patterns(&ignore_path()?, &source_ignore_path(source)?)
 }
 
 fn collect_sync_ignore_patterns(global_path: &Path, source_path: &Path) -> Result<Vec<String>> {
@@ -2448,10 +2454,29 @@ fn ensure_ignore_file() -> Result<()> {
     Ok(())
 }
 
+fn ensure_source_ignore_files(sources: &[Source]) -> Result<()> {
+    for source in sources {
+        ensure_source_ignore_file(source)?;
+    }
+    Ok(())
+}
+
+fn ensure_source_ignore_file(source: &Source) -> Result<()> {
+    let path = source_ignore_path(source)?;
+    if path.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, default_source_ignore_file(&source.agent))?;
+    Ok(())
+}
+
 fn default_ignore_file() -> &'static str {
     "# UltraContext ignore file\n\
-# Patterns use Mutagen's default ignore syntax and apply to every synced source.\n\
-# You can also add a .ultracontextignore inside any source folder for source-specific rules.\n\
+# Global patterns use Mutagen's default ignore syntax and apply to every synced source.\n\
+# Source-specific rules live in ~/.ultracontext/ignores/<source>/.ultracontextignore.\n\
 # Comment, edit, or extend any rule. Run `uc sync reset` after ignore edits.\n\
 \n\
 # Source control\n\
@@ -2487,6 +2512,33 @@ blob_storage/\n\
 # Add extra ignore patterns below.\n"
 }
 
+fn default_source_ignore_file(source: &str) -> String {
+    if source.eq_ignore_ascii_case("openclaw") {
+        return "# OpenClaw UltraContext ignore file\n\
+# Conversations only by default. Edit this file and run `uc sync reset`\n\
+# to change what UltraContext syncs for OpenClaw.\n\
+\n\
+# Ignore everything first.\n\
+*\n\
+\n\
+# Allow agent session directories.\n\
+!agents/\n\
+!agents/*/\n\
+!agents/*/sessions/\n\
+\n\
+# Keep conversation/session files.\n\
+!agents/*/sessions/*.jsonl\n\
+!agents/*/sessions/*.trajectory.jsonl\n\
+!agents/*/sessions/sessions.json\n"
+            .to_string();
+    }
+
+    format!(
+        "# UltraContext ignore file for {source}\n\
+# Add source-specific patterns here. Run `uc sync reset` after edits.\n"
+    )
+}
+
 fn config_dir() -> Result<PathBuf> {
     Ok(home_dir()?.join(APP_DIR))
 }
@@ -2496,7 +2548,15 @@ fn config_path() -> Result<PathBuf> {
 }
 
 fn ignore_path() -> Result<PathBuf> {
-    Ok(config_dir()?.join(IGNORE_FILE))
+    Ok(ignores_dir()?.join(IGNORE_FILE))
+}
+
+fn ignores_dir() -> Result<PathBuf> {
+    Ok(config_dir()?.join(IGNORES_DIR))
+}
+
+fn source_ignore_path(source: &Source) -> Result<PathBuf> {
+    Ok(ignores_dir()?.join(&source.agent).join(IGNORE_FILE))
 }
 
 fn save_config(config: &Config) -> Result<()> {
@@ -3805,6 +3865,24 @@ dist/
 
         assert_eq!(patterns, vec!["node_modules/".to_string()]);
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn openclaw_source_ignore_defaults_to_conversations_only() {
+        let patterns = parse_ignore_patterns(&default_source_ignore_file("openclaw"));
+
+        assert_eq!(patterns[0], "*");
+        assert!(patterns.contains(&"!agents/".to_string()));
+        assert!(patterns.contains(&"!agents/*/sessions/".to_string()));
+        assert!(patterns.contains(&"!agents/*/sessions/*.jsonl".to_string()));
+        assert!(patterns.contains(&"!agents/*/sessions/*.trajectory.jsonl".to_string()));
+        assert!(patterns.contains(&"!agents/*/sessions/sessions.json".to_string()));
+        assert!(!patterns.contains(&"!agents/*/qmd/".to_string()));
+    }
+
+    #[test]
+    fn non_openclaw_source_ignore_defaults_to_comments_only() {
+        assert!(parse_ignore_patterns(&default_source_ignore_file("codex")).is_empty());
     }
 
     #[test]

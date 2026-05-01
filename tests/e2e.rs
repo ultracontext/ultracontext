@@ -115,6 +115,16 @@ fn init_configures_skills_sources_and_workspace() {
     assert!(config.contains("[sources.codex]"), "{config}");
     assert!(config.contains("[sources.openclaw]"), "{config}");
     assert!(config.contains("[sources.hermes]"), "{config}");
+    let ignores_dir = home.join(".ultracontext").join("ignores");
+    let global_ignore = fs::read_to_string(ignores_dir.join(".ultracontextignore")).unwrap();
+    let openclaw_ignore =
+        fs::read_to_string(ignores_dir.join("openclaw").join(".ultracontextignore")).unwrap();
+    let codex_ignore =
+        fs::read_to_string(ignores_dir.join("codex").join(".ultracontextignore")).unwrap();
+    assert!(global_ignore.contains("node_modules/"), "{global_ignore}");
+    assert!(openclaw_ignore.contains("!agents/*/sessions/*.jsonl"));
+    assert!(openclaw_ignore.contains("Conversations only"));
+    assert!(!codex_ignore.contains("*\n"), "{codex_ignore}");
     assert!(
         home.join(".claude")
             .join("skills")
@@ -161,6 +171,14 @@ fn manages_sources_from_cli() {
         .output()
         .unwrap();
     assert_success("uc source add", add);
+    let openclaw_ignore = fs::read_to_string(
+        home.join(".ultracontext")
+            .join("ignores")
+            .join("openclaw")
+            .join(".ultracontextignore"),
+    )
+    .unwrap();
+    assert!(openclaw_ignore.contains("Conversations only"));
 
     let list = uc(&home).args(["source", "list"]).output().unwrap();
     let list_stdout = String::from_utf8_lossy(&list.stdout).to_string();
@@ -388,9 +406,11 @@ fn syncs_agent_directories_to_remote_workspace() {
     fs::create_dir_all(codex_memory_file.parent().unwrap()).unwrap();
     fs::create_dir_all(codex_node_module_file.parent().unwrap()).unwrap();
     fs::create_dir_all(codex_extra_cache_file.parent().unwrap()).unwrap();
-    fs::create_dir_all(home.join(".ultracontext")).unwrap();
+    fs::create_dir_all(home.join(".ultracontext").join("ignores")).unwrap();
     fs::write(
-        home.join(".ultracontext").join(".ultracontextignore"),
+        home.join(".ultracontext")
+            .join("ignores")
+            .join(".ultracontextignore"),
         "scratch-cache/\n",
     )
     .unwrap();
