@@ -2554,8 +2554,9 @@ fn default_source_ignore_file(source: &str) -> String {
 !rules/\n\
 !rules/**\n\
 \n\
-# Keep Codex preferences. Auth and env files remain ignored.\n\
-!config.toml\n"
+# Keep Codex preferences and version metadata. Auth and env files remain ignored.\n\
+!config.toml\n\
+!version.json\n"
             .to_string();
     }
 
@@ -3997,6 +3998,7 @@ dist/
         assert!(patterns.contains(&"!rules/".to_string()));
         assert!(patterns.contains(&"!rules/**".to_string()));
         assert!(patterns.contains(&"!config.toml".to_string()));
+        assert!(patterns.contains(&"!version.json".to_string()));
         assert!(!patterns.contains(&"!auth.json".to_string()));
         assert!(!patterns.contains(&"!.env".to_string()));
         assert!(!patterns.contains(&"!skills/".to_string()));

@@ -136,6 +136,7 @@ fn init_configures_skills_sources_and_workspace() {
     assert!(codex_ignore.contains("!memories/**"), "{codex_ignore}");
     assert!(codex_ignore.contains("!rules/**"), "{codex_ignore}");
     assert!(codex_ignore.contains("!config.toml"), "{codex_ignore}");
+    assert!(codex_ignore.contains("!version.json"), "{codex_ignore}");
     assert!(!codex_ignore.contains("!auth.json"), "{codex_ignore}");
     assert!(!codex_ignore.contains("!.env"), "{codex_ignore}");
     assert!(!codex_ignore.contains("!skills/"), "{codex_ignore}");
@@ -459,6 +460,7 @@ fn syncs_agent_directories_to_remote_workspace() {
         .join(format!("{run_id}.json"));
     let codex_memory_file = home.join(".codex").join("memories").join("ultracontext.md");
     let codex_config_file = home.join(".codex").join("config.toml");
+    let codex_version_file = home.join(".codex").join("version.json");
     let codex_rule_file = home.join(".codex").join("rules").join("ultracontext.md");
     let codex_auth_file = home.join(".codex").join("auth.json");
     let codex_env_file = home.join(".codex").join(".env");
@@ -526,6 +528,11 @@ fn syncs_agent_directories_to_remote_workspace() {
     .unwrap();
     fs::write(&codex_config_file, format!("model = \"test-{run_id}\"\n")).unwrap();
     fs::write(
+        &codex_version_file,
+        format!("{{\"latest_version\":\"test-{run_id}\"}}\n"),
+    )
+    .unwrap();
+    fs::write(
         &codex_rule_file,
         format!("rule marker from codex root {run_id}\n"),
     )
@@ -586,6 +593,8 @@ fn syncs_agent_directories_to_remote_workspace() {
         format!("{remote_root}/workspace/sessions/{host_id}/codex/memories/ultracontext.md");
     let codex_config_remote =
         format!("{remote_root}/workspace/sessions/{host_id}/codex/config.toml");
+    let codex_version_remote =
+        format!("{remote_root}/workspace/sessions/{host_id}/codex/version.json");
     let codex_rule_remote =
         format!("{remote_root}/workspace/sessions/{host_id}/codex/rules/ultracontext.md");
     let codex_auth_remote = format!("{remote_root}/workspace/sessions/{host_id}/codex/auth.json");
@@ -603,12 +612,13 @@ fn syncs_agent_directories_to_remote_workspace() {
     wait_for_remote_file(&remote, &claude_todo_remote, Duration::from_secs(45));
     wait_for_remote_file(&remote, &codex_memory_remote, Duration::from_secs(45));
     wait_for_remote_file(&remote, &codex_config_remote, Duration::from_secs(45));
+    wait_for_remote_file(&remote, &codex_version_remote, Duration::from_secs(45));
     wait_for_remote_file(&remote, &codex_rule_remote, Duration::from_secs(45));
 
     let remote_cat = ssh(
         &remote,
         &format!(
-            "cat {} && cat {} && cat {} && cat {} && cat {} && cat {} && cat {} && cat {}",
+            "cat {} && cat {} && cat {} && cat {} && cat {} && cat {} && cat {} && cat {} && cat {}",
             remote_path_arg(&claude_remote),
             remote_path_arg(&codex_remote),
             remote_path_arg(&claude_root_remote),
@@ -616,6 +626,7 @@ fn syncs_agent_directories_to_remote_workspace() {
             remote_path_arg(&claude_todo_remote),
             remote_path_arg(&codex_memory_remote),
             remote_path_arg(&codex_config_remote),
+            remote_path_arg(&codex_version_remote),
             remote_path_arg(&codex_rule_remote)
         ),
     )
@@ -649,6 +660,10 @@ fn syncs_agent_directories_to_remote_workspace() {
     );
     assert!(
         remote_text.contains(&format!("model = \"test-{run_id}\"")),
+        "{remote_text}"
+    );
+    assert!(
+        remote_text.contains(&format!("\"latest_version\":\"test-{run_id}\"")),
         "{remote_text}"
     );
     assert!(
