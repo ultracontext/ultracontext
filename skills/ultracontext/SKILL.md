@@ -112,7 +112,7 @@ Source names: letters, numbers, `-`, `_`. Start with letter or number.
 ## Files
 
 - Config: `~/.ultracontext/config.toml`
-- Ignores: `~/.ultracontext/ignores/.ultracontextignore` for global rules and `~/.ultracontext/ignores/<source>/.ultracontextignore` for source-specific rules. `uc init` syncs Claude/Codex broadly with no source-specific default ignores; OpenClaw starts with conversations and complete workspace directories. Edit then `uc sync reset`.
+- Ignores: `~/.ultracontext/ignores/.ultracontextignore` for global rules and `~/.ultracontext/ignores/<source>/.ultracontextignore` for source-specific rules. `uc init` syncs Claude/Codex broadly with no source-specific default ignores; OpenClaw starts with conversations and complete workspace directories, excluding `node_modules`. Edit then `uc sync reset`.
 - **Query prompt**: `~/.ultracontext/prompts/query.md` — user-owned; this is what wraps every `uc query`. **When the user asks to "edit my prompt", "tweak the ultracontext prompt", "change how ultracontext searches", or anything similar, this is the file to point them to or edit.** Delete it to send the raw query with no template. Regenerate the default by deleting the file and running `uc init`.
 - Workspace: `~/.ultracontext/workspace/sessions/<host-id>/<source-folder>/`
 

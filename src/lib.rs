@@ -2572,7 +2572,11 @@ fn default_source_ignore_file(source: &str) -> String {
 !workspace/\n\
 !workspace/**\n\
 !workspace-*/\n\
-!workspace-*/**\n"
+!workspace-*/**\n\
+\n\
+# Keep dependency folders out even when workspace rules re-include their parent directories.\n\
+node_modules/\n\
+**/node_modules/\n"
             .to_string();
     }
 
@@ -3940,6 +3944,16 @@ dist/
         assert!(patterns.contains(&"!workspace/**".to_string()));
         assert!(patterns.contains(&"!workspace-*/".to_string()));
         assert!(patterns.contains(&"!workspace-*/**".to_string()));
+        assert!(patterns.contains(&"node_modules/".to_string()));
+        assert!(patterns.contains(&"**/node_modules/".to_string()));
+        assert!(
+            patterns
+                .iter()
+                .position(|pattern| pattern == "node_modules/")
+                > patterns
+                    .iter()
+                    .position(|pattern| pattern == "!workspace-*/**")
+        );
         assert!(!patterns.contains(&"!workspace/AGENTS.md".to_string()));
         assert!(!patterns.contains(&"!workspace-*/AGENTS.md".to_string()));
         assert!(!patterns.contains(&"!workspace/memory/**".to_string()));

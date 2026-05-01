@@ -138,6 +138,12 @@ fn init_configures_skills_sources_and_workspace() {
     assert!(openclaw_ignore.contains("complete workspace directories"));
     assert!(openclaw_ignore.contains("!workspace/**"));
     assert!(openclaw_ignore.contains("!workspace-*/**"));
+    assert!(openclaw_ignore.contains("node_modules/"));
+    assert!(openclaw_ignore.contains("**/node_modules/"));
+    assert!(
+        openclaw_ignore.find("node_modules/") > openclaw_ignore.find("!workspace-*/**"),
+        "{openclaw_ignore}"
+    );
     assert!(!openclaw_ignore.contains("!workspace/AGENTS.md"));
     assert!(!openclaw_ignore.contains("!workspace-*/AGENTS.md"));
     assert!(!openclaw_ignore.contains("!workspace/memory/**"));
@@ -199,6 +205,12 @@ fn manages_sources_from_cli() {
     assert!(openclaw_ignore.contains("!agents/*/sessions/**"));
     assert!(openclaw_ignore.contains("!workspace/**"));
     assert!(openclaw_ignore.contains("!workspace-*/**"));
+    assert!(openclaw_ignore.contains("node_modules/"));
+    assert!(openclaw_ignore.contains("**/node_modules/"));
+    assert!(
+        openclaw_ignore.find("node_modules/") > openclaw_ignore.find("!workspace-*/**"),
+        "{openclaw_ignore}"
+    );
     assert!(!openclaw_ignore.contains("!workspace/AGENTS.md"));
     assert!(!openclaw_ignore.contains("!workspace-*/AGENTS.md"));
     assert!(!openclaw_ignore.contains("!workspace/memory/**"));
