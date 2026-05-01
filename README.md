@@ -49,7 +49,7 @@ Main commands:
 
 | Command | What it does |
 |---|---|
-| `uc init [local\|user@host]` | Interactive onboarding: choose where UltraContext lives, choose agents, install skill, start sync. `uc setup` remains as a deprecated alias |
+| `uc init [local\|user@host]` | Interactive onboarding: choose where UltraContext lives, choose agents, install skill, start sync |
 | `uc status` | Show compact workspace and source sync overview |
 | `uc query "<query>"` | Ask the query agent for relevant context |
 | `uc doctor` | Verify dependencies, config, and remote access |

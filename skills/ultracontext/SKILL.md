@@ -94,7 +94,7 @@ Quote project names, file names, errors, branches, and user wording exactly — 
 
 | Command | Purpose |
 |---|---|
-| `uc init <local\|user@host>` | Configure workspace, choose agents, install the agent skill, and start sync in one onboarding flow. `uc setup` remains as a deprecated alias. |
+| `uc init <local\|user@host>` | Configure workspace, choose agents, install the agent skill, and start sync in one onboarding flow. |
 | `uc sync start` | Start syncing every enabled source. Idempotent — resumes existing sessions. |
 | `uc sync list` | List configured sync sessions and their current state. |
 | `uc sync status` | Show Mutagen session state. |
