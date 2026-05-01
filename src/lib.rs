@@ -2540,43 +2540,15 @@ blob_storage/\n\
 fn default_source_ignore_file(source: &str) -> String {
     if source.eq_ignore_ascii_case("claude") {
         return "# Claude UltraContext ignore file\n\
-# Claude syncs agent context by default. Add patterns here and run `uc sync reset`\n\
-# to exclude machine-local state or secrets from Claude.\n\
-\n\
-# Auth/env and machine-local state.\n\
-mcp-needs-auth-cache.json\n\
-session-env/\n\
-\n\
-# Generated caches and temporary/runtime files.\n\
-backups/\n\
-cache/\n\
-debug/\n\
-downloads/\n\
-paste-cache/\n\
-shell-snapshots/\n\
-telemetry/\n"
+# Claude has no source-specific default ignores. Add patterns here and run\n\
+# `uc sync reset` if you want to exclude anything from Claude.\n"
             .to_string();
     }
 
     if source.eq_ignore_ascii_case("codex") {
         return "# Codex UltraContext ignore file\n\
-# Codex syncs agent context by default. Add patterns here and run `uc sync reset`\n\
-# to exclude machine-local state or secrets from Codex.\n\
-\n\
-# Auth/env and secret material.\n\
-auth.json\n\
-.env\n\
-.env.*\n\
-*.pem\n\
-*.key\n\
-\n\
-# Generated caches and temporary/runtime files.\n\
-.tmp/\n\
-tmp/\n\
-cache/\n\
-log/\n\
-logs/\n\
-shell_snapshots/\n"
+# Codex has no source-specific default ignores. Add patterns here and run\n\
+# `uc sync reset` if you want to exclude anything from Codex.\n"
             .to_string();
     }
 
@@ -4008,45 +3980,17 @@ dist/
     }
 
     #[test]
-    fn claude_source_ignore_defaults_to_searchable_context() {
+    fn claude_source_ignore_defaults_to_no_source_specific_rules() {
         let patterns = parse_ignore_patterns(&default_source_ignore_file("claude"));
 
-        assert!(!patterns.contains(&"*".to_string()));
-        assert!(patterns.contains(&"mcp-needs-auth-cache.json".to_string()));
-        assert!(patterns.contains(&"session-env/".to_string()));
-        assert!(patterns.contains(&"backups/".to_string()));
-        assert!(patterns.contains(&"cache/".to_string()));
-        assert!(patterns.contains(&"debug/".to_string()));
-        assert!(patterns.contains(&"downloads/".to_string()));
-        assert!(patterns.contains(&"paste-cache/".to_string()));
-        assert!(patterns.contains(&"shell-snapshots/".to_string()));
-        assert!(patterns.contains(&"telemetry/".to_string()));
-        assert!(!patterns.contains(&"!history.jsonl".to_string()));
-        assert!(!patterns.contains(&"!file-history/".to_string()));
-        assert!(!patterns.contains(&"!projects/".to_string()));
-        assert!(!patterns.contains(&"!skills/".to_string()));
+        assert!(patterns.is_empty(), "{patterns:?}");
     }
 
     #[test]
-    fn codex_source_ignore_defaults_to_searchable_context() {
+    fn codex_source_ignore_defaults_to_no_source_specific_rules() {
         let patterns = parse_ignore_patterns(&default_source_ignore_file("codex"));
 
-        assert!(!patterns.contains(&"*".to_string()));
-        assert!(patterns.contains(&"auth.json".to_string()));
-        assert!(patterns.contains(&".env".to_string()));
-        assert!(patterns.contains(&".env.*".to_string()));
-        assert!(patterns.contains(&"*.pem".to_string()));
-        assert!(patterns.contains(&"*.key".to_string()));
-        assert!(patterns.contains(&".tmp/".to_string()));
-        assert!(patterns.contains(&"tmp/".to_string()));
-        assert!(patterns.contains(&"cache/".to_string()));
-        assert!(patterns.contains(&"log/".to_string()));
-        assert!(patterns.contains(&"logs/".to_string()));
-        assert!(patterns.contains(&"shell_snapshots/".to_string()));
-        assert!(!patterns.contains(&"!history.jsonl".to_string()));
-        assert!(!patterns.contains(&"!sessions/".to_string()));
-        assert!(!patterns.contains(&"!config.toml".to_string()));
-        assert!(!patterns.contains(&"!skills/".to_string()));
+        assert!(patterns.is_empty(), "{patterns:?}");
     }
 
     #[test]
