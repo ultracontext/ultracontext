@@ -48,7 +48,7 @@ You are one agent in a fleet. The user also runs Claude on other machines, Codex
 
 So when the user says "what did we...", "remember when...", "find that..." — they mean across **everything**, not just this conversation. You are not expected to know it. ultracontext is how you go fetch it.
 
-- Workspace root: `~/.ultracontext/workspace/`. Session files live at `workspace/sessions/<host-id>/<source-folder>/<native-layout>`; built-in agents use native dot-folder names like `.claude`, `.codex`, `.openclaw`, and `.hermes`, while custom sources use their source name. Future categories (event logs, etc.) live alongside under their own subfolders. `uc query` operates at the workspace root, so it sees everything.
+- Workspace root: `~/.ultracontext/workspace/`. Each synced source lives at `workspace/<host-id>/<source-folder>/<native-layout>`; built-in agents use native dot-folder names like `.claude`, `.codex`, `.openclaw`, and `.hermes`, while custom sources use their source name. Future categories (event logs, etc.) live alongside under their own subfolders. `uc query` operates at the workspace root, so it sees everything.
 - Sources can be agents (`claude`, `codex`, `openclaw`, `hermes`) or arbitrary folders the user indexed via `uc source add`.
 - Sync is realtime, one-way, conflict-free, Mutagen-backed. Files are the source of truth — no DB, no index.
 - `uc query "<query>"` runs a context-engineer agent over the whole workspace and returns **context**, not a final answer.
@@ -114,7 +114,7 @@ Source names: letters, numbers, `-`, `_`. Start with letter or number.
 - Config: `~/.ultracontext/config.toml`
 - Ignores: `~/.ultracontext/ignores/.ultracontextignore` for global rules and `~/.ultracontext/ignores/<source>/.ultracontextignore` for source-specific rules. `uc init` syncs Claude/Codex broadly with no source-specific default ignores; OpenClaw starts with conversations and complete workspace directories, excluding `node_modules`. Edit then `uc sync reset`.
 - **Query prompt**: `~/.ultracontext/prompts/query.md` — user-owned; this is what wraps every `uc query`. **When the user asks to "edit my prompt", "tweak the ultracontext prompt", "change how ultracontext searches", or anything similar, this is the file to point them to or edit.** Delete it to send the raw query with no template. Regenerate the default by deleting the file and running `uc init`.
-- Workspace: `~/.ultracontext/workspace/sessions/<host-id>/<source-folder>/`
+- Workspace: `~/.ultracontext/workspace/<host-id>/<source-folder>/`
 
 > **Do NOT** direct the user to this `SKILL.md` for prompt edits. `SKILL.md` describes how agents use ultracontext. The query prompt at `~/.ultracontext/prompts/query.md` is what the user owns and tunes.
 

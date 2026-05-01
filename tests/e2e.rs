@@ -40,11 +40,10 @@ fn initializes_and_queries_local_workspace() {
     let config_path = home.join(".ultracontext").join("config.toml");
     let config = fs::read_to_string(&config_path).unwrap();
     assert!(config.contains("remote = \"local\""), "{config}");
-    assert!(remote_root.join("workspace").join("sessions").is_dir());
+    assert!(remote_root.join("workspace").join(&host_id).is_dir());
     assert!(
         remote_root
             .join("workspace")
-            .join("sessions")
             .join(&host_id)
             .join(".claude")
             .is_dir()
@@ -162,7 +161,7 @@ fn init_configures_skills_sources_and_workspace() {
             .join("SKILL.md")
             .is_file()
     );
-    assert!(remote_root.join("workspace").join("sessions").is_dir());
+    assert!(remote_root.join("workspace").join(&host_id).is_dir());
 
     let _ = fs::remove_dir_all(&home);
 }
@@ -575,44 +574,35 @@ fn syncs_agent_directories_to_remote_workspace() {
     assert_success("uc init", setup);
 
     let claude_remote = format!(
-        "{remote_root}/workspace/sessions/{host_id}/.claude/projects/-tmp-ultracontext-e2e/session.jsonl"
+        "{remote_root}/workspace/{host_id}/.claude/projects/-tmp-ultracontext-e2e/session.jsonl"
     );
     let codex_remote = format!(
-        "{remote_root}/workspace/sessions/{host_id}/.codex/sessions/2026/04/24/{}",
+        "{remote_root}/workspace/{host_id}/.codex/sessions/2026/04/24/{}",
         codex_file.file_name().unwrap().to_string_lossy()
     );
-    let claude_root_remote =
-        format!("{remote_root}/workspace/sessions/{host_id}/.claude/CLAUDE.md");
-    let claude_history_remote =
-        format!("{remote_root}/workspace/sessions/{host_id}/.claude/history.jsonl");
-    let claude_file_history_remote = format!(
-        "{remote_root}/workspace/sessions/{host_id}/.claude/file-history/claude-{run_id}/source@v1"
-    );
-    let claude_env_remote =
-        format!("{remote_root}/workspace/sessions/{host_id}/.claude/session-env");
-    let claude_plan_remote =
-        format!("{remote_root}/workspace/sessions/{host_id}/.claude/plans/launch.md");
+    let claude_root_remote = format!("{remote_root}/workspace/{host_id}/.claude/CLAUDE.md");
+    let claude_history_remote = format!("{remote_root}/workspace/{host_id}/.claude/history.jsonl");
+    let claude_file_history_remote =
+        format!("{remote_root}/workspace/{host_id}/.claude/file-history/claude-{run_id}/source@v1");
+    let claude_env_remote = format!("{remote_root}/workspace/{host_id}/.claude/session-env");
+    let claude_plan_remote = format!("{remote_root}/workspace/{host_id}/.claude/plans/launch.md");
     let claude_todo_remote = format!(
-        "{remote_root}/workspace/sessions/{host_id}/.claude/todos/{}.json",
+        "{remote_root}/workspace/{host_id}/.claude/todos/{}.json",
         run_id
     );
     let codex_memory_remote =
-        format!("{remote_root}/workspace/sessions/{host_id}/.codex/memories/ultracontext.md");
-    let codex_config_remote =
-        format!("{remote_root}/workspace/sessions/{host_id}/.codex/config.toml");
-    let codex_version_remote =
-        format!("{remote_root}/workspace/sessions/{host_id}/.codex/version.json");
-    let codex_history_remote =
-        format!("{remote_root}/workspace/sessions/{host_id}/.codex/history.jsonl");
+        format!("{remote_root}/workspace/{host_id}/.codex/memories/ultracontext.md");
+    let codex_config_remote = format!("{remote_root}/workspace/{host_id}/.codex/config.toml");
+    let codex_version_remote = format!("{remote_root}/workspace/{host_id}/.codex/version.json");
+    let codex_history_remote = format!("{remote_root}/workspace/{host_id}/.codex/history.jsonl");
     let codex_rule_remote =
-        format!("{remote_root}/workspace/sessions/{host_id}/.codex/rules/ultracontext.md");
-    let codex_auth_remote = format!("{remote_root}/workspace/sessions/{host_id}/.codex/auth.json");
-    let codex_env_remote = format!("{remote_root}/workspace/sessions/{host_id}/.codex/.env");
-    let codex_node_module_remote = format!(
-        "{remote_root}/workspace/sessions/{host_id}/.codex/node_modules/ignored-package/index.js"
-    );
+        format!("{remote_root}/workspace/{host_id}/.codex/rules/ultracontext.md");
+    let codex_auth_remote = format!("{remote_root}/workspace/{host_id}/.codex/auth.json");
+    let codex_env_remote = format!("{remote_root}/workspace/{host_id}/.codex/.env");
+    let codex_node_module_remote =
+        format!("{remote_root}/workspace/{host_id}/.codex/node_modules/ignored-package/index.js");
     let codex_extra_cache_remote =
-        format!("{remote_root}/workspace/sessions/{host_id}/.codex/scratch-cache/output.txt");
+        format!("{remote_root}/workspace/{host_id}/.codex/scratch-cache/output.txt");
 
     wait_for_remote_file(&remote, &claude_remote, Duration::from_secs(45));
     wait_for_remote_file(&remote, &codex_remote, Duration::from_secs(45));
