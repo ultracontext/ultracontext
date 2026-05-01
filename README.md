@@ -25,7 +25,7 @@ The installer provides `ultracontext`, `uc`, and Mutagen when it is missing. SSH
 Agents need horizontal intelligence, so they remain sharp and lean across sessions, machines, and tools by getting relevant context on demand.
 
 - **Unified workspace** — Claude on your laptop, Codex on your desktop, OpenClaw on a VPS, all in one tree.
-- **Files are truth** — raw session files, no proprietary format, no migration risk.
+- **Files are truth** — raw session files, no proprietary format, no lock-in risk.
 - **Agentic query** — Claude recursively reads the workspace and gets the relevant context on demand. No index to rebuild.
 - **Self-hosted by default** — your machine, your VPS, your data.
 

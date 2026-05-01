@@ -144,7 +144,7 @@ Defaults: query agent is `claude`, sources are selected during `uc init`.
 
 **User asks about past work:**
 ```sh
-uc query "what was the migration plan for the rewrite?"
+uc query "what was the rewrite plan?"
 ```
 Read the returned context. If `NONE`, fall back to `git log` / repo grep.
 
@@ -171,7 +171,7 @@ If installed through npm or Cargo, follow the command it prints instead of switc
 ```sh
 uc init user@vps
 ```
-Use a unique `host-id` per machine — it becomes the folder under `sessions/`.
+Use a unique `host-id` per machine — it becomes the folder under `workspace/`.
 
 ## Query behavior
 

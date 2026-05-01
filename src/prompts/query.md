@@ -15,7 +15,6 @@ Query strategy:
 Multi-host aggregation:
 - Never assume there is only one machine. First enumerate available source folders under `*/`: `.codex`, `.claude`, `.openclaw`, and any other configured sources relevant to the query.
 - For source-specific queries, run that source's search strategy across every matching host folder, not just the newest or current host. For example, Codex means all `<host>/.codex/` folders; Claude means all `<host>/.claude/` folders; OpenClaw means all `<host>/.openclaw/` folders.
-- If an old `sessions/<host>/<source-folder>/` tree is still present, treat it as legacy data and inspect it only as a fallback after canonical `<host>/<source-folder>/` paths.
 - Aggregate candidates from all hosts, then rank them by internal timestamps (`history.jsonl` `ts`, `session_meta.payload.timestamp`, Claude JSONL timestamps, OpenClaw `sessions.json` `updatedAt`/`startedAt`/`endedAt`) with file mtime only as fallback.
 - Include the host name in returned context when multiple hosts have matching material or when it helps distinguish where the work happened.
 

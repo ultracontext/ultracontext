@@ -902,9 +902,6 @@ fn sync_start(args: &[String]) -> Result<()> {
     ensure_source_ignore_files(&config.sources)?;
 
     let existing = capture_command("mutagen", ["sync", "list"])?;
-    if owned_mutagen_session_names(&config, &existing).is_empty() {
-        migrate_legacy_host_workspace(&config)?;
-    }
     prepare_remote_workspace(&config)?;
 
     for source in enabled_sources(&config) {
@@ -1992,42 +1989,12 @@ fn terminate_owned_sync_sessions(config: &Config) -> Result<()> {
 
 fn move_host_workspace(config: &Config, new_host_id: &str) -> Result<()> {
     let old_dir = host_workspace_dir(config);
-    let legacy_old_dir = legacy_host_workspace_dir(config);
     let new_dir = host_workspace_dir_for_id(config, new_host_id);
 
     if config.is_local() {
         let old_path = expand_home(&old_dir)?;
-        let legacy_old_path = expand_home(&legacy_old_dir)?;
         let new_path = expand_home(&new_dir)?;
-        move_or_delete_local_workspace(&old_path, &new_path, &config.host_id, new_host_id)?;
-        move_or_delete_local_workspace(&legacy_old_path, &new_path, &config.host_id, new_host_id)?;
-        return Ok(());
-    }
-
-    let old_arg = remote_path_arg(&old_dir);
-    let legacy_old_arg = remote_path_arg(&legacy_old_dir);
-    let new_arg = remote_path_arg(&new_dir);
-    let workspace_arg = remote_path_arg(&workspace_root(config));
-    let command = format!(
-        "mkdir -p {workspace_arg}; \
-if [ -d {old_arg} ] && [ ! -e {new_arg} ]; then mv {old_arg} {new_arg}; \
-elif [ -d {old_arg} ] && [ -d {new_arg} ] && [ -z \"$(ls -A {new_arg} 2>/dev/null)\" ]; then rm -rf {new_arg}; mv {old_arg} {new_arg}; \
-elif [ -d {old_arg} ] && [ -e {new_arg} ]; then rm -rf {old_arg}; fi; \
-if [ -d {legacy_old_arg} ] && [ ! -e {new_arg} ]; then mv {legacy_old_arg} {new_arg}; \
-elif [ -d {legacy_old_arg} ] && [ -d {new_arg} ] && [ -z \"$(ls -A {new_arg} 2>/dev/null)\" ]; then rm -rf {new_arg}; mv {legacy_old_arg} {new_arg}; \
-elif [ -d {legacy_old_arg} ] && [ -e {new_arg} ]; then rm -rf {legacy_old_arg}; fi"
-    );
-    run_command("ssh", [config.remote.as_str(), command.as_str()])
-}
-
-fn migrate_legacy_host_workspace(config: &Config) -> Result<()> {
-    let old_dir = legacy_host_workspace_dir(config);
-    let new_dir = host_workspace_dir(config);
-
-    if config.is_local() {
-        let old_path = expand_home(&old_dir)?;
-        let new_path = expand_home(&new_dir)?;
-        move_or_delete_local_workspace(&old_path, &new_path, &config.host_id, &config.host_id)?;
+        move_local_workspace(&old_path, &new_path, &config.host_id, new_host_id)?;
         return Ok(());
     }
 
@@ -2037,13 +2004,12 @@ fn migrate_legacy_host_workspace(config: &Config) -> Result<()> {
     let command = format!(
         "mkdir -p {workspace_arg}; \
 if [ -d {old_arg} ] && [ ! -e {new_arg} ]; then mv {old_arg} {new_arg}; \
-elif [ -d {old_arg} ] && [ -d {new_arg} ] && [ -z \"$(ls -A {new_arg} 2>/dev/null)\" ]; then rm -rf {new_arg}; mv {old_arg} {new_arg}; \
 elif [ -d {old_arg} ] && [ -e {new_arg} ]; then rm -rf {old_arg}; fi"
     );
     run_command("ssh", [config.remote.as_str(), command.as_str()])
 }
 
-fn move_or_delete_local_workspace(
+fn move_local_workspace(
     old_path: &Path,
     new_path: &Path,
     old_host_id: &str,
@@ -2053,13 +2019,9 @@ fn move_or_delete_local_workspace(
         return Ok(());
     }
     if new_path.exists() {
-        if new_path.is_dir() && directory_is_empty(new_path)? {
-            fs::remove_dir_all(new_path)?;
-        } else {
-            ui_step(format!("remove old workspace {old_host_id}"));
-            fs::remove_dir_all(old_path)?;
-            return Ok(());
-        }
+        ui_step(format!("remove old workspace {old_host_id}"));
+        fs::remove_dir_all(old_path)?;
+        return Ok(());
     }
     if let Some(parent) = new_path.parent() {
         fs::create_dir_all(parent)?;
@@ -2067,10 +2029,6 @@ fn move_or_delete_local_workspace(
     ui_step(format!("move workspace {old_host_id} -> {new_host_id}"));
     fs::rename(old_path, new_path)?;
     Ok(())
-}
-
-fn directory_is_empty(path: &Path) -> Result<bool> {
-    Ok(fs::read_dir(path)?.next().is_none())
 }
 
 // Render the prompt the query agent will receive.
@@ -2266,19 +2224,8 @@ fn host_workspace_dir(config: &Config) -> String {
     host_workspace_dir_for_id(config, &config.host_id)
 }
 
-fn legacy_host_workspace_dir(config: &Config) -> String {
-    format!(
-        "{}/workspace/sessions/{}",
-        config.remote_root, config.host_id
-    )
-}
-
 fn remote_dir_for_name(config: &Config, dir_name: &str) -> String {
     format!("{}/{}", host_workspace_dir(config), dir_name)
-}
-
-fn legacy_remote_dir_for_name(config: &Config, dir_name: &str) -> String {
-    format!("{}/{}", legacy_host_workspace_dir(config), dir_name)
 }
 
 fn remote_dir(config: &Config, source: &Source) -> String {
@@ -2287,16 +2234,7 @@ fn remote_dir(config: &Config, source: &Source) -> String {
 
 fn remote_dirs_to_delete(config: &Config, source: &Source) -> Vec<String> {
     let current = remote_source_dir_name(source);
-    let mut dirs = vec![
-        remote_dir_for_name(config, &current),
-        legacy_remote_dir_for_name(config, &current),
-    ];
-    if current != source.agent {
-        dirs.push(remote_dir_for_name(config, &source.agent));
-        dirs.push(legacy_remote_dir_for_name(config, &source.agent));
-    }
-    dirs.dedup();
-    dirs
+    vec![remote_dir_for_name(config, &current)]
 }
 
 fn remote_endpoint(config: &Config, source: &Source) -> String {
@@ -3316,11 +3254,6 @@ impl Config {
             return Err(UcError::Message("config missing host_id".to_string()));
         }
 
-        let sources = sources
-            .into_iter()
-            .map(normalize_legacy_source)
-            .collect::<Vec<_>>();
-
         for source in &sources {
             validate_source_name(&source.agent)?;
             if source.local_path.is_empty() {
@@ -3355,15 +3288,6 @@ enum ConfigSection {
     Root,
     Query,
     Source,
-}
-
-fn normalize_legacy_source(mut source: Source) -> Source {
-    match (source.agent.as_str(), source.local_path.as_str()) {
-        ("claude", "~/.claude/projects") => source.local_path = "~/.claude".to_string(),
-        ("codex", "~/.codex/sessions") => source.local_path = "~/.codex".to_string(),
-        _ => {}
-    }
-    source
 }
 
 fn escape_toml(value: &str) -> String {
@@ -3505,83 +3429,12 @@ mod tests {
             enabled: true,
         };
         let copy = PathBuf::from(remote_dir(&cfg, &source));
-        let old_canonical_copy = root.join("workspace").join("mini").join("codex");
-        let legacy_dot_copy = root
-            .join("workspace")
-            .join("sessions")
-            .join("mini")
-            .join(".codex");
-        let legacy_copy = root
-            .join("workspace")
-            .join("sessions")
-            .join("mini")
-            .join("codex");
         fs::create_dir_all(copy.join("nested")).unwrap();
         fs::write(copy.join("nested").join("session.jsonl"), "{}").unwrap();
-        fs::create_dir_all(old_canonical_copy.join("nested")).unwrap();
-        fs::write(
-            old_canonical_copy.join("nested").join("session.jsonl"),
-            "{}",
-        )
-        .unwrap();
-        fs::create_dir_all(legacy_dot_copy.join("nested")).unwrap();
-        fs::write(legacy_dot_copy.join("nested").join("session.jsonl"), "{}").unwrap();
-        fs::create_dir_all(legacy_copy.join("nested")).unwrap();
-        fs::write(legacy_copy.join("nested").join("session.jsonl"), "{}").unwrap();
 
         delete_remote_source_dir(&cfg, &source).unwrap();
 
         assert!(!copy.exists());
-        assert!(!old_canonical_copy.exists());
-        assert!(!legacy_dot_copy.exists());
-        assert!(!legacy_copy.exists());
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn reconfigured_host_moves_legacy_workspace_to_canonical_path() {
-        let root = env::temp_dir().join(format!(
-            "uc-move-workspace-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let cfg = Config {
-            remote: "local".to_string(),
-            remote_root: root.to_string_lossy().to_string(),
-            host_id: "old-host".to_string(),
-            query: QueryConfig {
-                command: "claude".to_string(),
-                args: "--dangerously-skip-permissions".to_string(),
-            },
-            sources: vec![],
-        };
-        let legacy_file = root
-            .join("workspace")
-            .join("sessions")
-            .join("old-host")
-            .join(".codex")
-            .join("history.jsonl");
-        fs::create_dir_all(legacy_file.parent().unwrap()).unwrap();
-        fs::write(&legacy_file, "{}").unwrap();
-
-        move_host_workspace(&cfg, "new-host").unwrap();
-
-        assert!(
-            root.join("workspace")
-                .join("new-host")
-                .join(".codex")
-                .join("history.jsonl")
-                .is_file()
-        );
-        assert!(
-            !root
-                .join("workspace")
-                .join("sessions")
-                .join("old-host")
-                .exists()
-        );
         let _ = fs::remove_dir_all(root);
     }
 
