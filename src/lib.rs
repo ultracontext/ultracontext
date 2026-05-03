@@ -2206,8 +2206,7 @@ fn set_source_enabled(config: &mut Config, name: &str, enabled: bool) -> Result<
 }
 
 fn remote_source_dir_name(source: &Source) -> String {
-    known_source(&source.agent)
-        .and_then(|known| known.path.rsplit('/').next())
+    source.local_path.rsplit('/').next()
         .unwrap_or(source.agent.as_str())
         .to_string()
 }
@@ -3375,7 +3374,7 @@ mod tests {
         };
         assert_eq!(
             remote_dir(&cfg, &custom_source),
-            "~/.ultracontext/workspace/work-laptop/project_notes"
+            "~/.ultracontext/workspace/work-laptop/notes"
         );
     }
 
