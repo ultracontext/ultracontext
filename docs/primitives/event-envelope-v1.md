@@ -32,7 +32,7 @@ This document does not define:
 
 ## Contract
 
-### Required fields
+### Base required fields
 
 ```text
 schema_version
@@ -41,10 +41,19 @@ kind
 source
 subject
 occurred_at
-received_at
 host
 privacy
 ```
+
+These fields are required for any valid `uc.event.v1` envelope, including events still waiting in a client outbox.
+
+### Server-committed field
+
+```text
+received_at
+```
+
+`received_at` is optional in the base envelope and is set/overwritten by UltraContext when the event is committed to the server log. A client outbox event normally does not have `received_at`; a committed event in `<remote_root>/events/events.jsonl` should have it.
 
 ### Optional fields
 
@@ -67,10 +76,10 @@ error
 - `schema_version`: must be `uc.event.v1` for this contract.
 - `event_id`: globally unique id used for idempotency/dedupe.
 - `kind`: dotted event kind, e.g. `agent.run.completed`, `session.closed`, `sync.failed`.
-- `source`: component/driver/agent that emitted or observed the event, e.g. `hermes`, `chatgpt-ios-shortcut`, `github-webhook`.
-- `subject`: stable thing the event is about, e.g. `repo:ultracontext`, `chatgpt:session:abc123`, `agent-run:hermes:xyz`.
+- `source`: component/driver/agent that emitted or observed the event, e.g. `hermes`, `community-app-driver`, `github-webhook`.
+- `subject`: stable thing the event is about, e.g. `repo:ultracontext`, `community-app:session:abc123`, `agent-run:hermes:xyz`.
 - `occurred_at`: when it happened in the source system.
-- `received_at`: when UltraContext accepted/committed it.
+- `received_at`: optional server commit timestamp. UltraContext sets/overwrites it when the event is accepted into the server log.
 - `host`: machine/client/server that emitted or committed it.
 - `privacy`: one of `public`, `internal`, `metadata_only`, `sensitive_ref`.
 - `actor`: who caused the event, e.g. `user:fabio`, `agent:hermes`, `driver:github`.
@@ -99,7 +108,7 @@ Server:
   <remote_root>/events/seen/ or equivalent index for dedupe
 ```
 
-The local outbox is only a durable retry buffer. The server log is the source of truth.
+The local outbox is only a durable retry buffer. The server log is the source of truth. `uc event emit` creates a base envelope, saves it in the outbox, and asks the configured server to commit it. The preferred SSH path is `uc event commit --from-stdin` on the server; bare SSH hosts can use an equivalent server-side Python fallback until the `uc` binary is installed there. The server commit path adds/overwrites `received_at` before appending the committed event.
 
 ## CLI/API
 
@@ -108,13 +117,13 @@ Current/future CLI shape:
 ```bash
 uc event emit \
   --kind session.closed \
-  --source chatgpt-ios-shortcut \
-  --subject chatgpt:session:abc123 \
+  --source community-app-driver \
+  --subject community-app:session:abc123 \
   --actor user:fabio \
   --privacy metadata_only \
-  --payload-ref uc://artifacts/chatgpt/sessions/abc123.md \
-  --label provider=chatgpt \
-  --label driver=ios-shortcut
+  --payload-ref uc://artifacts/community-app/sessions/abc123.md \
+  --label provider=community-app \
+  --label driver=community-app-driver
 ```
 
 Recommended stable flags for v1:
@@ -166,24 +175,48 @@ Recommended stable flags for v1:
 }
 ```
 
-### External driver: ChatGPT iOS Shortcut session closed
+### External driver: community app session closed
 
 ```json
 {
   "schema_version": "uc.event.v1",
   "event_id": "evt_01...",
-  "kind": "session.closed",
-  "source": "chatgpt-ios-shortcut",
-  "subject": "chatgpt:session:abc123",
+  "kind": "app.closed",
+  "source": "community-app-ios-shortcut",
+  "subject": "community-app:app:ios",
   "occurred_at": "2026-05-08T12:10:00Z",
   "received_at": "2026-05-08T12:10:05Z",
   "host": "iphone-fabio",
   "actor": "user:fabio",
-  "payload_ref": "uc://artifacts/chatgpt/sessions/abc123.md",
   "privacy": "metadata_only",
-  "labels": { "provider": "chatgpt", "driver": "ios-shortcut" }
+  "counts": { "listed": 10, "synced": 1, "changed_sessions": 1 },
+  "labels": { "provider": "community-app", "driver": "ios-shortcut", "trigger": "closed" }
 }
 ```
+
+If that lifecycle sync writes or updates a session artifact, the driver emits a separate event for the changed session:
+
+```json
+{
+  "schema_version": "uc.event.v1",
+  "event_id": "evt_02...",
+  "kind": "community-app.session.updated",
+  "source": "community-app-driver",
+  "subject": "community-app:session:abc123",
+  "occurred_at": "2026-05-08T12:10:04Z",
+  "received_at": "2026-05-08T12:10:06Z",
+  "host": "fabios-mac-mini",
+  "parent_event_id": "evt_01...",
+  "trace_id": "evt_01...",
+  "payload_ref": "file:///Users/example/.community-app/sessions/abc123.md",
+  "payload_hash": "sha256:<markdown-sha256>",
+  "privacy": "metadata_only",
+  "counts": { "message_count": 10 },
+  "labels": { "provider": "community-app", "agent": "community-app", "title": "Session title" }
+}
+```
+
+Use one `*.session.updated` event per changed session instead of hiding changed session ids inside lifecycle event metadata. Events remain small immutable facts; `payload_ref` points to the derived context artifact agents can read if relevance warrants it.
 
 ### External driver: GitHub PR opened
 
@@ -237,7 +270,7 @@ build.completed
 build.failed
 ```
 
-Provider-specific details should usually be in `source`, `subject`, and `labels`, not in many provider-specific `kind` values.
+Provider-specific details should usually be in `source`, `subject`, and `labels`, not in many provider-specific `kind` values. A provider-specific `kind` is acceptable when it names a fact consumers need to subscribe to directly, such as `community-app.session.updated`.
 
 ## External driver rule
 
@@ -251,14 +284,14 @@ external input -> optional artifact -> canonical UC event envelope
 
 Examples:
 
-- GitHub webhook driver receives webhook JSON, stores raw webhook as artifact, emits a canonical event.
-- ChatGPT iOS Shortcut driver observes lifecycle, runs bounded sync, stores session artifact, emits `session.closed` / `sync.completed`.
-- Claude/Codex watcher observes local session files, writes derived markdown artifact, emits `session.closed` / `agent.artifact.created`.
+- GitHub webhook driver receives webhook JSON, stores raw webhook as artifact, emits `github.pr.opened`.
+- Community app driver observes lifecycle, runs bounded sync, emits app lifecycle events, then emits one `*.session.updated` per changed session artifact.
 
 ## Validation rules
 
 - `schema_version` must be `uc.event.v1`.
-- `kind`, `source`, `subject`, `occurred_at`, `received_at`, `host`, `privacy` are required.
+- `kind`, `source`, `subject`, `occurred_at`, `host`, and `privacy` are required in every envelope.
+- `received_at` is optional before commit and should be set/overwritten by the server commit path.
 - `kind` should be dotted and stable.
 - `priority` must be between `0` and `100`.
 - `privacy` must be one of `public`, `internal`, `metadata_only`, `sensitive_ref`.
@@ -300,7 +333,8 @@ CLI compatibility can keep old flags temporarily, but stored v1 events should us
 
 Before production code changes:
 
-- event emit writes `schema_version`, `occurred_at`, `received_at`, `privacy`, and required fields;
+- event emit writes a pending envelope with `schema_version`, `occurred_at`, `privacy`, and required fields;
+- event commit sets/overwrites `received_at` and dedupes by `event_id`;
 - invalid priority/privacy/hash fails cleanly;
 - labels are rendered as a JSON object;
 - structured error is rendered as a JSON object;

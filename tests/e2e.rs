@@ -508,6 +508,107 @@ fn event_emit_supports_labels_and_structured_error() {
 }
 
 #[test]
+fn event_commit_from_stdin_adds_and_overwrites_received_at() {
+    let run_id = unique_run_id();
+    let home = env::temp_dir().join(format!("uc-events-commit-home-{run_id}"));
+    let remote_root = home.join("server-root");
+    fs::create_dir_all(home.join(".ultracontext")).unwrap();
+    fs::write(
+        home.join(".ultracontext").join("config.toml"),
+        format!(
+            "remote = \"local\"\nremote_root = \"{}\"\nhost_id = \"server-{run_id}\"\n\n[query]\ncommand = \"claude\"\nargs = \"-p {{{{prompt}}}}\"\n",
+            remote_root.display()
+        ),
+    )
+    .unwrap();
+
+    let event_id = format!("evt_commit_overwrite_{run_id}");
+    let pending_event = format!(
+        "{{\"schema_version\":\"uc.event.v1\",\"event_id\":\"{event_id}\",\"kind\":\"commit.test\",\"source\":\"hermes\",\"subject\":\"event:commit\",\"occurred_at\":\"2026-05-08T12:00:00Z\",\"received_at\":\"client-lie\",\"host\":\"client-host\",\"privacy\":\"metadata_only\"}}\n"
+    );
+    let commit = uc(&home)
+        .args(["event", "commit", "--from-stdin"])
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write;
+            child
+                .stdin
+                .as_mut()
+                .unwrap()
+                .write_all(pending_event.as_bytes())?;
+            child.wait_with_output()
+        })
+        .unwrap();
+    assert_success("uc event commit --from-stdin", commit);
+
+    let raw = fs::read_to_string(remote_root.join("events").join("events.jsonl")).unwrap();
+    assert!(
+        raw.contains(&format!("\"event_id\":\"{event_id}\"")),
+        "{raw}"
+    );
+    assert!(!raw.contains("client-lie"), "{raw}");
+    assert!(raw.contains("\"received_at\":\"20"), "{raw}");
+
+    let _ = fs::remove_dir_all(&home);
+}
+
+#[test]
+fn event_commit_from_stdin_dedupes_by_event_id() {
+    let run_id = unique_run_id();
+    let home = env::temp_dir().join(format!("uc-events-commit-dedupe-home-{run_id}"));
+    let remote_root = home.join("server-root");
+    fs::create_dir_all(home.join(".ultracontext")).unwrap();
+    fs::write(
+        home.join(".ultracontext").join("config.toml"),
+        format!(
+            "remote = \"local\"\nremote_root = \"{}\"\nhost_id = \"server-{run_id}\"\n\n[query]\ncommand = \"claude\"\nargs = \"-p {{{{prompt}}}}\"\n",
+            remote_root.display()
+        ),
+    )
+    .unwrap();
+
+    let event_id = format!("evt_commit_dedupe_{run_id}");
+    let pending_event = format!(
+        "{{\"schema_version\":\"uc.event.v1\",\"event_id\":\"{event_id}\",\"kind\":\"commit.test\",\"source\":\"hermes\",\"subject\":\"event:dedupe\",\"occurred_at\":\"2026-05-08T12:00:00Z\",\"host\":\"client-host\",\"privacy\":\"metadata_only\"}}\n"
+    );
+
+    for _ in 0..2 {
+        let commit = uc(&home)
+            .args(["event", "commit", "--from-stdin"])
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .and_then(|mut child| {
+                use std::io::Write;
+                child
+                    .stdin
+                    .as_mut()
+                    .unwrap()
+                    .write_all(pending_event.as_bytes())?;
+                child.wait_with_output()
+            })
+            .unwrap();
+        assert_success("uc event commit duplicate", commit);
+    }
+
+    let raw = fs::read_to_string(remote_root.join("events").join("events.jsonl")).unwrap();
+    assert_eq!(
+        raw.matches(&format!("\"event_id\":\"{event_id}\"")).count(),
+        1,
+        "{raw}"
+    );
+    assert!(
+        remote_root
+            .join("events")
+            .join("seen")
+            .join(&event_id)
+            .exists()
+    );
+
+    let _ = fs::remove_dir_all(&home);
+}
+
+#[test]
 fn event_emit_is_idempotent_by_event_id() {
     let run_id = unique_run_id();
     let home = env::temp_dir().join(format!("uc-events-dedupe-home-{run_id}"));
@@ -623,6 +724,151 @@ fn event_log_uses_configured_local_remote_root_and_outbox() {
 }
 
 #[test]
+fn event_emit_remote_ssh_uses_event_commit_command() {
+    let run_id = unique_run_id();
+    let home = env::temp_dir().join(format!("uc-events-remote-commit-home-{run_id}"));
+    let remote_root = home.join("remote-root");
+    let fake_bin = home.join("bin");
+    let captured_stdin = home.join("captured-stdin.json");
+    fs::create_dir_all(remote_root.join("events")).unwrap();
+    fs::create_dir_all(home.join(".ultracontext")).unwrap();
+    fs::create_dir_all(&fake_bin).unwrap();
+
+    fs::write(
+        fake_bin.join("ssh"),
+        "#!/bin/sh\nshift\n/bin/sh -c \"$1\"\n",
+    )
+    .unwrap();
+    make_executable(&fake_bin.join("ssh"));
+    fs::write(
+        fake_bin.join("uc"),
+        format!(
+            "#!/bin/sh\nif [ \"$1 $2 $3\" != \"event commit --from-stdin\" ]; then exit 42; fi\ninput=$(cat)\nprintf '%s\\n' \"$input\" > {}\nprintf '%s' \"$input\" | sed 's/,\"host\"/,\"received_at\":\"remote-server-time\",\"host\"/' >> {}/events/events.jsonl\nprintf '\\n' >> {}/events/events.jsonl\n",
+            captured_stdin.display(),
+            remote_root.display(),
+            remote_root.display()
+        ),
+    )
+    .unwrap();
+    make_executable(&fake_bin.join("uc"));
+
+    fs::write(
+        home.join(".ultracontext").join("config.toml"),
+        format!(
+            "remote = \"fake-remote\"\nremote_root = \"{}\"\nhost_id = \"client-{run_id}\"\n\n[query]\ncommand = \"claude\"\nargs = \"-p {{{{prompt}}}}\"\n",
+            remote_root.display()
+        ),
+    )
+    .unwrap();
+
+    let event_id = format!("evt_remote_commit_{run_id}");
+    let test_path = format!("{}:/usr/bin:/bin:/usr/sbin:/sbin", fake_bin.display());
+    let emit = uc(&home)
+        .env("PATH", &test_path)
+        .args([
+            "event",
+            "emit",
+            "--event-id",
+            event_id.as_str(),
+            "--kind",
+            "remote.commit",
+            "--source",
+            "hermes",
+            "--subject",
+            "remote:commit",
+        ])
+        .output()
+        .unwrap();
+    assert_success("uc event emit remote commit", emit);
+
+    let sent_to_server = fs::read_to_string(&captured_stdin).unwrap();
+    assert!(
+        sent_to_server.contains(&format!("\"event_id\":\"{event_id}\"")),
+        "{sent_to_server}"
+    );
+    assert!(
+        !sent_to_server.contains("\"received_at\""),
+        "client should send pending envelope without received_at: {sent_to_server}"
+    );
+    let remote_log = fs::read_to_string(remote_root.join("events").join("events.jsonl")).unwrap();
+    assert!(remote_log.contains("remote-server-time"), "{remote_log}");
+    assert!(
+        remote_log.contains(&format!("\"event_id\":\"{event_id}\"")),
+        "{remote_log}"
+    );
+
+    let _ = fs::remove_dir_all(&home);
+}
+
+#[test]
+fn event_tail_and_query_read_remote_ssh_server_log() {
+    let run_id = unique_run_id();
+    let home = env::temp_dir().join(format!("uc-events-remote-read-home-{run_id}"));
+    let remote_root = home.join("remote-root");
+    let fake_bin = home.join("bin");
+    fs::create_dir_all(remote_root.join("events")).unwrap();
+    fs::create_dir_all(home.join(".ultracontext").join("events")).unwrap();
+    fs::create_dir_all(&fake_bin).unwrap();
+
+    fs::write(
+        fake_bin.join("ssh"),
+        "#!/bin/sh\nshift\n/bin/sh -c \"$1\"\n",
+    )
+    .unwrap();
+    make_executable(&fake_bin.join("ssh"));
+
+    fs::write(
+        home.join(".ultracontext").join("config.toml"),
+        format!(
+            "remote = \"fake-remote\"\nremote_root = \"{}\"\nhost_id = \"host-{run_id}\"\n\n[query]\ncommand = \"claude\"\nargs = \"-p {{{{prompt}}}}\"\n",
+            remote_root.display()
+        ),
+    )
+    .unwrap();
+    fs::write(
+        remote_root.join("events").join("events.jsonl"),
+        "{\"schema_version\":\"uc.event.v1\",\"event_id\":\"evt_remote_tail_query\",\"kind\":\"remote.only\",\"source\":\"test\",\"subject\":\"remote:server\",\"occurred_at\":\"2026-05-08T12:00:00Z\",\"received_at\":\"2026-05-08T12:00:01Z\",\"host\":\"remote-host\",\"privacy\":\"metadata_only\"}\n",
+    )
+    .unwrap();
+    fs::write(
+        home.join(".ultracontext")
+            .join("events")
+            .join("events.jsonl"),
+        "{\"schema_version\":\"uc.event.v1\",\"event_id\":\"evt_local_stale\",\"kind\":\"local.stale\",\"source\":\"test\",\"subject\":\"local:stale\",\"occurred_at\":\"2026-05-08T12:00:00Z\",\"received_at\":\"2026-05-08T12:00:01Z\",\"host\":\"local-host\",\"privacy\":\"metadata_only\"}\n",
+    )
+    .unwrap();
+
+    let test_path = format!("{}:/usr/bin:/bin:/usr/sbin:/sbin", fake_bin.display());
+    let tail = uc(&home)
+        .env("PATH", &test_path)
+        .args(["event", "tail", "--limit", "1"])
+        .output()
+        .unwrap();
+    let tail_stdout = String::from_utf8_lossy(&tail.stdout).to_string();
+    assert_success("uc event tail remote ssh", tail);
+    assert!(
+        tail_stdout.contains("evt_remote_tail_query"),
+        "{tail_stdout}"
+    );
+    assert!(!tail_stdout.contains("evt_local_stale"), "{tail_stdout}");
+
+    let query = uc(&home)
+        .env("PATH", &test_path)
+        .args(["event", "query", "remote:server"])
+        .output()
+        .unwrap();
+    let query_stdout = String::from_utf8_lossy(&query.stdout).to_string();
+    assert_success("uc event query remote ssh", query);
+    assert!(
+        query_stdout.contains("evt_remote_tail_query"),
+        "{query_stdout}"
+    );
+    assert!(!query_stdout.contains("evt_local_stale"), "{query_stdout}");
+
+    let _ = fs::remove_dir_all(&home);
+}
+
+#[test]
 fn event_flush_keeps_pending_events_when_remote_append_fails() {
     let run_id = unique_run_id();
     let home = env::temp_dir().join(format!("uc-events-remote-fail-home-{run_id}"));
@@ -679,12 +925,40 @@ fn event_flush_keeps_pending_events_when_remote_append_fails() {
 }
 
 #[test]
-fn update_respects_npm_installer_env() {
+fn update_respects_npm_installer_env_and_refreshes_runtime_assets() {
     let run_id = unique_run_id();
     let home = env::temp_dir().join(format!("uc-update-home-{run_id}"));
+    let stale_skill = home
+        .join(".claude")
+        .join("skills")
+        .join("ultracontext")
+        .join("SKILL.md");
+    fs::create_dir_all(stale_skill.parent().unwrap()).unwrap();
+    fs::write(&stale_skill, "stale skill\n").unwrap();
 
+    let custom_prompt = home.join(".ultracontext").join("prompts").join("query.md");
+    fs::create_dir_all(custom_prompt.parent().unwrap()).unwrap();
+    fs::write(&custom_prompt, "custom prompt owned by user\n").unwrap();
+
+    let fake_bin = home.join("fake-bin");
+    fs::create_dir_all(&fake_bin).unwrap();
+    let npm_log = home.join("npm.log");
+    let fake_npm = fake_bin.join("npm");
+    fs::write(
+        &fake_npm,
+        format!("#!/bin/sh\nprintf '%s\\n' \"$*\" > {}\n", npm_log.display()),
+    )
+    .unwrap();
+    make_executable(&fake_npm);
+
+    let path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        env::var("PATH").unwrap_or_default()
+    );
     let update = uc(&home)
         .env("ULTRACONTEXT_INSTALLER", "npm")
+        .env("PATH", path)
         .args(["update"])
         .output()
         .unwrap();
@@ -692,6 +966,31 @@ fn update_respects_npm_installer_env() {
     assert_success("uc update", update);
     assert!(stdout.contains("managed by npm"), "{stdout}");
     assert!(stdout.contains("npm update -g ultracontext"), "{stdout}");
+    assert_eq!(
+        fs::read_to_string(&npm_log).unwrap(),
+        "update -g ultracontext\n"
+    );
+
+    let refreshed_skill = fs::read_to_string(&stale_skill).unwrap();
+    assert!(
+        refreshed_skill.contains("name: ultracontext"),
+        "{refreshed_skill}"
+    );
+    assert!(
+        refreshed_skill.contains("uc event tail"),
+        "{refreshed_skill}"
+    );
+    assert_eq!(
+        fs::read_to_string(&custom_prompt).unwrap(),
+        "custom prompt owned by user\n"
+    );
+
+    let codex_skill = home
+        .join(".agents")
+        .join("skills")
+        .join("ultracontext")
+        .join("SKILL.md");
+    assert!(codex_skill.is_file());
 
     let _ = fs::remove_dir_all(&home);
 }
@@ -1211,6 +1510,53 @@ impl Drop for LocalSourceCleanup {
             .output();
         let _ = fs::remove_dir_all(&self.home);
     }
+}
+
+#[test]
+fn driver_list_and_run_use_local_manifest_commands() {
+    let run_id = unique_run_id();
+    let home = env::temp_dir().join(format!("uc-driver-home-{run_id}"));
+    let driver_dir = home
+        .join(".ultracontext")
+        .join("drivers")
+        .join("demo-driver");
+    fs::create_dir_all(&driver_dir).unwrap();
+
+    let script = home.join("driver-capture.sh");
+    let marker = home.join("driver-marker.txt");
+    fs::write(
+        &script,
+        "#!/bin/sh\nprintf 'driver-ran:%s\\n' \"$1\"\nprintf '%s' \"$1\" > \"$2\"\n",
+    )
+    .unwrap();
+    make_executable(&script);
+
+    fs::write(
+        driver_dir.join("driver.toml"),
+        format!(
+            "name = \"demo-driver\"\nversion = \"0.1.0\"\ntype = \"external-app-sync\"\nruntime = \"shell\"\n\n[commands]\nopened = \"{} opened {}\"\n",
+            script.display(),
+            marker.display()
+        ),
+    )
+    .unwrap();
+
+    let list = uc(&home).args(["driver", "list"]).output().unwrap();
+    let list_stdout = String::from_utf8_lossy(&list.stdout).to_string();
+    assert_success("uc driver list", list);
+    assert!(list_stdout.contains("demo-driver"), "{list_stdout}");
+    assert!(list_stdout.contains("0.1.0"), "{list_stdout}");
+
+    let run = uc(&home)
+        .args(["driver", "run", "demo-driver", "opened"])
+        .output()
+        .unwrap();
+    let run_stdout = String::from_utf8_lossy(&run.stdout).to_string();
+    assert_success("uc driver run demo-driver opened", run);
+    assert!(run_stdout.contains("driver-ran:opened"), "{run_stdout}");
+    assert_eq!(fs::read_to_string(marker).unwrap(), "opened");
+
+    let _ = fs::remove_dir_all(&home);
 }
 
 fn uc(home: &Path) -> Command {

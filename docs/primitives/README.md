@@ -10,7 +10,7 @@ The goal is to avoid architecture drift: every primitive gets its own document w
 |---|---|---|
 | Event Log / Event Envelope | `event-envelope-v1.md` | Implemented contract in this worktree; validate with e2e before release |
 | Outbox / Retry Buffer | TBD | Existing minimal implementation, needs contract doc |
-| Drivers / Adapters | TBD | Architecture defined, needs driver contract doc |
+| Drivers / Adapters | `driver-adapter-v1.md` | Draft contract; local manifest `list/run` slice in progress |
 | Subscriptions / Interrupts | TBD | Planned |
 | Locks / Semaphores / Leases | TBD | Planned |
 | Checkpoints | TBD | Planned |

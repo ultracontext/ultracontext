@@ -57,8 +57,8 @@ error
 - `schema_version`: event contract version. Initial value: `uc.event.v1`.
 - `event_id`: globally unique event identity for idempotency/dedupe.
 - `kind`: what happened, in simple dotted form, e.g. `agent.run.completed`, `session.closed`, `sync.failed`.
-- `source`: component/driver/agent that emitted or observed the event, e.g. `hermes`, `chatgpt-ios-shortcut`, `github-webhook`.
-- `subject`: stable thing the event is about, e.g. `repo:ultracontext`, `chatgpt:session:abc123`, `agent-run:hermes:xyz`.
+- `source`: component/driver/agent that emitted or observed the event, e.g. `hermes`, `community-app-driver`, `github-webhook`.
+- `subject`: stable thing the event is about, e.g. `repo:ultracontext`, `community-app:session:abc123`, `agent-run:hermes:xyz`.
 - `occurred_at`: when it happened in the source system.
 - `received_at`: when UltraContext accepted/committed it.
 - `host`: machine/server/client that emitted or committed the event.
@@ -105,9 +105,9 @@ Example:
 {
   "schema_version": "uc.event.v1",
   "kind": "session.closed",
-  "source": "chatgpt-ios-shortcut",
-  "subject": "chatgpt:session:abc123",
-  "labels": { "provider": "chatgpt", "driver": "ios-shortcut" }
+  "source": "community-app-driver",
+  "subject": "community-app:session:abc123",
+  "labels": { "provider": "community-app", "driver": "community-app-driver" }
 }
 ```
 
@@ -124,8 +124,8 @@ external input -> optional artifact -> canonical UC event envelope
 Examples:
 
 - GitHub webhook driver receives webhook JSON, stores raw webhook as artifact, emits `github.pr.opened` or `github.pr.updated`.
-- ChatGPT iOS Shortcut driver observes open/close lifecycle, performs bounded sync, stores transcript artifact, emits `session.closed` / `sync.completed`.
-- Claude/Codex watcher observes local session JSONL, writes derived markdown artifact, emits `session.closed` / `agent.artifact.created`.
+- Community app driver observes lifecycle, runs bounded sync, emits app lifecycle events, then emits one `*.session.updated` per changed session artifact.
+
 
 External payloads do not go inline inside the event. Store them as artifacts and point via `payload_ref` + optional `payload_hash`.
 
@@ -154,7 +154,7 @@ External payloads do not go inline inside the event. Store them as artifacts and
    - Invalid `payload_hash` not starting with `sha256:` fails.
 
 3. `event_emit_supports_labels_and_structured_error`
-   - Emits labels via repeated flags, e.g. `--label provider=chatgpt --label driver=ios-shortcut`.
+   - Emits labels via repeated flags, e.g. `--label provider=community-app --label driver=community-app-driver`.
    - Emits structured error via `--error-class timeout --error-message "remote append timed out" --error-retryable true`.
    - Asserts output JSON has `labels` object and `error` object.
 
@@ -268,7 +268,7 @@ cargo test
 - Initial canonical event kinds.
 - Example events:
   - Hermes agent run completed.
-  - ChatGPT iOS Shortcut session closed.
+  - Community app session closed.
   - GitHub webhook PR opened.
 
 **Verification:**
@@ -286,13 +286,13 @@ root="$home/server-root"
 HOME="$home" target/release/ultracontext init local --host-id events-v1-test --remote-root "$root" --no-sync --yes
 HOME="$home" target/release/ultracontext event emit \
   --kind session.closed \
-  --source chatgpt-ios-shortcut \
-  --subject chatgpt:session:abc123 \
+  --source community-app-driver \
+  --subject community-app:session:abc123 \
   --actor user:fabio \
   --privacy metadata_only \
-  --label provider=chatgpt \
-  --label driver=ios-shortcut \
-  --payload-ref uc://artifacts/chatgpt/sessions/abc123.md
+  --label provider=community-app \
+  --label driver=community-app-driver \
+  --payload-ref uc://artifacts/community-app/sessions/abc123.md
 HOME="$home" target/release/ultracontext event tail --limit 1
 HOME="$home" target/release/ultracontext event status
 ```

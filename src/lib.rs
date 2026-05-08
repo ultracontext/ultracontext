@@ -1,10 +1,10 @@
 use console::{Key, Term, style};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::ffi::OsStr;
 use std::fmt;
 use std::fs::{self, OpenOptions};
-use std::io::{self, IsTerminal, Write};
+use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, Once};
@@ -186,10 +186,12 @@ fn run(args: Vec<String>) -> Result<()> {
         Some("sync") => cmd_sync(&args[2..]),
         Some("source" | "sources") => cmd_source(&args[2..]),
         Some("event" | "events") => cmd_event(&args[2..]),
+        Some("driver" | "drivers") => cmd_driver(&args[2..]),
         Some("query") => cmd_query(&args[2..]),
         Some("status") => cmd_status(&args[2..]),
         Some("doctor") => cmd_doctor(),
         Some("update") => cmd_update(&args[2..]),
+        Some("__refresh-runtime-assets") => refresh_runtime_assets(),
         Some("version" | "-V" | "--version") => {
             println!("{}", env!("CARGO_PKG_VERSION"));
             Ok(())
@@ -200,7 +202,7 @@ fn run(args: Vec<String>) -> Result<()> {
 
 fn print_help() {
     println!(
-        "UltraContext {}\n\nUsage:\n  uc init [local|user@host]\n  uc status\n  uc sync <start|list|status|stop|reset>\n  uc source <list|add|remove|enable|disable>\n  uc event <emit|tail|query>\n  uc query <query>\n  uc doctor\n  uc update\n",
+        "UltraContext {}\n\nUsage:\n  uc init [local|user@host]\n  uc status\n  uc sync <start|list|status|stop|reset>\n  uc source <list|add|remove|enable|disable>\n  uc event <emit|commit|tail|query|flush|status>\n  uc driver <list|run>\n  uc query <query>\n  uc doctor\n  uc update\n",
         env!("CARGO_PKG_VERSION")
     );
 }
@@ -1647,9 +1649,185 @@ struct EventInput {
     error_retryable: Option<bool>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DriverManifest {
+    name: String,
+    version: String,
+    driver_type: Option<String>,
+    runtime: Option<String>,
+    commands: HashMap<String, String>,
+    path: PathBuf,
+}
+
+fn cmd_driver(args: &[String]) -> Result<()> {
+    match args.first().map(String::as_str) {
+        None | Some("-h" | "--help" | "help") => {
+            println!("Usage:\n  uc driver list\n  uc driver run <driver> <command>");
+            Ok(())
+        }
+        Some("list") => driver_list(),
+        Some("run") => driver_run(&args[1..]),
+        Some(command) => Err(UcError::Message(format!(
+            "unknown driver command: {command}"
+        ))),
+    }
+}
+
+fn driver_list() -> Result<()> {
+    let drivers = load_driver_manifests()?;
+    if drivers.is_empty() {
+        println!("No drivers installed in {}", drivers_dir()?.display());
+        return Ok(());
+    }
+    for driver in drivers {
+        let driver_type = driver.driver_type.as_deref().unwrap_or("driver");
+        let runtime = driver.runtime.as_deref().unwrap_or("unknown-runtime");
+        println!(
+            "{}\t{}\t{}\t{}",
+            driver.name, driver.version, driver_type, runtime
+        );
+    }
+    Ok(())
+}
+
+fn driver_run(args: &[String]) -> Result<()> {
+    if args.len() != 2 {
+        return Err(UcError::Message(
+            "usage: uc driver run <driver> <command>".to_string(),
+        ));
+    }
+    let driver_name = &args[0];
+    let command_name = &args[1];
+    let driver = load_driver_manifest(driver_name)?;
+    let command = driver.commands.get(command_name).ok_or_else(|| {
+        UcError::Message(format!(
+            "driver {} has no command {}",
+            driver.name, command_name
+        ))
+    })?;
+    let status = external_command("sh").arg("-c").arg(command).status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(UcError::Message(format!(
+            "driver {} command {} exited with {}",
+            driver.name, command_name, status
+        )))
+    }
+}
+
+fn drivers_dir() -> Result<PathBuf> {
+    Ok(config_dir()?.join("drivers"))
+}
+
+fn load_driver_manifests() -> Result<Vec<DriverManifest>> {
+    let dir = drivers_dir()?;
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut drivers = Vec::new();
+    for entry in fs::read_dir(&dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let manifest_path = entry.path().join("driver.toml");
+        if manifest_path.is_file() {
+            drivers.push(parse_driver_manifest(&manifest_path)?);
+        }
+    }
+    drivers.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(drivers)
+}
+
+fn load_driver_manifest(name: &str) -> Result<DriverManifest> {
+    validate_driver_name(name)?;
+    let manifest_path = drivers_dir()?.join(name).join("driver.toml");
+    if !manifest_path.is_file() {
+        return Err(UcError::Message(format!(
+            "driver not found: {} ({})",
+            name,
+            manifest_path.display()
+        )));
+    }
+    parse_driver_manifest(&manifest_path)
+}
+
+fn parse_driver_manifest(path: &Path) -> Result<DriverManifest> {
+    let raw = fs::read_to_string(path)?;
+    let mut section = "".to_string();
+    let mut name = None;
+    let mut version = None;
+    let mut driver_type = None;
+    let mut runtime = None;
+    let mut commands = HashMap::new();
+
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            section = line
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+                .to_string();
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if section == "commands" {
+            let value = parse_toml_string(value.trim())?;
+            commands.insert(key.to_string(), value);
+        } else if section.is_empty() {
+            let value = parse_toml_string(value.trim())?;
+            match key {
+                "name" => name = Some(value),
+                "version" => version = Some(value),
+                "type" => driver_type = Some(value),
+                "runtime" => runtime = Some(value),
+                _ => {}
+            }
+        }
+    }
+
+    let name = name.ok_or_else(|| {
+        UcError::Message(format!("driver manifest missing name: {}", path.display()))
+    })?;
+    validate_driver_name(&name)?;
+    Ok(DriverManifest {
+        name,
+        version: version.unwrap_or_else(|| "0.0.0".to_string()),
+        driver_type,
+        runtime,
+        commands,
+        path: path.to_path_buf(),
+    })
+}
+
+fn parse_toml_string(value: &str) -> Result<String> {
+    let trimmed = value.trim();
+    if trimmed.starts_with('"') && trimmed.ends_with('"') && trimmed.len() >= 2 {
+        return Ok(trimmed[1..trimmed.len() - 1]
+            .replace("\\\"", "\"")
+            .replace("\\n", "\n")
+            .replace("\\\\", "\\"));
+    }
+    Err(UcError::Message(format!(
+        "expected quoted string in driver manifest: {value}"
+    )))
+}
+
+fn validate_driver_name(name: &str) -> Result<()> {
+    validate_source_name(name)
+}
+
 fn cmd_event(args: &[String]) -> Result<()> {
     match args.first().map(String::as_str) {
         Some("emit") => event_emit(&args[1..]),
+        Some("commit") => event_commit(&args[1..]),
         Some("tail") => event_tail(&args[1..]),
         Some("query") => event_query(&args[1..]),
         Some("flush") => event_flush(&args[1..]),
@@ -1666,7 +1844,7 @@ fn cmd_event(args: &[String]) -> Result<()> {
 
 fn print_event_help() {
     println!(
-        "Usage:\n  uc event emit --kind <kind> --source <source> --subject <id> [--event-id <id>] [--occurred-at <ts>] [--actor <actor>] [--priority <n>] [--run-id <id>] [--trace-id <id>] [--parent-event-id <id>] [--payload-ref <ref>] [--payload-hash sha256:<hash>] [--privacy <level>] [--count key=value] [--label key=value] [--ok true|false] [--error-class <class>] [--error-message <message>] [--error-retryable true|false]\n  uc event tail [--limit <n>]\n  uc event query <text> [--limit <n>]\n  uc event flush\n  uc event status"
+        "Usage:\n  uc event emit --kind <kind> --source <source> --subject <id> [--event-id <id>] [--occurred-at <ts>] [--actor <actor>] [--priority <n>] [--run-id <id>] [--trace-id <id>] [--parent-event-id <id>] [--payload-ref <ref>] [--payload-hash sha256:<hash>] [--privacy <level>] [--count key=value] [--label key=value] [--ok true|false] [--error-class <class>] [--error-message <message>] [--error-retryable true|false]\n  uc event commit --from-stdin\n  uc event tail [--limit <n>]\n  uc event query <text> [--limit <n>]\n  uc event flush\n  uc event status"
     );
 }
 
@@ -1920,7 +2098,6 @@ fn render_event_json(input: &EventInput, host: &str) -> Result<String> {
     let event_id = input.event_id.clone().unwrap_or(new_event_id()?);
     let now = iso_timestamp()?;
     let occurred_at = input.occurred_at.as_deref().unwrap_or(&now);
-    let received_at = iso_timestamp()?;
     let actor = json_optional_string(input.actor.as_deref());
     let run_id = json_optional_string(input.run_id.as_deref());
     let trace_id = json_optional_string(input.trace_id.as_deref());
@@ -1941,13 +2118,12 @@ fn render_event_json(input: &EventInput, host: &str) -> Result<String> {
         .join(",");
     let error = render_event_error(input);
     Ok(format!(
-        "{{\"schema_version\":\"uc.event.v1\",\"event_id\":{},\"kind\":{},\"source\":{},\"subject\":{},\"occurred_at\":{},\"received_at\":{},\"host\":{},\"actor\":{},\"run_id\":{},\"trace_id\":{},\"parent_event_id\":{},\"priority\":{},\"ok\":{},\"payload_ref\":{},\"payload_hash\":{},\"privacy\":{},\"counts\":{{{}}},\"labels\":{{{}}},\"error\":{}}}",
+        "{{\"schema_version\":\"uc.event.v1\",\"event_id\":{},\"kind\":{},\"source\":{},\"subject\":{},\"occurred_at\":{},\"host\":{},\"actor\":{},\"run_id\":{},\"trace_id\":{},\"parent_event_id\":{},\"priority\":{},\"ok\":{},\"payload_ref\":{},\"payload_hash\":{},\"privacy\":{},\"counts\":{{{}}},\"labels\":{{{}}},\"error\":{}}}",
         json_string(&event_id),
         json_string(&input.kind),
         json_string(&input.source),
         json_string(&input.subject),
         json_string(occurred_at),
-        json_string(&received_at),
         json_string(host),
         actor,
         run_id,
@@ -1983,45 +2159,207 @@ fn render_event_error(input: &EventInput) -> String {
     )
 }
 
+fn event_commit(args: &[String]) -> Result<()> {
+    if args.iter().any(|arg| arg == "-h" || arg == "--help") {
+        println!("Usage: uc event commit --from-stdin");
+        return Ok(());
+    }
+    if args != ["--from-stdin"] {
+        return Err(UcError::Message(
+            "usage: uc event commit --from-stdin".to_string(),
+        ));
+    }
+    let config = load_event_config()?;
+    let mut event = String::new();
+    io::stdin().read_to_string(&mut event)?;
+    let committed = commit_local_server_event(&config, event.trim())?;
+    if committed {
+        println!("committed: 1");
+    } else {
+        println!("committed: 0");
+    }
+    Ok(())
+}
+
 fn append_event(config: &Config, event_json: &str) -> Result<()> {
     if config.is_local() {
-        append_local_server_event(config, event_json)
+        commit_local_server_event(config, event_json).map(|_| ())
     } else {
         append_remote_server_event(config, event_json)
     }
 }
 
-fn append_local_server_event(config: &Config, event_json: &str) -> Result<()> {
+fn commit_local_server_event(config: &Config, event_json: &str) -> Result<bool> {
+    validate_event_envelope(event_json)?;
+    let event_id = event_field(event_json, "event_id")
+        .ok_or_else(|| UcError::Message("event missing event_id".to_string()))?;
     let path = event_log_path_for_config(config)?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+    let events_dir = path
+        .parent()
+        .ok_or_else(|| UcError::Message("event log path has no parent".to_string()))?;
+    let seen_dir = events_dir.join("seen");
+    let seen_path = seen_dir.join(&event_id);
+    fs::create_dir_all(&seen_dir)?;
+    if seen_path.exists() {
+        return Ok(false);
     }
-    if let Some(event_id) = event_field(event_json, "event_id") {
-        if path.exists()
-            && fs::read_to_string(&path)?
-                .lines()
-                .any(|line| line.contains(&format!("\"event_id\":\"{event_id}\"")))
-        {
-            return Ok(());
+    if path.exists()
+        && fs::read_to_string(&path)?
+            .lines()
+            .any(|line| line.contains(&format!("\"event_id\":\"{event_id}\"")))
+    {
+        fs::write(seen_path, "seen\n")?;
+        return Ok(false);
+    }
+    let committed_event = with_server_received_at(event_json, &iso_timestamp()?)?;
+    let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
+    writeln!(file, "{committed_event}")?;
+    fs::write(seen_path, "seen\n")?;
+    Ok(true)
+}
+
+fn validate_event_envelope(event_json: &str) -> Result<()> {
+    if event_json.trim().is_empty() {
+        return Err(UcError::Message(
+            "event commit requires JSON on stdin".to_string(),
+        ));
+    }
+    let schema = event_field(event_json, "schema_version")
+        .ok_or_else(|| UcError::Message("event missing schema_version".to_string()))?;
+    if schema != "uc.event.v1" {
+        return Err(UcError::Message(format!(
+            "unsupported event schema_version: {schema}"
+        )));
+    }
+    for field in [
+        "event_id",
+        "kind",
+        "source",
+        "subject",
+        "occurred_at",
+        "host",
+        "privacy",
+    ] {
+        if event_field(event_json, field).is_none() {
+            return Err(UcError::Message(format!("event missing {field}")));
         }
     }
-    let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
-    writeln!(file, "{event_json}")?;
     Ok(())
 }
 
+fn with_server_received_at(event_json: &str, received_at: &str) -> Result<String> {
+    let without_received_at = remove_json_string_field(event_json.trim(), "received_at");
+    insert_json_string_field_after(
+        &without_received_at,
+        "occurred_at",
+        "received_at",
+        received_at,
+    )
+}
+
+fn remove_json_string_field(event_json: &str, field: &str) -> String {
+    let needle = format!("\"{field}\":\"");
+    let Some(value_start) = event_json.find(&needle) else {
+        return event_json.to_string();
+    };
+    let mut value_end = value_start + needle.len();
+    let bytes = event_json.as_bytes();
+    while value_end < bytes.len() {
+        if bytes[value_end] == b'\"' && bytes.get(value_end.wrapping_sub(1)) != Some(&b'\\') {
+            value_end += 1;
+            break;
+        }
+        value_end += 1;
+    }
+    let mut remove_start = value_start;
+    let mut remove_end = value_end;
+    if bytes.get(remove_end) == Some(&b',') {
+        remove_end += 1;
+    } else if value_start > 0 && bytes.get(value_start - 1) == Some(&b',') {
+        remove_start -= 1;
+    }
+    format!(
+        "{}{}",
+        &event_json[..remove_start],
+        &event_json[remove_end..]
+    )
+}
+
+fn insert_json_string_field_after(
+    event_json: &str,
+    after_field: &str,
+    field: &str,
+    value: &str,
+) -> Result<String> {
+    let needle = format!("\"{after_field}\":\"");
+    let value_start = event_json
+        .find(&needle)
+        .ok_or_else(|| UcError::Message(format!("event missing {after_field}")))?
+        + needle.len();
+    let bytes = event_json.as_bytes();
+    let mut value_end = value_start;
+    while value_end < bytes.len() {
+        if bytes[value_end] == b'\"' && bytes.get(value_end.wrapping_sub(1)) != Some(&b'\\') {
+            value_end += 1;
+            break;
+        }
+        value_end += 1;
+    }
+    Ok(format!(
+        "{},{}{}",
+        &event_json[..value_end],
+        format!("\"{field}\":{}", json_string(value)),
+        &event_json[value_end..]
+    ))
+}
+
 fn append_remote_server_event(config: &Config, event_json: &str) -> Result<()> {
-    let dir = format!("{}/events", config.remote_root.trim_end_matches('/'));
-    let path = format!("{dir}/events.jsonl");
-    let event_id = event_field(event_json, "event_id").unwrap_or_default();
-    let command = format!(
-        "mkdir -p {dir} && (test -f {path} && grep -F {needle} {path} >/dev/null 2>&1 || printf '%s\\n' {event} >> {path})",
-        dir = remote_path_arg(&dir),
-        path = remote_path_arg(&path),
-        needle = sh_quote(&format!("\"event_id\":\"{event_id}\"")),
-        event = sh_quote(event_json)
-    );
-    run_command("ssh", [config.remote.as_str(), command.as_str()])
+    let command = remote_event_commit_command(config);
+    run_command_with_stdin(
+        "ssh",
+        [config.remote.as_str(), command.as_str()],
+        event_json,
+    )
+}
+
+fn remote_event_commit_command(config: &Config) -> String {
+    let fallback = r#"import datetime,json,os,sys
+root=os.path.expanduser(os.environ['UC_EVENT_ROOT'])
+raw=sys.stdin.read().strip()
+event=json.loads(raw)
+required=['schema_version','event_id','kind','source','subject','occurred_at','host','privacy']
+missing=[field for field in required if not event.get(field)]
+if missing:
+    raise SystemExit('event missing '+','.join(missing))
+if event['schema_version']!='uc.event.v1':
+    raise SystemExit('unsupported event schema_version: '+event['schema_version'])
+events_dir=os.path.join(root,'events')
+seen_dir=os.path.join(events_dir,'seen')
+os.makedirs(seen_dir,exist_ok=True)
+event_id=event['event_id']
+seen_path=os.path.join(seen_dir,event_id)
+log_path=os.path.join(events_dir,'events.jsonl')
+if os.path.exists(seen_path):
+    raise SystemExit(0)
+if os.path.exists(log_path):
+    with open(log_path,'r',encoding='utf-8') as file:
+        for line in file:
+            try:
+                if json.loads(line).get('event_id')==event_id:
+                    open(seen_path,'w',encoding='utf-8').write('seen\n')
+                    raise SystemExit(0)
+            except json.JSONDecodeError:
+                pass
+event['received_at']=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00','Z')
+with open(log_path,'a',encoding='utf-8') as file:
+    file.write(json.dumps(event,separators=(',',':'))+'\n')
+open(seen_path,'w',encoding='utf-8').write('seen\n')
+"#;
+    format!(
+        "if command -v uc >/dev/null 2>&1; then uc event commit --from-stdin; else UC_EVENT_ROOT={} python3 -c {}; fi",
+        sh_quote(config.remote_root.trim_end_matches('/')),
+        sh_quote(fallback)
+    )
 }
 
 fn event_tail(args: &[String]) -> Result<()> {
@@ -2110,15 +2448,30 @@ fn tail_lines(lines: &[String], limit: usize) -> &[String] {
 
 fn read_event_lines() -> Result<Vec<String>> {
     let config = load_event_config()?;
-    let path = event_log_path_for_config(&config)?;
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-    Ok(fs::read_to_string(path)?
+    let raw = if config.is_local() {
+        let path = event_log_path_for_config(&config)?;
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        fs::read_to_string(path)?
+    } else {
+        read_remote_event_log(&config)?
+    };
+    Ok(raw
         .lines()
         .filter(|line| !line.trim().is_empty())
         .map(str::to_string)
         .collect())
+}
+
+fn read_remote_event_log(config: &Config) -> Result<String> {
+    let path = format!(
+        "{}/events/events.jsonl",
+        config.remote_root.trim_end_matches('/')
+    );
+    let path_arg = remote_path_arg(&path);
+    let command = format!("if [ -f {path_arg} ]; then cat {path_arg}; fi");
+    capture_command("ssh", [config.remote.as_str(), command.as_str()])
 }
 
 fn event_log_path_for_config(config: &Config) -> Result<PathBuf> {
@@ -2594,27 +2947,32 @@ fn cmd_update(args: &[String]) -> Result<()> {
         return Err(UcError::Message("usage: uc update".to_string()));
     }
 
-    match detect_install_manager() {
+    let manager = detect_install_manager();
+    match manager {
         InstallManager::Standalone => {
             println!("Updating UltraContext with installer:");
             println!("  {INSTALL_URL}");
             let command = format!("curl -fsSL {INSTALL_URL} | sh");
-            run_command("sh", ["-c", command.as_str()])
+            run_command("sh", ["-c", command.as_str()])?;
+            refresh_runtime_assets_with_updated_binary()
         }
         InstallManager::Npm => {
             println!("UltraContext is managed by npm.");
-            println!("Update with: npm update -g ultracontext");
-            Ok(())
+            println!("Running: npm update -g ultracontext");
+            run_command("npm", ["update", "-g", "ultracontext"])?;
+            refresh_runtime_assets_with_updated_binary()
         }
         InstallManager::Cargo => {
             println!("UltraContext is managed by Cargo.");
-            println!("Update with: cargo install ultracontext --force");
-            Ok(())
+            println!("Running: cargo install ultracontext --force");
+            run_command("cargo", ["install", "ultracontext", "--force"])?;
+            refresh_runtime_assets_with_updated_binary()
         }
         InstallManager::Homebrew => {
             println!("UltraContext appears to be managed by Homebrew.");
-            println!("Update with: brew upgrade ultracontext");
-            Ok(())
+            println!("Running: brew upgrade ultracontext");
+            run_command("brew", ["upgrade", "ultracontext"])?;
+            refresh_runtime_assets_with_updated_binary()
         }
         InstallManager::Unknown => {
             println!("Could not determine how UltraContext was installed.");
@@ -2622,9 +2980,31 @@ fn cmd_update(args: &[String]) -> Result<()> {
             println!("  curl -fsSL {INSTALL_URL} | sh");
             println!("  npm update -g ultracontext");
             println!("  cargo install ultracontext --force");
-            Ok(())
+            refresh_runtime_assets()
         }
     }
+}
+
+fn refresh_runtime_assets_with_updated_binary() -> Result<()> {
+    let current_exe = env::current_exe()?;
+    let status = Command::new(&current_exe)
+        .arg("__refresh-runtime-assets")
+        .status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(UcError::Message(format!(
+            "{} __refresh-runtime-assets exited with {}",
+            current_exe.display(),
+            status
+        )))
+    }
+}
+
+fn refresh_runtime_assets() -> Result<()> {
+    install_agent_skills()?;
+    ensure_prompt_file()?;
+    Ok(())
 }
 
 fn prepare_remote_workspace(config: &Config) -> Result<()> {
@@ -2839,16 +3219,6 @@ fn known_source_specs() -> &'static [KnownSource] {
             agent: "codex",
             label: "Codex",
             path: "~/.codex",
-        },
-        KnownSource {
-            agent: "chatgpt",
-            label: "ChatGPT",
-            path: "~/.chatgpt",
-        },
-        KnownSource {
-            agent: "claude-web",
-            label: "Claude.ai",
-            path: "~/.claude-web",
         },
     ]
 }
@@ -3606,6 +3976,35 @@ where
     }
 }
 
+fn run_command_with_stdin<I, S>(program: &str, args: I, stdin_text: &str) -> Result<()>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let args = args
+        .into_iter()
+        .map(|arg| arg.as_ref().to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    let mut child = external_command(program)
+        .args(&args)
+        .stdin(Stdio::piped())
+        .spawn()?;
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin.write_all(stdin_text.as_bytes())?;
+        stdin.write_all(b"\n")?;
+    }
+    let status = child.wait()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(UcError::Message(format!(
+            "{} exited with {}",
+            command_display(program, &args),
+            status
+        )))
+    }
+}
+
 fn capture_command<I, S>(program: &str, args: I) -> Result<String>
 where
     I: IntoIterator<Item = S>,
@@ -4088,26 +4487,6 @@ mod tests {
         assert_eq!(
             remote_dir(&cfg, &custom_source),
             "~/.ultracontext/workspace/work-laptop/project_notes"
-        );
-
-        let chatgpt_source = Source {
-            agent: "chatgpt".to_string(),
-            local_path: "~/.chatgpt".to_string(),
-            enabled: true,
-        };
-        assert_eq!(
-            remote_dir(&cfg, &chatgpt_source),
-            "~/.ultracontext/workspace/work-laptop/.chatgpt"
-        );
-
-        let claude_web_source = Source {
-            agent: "claude-web".to_string(),
-            local_path: "~/.claude-web".to_string(),
-            enabled: true,
-        };
-        assert_eq!(
-            remote_dir(&cfg, &claude_web_source),
-            "~/.ultracontext/workspace/work-laptop/.claude-web"
         );
     }
 

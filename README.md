@@ -78,13 +78,23 @@ Event commands:
 
 | Command | What it does |
 |---|---|
-| `uc event emit --kind <kind> --source <source> --subject <id> [--privacy metadata_only] [--label key=value]` | Append a native UltraContext Event Envelope v1 to the configured server log |
+| `uc event emit --kind <kind> --source <source> --subject <id> [--privacy metadata_only] [--label key=value]` | Create a pending native UltraContext Event Envelope v1 and commit it to the configured server log |
+| `uc event commit --from-stdin` | Server-side commit path: read one event JSON from stdin, set/overwrite `received_at`, dedupe, and append to the server log |
 | `uc event tail [--limit <n>]` | Print recent committed events |
 | `uc event query <text> [--limit <n>]` | Search committed events by text |
 | `uc event flush` | Retry events still pending in the local outbox |
 | `uc event status` | Show server, host id, pending outbox count, and sent count |
 
-Native UC events use the versioned `uc.event.v1` envelope documented in `docs/primitives/event-envelope-v1.md`. Events are server-authoritative: for `remote = "local"`, the server log is `remote_root/events/events.jsonl`; for SSH remotes, events are appended over SSH to `<remote_root>/events/events.jsonl`. Clients keep a local durable outbox at `~/.ultracontext/events/outbox/` only for retry, then move committed events to `~/.ultracontext/events/sent/`. Events are small facts; large/details payloads belong in artifacts referenced by `payload_ref`. Do not put raw prompts, transcripts, secrets, cookies, API keys, tokens, headers, signed URLs, or huge payloads in event JSON.
+Native UC events use the versioned `uc.event.v1` envelope documented in `docs/primitives/event-envelope-v1.md`. Events are server-authoritative: `uc event emit` writes a pending envelope to the client outbox, then asks the configured server to run `uc event commit --from-stdin` when `uc` is installed remotely, with a Python server-side fallback for bare SSH hosts. The commit path sets/overwrites `received_at`, dedupes by `event_id`, and appends to `events/events.jsonl`. Clients keep a local durable outbox at `~/.ultracontext/events/outbox/` only for retry, then move committed events to `~/.ultracontext/events/sent/`. Events are small facts; large/details payloads belong in artifacts referenced by `payload_ref`. Do not put raw prompts, transcripts, secrets, cookies, API keys, tokens, headers, signed URLs, or huge payloads in event JSON.
+
+Driver commands:
+
+| Command | What it does |
+|---|---|
+| `uc driver list` | List installed external drivers from `~/.ultracontext/drivers/*/driver.toml` |
+| `uc driver run <driver> <command>` | Run a named installed driver command |
+
+Drivers/adapters are external integration code around UC primitives, not core runtime dependencies. The core repo ships the driver contract and CLI only. Product-specific or community drivers are installed separately under `~/.ultracontext/drivers/<name>/driver.toml`.
 
 Advanced:
 
