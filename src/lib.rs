@@ -2840,6 +2840,16 @@ fn known_source_specs() -> &'static [KnownSource] {
             label: "Codex",
             path: "~/.codex",
         },
+        KnownSource {
+            agent: "chatgpt",
+            label: "ChatGPT",
+            path: "~/.chatgpt",
+        },
+        KnownSource {
+            agent: "claude-web",
+            label: "Claude.ai",
+            path: "~/.claude-web",
+        },
     ]
 }
 
@@ -4078,6 +4088,26 @@ mod tests {
         assert_eq!(
             remote_dir(&cfg, &custom_source),
             "~/.ultracontext/workspace/work-laptop/project_notes"
+        );
+
+        let chatgpt_source = Source {
+            agent: "chatgpt".to_string(),
+            local_path: "~/.chatgpt".to_string(),
+            enabled: true,
+        };
+        assert_eq!(
+            remote_dir(&cfg, &chatgpt_source),
+            "~/.ultracontext/workspace/work-laptop/.chatgpt"
+        );
+
+        let claude_web_source = Source {
+            agent: "claude-web".to_string(),
+            local_path: "~/.claude-web".to_string(),
+            enabled: true,
+        };
+        assert_eq!(
+            remote_dir(&cfg, &claude_web_source),
+            "~/.ultracontext/workspace/work-laptop/.claude-web"
         );
     }
 
