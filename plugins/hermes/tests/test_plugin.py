@@ -9,8 +9,10 @@ from contextlib import contextmanager
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[3]
-PLUGIN_DIR = ROOT / "plugins" / "hermes"
+TEST_FILE = Path(__file__).resolve()
+REPO_PLUGIN_DIR = TEST_FILE.parents[3] / "plugins" / "hermes"
+INSTALLED_PLUGIN_DIR = TEST_FILE.parents[1]
+PLUGIN_DIR = REPO_PLUGIN_DIR if REPO_PLUGIN_DIR.exists() else INSTALLED_PLUGIN_DIR
 PLUGIN_PATH = PLUGIN_DIR / "__init__.py"
 MANIFEST_PATH = PLUGIN_DIR / "plugin.yaml"
 
