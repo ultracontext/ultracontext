@@ -2,5 +2,5 @@ name: ultracontext
 version: "0.1.0"
 description: "Injects a bounded UltraContext activity signal into Hermes before each LLM turn."
 author: UltraContext
-hooks:
+provides_hooks:
   - pre_llm_call

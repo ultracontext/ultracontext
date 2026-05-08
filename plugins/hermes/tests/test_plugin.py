@@ -10,7 +10,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[3]
-PLUGIN_PATH = ROOT / "plugins" / "hermes" / "__init__.py"
+PLUGIN_DIR = ROOT / "plugins" / "hermes"
+PLUGIN_PATH = PLUGIN_DIR / "__init__.py"
+MANIFEST_PATH = PLUGIN_DIR / "plugin.yaml"
 
 
 @contextmanager
@@ -123,6 +125,13 @@ class HermesUltraContextPluginTests(unittest.TestCase):
             with patched_env(ULTRACONTEXT_CLI=str(fake_uc)):
                 plugin = load_plugin()
                 self.assertIsNone(plugin.on_pre_llm_call(session_id="s1", user_message="oi"))
+
+    def test_plugin_manifest_matches_hermes_loader_keys(self):
+        manifest = MANIFEST_PATH.read_text()
+        self.assertIn("name: ultracontext", manifest)
+        self.assertIn("provides_hooks:", manifest)
+        self.assertIn("  - pre_llm_call", manifest)
+        self.assertNotIn("\nhooks:\n", f"\n{manifest}")
 
     def test_plugin_module_is_syntax_valid(self):
         subprocess.run([sys.executable, "-m", "py_compile", str(PLUGIN_PATH)], check=True)

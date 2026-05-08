@@ -23,6 +23,8 @@ uc query "<exact user question>"
 - It does not read transcripts or payload refs automatically.
 - It fails open: if `uc` is missing, slow, or returns no events, it injects nothing.
 
+Full docs: `docs/plugins/hermes.md`.
+
 ## Configuration
 
 Environment variables:
@@ -34,18 +36,21 @@ Environment variables:
 
 ## Install into Hermes
 
-Copy this folder to a Hermes plugin root, for example:
+Hermes user plugins live under `~/.hermes/plugins/<plugin-dir>/`.
 
-```text
-~/.hermes/plugins/hermes/
+Recommended install shape:
+
+```bash
+mkdir -p ~/.hermes/plugins/ultracontext
+cp -R plugins/hermes/* ~/.hermes/plugins/ultracontext/
 ```
 
-Then enable it in Hermes config:
+Then enable the plugin by manifest name/key:
 
 ```yaml
 plugins:
   enabled:
-    - hermes
+    - ultracontext
 ```
 
 Restart Hermes or the gateway after enabling.
