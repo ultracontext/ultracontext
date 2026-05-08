@@ -96,6 +96,8 @@ Driver commands:
 
 Drivers/adapters are external integration code around UC primitives, not core runtime dependencies. The core repo ships the driver contract and CLI only. Product-specific or community drivers are installed separately under `~/.ultracontext/drivers/<name>/driver.toml`.
 
+Plugins are the opposite direction: UC context consumed inside a host runtime. The first plugin lives at `plugins/hermes/` and registers a Hermes `pre_llm_call` hook that injects a bounded `uc event tail` activity signal so the model knows when to use the UltraContext skill for deeper lookup.
+
 Advanced:
 
 | Command | What it does |
