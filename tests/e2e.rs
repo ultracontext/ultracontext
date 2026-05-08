@@ -245,6 +245,440 @@ fn manages_sources_from_cli() {
 }
 
 #[test]
+fn event_log_emits_tails_and_queries_jsonl_events() {
+    let run_id = unique_run_id();
+    let home = env::temp_dir().join(format!("uc-events-home-{run_id}"));
+
+    let emit = uc(&home)
+        .args([
+            "event",
+            "emit",
+            "--kind",
+            "user_message",
+            "--source",
+            "hermes",
+            "--subject",
+            "telegram:fase1",
+            "--priority",
+            "80",
+            "--run-id",
+            run_id.as_str(),
+            "--payload-ref",
+            "uc://payload/test",
+            "--count",
+            "synced=0",
+        ])
+        .output()
+        .unwrap();
+    let emit_stdout = String::from_utf8_lossy(&emit.stdout).to_string();
+    assert_success("uc event emit", emit);
+    assert!(emit_stdout.contains("event:"), "{emit_stdout}");
+    assert!(emit_stdout.contains("user_message"), "{emit_stdout}");
+
+    let event_log = home
+        .join(".ultracontext")
+        .join("events")
+        .join("events.jsonl");
+    let raw = fs::read_to_string(&event_log).unwrap();
+    let lines = raw.lines().collect::<Vec<_>>();
+    assert_eq!(lines.len(), 1, "{raw}");
+    assert!(raw.contains("\"event_id\":"), "{raw}");
+    assert!(raw.contains("\"schema_version\":\"uc.event.v1\""), "{raw}");
+    assert!(raw.contains("\"occurred_at\":"), "{raw}");
+    assert!(raw.contains("\"kind\":\"user_message\""), "{raw}");
+    assert!(raw.contains("\"source\":\"hermes\""), "{raw}");
+    assert!(raw.contains("\"subject\":\"telegram:fase1\""), "{raw}");
+    assert!(raw.contains("\"priority\":80"), "{raw}");
+    assert!(
+        raw.contains("\"payload_ref\":\"uc://payload/test\""),
+        "{raw}"
+    );
+    assert!(raw.contains("\"run_id\":"), "{raw}");
+    assert!(raw.contains("\"counts\":{\"synced\":0}"), "{raw}");
+    assert!(raw.contains("\"ok\":true"), "{raw}");
+    assert!(raw.contains("\"privacy\":\"metadata_only\""), "{raw}");
+    assert!(raw.contains("\"error\":null"), "{raw}");
+
+    let tail = uc(&home)
+        .args(["event", "tail", "--limit", "1"])
+        .output()
+        .unwrap();
+    let tail_stdout = String::from_utf8_lossy(&tail.stdout).to_string();
+    assert_success("uc event tail", tail);
+    assert!(tail_stdout.contains("user_message"), "{tail_stdout}");
+
+    let query = uc(&home)
+        .args(["event", "query", "user_message"])
+        .output()
+        .unwrap();
+    let query_stdout = String::from_utf8_lossy(&query.stdout).to_string();
+    assert_success("uc event query", query);
+    assert!(query_stdout.contains("telegram:fase1"), "{query_stdout}");
+
+    let miss = uc(&home)
+        .args(["event", "query", "does-not-match"])
+        .output()
+        .unwrap();
+    let miss_stdout = String::from_utf8_lossy(&miss.stdout).to_string();
+    assert_success("uc event query miss", miss);
+    assert!(miss_stdout.contains("No matching events"), "{miss_stdout}");
+
+    let _ = fs::remove_dir_all(&home);
+}
+
+#[test]
+fn event_emit_writes_schema_version_privacy_and_occurred_at() {
+    let run_id = unique_run_id();
+    let home = env::temp_dir().join(format!("uc-events-v1-home-{run_id}"));
+    let occurred_at = "2026-05-08T12:00:00Z";
+
+    let emit = uc(&home)
+        .args([
+            "event",
+            "emit",
+            "--kind",
+            "session.closed",
+            "--source",
+            "chatgpt-ios-shortcut",
+            "--subject",
+            "chatgpt:session:abc123",
+            "--occurred-at",
+            occurred_at,
+            "--actor",
+            "user:fabio",
+            "--privacy",
+            "metadata_only",
+        ])
+        .output()
+        .unwrap();
+    assert_success("uc event emit v1 envelope", emit);
+
+    let event_log = home
+        .join(".ultracontext")
+        .join("events")
+        .join("events.jsonl");
+    let raw = fs::read_to_string(&event_log).unwrap();
+    assert!(raw.contains("\"schema_version\":\"uc.event.v1\""), "{raw}");
+    assert!(raw.contains("\"kind\":\"session.closed\""), "{raw}");
+    assert!(raw.contains("\"source\":\"chatgpt-ios-shortcut\""), "{raw}");
+    assert!(
+        raw.contains("\"subject\":\"chatgpt:session:abc123\""),
+        "{raw}"
+    );
+    assert!(
+        raw.contains(&format!("\"occurred_at\":\"{occurred_at}\"")),
+        "{raw}"
+    );
+    assert!(raw.contains("\"received_at\":"), "{raw}");
+    assert!(raw.contains("\"host\":"), "{raw}");
+    assert!(raw.contains("\"actor\":\"user:fabio\""), "{raw}");
+    assert!(raw.contains("\"privacy\":\"metadata_only\""), "{raw}");
+
+    let _ = fs::remove_dir_all(&home);
+}
+
+#[test]
+fn event_emit_rejects_invalid_event_envelope() {
+    let run_id = unique_run_id();
+    let home = env::temp_dir().join(format!("uc-events-invalid-home-{run_id}"));
+
+    let missing_subject = uc(&home)
+        .args([
+            "event",
+            "emit",
+            "--kind",
+            "session.closed",
+            "--source",
+            "hermes",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        !missing_subject.status.success(),
+        "missing subject should fail"
+    );
+    let stderr = String::from_utf8_lossy(&missing_subject.stderr).to_string();
+    assert!(stderr.contains("missing --subject"), "{stderr}");
+
+    let invalid_priority = uc(&home)
+        .args([
+            "event",
+            "emit",
+            "--kind",
+            "session.closed",
+            "--source",
+            "hermes",
+            "--subject",
+            "session:test",
+            "--priority",
+            "101",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        !invalid_priority.status.success(),
+        "priority > 100 should fail"
+    );
+
+    let invalid_privacy = uc(&home)
+        .args([
+            "event",
+            "emit",
+            "--kind",
+            "session.closed",
+            "--source",
+            "hermes",
+            "--subject",
+            "session:test",
+            "--privacy",
+            "secret",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        !invalid_privacy.status.success(),
+        "invalid privacy should fail"
+    );
+
+    let invalid_hash = uc(&home)
+        .args([
+            "event",
+            "emit",
+            "--kind",
+            "session.closed",
+            "--source",
+            "hermes",
+            "--subject",
+            "session:test",
+            "--payload-hash",
+            "md5:abc",
+        ])
+        .output()
+        .unwrap();
+    assert!(!invalid_hash.status.success(), "invalid hash should fail");
+
+    let _ = fs::remove_dir_all(&home);
+}
+
+#[test]
+fn event_emit_supports_labels_and_structured_error() {
+    let run_id = unique_run_id();
+    let home = env::temp_dir().join(format!("uc-events-labels-home-{run_id}"));
+
+    let emit = uc(&home)
+        .args([
+            "event",
+            "emit",
+            "--kind",
+            "sync.failed",
+            "--source",
+            "chatgpt-ios-shortcut",
+            "--subject",
+            "chatgpt:sync",
+            "--label",
+            "provider=chatgpt",
+            "--label",
+            "driver=ios-shortcut",
+            "--error-class",
+            "timeout",
+            "--error-message",
+            "remote append timed out",
+            "--error-retryable",
+            "true",
+            "--ok",
+            "false",
+        ])
+        .output()
+        .unwrap();
+    assert_success("uc event emit labels/error", emit);
+
+    let event_log = home
+        .join(".ultracontext")
+        .join("events")
+        .join("events.jsonl");
+    let raw = fs::read_to_string(&event_log).unwrap();
+    assert!(
+        raw.contains("\"labels\":{\"provider\":\"chatgpt\",\"driver\":\"ios-shortcut\"}"),
+        "{raw}"
+    );
+    assert!(raw.contains("\"error\":{\"class\":\"timeout\",\"message\":\"remote append timed out\",\"retryable\":true}"), "{raw}");
+    assert!(raw.contains("\"ok\":false"), "{raw}");
+
+    let _ = fs::remove_dir_all(&home);
+}
+
+#[test]
+fn event_emit_is_idempotent_by_event_id() {
+    let run_id = unique_run_id();
+    let home = env::temp_dir().join(format!("uc-events-dedupe-home-{run_id}"));
+    let event_id = format!("evt_test_duplicate_{run_id}");
+
+    for _ in 0..2 {
+        let emit = uc(&home)
+            .args([
+                "event",
+                "emit",
+                "--event-id",
+                event_id.as_str(),
+                "--kind",
+                "agent.run.completed",
+                "--source",
+                "hermes",
+                "--subject",
+                "agent-run:hermes:duplicate",
+            ])
+            .output()
+            .unwrap();
+        assert_success("uc event emit duplicate event_id", emit);
+    }
+
+    let event_log = home
+        .join(".ultracontext")
+        .join("events")
+        .join("events.jsonl");
+    let raw = fs::read_to_string(&event_log).unwrap();
+    let count = raw.matches(&format!("\"event_id\":\"{event_id}\"")).count();
+    assert_eq!(count, 1, "{raw}");
+
+    let _ = fs::remove_dir_all(&home);
+}
+
+#[test]
+fn event_log_uses_configured_local_remote_root_and_outbox() {
+    let run_id = unique_run_id();
+    let host_id = format!("uc-events-{run_id}");
+    let home = env::temp_dir().join(format!("uc-events-root-home-{run_id}"));
+    let remote_root = home.join("ultracontext-root");
+
+    let setup = uc(&home)
+        .args([
+            "init",
+            "local",
+            "--host-id",
+            host_id.as_str(),
+            "--remote-root",
+            remote_root.to_str().unwrap(),
+            "--no-sync",
+            "--yes",
+        ])
+        .output()
+        .unwrap();
+    assert_success("uc init local for events", setup);
+
+    let emit = uc(&home)
+        .args([
+            "event",
+            "emit",
+            "--kind",
+            "agent_done",
+            "--source",
+            "hermes",
+            "--subject",
+            "ultracontext:phase1.5",
+            "--run-id",
+            run_id.as_str(),
+        ])
+        .output()
+        .unwrap();
+    assert_success("uc event emit local remote_root", emit);
+
+    let server_log = remote_root.join("events").join("events.jsonl");
+    let raw = fs::read_to_string(&server_log).unwrap();
+    assert!(raw.contains("\"kind\":\"agent_done\""), "{raw}");
+    assert!(raw.contains(&format!("\"host\":\"{host_id}\"")), "{raw}");
+    assert!(raw.contains("\"received_at\":"), "{raw}");
+    assert!(
+        raw.contains("\"subject\":\"ultracontext:phase1.5\""),
+        "{raw}"
+    );
+    assert!(
+        !home
+            .join(".ultracontext")
+            .join("events")
+            .join("events.jsonl")
+            .exists(),
+        "configured local remotes should use remote_root as the server log"
+    );
+
+    let sent_dir = home.join(".ultracontext").join("events").join("sent");
+    assert!(sent_dir.is_dir());
+    assert!(fs::read_dir(&sent_dir).unwrap().next().is_some());
+
+    let status = uc(&home).args(["event", "status"]).output().unwrap();
+    let status_stdout = String::from_utf8_lossy(&status.stdout).to_string();
+    assert_success("uc event status", status);
+    assert!(status_stdout.contains("server: local"), "{status_stdout}");
+    assert!(status_stdout.contains("pending: 0"), "{status_stdout}");
+    assert!(status_stdout.contains("sent: 1"), "{status_stdout}");
+
+    let tail = uc(&home)
+        .args(["event", "tail", "--limit", "1"])
+        .output()
+        .unwrap();
+    let tail_stdout = String::from_utf8_lossy(&tail.stdout).to_string();
+    assert_success("uc event tail local remote_root", tail);
+    assert!(tail_stdout.contains("agent_done"), "{tail_stdout}");
+
+    let _ = fs::remove_dir_all(&home);
+}
+
+#[test]
+fn event_flush_keeps_pending_events_when_remote_append_fails() {
+    let run_id = unique_run_id();
+    let home = env::temp_dir().join(format!("uc-events-remote-fail-home-{run_id}"));
+    let remote_root = format!("~/.ultracontext-test/{run_id}");
+    fs::create_dir_all(home.join(".ultracontext")).unwrap();
+    fs::write(
+        home.join(".ultracontext").join("config.toml"),
+        format!(
+            "remote = \"no-such-remote-host\"\nremote_root = \"{remote_root}\"\nhost_id = \"host-{run_id}\"\n\n[query]\ncommand = \"claude\"\nargs = \"-p {{{{prompt}}}}\"\n"
+        ),
+    )
+    .unwrap();
+
+    let emit = uc(&home)
+        .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+        .args([
+            "event",
+            "emit",
+            "--kind",
+            "remote_failed",
+            "--source",
+            "hermes",
+            "--subject",
+            "remote:failed",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        !emit.status.success(),
+        "remote emit should fail so the outbox path is tested"
+    );
+
+    let outbox_dir = home.join(".ultracontext").join("events").join("outbox");
+    assert!(outbox_dir.is_dir());
+    assert!(fs::read_dir(&outbox_dir).unwrap().next().is_some());
+
+    let flush = uc(&home)
+        .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+        .args(["event", "flush"])
+        .output()
+        .unwrap();
+    assert!(
+        !flush.status.success(),
+        "flush should report failure while keeping pending events"
+    );
+    assert!(fs::read_dir(&outbox_dir).unwrap().next().is_some());
+
+    let status = uc(&home).args(["event", "status"]).output().unwrap();
+    let status_stdout = String::from_utf8_lossy(&status.stdout).to_string();
+    assert_success("uc event status after failed remote", status);
+    assert!(status_stdout.contains("pending: 1"), "{status_stdout}");
+
+    let _ = fs::remove_dir_all(&home);
+}
+
+#[test]
 fn update_respects_npm_installer_env() {
     let run_id = unique_run_id();
     let home = env::temp_dir().join(format!("uc-update-home-{run_id}"));

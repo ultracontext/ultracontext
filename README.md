@@ -74,6 +74,18 @@ Sync commands:
 | `uc sync stop` | Pause every enabled source |
 | `uc sync reset` | Recreate sessions after editing global settings or ignore rules |
 
+Event commands:
+
+| Command | What it does |
+|---|---|
+| `uc event emit --kind <kind> --source <source> --subject <id> [--privacy metadata_only] [--label key=value]` | Append a native UltraContext Event Envelope v1 to the configured server log |
+| `uc event tail [--limit <n>]` | Print recent committed events |
+| `uc event query <text> [--limit <n>]` | Search committed events by text |
+| `uc event flush` | Retry events still pending in the local outbox |
+| `uc event status` | Show server, host id, pending outbox count, and sent count |
+
+Native UC events use the versioned `uc.event.v1` envelope documented in `docs/primitives/event-envelope-v1.md`. Events are server-authoritative: for `remote = "local"`, the server log is `remote_root/events/events.jsonl`; for SSH remotes, events are appended over SSH to `<remote_root>/events/events.jsonl`. Clients keep a local durable outbox at `~/.ultracontext/events/outbox/` only for retry, then move committed events to `~/.ultracontext/events/sent/`. Events are small facts; large/details payloads belong in artifacts referenced by `payload_ref`. Do not put raw prompts, transcripts, secrets, cookies, API keys, tokens, headers, signed URLs, or huge payloads in event JSON.
+
 Advanced:
 
 | Command | What it does |

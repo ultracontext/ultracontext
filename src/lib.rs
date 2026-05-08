@@ -3,11 +3,12 @@ use std::collections::HashSet;
 use std::env;
 use std::ffi::OsStr;
 use std::fmt;
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, Once};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const APP_DIR: &str = ".ultracontext";
 const IGNORE_FILE: &str = ".ultracontextignore";
@@ -184,6 +185,7 @@ fn run(args: Vec<String>) -> Result<()> {
         Some("init") => cmd_init(&args[2..]),
         Some("sync") => cmd_sync(&args[2..]),
         Some("source" | "sources") => cmd_source(&args[2..]),
+        Some("event" | "events") => cmd_event(&args[2..]),
         Some("query") => cmd_query(&args[2..]),
         Some("status") => cmd_status(&args[2..]),
         Some("doctor") => cmd_doctor(),
@@ -198,7 +200,7 @@ fn run(args: Vec<String>) -> Result<()> {
 
 fn print_help() {
     println!(
-        "UltraContext {}\n\nUsage:\n  uc init [local|user@host]\n  uc status\n  uc sync <start|list|status|stop|reset>\n  uc source <list|add|remove|enable|disable>\n  uc query <query>\n  uc doctor\n  uc update\n",
+        "UltraContext {}\n\nUsage:\n  uc init [local|user@host]\n  uc status\n  uc sync <start|list|status|stop|reset>\n  uc source <list|add|remove|enable|disable>\n  uc event <emit|tail|query>\n  uc query <query>\n  uc doctor\n  uc update\n",
         env!("CARGO_PKG_VERSION")
     );
 }
@@ -1622,6 +1624,706 @@ fn single_source_name_arg<'a>(args: &'a [String], command: &str) -> Result<&'a s
     Ok(&args[0])
 }
 
+#[derive(Debug)]
+struct EventInput {
+    event_id: Option<String>,
+    kind: String,
+    source: String,
+    subject: String,
+    occurred_at: Option<String>,
+    actor: Option<String>,
+    run_id: Option<String>,
+    trace_id: Option<String>,
+    parent_event_id: Option<String>,
+    priority: i64,
+    payload_ref: Option<String>,
+    payload_hash: Option<String>,
+    privacy: String,
+    counts: Vec<(String, i64)>,
+    labels: Vec<(String, String)>,
+    ok: bool,
+    error_class: Option<String>,
+    error_message: Option<String>,
+    error_retryable: Option<bool>,
+}
+
+fn cmd_event(args: &[String]) -> Result<()> {
+    match args.first().map(String::as_str) {
+        Some("emit") => event_emit(&args[1..]),
+        Some("tail") => event_tail(&args[1..]),
+        Some("query") => event_query(&args[1..]),
+        Some("flush") => event_flush(&args[1..]),
+        Some("status") => event_status(&args[1..]),
+        Some("-h" | "--help") | None => {
+            print_event_help();
+            Ok(())
+        }
+        Some(command) => Err(UcError::Message(format!(
+            "unknown event command: {command}"
+        ))),
+    }
+}
+
+fn print_event_help() {
+    println!(
+        "Usage:\n  uc event emit --kind <kind> --source <source> --subject <id> [--event-id <id>] [--occurred-at <ts>] [--actor <actor>] [--priority <n>] [--run-id <id>] [--trace-id <id>] [--parent-event-id <id>] [--payload-ref <ref>] [--payload-hash sha256:<hash>] [--privacy <level>] [--count key=value] [--label key=value] [--ok true|false] [--error-class <class>] [--error-message <message>] [--error-retryable true|false]\n  uc event tail [--limit <n>]\n  uc event query <text> [--limit <n>]\n  uc event flush\n  uc event status"
+    );
+}
+
+fn event_emit(args: &[String]) -> Result<()> {
+    if args.iter().any(|arg| arg == "-h" || arg == "--help") {
+        println!(
+            "Usage: uc event emit --kind <kind> --source <source> --subject <id> [--event-id <id>] [--occurred-at <ts>] [--actor <actor>] [--priority <n>] [--run-id <id>] [--trace-id <id>] [--parent-event-id <id>] [--payload-ref <ref>] [--payload-hash sha256:<hash>] [--privacy <level>] [--count key=value] [--label key=value] [--ok true|false] [--error-class <class>] [--error-message <message>] [--error-retryable true|false]"
+        );
+        return Ok(());
+    }
+
+    let config = load_event_config()?;
+    let input = parse_event_emit_args(args)?;
+    let event = render_event_json(&input, &config.host_id)?;
+    save_outbox_event(&event)?;
+    match append_event(&config, &event) {
+        Ok(()) => mark_event_sent(&event)?,
+        Err(error) => {
+            return Err(UcError::Message(format!(
+                "event saved to local outbox but server append failed: {error}"
+            )));
+        }
+    }
+    println!(
+        "event: {} {}",
+        event_field(&event, "event_id").unwrap_or_default(),
+        input.kind
+    );
+    Ok(())
+}
+
+fn parse_event_emit_args(args: &[String]) -> Result<EventInput> {
+    let mut event_id: Option<String> = None;
+    let mut kind: Option<String> = None;
+    let mut source: Option<String> = None;
+    let mut subject: Option<String> = None;
+    let mut occurred_at: Option<String> = None;
+    let mut actor: Option<String> = None;
+    let mut run_id: Option<String> = None;
+    let mut trace_id: Option<String> = None;
+    let mut parent_event_id: Option<String> = None;
+    let mut priority: i64 = 50;
+    let mut payload_ref: Option<String> = None;
+    let mut payload_hash: Option<String> = None;
+    let mut privacy = "metadata_only".to_string();
+    let mut counts: Vec<(String, i64)> = Vec::new();
+    let mut labels: Vec<(String, String)> = Vec::new();
+    let mut ok = true;
+    let mut error_class: Option<String> = None;
+    let mut error_message: Option<String> = None;
+    let mut error_retryable: Option<bool> = None;
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--event-id" => {
+                i += 1;
+                event_id = Some(require_value(args, i, "--event-id")?.to_string());
+            }
+            "--kind" => {
+                i += 1;
+                kind = Some(require_value(args, i, "--kind")?.to_string());
+            }
+            "--source" => {
+                i += 1;
+                source = Some(require_value(args, i, "--source")?.to_string());
+            }
+            "--subject" | "--subject-id" => {
+                i += 1;
+                subject = Some(require_value(args, i, "--subject")?.to_string());
+            }
+            "--occurred-at" | "--at" => {
+                i += 1;
+                occurred_at = Some(require_value(args, i, "--occurred-at")?.to_string());
+            }
+            "--actor" => {
+                i += 1;
+                actor = Some(require_value(args, i, "--actor")?.to_string());
+            }
+            "--run-id" => {
+                i += 1;
+                run_id = Some(require_value(args, i, "--run-id")?.to_string());
+            }
+            "--trace-id" => {
+                i += 1;
+                trace_id = Some(require_value(args, i, "--trace-id")?.to_string());
+            }
+            "--parent-event-id" => {
+                i += 1;
+                parent_event_id = Some(require_value(args, i, "--parent-event-id")?.to_string());
+            }
+            "--priority" => {
+                i += 1;
+                let raw = require_value(args, i, "--priority")?;
+                priority = raw
+                    .parse::<i64>()
+                    .map_err(|_| UcError::Message(format!("invalid --priority: {raw}")))?;
+            }
+            "--payload-ref" => {
+                i += 1;
+                payload_ref = Some(require_value(args, i, "--payload-ref")?.to_string());
+            }
+            "--payload-hash" => {
+                i += 1;
+                payload_hash = Some(require_value(args, i, "--payload-hash")?.to_string());
+            }
+            "--privacy" => {
+                i += 1;
+                privacy = require_value(args, i, "--privacy")?.to_string();
+            }
+            "--count" => {
+                i += 1;
+                counts.push(parse_count(require_value(args, i, "--count")?)?);
+            }
+            "--label" => {
+                i += 1;
+                labels.push(parse_label(require_value(args, i, "--label")?)?);
+            }
+            "--ok" => {
+                i += 1;
+                ok = parse_bool(require_value(args, i, "--ok")?)?;
+            }
+            "--error-class" => {
+                i += 1;
+                error_class = Some(require_value(args, i, "--error-class")?.to_string());
+            }
+            "--error-message" => {
+                i += 1;
+                error_message = Some(require_value(args, i, "--error-message")?.to_string());
+            }
+            "--error-retryable" => {
+                i += 1;
+                error_retryable = Some(parse_bool(require_value(args, i, "--error-retryable")?)?);
+            }
+            value if value.starts_with('-') => {
+                return Err(UcError::Message(format!(
+                    "unknown event emit option: {value}"
+                )));
+            }
+            value => {
+                if kind.is_none() {
+                    kind = Some(value.to_string());
+                } else {
+                    return Err(UcError::Message(format!(
+                        "unexpected event emit argument: {value}"
+                    )));
+                }
+            }
+        }
+        i += 1;
+    }
+
+    let kind = kind.ok_or_else(|| UcError::Message("missing --kind".to_string()))?;
+    let source = source.ok_or_else(|| UcError::Message("missing --source".to_string()))?;
+    let subject = subject.ok_or_else(|| UcError::Message("missing --subject".to_string()))?;
+    validate_event_token("event_id", event_id.as_deref().unwrap_or("evt_placeholder"))?;
+    validate_event_token("kind", &kind)?;
+    validate_event_token("source", &source)?;
+    validate_event_token("subject", &subject)?;
+    if !(0..=100).contains(&priority) {
+        return Err(UcError::Message(format!(
+            "invalid --priority: {priority}. Must be between 0 and 100."
+        )));
+    }
+    validate_privacy(&privacy)?;
+    if let Some(hash) = payload_hash.as_deref() {
+        if !hash.starts_with("sha256:") {
+            return Err(UcError::Message(
+                "invalid --payload-hash: expected sha256:<hash>".to_string(),
+            ));
+        }
+    }
+    Ok(EventInput {
+        event_id,
+        kind,
+        source,
+        subject,
+        occurred_at,
+        actor,
+        run_id,
+        trace_id,
+        parent_event_id,
+        priority,
+        payload_ref,
+        payload_hash,
+        privacy,
+        counts,
+        labels,
+        ok,
+        error_class,
+        error_message,
+        error_retryable,
+    })
+}
+
+fn parse_count(raw: &str) -> Result<(String, i64)> {
+    let (key, value) = raw
+        .split_once('=')
+        .ok_or_else(|| UcError::Message(format!("invalid --count, expected key=value: {raw}")))?;
+    validate_event_token("count key", key)?;
+    let value = value
+        .parse::<i64>()
+        .map_err(|_| UcError::Message(format!("invalid count value: {value}")))?;
+    Ok((key.to_string(), value))
+}
+
+fn parse_label(raw: &str) -> Result<(String, String)> {
+    let (key, value) = raw
+        .split_once('=')
+        .ok_or_else(|| UcError::Message(format!("invalid --label, expected key=value: {raw}")))?;
+    validate_event_token("label key", key)?;
+    if value.is_empty() || value.len() > 256 {
+        return Err(UcError::Message(format!("invalid label value: {value}")));
+    }
+    Ok((key.to_string(), value.to_string()))
+}
+
+fn validate_privacy(value: &str) -> Result<()> {
+    match value {
+        "public" | "internal" | "metadata_only" | "sensitive_ref" => Ok(()),
+        _ => Err(UcError::Message(format!(
+            "invalid --privacy: {value}. Expected public, internal, metadata_only, or sensitive_ref."
+        ))),
+    }
+}
+
+fn parse_bool(raw: &str) -> Result<bool> {
+    match raw {
+        "true" | "1" | "yes" => Ok(true),
+        "false" | "0" | "no" => Ok(false),
+        _ => Err(UcError::Message(format!("invalid boolean: {raw}"))),
+    }
+}
+
+fn validate_event_token(label: &str, value: &str) -> Result<()> {
+    if value.is_empty() || value.len() > 128 {
+        return Err(UcError::Message(format!("invalid {label}: {value}")));
+    }
+    if !value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | ':' | '/'))
+    {
+        return Err(UcError::Message(format!(
+            "invalid {label}: {value}. Use letters, numbers, _, -, ., :, and /."
+        )));
+    }
+    Ok(())
+}
+
+fn render_event_json(input: &EventInput, host: &str) -> Result<String> {
+    let event_id = input.event_id.clone().unwrap_or(new_event_id()?);
+    let now = iso_timestamp()?;
+    let occurred_at = input.occurred_at.as_deref().unwrap_or(&now);
+    let received_at = iso_timestamp()?;
+    let actor = json_optional_string(input.actor.as_deref());
+    let run_id = json_optional_string(input.run_id.as_deref());
+    let trace_id = json_optional_string(input.trace_id.as_deref());
+    let parent_event_id = json_optional_string(input.parent_event_id.as_deref());
+    let payload_ref = json_optional_string(input.payload_ref.as_deref());
+    let payload_hash = json_optional_string(input.payload_hash.as_deref());
+    let counts = input
+        .counts
+        .iter()
+        .map(|(key, value)| format!("{}:{}", json_string(key), value))
+        .collect::<Vec<_>>()
+        .join(",");
+    let labels = input
+        .labels
+        .iter()
+        .map(|(key, value)| format!("{}:{}", json_string(key), json_string(value)))
+        .collect::<Vec<_>>()
+        .join(",");
+    let error = render_event_error(input);
+    Ok(format!(
+        "{{\"schema_version\":\"uc.event.v1\",\"event_id\":{},\"kind\":{},\"source\":{},\"subject\":{},\"occurred_at\":{},\"received_at\":{},\"host\":{},\"actor\":{},\"run_id\":{},\"trace_id\":{},\"parent_event_id\":{},\"priority\":{},\"ok\":{},\"payload_ref\":{},\"payload_hash\":{},\"privacy\":{},\"counts\":{{{}}},\"labels\":{{{}}},\"error\":{}}}",
+        json_string(&event_id),
+        json_string(&input.kind),
+        json_string(&input.source),
+        json_string(&input.subject),
+        json_string(occurred_at),
+        json_string(&received_at),
+        json_string(host),
+        actor,
+        run_id,
+        trace_id,
+        parent_event_id,
+        input.priority,
+        input.ok,
+        payload_ref,
+        payload_hash,
+        json_string(&input.privacy),
+        counts,
+        labels,
+        error
+    ))
+}
+
+fn render_event_error(input: &EventInput) -> String {
+    if input.error_class.is_none()
+        && input.error_message.is_none()
+        && input.error_retryable.is_none()
+    {
+        return "null".to_string();
+    }
+    let class = json_optional_string(input.error_class.as_deref());
+    let message = json_optional_string(input.error_message.as_deref());
+    let retryable = input
+        .error_retryable
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "null".to_string());
+    format!(
+        "{{\"class\":{},\"message\":{},\"retryable\":{}}}",
+        class, message, retryable
+    )
+}
+
+fn append_event(config: &Config, event_json: &str) -> Result<()> {
+    if config.is_local() {
+        append_local_server_event(config, event_json)
+    } else {
+        append_remote_server_event(config, event_json)
+    }
+}
+
+fn append_local_server_event(config: &Config, event_json: &str) -> Result<()> {
+    let path = event_log_path_for_config(config)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    if let Some(event_id) = event_field(event_json, "event_id") {
+        if path.exists()
+            && fs::read_to_string(&path)?
+                .lines()
+                .any(|line| line.contains(&format!("\"event_id\":\"{event_id}\"")))
+        {
+            return Ok(());
+        }
+    }
+    let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
+    writeln!(file, "{event_json}")?;
+    Ok(())
+}
+
+fn append_remote_server_event(config: &Config, event_json: &str) -> Result<()> {
+    let dir = format!("{}/events", config.remote_root.trim_end_matches('/'));
+    let path = format!("{dir}/events.jsonl");
+    let event_id = event_field(event_json, "event_id").unwrap_or_default();
+    let command = format!(
+        "mkdir -p {dir} && (test -f {path} && grep -F {needle} {path} >/dev/null 2>&1 || printf '%s\\n' {event} >> {path})",
+        dir = remote_path_arg(&dir),
+        path = remote_path_arg(&path),
+        needle = sh_quote(&format!("\"event_id\":\"{event_id}\"")),
+        event = sh_quote(event_json)
+    );
+    run_command("ssh", [config.remote.as_str(), command.as_str()])
+}
+
+fn event_tail(args: &[String]) -> Result<()> {
+    let limit = parse_limit_args(args, "event tail")?.unwrap_or(20);
+    let lines = read_event_lines()?;
+    for line in tail_lines(&lines, limit) {
+        println!("{line}");
+    }
+    Ok(())
+}
+
+fn event_query(args: &[String]) -> Result<()> {
+    if args.is_empty() || args.iter().any(|arg| arg == "-h" || arg == "--help") {
+        println!("Usage: uc event query <text> [--limit <n>]");
+        return Ok(());
+    }
+    let mut terms = Vec::new();
+    let mut limit = 100usize;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--limit" => {
+                i += 1;
+                let raw = require_value(args, i, "--limit")?;
+                limit = raw
+                    .parse::<usize>()
+                    .map_err(|_| UcError::Message(format!("invalid --limit: {raw}")))?;
+            }
+            value if value.starts_with('-') => {
+                return Err(UcError::Message(format!(
+                    "unknown event query option: {value}"
+                )));
+            }
+            value => terms.push(value.to_string()),
+        }
+        i += 1;
+    }
+    let needle = terms.join(" ").to_lowercase();
+    let matches = read_event_lines()?
+        .into_iter()
+        .filter(|line| line.to_lowercase().contains(&needle))
+        .take(limit)
+        .collect::<Vec<_>>();
+    if matches.is_empty() {
+        println!("No matching events");
+    } else {
+        for line in matches {
+            println!("{line}");
+        }
+    }
+    Ok(())
+}
+
+fn parse_limit_args(args: &[String], command: &str) -> Result<Option<usize>> {
+    let mut limit = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--limit" | "-n" => {
+                i += 1;
+                let raw = require_value(args, i, "--limit")?;
+                limit = Some(
+                    raw.parse::<usize>()
+                        .map_err(|_| UcError::Message(format!("invalid --limit: {raw}")))?,
+                );
+            }
+            "-h" | "--help" => {
+                println!("Usage: uc {command} [--limit <n>]");
+                return Ok(Some(0));
+            }
+            value => {
+                return Err(UcError::Message(format!(
+                    "unknown {command} option: {value}"
+                )));
+            }
+        }
+        i += 1;
+    }
+    Ok(limit)
+}
+
+fn tail_lines(lines: &[String], limit: usize) -> &[String] {
+    let start = lines.len().saturating_sub(limit);
+    &lines[start..]
+}
+
+fn read_event_lines() -> Result<Vec<String>> {
+    let config = load_event_config()?;
+    let path = event_log_path_for_config(&config)?;
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    Ok(fs::read_to_string(path)?
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(str::to_string)
+        .collect())
+}
+
+fn event_log_path_for_config(config: &Config) -> Result<PathBuf> {
+    if config.is_local() {
+        Ok(expand_home(&config.remote_root)?
+            .join("events")
+            .join("events.jsonl"))
+    } else {
+        Ok(config_dir()?.join("events").join("events.jsonl"))
+    }
+}
+
+fn load_event_config() -> Result<Config> {
+    load_config().or_else(|_| {
+        Ok(Config {
+            remote: "local".to_string(),
+            remote_root: config_dir()?.to_string_lossy().to_string(),
+            host_id: default_host_id(),
+            query: QueryConfig {
+                command: DEFAULT_QUERY_COMMAND.to_string(),
+                args: DEFAULT_QUERY_ARGS.to_string(),
+            },
+            sources: Vec::new(),
+        })
+    })
+}
+
+fn event_storage_dir(name: &str) -> Result<PathBuf> {
+    Ok(config_dir()?.join("events").join(name))
+}
+
+fn save_outbox_event(event_json: &str) -> Result<PathBuf> {
+    let event_id = event_field(event_json, "event_id")
+        .ok_or_else(|| UcError::Message("event missing event_id".to_string()))?;
+    let dir = event_storage_dir("outbox")?;
+    fs::create_dir_all(&dir)?;
+    let path = dir.join(format!("{event_id}.json"));
+    fs::write(&path, format!("{event_json}\n"))?;
+    Ok(path)
+}
+
+fn mark_event_sent(event_json: &str) -> Result<()> {
+    let event_id = event_field(event_json, "event_id")
+        .ok_or_else(|| UcError::Message("event missing event_id".to_string()))?;
+    let outbox_path = event_storage_dir("outbox")?.join(format!("{event_id}.json"));
+    let sent_dir = event_storage_dir("sent")?;
+    fs::create_dir_all(&sent_dir)?;
+    let sent_path = sent_dir.join(format!("{event_id}.json"));
+    fs::write(&sent_path, format!("{event_json}\n"))?;
+    if outbox_path.exists() {
+        fs::remove_file(outbox_path)?;
+    }
+    Ok(())
+}
+
+fn event_flush(args: &[String]) -> Result<()> {
+    if args.iter().any(|arg| arg == "-h" || arg == "--help") {
+        println!("Usage: uc event flush");
+        return Ok(());
+    }
+    if !args.is_empty() {
+        return Err(UcError::Message("usage: uc event flush".to_string()));
+    }
+    let config = load_event_config()?;
+    let outbox_dir = event_storage_dir("outbox")?;
+    if !outbox_dir.exists() {
+        println!("flushed: 0");
+        return Ok(());
+    }
+    let mut flushed = 0usize;
+    let mut failed = 0usize;
+    for entry in fs::read_dir(&outbox_dir)? {
+        let path = entry?.path();
+        if !path.is_file() {
+            continue;
+        }
+        let event = fs::read_to_string(&path)?;
+        let event = event.trim();
+        if event.is_empty() {
+            continue;
+        }
+        match append_event(&config, event) {
+            Ok(()) => {
+                mark_event_sent(event)?;
+                flushed += 1;
+            }
+            Err(error) => {
+                failed += 1;
+                ui_warn(format!("pending {}: {error}", path.display()));
+            }
+        }
+    }
+    println!("flushed: {flushed}");
+    if failed > 0 {
+        return Err(UcError::Message(format!(
+            "failed to flush {failed} event(s)"
+        )));
+    }
+    Ok(())
+}
+
+fn event_status(args: &[String]) -> Result<()> {
+    if args.iter().any(|arg| arg == "-h" || arg == "--help") {
+        println!("Usage: uc event status");
+        return Ok(());
+    }
+    if !args.is_empty() {
+        return Err(UcError::Message("usage: uc event status".to_string()));
+    }
+    let config = load_event_config()?;
+    let server = if config.is_local() {
+        format!("local {}", expand_home(&config.remote_root)?.display())
+    } else {
+        format!("{}:{}", config.remote, config.remote_root)
+    };
+    println!("server: {server}");
+    println!("host: {}", config.host_id);
+    println!("pending: {}", count_files(&event_storage_dir("outbox")?)?);
+    println!("sent: {}", count_files(&event_storage_dir("sent")?)?);
+    Ok(())
+}
+
+fn count_files(path: &Path) -> Result<usize> {
+    if !path.exists() {
+        return Ok(0);
+    }
+    Ok(fs::read_dir(path)?
+        .filter_map(std::result::Result::ok)
+        .filter(|entry| entry.path().is_file())
+        .count())
+}
+
+fn new_event_id() -> Result<String> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| UcError::Message(format!("system clock before unix epoch: {error}")))?;
+    Ok(format!(
+        "evt_{}_{}_{}",
+        std::process::id(),
+        now.as_secs(),
+        now.subsec_nanos()
+    ))
+}
+
+fn iso_timestamp() -> Result<String> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| UcError::Message(format!("system clock before unix epoch: {error}")))?;
+    Ok(format_unix_millis(
+        now.as_secs() as i64,
+        now.subsec_millis(),
+    ))
+}
+
+fn format_unix_millis(seconds: i64, millis: u32) -> String {
+    let days = seconds.div_euclid(86_400);
+    let secs_of_day = seconds.rem_euclid(86_400);
+    let (year, month, day) = civil_from_days(days);
+    let hour = secs_of_day / 3_600;
+    let minute = (secs_of_day % 3_600) / 60;
+    let second = secs_of_day % 60;
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{millis:03}Z")
+}
+
+fn civil_from_days(days_since_epoch: i64) -> (i64, u32, u32) {
+    let z = days_since_epoch + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = mp + if mp < 10 { 3 } else { -9 };
+    let year = y + if m <= 2 { 1 } else { 0 };
+    (year, m as u32, d as u32)
+}
+
+fn json_optional_string(value: Option<&str>) -> String {
+    value.map(json_string).unwrap_or_else(|| "null".to_string())
+}
+
+fn json_string(value: &str) -> String {
+    let mut out = String::from("\"");
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '\"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            ch if ch.is_control() => out.push_str(&format!("\\u{:04x}", ch as u32)),
+            ch => out.push(ch),
+        }
+    }
+    out.push('\"');
+    out
+}
+
+fn event_field(event_json: &str, field: &str) -> Option<String> {
+    let needle = format!("\"{field}\":\"");
+    let rest = event_json.split_once(&needle)?.1;
+    Some(rest.split('"').next()?.to_string())
+}
+
 fn cmd_query(args: &[String]) -> Result<()> {
     if args.is_empty() || args.iter().any(|arg| arg == "-h" || arg == "--help") {
         println!("Usage: uc query <query>");
@@ -2206,7 +2908,8 @@ fn set_source_enabled(config: &mut Config, name: &str, enabled: bool) -> Result<
 }
 
 fn remote_source_dir_name(source: &Source) -> String {
-    source.local_path.rsplit('/').next()
+    known_source(&source.agent)
+        .and_then(|known| known.path.rsplit('/').next())
         .unwrap_or(source.agent.as_str())
         .to_string()
 }
@@ -3374,7 +4077,7 @@ mod tests {
         };
         assert_eq!(
             remote_dir(&cfg, &custom_source),
-            "~/.ultracontext/workspace/work-laptop/notes"
+            "~/.ultracontext/workspace/work-laptop/project_notes"
         );
     }
 

@@ -106,6 +106,13 @@ Quote project names, file names, errors, branches, and user wording exactly — 
 | `uc source enable <name>` / `disable <name>` | Toggle one source. |
 | `uc doctor` | Verify deps (mutagen, ssh), config, remote reachability, query agent. |
 | `uc update` | Update using the active install manager without switching managers silently. |
+| `uc event emit --kind <kind> --source <source> --subject <id> [--privacy metadata_only] [--label key=value]` | Emit a native `uc.event.v1` Event Envelope to the configured server log. |
+| `uc event tail [--limit <n>]` | Print recent committed events. |
+| `uc event query <text> [--limit <n>]` | Search committed events by text. |
+| `uc event flush` | Retry pending events from the local outbox. |
+| `uc event status` | Show event server, host, pending, and sent counts. |
+
+Native event rules: events use the versioned `uc.event.v1` envelope. The server log is authoritative. With `remote = "local"`, events commit to `remote_root/events/events.jsonl`; with SSH remotes, `uc` appends to `<remote_root>/events/events.jsonl` over SSH. The client keeps `~/.ultracontext/events/outbox/` only as a durable retry buffer and moves committed events to `~/.ultracontext/events/sent/`. Events are small facts; large/details payloads belong in artifacts referenced by `payload_ref`. Do not put raw prompts, full transcripts, secrets, cookies, API keys, tokens, headers, signed URLs, or huge payloads in events; use small metadata, labels, hashes, counts, and `payload_ref` pointers.
 
 Source names: letters, numbers, `-`, `_`. Start with letter or number.
 
