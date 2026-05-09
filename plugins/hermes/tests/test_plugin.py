@@ -112,6 +112,136 @@ class HermesUltraContextPluginTests(unittest.TestCase):
             self.assertIn("file:///tmp/new.md", context)
             self.assertNotIn("chatgpt.app.closed", context)
 
+    def test_session_updated_reads_payload_ref_and_injects_short_gist(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            session_path = tmp_path / "chatgpt-session.md"
+            session_path.write_text(
+                "# Hermes e a ervilha\n\n"
+                "User: por que o Hermes não leu a sessão nova antes de responder?\n\n"
+                "Assistant: porque o plugin só passou metadata e deveria abrir o payload_ref quando relevante.\n"
+                "User: então a sessão nova deve gerar um look geral bounded.\n",
+            )
+            event = {
+                "event_id": "new-session",
+                "kind": "chatgpt.session.updated",
+                "subject": "chatgpt:session:abc",
+                "payload_ref": f"file://{session_path}",
+                "labels": {"title": "Hermes e a ervilha"},
+                "counts": {"message_count": 10},
+            }
+            fake_uc = make_fake_uc(
+                tmp_path,
+                '{"event_id":"baseline","kind":"baseline"}\n' + json.dumps(event) + "\n",
+            )
+            state_path = tmp_path / "state.json"
+            state_path.write_text(json.dumps({"s1": "baseline"}))
+
+            with patched_env(ULTRACONTEXT_CLI=str(fake_uc), ULTRACONTEXT_HERMES_STATE_FILE=str(state_path)):
+                plugin = load_plugin()
+                result = plugin.on_pre_llm_call(
+                    session_id="s1",
+                    user_message="por que o agent nao leu a sessao do GPT antes de responder?",
+                )
+
+            self.assertIsInstance(result, dict)
+            context = result["context"]
+            self.assertIn("New ChatGPT session since last turn", context)
+            self.assertIn("title=Hermes e a ervilha", context)
+            self.assertIn("gist=", context)
+            self.assertIn("payload_ref", context)
+            self.assertIn("plugin só passou metadata", context)
+            self.assertNotIn("User: por que", context)
+            self.assertNotIn("Assistant:", context)
+            self.assertLess(len(context), 1200)
+
+    def test_session_payload_is_bounded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            session_path = tmp_path / "large-session.md"
+            session_path.write_text(
+                "# Hermes gigante\n\n"
+                "Resumo importante sobre Hermes consultar payload_ref de sessões novas.\n\n"
+                + "linha irrelevante com muito texto " * 1000
+            )
+            event = {
+                "event_id": "large-session",
+                "kind": "chatgpt.session.updated",
+                "subject": "chatgpt:session:large",
+                "payload_ref": f"file://{session_path}",
+                "labels": {"title": "Hermes gigante"},
+            }
+            fake_uc = make_fake_uc(tmp_path, '{"event_id":"baseline","kind":"baseline"}\n' + json.dumps(event) + "\n")
+            state_path = tmp_path / "state.json"
+            state_path.write_text(json.dumps({"s1": "baseline"}))
+
+            with patched_env(ULTRACONTEXT_CLI=str(fake_uc), ULTRACONTEXT_HERMES_STATE_FILE=str(state_path)):
+                plugin = load_plugin()
+                result = plugin.on_pre_llm_call(session_id="s1", user_message="Hermes deve ler sessão nova?")
+
+            self.assertIsInstance(result, dict)
+            self.assertLess(len(result["context"]), 1200)
+            self.assertIn("Resumo importante", result["context"])
+            self.assertNotIn("linha irrelevante com muito texto " * 20, result["context"])
+
+    def test_irrelevant_session_updated_does_not_inject_payload_context(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            session_path = tmp_path / "food-session.md"
+            session_path.write_text("# Receita de pão\n\nComo assar pão de fermentação natural em casa.\n")
+            event = {
+                "event_id": "food-session",
+                "kind": "chatgpt.session.updated",
+                "subject": "chatgpt:session:food",
+                "payload_ref": f"file://{session_path}",
+                "labels": {"title": "Receita de pão"},
+            }
+            fake_uc = make_fake_uc(tmp_path, '{"event_id":"baseline","kind":"baseline"}\n' + json.dumps(event) + "\n")
+            state_path = tmp_path / "state.json"
+            state_path.write_text(json.dumps({"s1": "baseline"}))
+
+            with patched_env(ULTRACONTEXT_CLI=str(fake_uc), ULTRACONTEXT_HERMES_STATE_FILE=str(state_path)):
+                plugin = load_plugin()
+                result = plugin.on_pre_llm_call(session_id="s1", user_message="como configuro postgres no docker?")
+
+            self.assertIsNone(result)
+
+    def test_lifecycle_noise_is_suppressed_when_session_update_is_present(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            session_path = tmp_path / "hermes-session.md"
+            session_path.write_text("# Hermes payload\n\nSessão sobre Hermes ler payload_ref antes de responder.\n")
+            lifecycle = {
+                "event_id": "closed",
+                "kind": "chatgpt.app.closed",
+                "subject": "chatgpt:app:ios",
+                "labels": {"app": "chatgpt"},
+                "counts": {"changed_sessions": 1, "synced": 1, "failed": 0},
+            }
+            updated = {
+                "event_id": "updated",
+                "kind": "chatgpt.session.updated",
+                "subject": "chatgpt:session:hermes",
+                "payload_ref": f"file://{session_path}",
+                "labels": {"title": "Hermes payload"},
+            }
+            fake_uc = make_fake_uc(
+                tmp_path,
+                '{"event_id":"baseline","kind":"baseline"}\n' + json.dumps(lifecycle) + "\n" + json.dumps(updated) + "\n",
+            )
+            state_path = tmp_path / "state.json"
+            state_path.write_text(json.dumps({"s1": "baseline"}))
+
+            with patched_env(ULTRACONTEXT_CLI=str(fake_uc), ULTRACONTEXT_HERMES_STATE_FILE=str(state_path)):
+                plugin = load_plugin()
+                result = plugin.on_pre_llm_call(session_id="s1", user_message="o que rolou na sessão do Hermes?")
+
+            self.assertIsInstance(result, dict)
+            context = result["context"]
+            self.assertIn("New ChatGPT session since last turn", context)
+            self.assertNotIn("chatgpt.app.closed", context)
+            self.assertNotIn("changed_sessions", context)
+
     def test_pre_llm_call_injects_compact_recent_uc_events_without_running_deep_query(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)

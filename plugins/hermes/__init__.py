@@ -10,14 +10,18 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Any, Dict, Optional
+from urllib.parse import unquote, urlparse
 
 DEFAULT_EVENT_LIMIT = 20
 DEFAULT_TIMEOUT_SECONDS = 3
 MAX_CONTEXT_CHARS = 3000
 MAX_EVENT_LIMIT = 50
+MAX_PAYLOAD_READ_CHARS = 4096
+MAX_GIST_CHARS = 260
 
 
 def register(ctx: Any) -> None:
@@ -46,7 +50,7 @@ def on_pre_llm_call(**kwargs: Any) -> Optional[Dict[str, str]]:
     if not events:
         return None
 
-    context = _format_context(events)
+    context = _format_context(events, kwargs.get("user_message"))
     if not context:
         return None
     return {"context": context}
@@ -169,36 +173,69 @@ def _save_state(state: Dict[str, str]) -> None:
         pass
 
 
-def _format_context(events: str) -> str:
-    compact_events = _compact_events(events)
+def _format_context(events: str, user_message: Any = None) -> str:
+    compact_events = _compact_events(events, user_message)
     if not compact_events:
         return ""
     return (
         "## UltraContext activity signal\n\n"
-        "Recent shared UC events (metadata only):\n"
         f"{compact_events}\n\n"
         "If relevant, query deeper with `uc event query \"<topic>\" --limit 5`."
     )
 
 
-def _compact_events(events: str) -> str:
-    lines = []
+def _compact_events(events: str, user_message: Any = None) -> str:
+    parsed_events = []
+    fallback_lines = []
     for raw_line in events.splitlines():
         line = raw_line.strip()
         if not line:
             continue
-        lines.append(_compact_event_line(line))
-    return "\n".join(line for line in lines if line)
+        event = _parse_event(line)
+        if event is None:
+            fallback_lines.append(_compact_event_line(line))
+            continue
+        parsed_events.append(event)
+
+    session_lines = []
+    for event in parsed_events:
+        session_line = _compact_session_event(event, user_message)
+        if session_line:
+            session_lines.append(session_line)
+
+    if session_lines:
+        return "Recent relevant session updates:\n" + "\n".join(session_lines)
+
+    non_session_lines = []
+    for event in parsed_events:
+        if _is_session_updated_event(event) and _session_event_has_readable_payload(event):
+            continue
+        non_session_lines.append(_compact_event_dict(event))
+
+    all_lines = fallback_lines + [line for line in non_session_lines if line]
+    if not all_lines:
+        return ""
+    return "Recent shared UC events (metadata only):\n" + "\n".join(all_lines)
 
 
 def _compact_event_line(line: str) -> str:
+    event = _parse_event(line)
+    if event is None:
+        return f"- {line}"
+    return _compact_event_dict(event)
+
+
+def _parse_event(line: str) -> Optional[Dict[str, Any]]:
     try:
         event = json.loads(line)
     except json.JSONDecodeError:
-        return f"- {line}"
+        return None
     if not isinstance(event, dict):
-        return f"- {line}"
+        return None
+    return event
 
+
+def _compact_event_dict(event: Dict[str, Any]) -> str:
     kind = str(event.get("kind") or "event")
     subject = str(event.get("subject") or "-")
     labels = event.get("labels") if isinstance(event.get("labels"), dict) else {}
@@ -218,6 +255,171 @@ def _compact_event_line(line: str) -> str:
     if payload_ref:
         pieces.append(f"payload_ref={payload_ref}")
     return " | ".join(pieces)
+
+
+def _is_session_updated_event(event: Dict[str, Any]) -> bool:
+    return str(event.get("kind") or "").endswith(".session.updated")
+
+
+def _session_event_has_readable_payload(event: Dict[str, Any]) -> bool:
+    payload_ref = str(event.get("payload_ref") or "")
+    return bool(payload_ref and _read_payload_ref(payload_ref))
+
+
+def _compact_session_event(event: Dict[str, Any], user_message: Any) -> str:
+    if not _is_session_updated_event(event):
+        return ""
+
+    payload_ref = str(event.get("payload_ref") or "")
+    if not payload_ref:
+        return ""
+
+    payload_text = _read_payload_ref(payload_ref)
+    if not payload_text:
+        return ""
+
+    labels = event.get("labels") if isinstance(event.get("labels"), dict) else {}
+    title = str(labels.get("title") or _extract_markdown_title(payload_text) or "session")
+    gist = _session_gist(payload_text, user_message, title)
+    if not gist:
+        return ""
+
+    relevance_text = f"{title}\n{gist}\n{event.get('subject') or ''}\n{event.get('kind') or ''}"
+    if not _is_relevant_session(user_message, relevance_text):
+        return ""
+
+    source = _event_source_label(event)
+    parts = [f"- New {source} session since last turn", f"title={_clean_inline(title)}", f"gist={_clean_inline(gist)}"]
+    parts.append(f"payload_ref={payload_ref}")
+    return " | ".join(parts)
+
+
+def _event_source_label(event: Dict[str, Any]) -> str:
+    kind = str(event.get("kind") or "")
+    labels = event.get("labels") if isinstance(event.get("labels"), dict) else {}
+    app = str(labels.get("app") or "")
+    source = f"{kind} {app}".lower()
+    if "chatgpt" in source:
+        return "ChatGPT"
+    if "claude" in source:
+        return "Claude"
+    return "UC"
+
+
+def _read_payload_ref(payload_ref: str) -> str:
+    try:
+        parsed = urlparse(payload_ref)
+        if parsed.scheme != "file":
+            return ""
+        path = Path(unquote(parsed.path)).expanduser()
+        if not path.exists() or not path.is_file():
+            return ""
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            return handle.read(MAX_PAYLOAD_READ_CHARS)
+    except OSError:
+        return ""
+
+
+def _extract_markdown_title(text: str) -> str:
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            return stripped.lstrip("#").strip()
+    return ""
+
+
+def _session_gist(text: str, user_message: Any, title: str) -> str:
+    transcript_marker = re.search(r"(?im)^##\s+transcript\s*$", text)
+    if transcript_marker:
+        text = text[transcript_marker.end() :]
+
+    candidates = []
+    for line in text.splitlines():
+        cleaned = _clean_payload_line(line)
+        if not cleaned or cleaned == title:
+            continue
+        candidates.append(cleaned)
+
+    if not candidates:
+        return ""
+
+    user_tokens = _tokens(str(user_message or ""))
+    best = candidates[0]
+    best_score = -1
+    for candidate in candidates[:40]:
+        score = len(user_tokens & _tokens(candidate))
+        if any(marker in candidate.lower() for marker in ("deveria", "should", "porque", "fix", "corrigir", "plugin")):
+            score += 3
+        if score > best_score:
+            best = candidate
+            best_score = score
+
+    if len(best) > MAX_GIST_CHARS:
+        best = best[: MAX_GIST_CHARS - 1].rstrip() + "…"
+    return best
+
+
+def _clean_payload_line(line: str) -> str:
+    stripped = line.strip()
+    if not stripped or stripped == "---" or stripped.startswith("<!--"):
+        return ""
+    lowered = stripped.lower()
+    if lowered.startswith((
+        "schema:", "agent:", "session_id:", "conversation_id:", "title:", "started_at:", "ended_at:",
+        "model:", "record_count:", "roles:", "content_types:", "current_node:", "branch_count:",
+        "branch_point_count:", "current_path_length:", "leaf_nodes:", "source_path:", "raw_json_path:",
+        "source_sha256:", "delta_sha256:", "generated_at:", "markdown_sha256:", "## metadata",
+        "## transcript", "- session_id:", "- started_at:", "- ended_at:", "- model:", "- record_count:",
+        "- current_node:", "- branch_count:", "- branch_point_count:", "- current_path_length:", "- roles:",
+        "- leaf_nodes:",
+    )):
+        return ""
+    if re.match(r"^#{1,6}\s+\d+\.\s+(user|assistant|system)\b", stripped, flags=re.IGNORECASE):
+        return ""
+    if stripped.startswith("#") and " session " in f" {lowered} ":
+        return ""
+    stripped = stripped.lstrip("# ").strip()
+    stripped = re.sub(r"^(user|assistant|system|human|ai)\s*:\s*", "", stripped, flags=re.IGNORECASE)
+    stripped = _redact_inline(stripped)
+    return _clean_inline(stripped)
+
+
+def _clean_inline(text: str) -> str:
+    return " ".join(str(text).split())
+
+
+def _redact_inline(text: str) -> str:
+    text = re.sub(r"(?i)(api[_-]?key|token|secret|password)\s*[:=]\s*\S+", r"\1=[REDACTED]", text)
+    text = re.sub(r"(?i)bearer\s+[a-z0-9._~+/=-]+", "Bearer [REDACTED]", text)
+    return text
+
+
+def _is_relevant_session(user_message: Any, session_text: str) -> bool:
+    if not isinstance(user_message, str):
+        return False
+    user_tokens = _tokens(user_message)
+    session_tokens = _tokens(session_text)
+    if user_tokens & session_tokens:
+        return True
+
+    lowered = user_message.lower()
+    generic_session_request = any(
+        marker in lowered
+        for marker in ("gpt", "chatgpt", "claude", "sessao", "sessão", "session", "o que fiz", "o que rolou")
+    )
+    if generic_session_request and any(source in session_text.lower() for source in ("chatgpt", "claude")):
+        return True
+    return False
+
+
+def _tokens(text: str) -> set[str]:
+    stopwords = {
+        "a", "ai", "as", "ao", "aos", "antes", "com", "como", "da", "das", "de", "do", "dos",
+        "e", "em", "eu", "na", "nas", "no", "nos", "o", "os", "ou", "para", "por", "pq",
+        "que", "se", "um", "uma", "the", "to", "and", "or", "of", "in", "on", "is", "it",
+    }
+    return {token for token in re.findall(r"[\wÀ-ÿ]+", text.lower()) if len(token) > 2 and token not in stopwords}
+
 
 
 def _is_trivial_user_message(message: Any) -> bool:
