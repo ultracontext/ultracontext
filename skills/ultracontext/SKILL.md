@@ -107,7 +107,6 @@ Quote project names, file names, errors, branches, and user wording exactly — 
 | `uc doctor` | Verify deps (mutagen, ssh), config, remote reachability, query agent. |
 | `uc update` | Update using the active install manager without switching managers silently. |
 | `uc event tail [--limit <n>]` | Show the most recent shared activity/events. Use this first when the user asks where things stopped or what agents have been doing. |
-| `uc event query <text> [--limit <n>]` | Search recent/shared activity by text. |
 
 Event rule: events are for small activity facts. Do not put raw prompts, full transcripts, secrets, cookies, tokens, headers, signed URLs, or huge payloads in events. Use `uc query` or referenced artifacts for deep context.
 

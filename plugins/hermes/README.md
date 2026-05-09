@@ -8,12 +8,7 @@ It registers a `pre_llm_call` hook and injects a small activity signal from:
 uc event tail --limit <n>
 ```
 
-The injected text is only a hint. It tells the LLM recent shared events exist and points it to the UltraContext skill/tools for deeper retrieval:
-
-```bash
-uc event query "<topic>" --limit 5
-uc query "<exact user question>"
-```
+The injected text is only a hint. It contains the bounded event tail summary already selected by the plugin.
 
 ## Boundary
 

@@ -48,17 +48,7 @@ On each turn, the plugin:
    ```
 
 3. Trims blank lines and bounds injected text.
-4. Returns a short context block telling the LLM:
-   - recent shared events exist;
-   - treat them as hints;
-   - if relevant, use the UltraContext skill/tools:
-
-     ```bash
-     uc event query "<topic>" --limit 5
-     uc query "<exact user question>"
-     ```
-
-It does **not** run `uc query` automatically. That is deliberate. The LLM should decide if deeper lookup is relevant to the current user message.
+4. Returns a short context block with the bounded event-tail summary already selected by the plugin.
 
 ## Privacy rules
 
@@ -127,11 +117,7 @@ Example:
 Recent shared events from UltraContext:
 <uc event tail output>
 
-Use these only as hints. If relevant to the user's current message, use the UltraContext skill/tools to search deeper:
-- `uc event query "<topic>" --limit 5`
-- `uc query "<exact user question with project/error names>"`
-
-Ignore this section if unrelated. Do not mention it unless it changes the answer.
+Use these only as hints. Ignore this section if unrelated. Do not mention it unless it changes the answer.
 ```
 
 ## Failure behavior

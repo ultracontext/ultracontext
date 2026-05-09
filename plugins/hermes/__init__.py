@@ -177,11 +177,7 @@ def _format_context(events: str, user_message: Any = None) -> str:
     compact_events = _compact_events(events, user_message)
     if not compact_events:
         return ""
-    return (
-        "## UltraContext activity signal\n\n"
-        f"{compact_events}\n\n"
-        "If relevant, query deeper with `uc event query \"<topic>\" --limit 5`."
-    )
+    return "## UltraContext activity signal\n\n" f"{compact_events}"
 
 
 def _compact_events(events: str, user_message: Any = None) -> str:

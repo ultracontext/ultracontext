@@ -81,7 +81,6 @@ Event commands:
 | `uc event emit --kind <kind> --source <source> --subject <id> [--privacy metadata_only] [--label key=value]` | Create a pending native UltraContext Event Envelope v1 and commit it to the configured server log |
 | `uc event commit --from-stdin` | Server-side commit path: read one event JSON from stdin, set/overwrite `received_at`, dedupe, and append to the server log |
 | `uc event tail [--limit <n>]` | Print recent committed events |
-| `uc event query <text> [--limit <n>]` | Search committed events by text |
 | `uc event flush` | Retry events still pending in the local outbox |
 | `uc event status` | Show server, host id, pending outbox count, and sent count |
 

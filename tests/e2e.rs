@@ -245,7 +245,7 @@ fn manages_sources_from_cli() {
 }
 
 #[test]
-fn event_log_emits_tails_and_queries_jsonl_events() {
+fn event_log_emits_and_tails_jsonl_events_only() {
     let run_id = unique_run_id();
     let home = env::temp_dir().join(format!("uc-events-home-{run_id}"));
 
@@ -307,21 +307,25 @@ fn event_log_emits_tails_and_queries_jsonl_events() {
     assert_success("uc event tail", tail);
     assert!(tail_stdout.contains("user_message"), "{tail_stdout}");
 
-    let query = uc(&home)
+    let help = uc(&home).args(["event", "--help"]).output().unwrap();
+    let help_stdout = String::from_utf8_lossy(&help.stdout).to_string();
+    assert_success("uc event help", help);
+    let removed_help_line = ["event", "query"].join(" ");
+    assert!(!help_stdout.contains(&removed_help_line), "{help_stdout}");
+
+    let removed_query = uc(&home)
         .args(["event", "query", "user_message"])
         .output()
         .unwrap();
-    let query_stdout = String::from_utf8_lossy(&query.stdout).to_string();
-    assert_success("uc event query", query);
-    assert!(query_stdout.contains("telegram:fase1"), "{query_stdout}");
-
-    let miss = uc(&home)
-        .args(["event", "query", "does-not-match"])
-        .output()
-        .unwrap();
-    let miss_stdout = String::from_utf8_lossy(&miss.stdout).to_string();
-    assert_success("uc event query miss", miss);
-    assert!(miss_stdout.contains("No matching events"), "{miss_stdout}");
+    let removed_query_stderr = String::from_utf8_lossy(&removed_query.stderr).to_string();
+    assert!(
+        !removed_query.status.success(),
+        "removed event subcommand should fail"
+    );
+    assert!(
+        removed_query_stderr.contains("unknown event command: query"),
+        "{removed_query_stderr}"
+    );
 
     let _ = fs::remove_dir_all(&home);
 }
@@ -801,7 +805,7 @@ fn event_emit_remote_ssh_uses_event_commit_command() {
 }
 
 #[test]
-fn event_tail_and_query_read_remote_ssh_server_log() {
+fn event_tail_reads_remote_ssh_server_log() {
     let run_id = unique_run_id();
     let home = env::temp_dir().join(format!("uc-events-remote-read-home-{run_id}"));
     let remote_root = home.join("remote-root");
@@ -827,7 +831,7 @@ fn event_tail_and_query_read_remote_ssh_server_log() {
     .unwrap();
     fs::write(
         remote_root.join("events").join("events.jsonl"),
-        "{\"schema_version\":\"uc.event.v1\",\"event_id\":\"evt_remote_tail_query\",\"kind\":\"remote.only\",\"source\":\"test\",\"subject\":\"remote:server\",\"occurred_at\":\"2026-05-08T12:00:00Z\",\"received_at\":\"2026-05-08T12:00:01Z\",\"host\":\"remote-host\",\"privacy\":\"metadata_only\"}\n",
+        "{\"schema_version\":\"uc.event.v1\",\"event_id\":\"evt_remote_tail_only\",\"kind\":\"remote.only\",\"source\":\"test\",\"subject\":\"remote:server\",\"occurred_at\":\"2026-05-08T12:00:00Z\",\"received_at\":\"2026-05-08T12:00:01Z\",\"host\":\"remote-host\",\"privacy\":\"metadata_only\"}\n",
     )
     .unwrap();
     fs::write(
@@ -847,23 +851,10 @@ fn event_tail_and_query_read_remote_ssh_server_log() {
     let tail_stdout = String::from_utf8_lossy(&tail.stdout).to_string();
     assert_success("uc event tail remote ssh", tail);
     assert!(
-        tail_stdout.contains("evt_remote_tail_query"),
+        tail_stdout.contains("evt_remote_tail_only"),
         "{tail_stdout}"
     );
     assert!(!tail_stdout.contains("evt_local_stale"), "{tail_stdout}");
-
-    let query = uc(&home)
-        .env("PATH", &test_path)
-        .args(["event", "query", "remote:server"])
-        .output()
-        .unwrap();
-    let query_stdout = String::from_utf8_lossy(&query.stdout).to_string();
-    assert_success("uc event query remote ssh", query);
-    assert!(
-        query_stdout.contains("evt_remote_tail_query"),
-        "{query_stdout}"
-    );
-    assert!(!query_stdout.contains("evt_local_stale"), "{query_stdout}");
 
     let _ = fs::remove_dir_all(&home);
 }

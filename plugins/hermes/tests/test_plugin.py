@@ -273,7 +273,7 @@ class HermesUltraContextPluginTests(unittest.TestCase):
             self.assertIn("Driver design", context)
             self.assertIn("file:///tmp/abc.md", context)
             self.assertIn("claude.session.updated", context)
-            self.assertIn("uc event query", context)
+            self.assertTrue(context.endswith("title=Update flow"))
             self.assertNotIn("schema_version", context)
             self.assertNotIn("raw_path", context)
             self.assertEqual((tmp_path / "uc.args").read_text(), "event tail --limit 7\n")

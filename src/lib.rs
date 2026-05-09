@@ -1829,7 +1829,6 @@ fn cmd_event(args: &[String]) -> Result<()> {
         Some("emit") => event_emit(&args[1..]),
         Some("commit") => event_commit(&args[1..]),
         Some("tail") => event_tail(&args[1..]),
-        Some("query") => event_query(&args[1..]),
         Some("flush") => event_flush(&args[1..]),
         Some("status") => event_status(&args[1..]),
         Some("-h" | "--help") | None => {
@@ -1844,7 +1843,7 @@ fn cmd_event(args: &[String]) -> Result<()> {
 
 fn print_event_help() {
     println!(
-        "Usage:\n  uc event emit --kind <kind> --source <source> --subject <id> [--event-id <id>] [--occurred-at <ts>] [--actor <actor>] [--priority <n>] [--run-id <id>] [--trace-id <id>] [--parent-event-id <id>] [--payload-ref <ref>] [--payload-hash sha256:<hash>] [--privacy <level>] [--count key=value] [--label key=value] [--ok true|false] [--error-class <class>] [--error-message <message>] [--error-retryable true|false]\n  uc event commit --from-stdin\n  uc event tail [--limit <n>]\n  uc event query <text> [--limit <n>]\n  uc event flush\n  uc event status"
+        "Usage:\n  uc event emit --kind <kind> --source <source> --subject <id> [--event-id <id>] [--occurred-at <ts>] [--actor <actor>] [--priority <n>] [--run-id <id>] [--trace-id <id>] [--parent-event-id <id>] [--payload-ref <ref>] [--payload-hash sha256:<hash>] [--privacy <level>] [--count key=value] [--label key=value] [--ok true|false] [--error-class <class>] [--error-message <message>] [--error-retryable true|false]\n  uc event commit --from-stdin\n  uc event tail [--limit <n>]\n  uc event flush\n  uc event status"
     );
 }
 
@@ -2367,48 +2366,6 @@ fn event_tail(args: &[String]) -> Result<()> {
     let lines = read_event_lines()?;
     for line in tail_lines(&lines, limit) {
         println!("{line}");
-    }
-    Ok(())
-}
-
-fn event_query(args: &[String]) -> Result<()> {
-    if args.is_empty() || args.iter().any(|arg| arg == "-h" || arg == "--help") {
-        println!("Usage: uc event query <text> [--limit <n>]");
-        return Ok(());
-    }
-    let mut terms = Vec::new();
-    let mut limit = 100usize;
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--limit" => {
-                i += 1;
-                let raw = require_value(args, i, "--limit")?;
-                limit = raw
-                    .parse::<usize>()
-                    .map_err(|_| UcError::Message(format!("invalid --limit: {raw}")))?;
-            }
-            value if value.starts_with('-') => {
-                return Err(UcError::Message(format!(
-                    "unknown event query option: {value}"
-                )));
-            }
-            value => terms.push(value.to_string()),
-        }
-        i += 1;
-    }
-    let needle = terms.join(" ").to_lowercase();
-    let matches = read_event_lines()?
-        .into_iter()
-        .filter(|line| line.to_lowercase().contains(&needle))
-        .take(limit)
-        .collect::<Vec<_>>();
-    if matches.is_empty() {
-        println!("No matching events");
-    } else {
-        for line in matches {
-            println!("{line}");
-        }
     }
     Ok(())
 }
