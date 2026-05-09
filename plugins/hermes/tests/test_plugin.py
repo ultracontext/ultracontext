@@ -113,6 +113,10 @@ class HermesUltraContextPluginTests(unittest.TestCase):
             self.assertIsInstance(result, dict)
             self.assertLessEqual(len(result["context"]), 3500)
             self.assertIn("UltraContext activity signal", result["context"])
+            injected_events = result["context"].split("Recent shared events from UltraContext:\n", 1)[1]
+            first_event_line = injected_events.splitlines()[0]
+            self.assertRegex(first_event_line, r"^event-\d+ ")
+
 
     def test_pre_llm_call_returns_none_when_uc_has_no_events(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -80,19 +80,24 @@ def _resolve_uc_cli() -> str:
 
 def _trim_events(raw: str) -> str:
     lines = []
-    for line in raw.splitlines():
+    total_chars = 0
+    for line in reversed(raw.splitlines()):
         stripped = line.strip()
         if not stripped:
             continue
+        next_total = total_chars + len(stripped) + (1 if lines else 0)
+        if lines and next_total > MAX_CONTEXT_CHARS:
+            break
+        if not lines and len(stripped) > MAX_CONTEXT_CHARS:
+            stripped = stripped[:MAX_CONTEXT_CHARS]
+            next_total = len(stripped)
         lines.append(stripped)
+        total_chars = next_total
 
     if not lines:
         return ""
 
-    text = "\n".join(lines)
-    if len(text) <= MAX_CONTEXT_CHARS:
-        return text
-    return text[-MAX_CONTEXT_CHARS:]
+    return "\n".join(reversed(lines))
 
 
 def _format_context(events: str) -> str:
