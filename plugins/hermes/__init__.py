@@ -41,6 +41,11 @@ def on_pre_llm_call(**kwargs: Any) -> Optional[Dict[str, str]]:
     if not events:
         return None
 
+    session_id = str(kwargs.get("session_id") or "default")
+    events = _events_since_last_turn(session_id, events)
+    if not events:
+        return None
+
     context = _format_context(events)
     if not context:
         return None
@@ -102,6 +107,66 @@ def _trim_events(raw: str) -> str:
         return ""
 
     return "\n".join(reversed(lines))
+
+
+def _events_since_last_turn(session_id: str, events: str) -> str:
+    lines = [line.strip() for line in events.splitlines() if line.strip()]
+    if not lines:
+        return ""
+
+    event_ids = [_event_cursor_id(line) for line in lines]
+    current_cursor = event_ids[-1]
+    state = _load_state()
+    previous_cursor = state.get(session_id)
+    state[session_id] = current_cursor
+    _save_state(state)
+
+    if not previous_cursor:
+        return ""
+
+    try:
+        previous_index = event_ids.index(previous_cursor)
+    except ValueError:
+        return "\n".join(lines)
+
+    return "\n".join(lines[previous_index + 1 :])
+
+
+def _event_cursor_id(line: str) -> str:
+    try:
+        event = json.loads(line)
+    except json.JSONDecodeError:
+        return line
+    if isinstance(event, dict):
+        return str(event.get("event_id") or line)
+    return line
+
+
+def _state_path() -> Path:
+    configured = os.getenv("ULTRACONTEXT_HERMES_STATE_FILE")
+    if configured:
+        return Path(configured).expanduser()
+    return Path.home() / ".hermes" / "plugins" / "ultracontext" / "state.json"
+
+
+def _load_state() -> Dict[str, str]:
+    path = _state_path()
+    try:
+        raw = json.loads(path.read_text())
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    return {str(key): str(value) for key, value in raw.items() if isinstance(value, str)}
+
+
+def _save_state(state: Dict[str, str]) -> None:
+    path = _state_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(state, sort_keys=True))
+    except OSError:
+        pass
 
 
 def _format_context(events: str) -> str:

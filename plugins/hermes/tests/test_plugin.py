@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import os
 import stat
 import subprocess
@@ -57,6 +58,19 @@ def make_fake_uc(tmp_path: Path, output: str, exit_code: int = 0) -> Path:
     return fake_uc
 
 
+def make_fake_uc_from_file(tmp_path: Path, output_path: Path) -> Path:
+    log_path = tmp_path / "uc.args"
+    fake_uc = tmp_path / "uc"
+    fake_uc.write_text(
+        "#!/usr/bin/env python3\n"
+        "import pathlib, sys\n"
+        f"pathlib.Path({str(log_path)!r}).write_text(' '.join(sys.argv[1:]) + '\\n')\n"
+        f"sys.stdout.write(pathlib.Path({str(output_path)!r}).read_text())\n"
+    )
+    fake_uc.chmod(fake_uc.stat().st_mode | stat.S_IXUSR)
+    return fake_uc
+
+
 class HermesUltraContextPluginTests(unittest.TestCase):
     def test_register_wires_pre_llm_call_hook(self):
         plugin = load_plugin()
@@ -72,18 +86,48 @@ class HermesUltraContextPluginTests(unittest.TestCase):
         self.assertEqual(registered[0][0], "pre_llm_call")
         self.assertIs(registered[0][1], plugin.on_pre_llm_call)
 
+    def test_pre_llm_call_injects_only_events_since_previous_turn(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            output_path = tmp_path / "events.jsonl"
+            event_a = '{"event_id":"a","kind":"chatgpt.app.closed","subject":"chatgpt:app:ios","labels":{"app":"chatgpt"},"counts":{"changed_sessions":0,"synced":0,"failed":0}}\n'
+            event_b = '{"event_id":"b","kind":"chatgpt.session.updated","subject":"chatgpt:session:new","payload_ref":"file:///tmp/new.md","labels":{"title":"Semente Funcionou"},"counts":{"message_count":10}}\n'
+            output_path.write_text(event_a)
+            fake_uc = make_fake_uc_from_file(tmp_path, output_path)
+            state_path = tmp_path / "state.json"
+
+            with patched_env(
+                ULTRACONTEXT_CLI=str(fake_uc),
+                ULTRACONTEXT_HERMES_STATE_FILE=str(state_path),
+            ):
+                plugin = load_plugin()
+                self.assertIsNone(plugin.on_pre_llm_call(session_id="s1", user_message="primeiro turno"))
+                output_path.write_text(event_a + event_b)
+                result = plugin.on_pre_llm_call(session_id="s1", user_message="segundo turno")
+
+            self.assertIsInstance(result, dict)
+            context = result["context"]
+            self.assertIn("chatgpt.session.updated", context)
+            self.assertIn("Semente Funcionou", context)
+            self.assertIn("file:///tmp/new.md", context)
+            self.assertNotIn("chatgpt.app.closed", context)
+
     def test_pre_llm_call_injects_compact_recent_uc_events_without_running_deep_query(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             fake_uc = make_fake_uc(
                 tmp_path,
-                '{"schema_version":"uc.event.v1","kind":"chatgpt.session.updated","subject":"chatgpt:session:abc","payload_ref":"file:///tmp/abc.md","labels":{"title":"Driver design"}}\n'
-                '{"schema_version":"uc.event.v1","kind":"claude.session.updated","subject":"claude:session:def","labels":{"title":"Update flow"}}\n',
+                '{"event_id":"baseline","kind":"baseline"}\n'
+                '{"event_id":"a","schema_version":"uc.event.v1","kind":"chatgpt.session.updated","subject":"chatgpt:session:abc","payload_ref":"file:///tmp/abc.md","labels":{"title":"Driver design"}}\n'
+                '{"event_id":"b","schema_version":"uc.event.v1","kind":"claude.session.updated","subject":"claude:session:def","labels":{"title":"Update flow"}}\n',
             )
+            state_path = tmp_path / "state.json"
+            state_path.write_text(json.dumps({"s1": "baseline"}))
             with patched_env(
                 ULTRACONTEXT_CLI=str(fake_uc),
                 ULTRACONTEXT_HERMES_EVENT_LIMIT="7",
                 ULTRACONTEXT_HERMES_TIMEOUT_SECONDS="2",
+                ULTRACONTEXT_HERMES_STATE_FILE=str(state_path),
             ):
                 plugin = load_plugin()
                 result = plugin.on_pre_llm_call(
@@ -106,9 +150,12 @@ class HermesUltraContextPluginTests(unittest.TestCase):
 
     def test_pre_llm_call_bounds_injected_context_size(self):
         with tempfile.TemporaryDirectory() as tmp:
-            huge_output = "\n".join(f"event-{i} " + "x" * 200 for i in range(100))
-            fake_uc = make_fake_uc(Path(tmp), huge_output)
-            with patched_env(ULTRACONTEXT_CLI=str(fake_uc)):
+            tmp_path = Path(tmp)
+            huge_output = "baseline\n" + "\n".join(f"event-{i} " + "x" * 200 for i in range(100))
+            fake_uc = make_fake_uc(tmp_path, huge_output)
+            state_path = tmp_path / "state.json"
+            state_path.write_text(json.dumps({"s1": "baseline"}))
+            with patched_env(ULTRACONTEXT_CLI=str(fake_uc), ULTRACONTEXT_HERMES_STATE_FILE=str(state_path)):
                 plugin = load_plugin()
                 result = plugin.on_pre_llm_call(session_id="s1", user_message="continua")
 
