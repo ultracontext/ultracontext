@@ -72,13 +72,13 @@ class HermesUltraContextPluginTests(unittest.TestCase):
         self.assertEqual(registered[0][0], "pre_llm_call")
         self.assertIs(registered[0][1], plugin.on_pre_llm_call)
 
-    def test_pre_llm_call_injects_recent_uc_events_without_running_deep_query(self):
+    def test_pre_llm_call_injects_compact_recent_uc_events_without_running_deep_query(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             fake_uc = make_fake_uc(
                 tmp_path,
-                "2026-05-08T19:12:00Z chatgpt.session.updated subject=chatgpt:session:abc title=Driver design\n"
-                "2026-05-08T19:14:00Z claude.session.updated subject=claude:session:def title=Update flow\n",
+                '{"schema_version":"uc.event.v1","kind":"chatgpt.session.updated","subject":"chatgpt:session:abc","payload_ref":"file:///tmp/abc.md","labels":{"title":"Driver design"}}\n'
+                '{"schema_version":"uc.event.v1","kind":"claude.session.updated","subject":"claude:session:def","labels":{"title":"Update flow"}}\n',
             )
             with patched_env(
                 ULTRACONTEXT_CLI=str(fake_uc),
@@ -96,10 +96,12 @@ class HermesUltraContextPluginTests(unittest.TestCase):
             context = result["context"]
             self.assertIn("UltraContext activity signal", context)
             self.assertIn("chatgpt.session.updated", context)
+            self.assertIn("Driver design", context)
+            self.assertIn("file:///tmp/abc.md", context)
             self.assertIn("claude.session.updated", context)
             self.assertIn("uc event query", context)
-            self.assertIn("uc query", context)
-            self.assertIn("Ignore this section if unrelated", context)
+            self.assertNotIn("schema_version", context)
+            self.assertNotIn("raw_path", context)
             self.assertEqual((tmp_path / "uc.args").read_text(), "event tail --limit 7\n")
 
     def test_pre_llm_call_bounds_injected_context_size(self):
@@ -108,22 +110,30 @@ class HermesUltraContextPluginTests(unittest.TestCase):
             fake_uc = make_fake_uc(Path(tmp), huge_output)
             with patched_env(ULTRACONTEXT_CLI=str(fake_uc)):
                 plugin = load_plugin()
-                result = plugin.on_pre_llm_call(session_id="s1", user_message="oi")
+                result = plugin.on_pre_llm_call(session_id="s1", user_message="continua")
 
             self.assertIsInstance(result, dict)
             self.assertLessEqual(len(result["context"]), 3500)
             self.assertIn("UltraContext activity signal", result["context"])
-            injected_events = result["context"].split("Recent shared events from UltraContext:\n", 1)[1]
+            injected_events = result["context"].split("Recent shared UC events (metadata only):\n", 1)[1]
             first_event_line = injected_events.splitlines()[0]
-            self.assertRegex(first_event_line, r"^event-\d+ ")
+            self.assertRegex(first_event_line, r"^- event-\d+ ")
 
+
+    def test_pre_llm_call_returns_none_for_trivial_greeting_without_calling_uc(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_uc = make_fake_uc(Path(tmp), '{"kind":"chatgpt.session.updated"}\n')
+            with patched_env(ULTRACONTEXT_CLI=str(fake_uc)):
+                plugin = load_plugin()
+                self.assertIsNone(plugin.on_pre_llm_call(session_id="s1", user_message="oi"))
+            self.assertFalse((Path(tmp) / "uc.args").exists())
 
     def test_pre_llm_call_returns_none_when_uc_has_no_events(self):
         with tempfile.TemporaryDirectory() as tmp:
             fake_uc = make_fake_uc(Path(tmp), "\n")
             with patched_env(ULTRACONTEXT_CLI=str(fake_uc)):
                 plugin = load_plugin()
-                self.assertIsNone(plugin.on_pre_llm_call(session_id="s1", user_message="oi"))
+                self.assertIsNone(plugin.on_pre_llm_call(session_id="s1", user_message="continua"))
 
     def test_pre_llm_call_fails_open_when_uc_errors(self):
         with tempfile.TemporaryDirectory() as tmp:

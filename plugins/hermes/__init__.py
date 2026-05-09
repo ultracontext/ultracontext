@@ -8,6 +8,7 @@ context exists and can use the installed UltraContext skill/tools if relevant.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -31,6 +32,9 @@ def on_pre_llm_call(**kwargs: Any) -> Optional[Dict[str, str]]:
     is missing, slow, or returns no events, inject nothing.
     """
     if _env_false("ULTRACONTEXT_HERMES_ENABLED"):
+        return None
+
+    if _is_trivial_user_message(kwargs.get("user_message")):
         return None
 
     events = _tail_events()
@@ -101,16 +105,61 @@ def _trim_events(raw: str) -> str:
 
 
 def _format_context(events: str) -> str:
+    compact_events = _compact_events(events)
+    if not compact_events:
+        return ""
     return (
         "## UltraContext activity signal\n\n"
-        "Recent shared events from UltraContext:\n"
-        f"{events}\n\n"
-        "Use these only as hints. If relevant to the user's current message, "
-        "use the UltraContext skill/tools to search deeper:\n"
-        '- `uc event query "<topic>" --limit 5`\n'
-        '- `uc query "<exact user question with project/error names>"`\n\n'
-        "Ignore this section if unrelated. Do not mention it unless it changes the answer."
+        "Recent shared UC events (metadata only):\n"
+        f"{compact_events}\n\n"
+        "If relevant, query deeper with `uc event query \"<topic>\" --limit 5`."
     )
+
+
+def _compact_events(events: str) -> str:
+    lines = []
+    for raw_line in events.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        lines.append(_compact_event_line(line))
+    return "\n".join(line for line in lines if line)
+
+
+def _compact_event_line(line: str) -> str:
+    try:
+        event = json.loads(line)
+    except json.JSONDecodeError:
+        return f"- {line}"
+    if not isinstance(event, dict):
+        return f"- {line}"
+
+    kind = str(event.get("kind") or "event")
+    subject = str(event.get("subject") or "-")
+    labels = event.get("labels") if isinstance(event.get("labels"), dict) else {}
+    counts = event.get("counts") if isinstance(event.get("counts"), dict) else {}
+    title = labels.get("title") or labels.get("app") or ""
+    payload_ref = event.get("payload_ref") or ""
+    count_bits = []
+    for key in ("changed_sessions", "synced", "failed", "message_count"):
+        if key in counts:
+            count_bits.append(f"{key}={counts[key]}")
+
+    pieces = [f"- {kind}", f"subject={subject}"]
+    if title:
+        pieces.append(f"title={title}")
+    if count_bits:
+        pieces.append(",".join(count_bits))
+    if payload_ref:
+        pieces.append(f"payload_ref={payload_ref}")
+    return " | ".join(pieces)
+
+
+def _is_trivial_user_message(message: Any) -> bool:
+    if not isinstance(message, str):
+        return False
+    text = message.strip().lower()
+    return text in {"oi", "olá", "ola", "hello", "hi", "hey", "yo", "e aí", "e ai"}
 
 
 def _int_env(name: str, default: int) -> int:
