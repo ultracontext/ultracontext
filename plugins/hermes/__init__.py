@@ -22,6 +22,8 @@ MAX_CONTEXT_CHARS = 3000
 MAX_EVENT_LIMIT = 50
 MAX_PAYLOAD_READ_CHARS = 4096
 MAX_GIST_CHARS = 260
+DEFAULT_PAYLOAD_EXCERPT_CHARS = 1800
+MAX_PAYLOAD_EXCERPT_CHARS = 6000
 
 
 def register(ctx: Any) -> None:
@@ -287,6 +289,10 @@ def _compact_session_event(event: Dict[str, Any], user_message: Any) -> str:
     source = _event_source_label(event)
     parts = [f"- New {source} session since last turn", f"title={_clean_inline(title)}", f"gist={_clean_inline(gist)}"]
     parts.append(f"payload_ref={payload_ref}")
+    if _env_true("ULTRACONTEXT_HERMES_INCLUDE_PAYLOAD"):
+        excerpt = _session_excerpt(payload_text)
+        if excerpt:
+            parts.append("excerpt=" + excerpt)
     return " | ".join(parts)
 
 
@@ -353,6 +359,32 @@ def _session_gist(text: str, user_message: Any, title: str) -> str:
     if len(best) > MAX_GIST_CHARS:
         best = best[: MAX_GIST_CHARS - 1].rstrip() + "…"
     return best
+
+
+def _session_excerpt(text: str) -> str:
+    max_chars = _int_env("ULTRACONTEXT_HERMES_PAYLOAD_CHARS", DEFAULT_PAYLOAD_EXCERPT_CHARS)
+    max_chars = max(1, min(max_chars, MAX_PAYLOAD_EXCERPT_CHARS))
+
+    transcript_marker = re.search(r"(?im)^##\s+transcript\s*$", text)
+    if transcript_marker:
+        text = text[transcript_marker.end() :]
+
+    lines = []
+    total_chars = 0
+    for line in text.splitlines():
+        cleaned = _clean_payload_line(line)
+        if not cleaned:
+            continue
+        next_total = total_chars + len(cleaned) + (1 if lines else 0)
+        if next_total > max_chars:
+            remaining = max_chars - total_chars - (1 if lines else 0)
+            if remaining > 20:
+                lines.append(cleaned[: remaining - 1].rstrip() + "…")
+            break
+        lines.append(cleaned)
+        total_chars = next_total
+
+    return "\n".join(lines)
 
 
 def _clean_payload_line(line: str) -> str:
@@ -433,6 +465,13 @@ def _int_env(name: str, default: int) -> int:
         return int(raw)
     except ValueError:
         return default
+
+
+def _env_true(name: str) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return False
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _env_false(name: str) -> bool:

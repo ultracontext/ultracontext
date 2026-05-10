@@ -48,14 +48,17 @@ On each turn, the plugin:
    ```
 
 3. Trims blank lines and bounds injected text.
-4. Returns a short context block with the bounded event-tail summary already selected by the plugin.
+4. Computes only the event delta since the previous Hermes turn for that Hermes session.
+5. For relevant `*.session.updated` events with local `file://` payloads, reads a bounded prefix and injects a short gist.
+6. If `ULTRACONTEXT_HERMES_INCLUDE_PAYLOAD=true`, also injects a sanitized bounded excerpt from that payload.
 
 ## Privacy rules
 
-The plugin should not automatically read:
+By default the plugin should not inject large raw artifacts. It may read local `file://` payload refs for relevant session updates to build a short gist. Full-ish transcript context is opt-in and still bounded.
 
-- raw transcripts;
-- payload refs;
+Do not inject:
+- unbounded raw transcripts;
+- non-local or non-`file://` payload refs;
 - cookies;
 - tokens;
 - headers;
@@ -73,6 +76,8 @@ Environment variables:
 - `ULTRACONTEXT_HERMES_EVENT_LIMIT`: event tail limit. Default: `20`. Max: `50`.
 - `ULTRACONTEXT_HERMES_TIMEOUT_SECONDS`: command timeout. Default: `3`. Max: `30`.
 - `ULTRACONTEXT_HERMES_ENABLED=false`: disable injection.
+- `ULTRACONTEXT_HERMES_INCLUDE_PAYLOAD=true`: include a bounded sanitized excerpt from relevant local `file://` session payloads.
+- `ULTRACONTEXT_HERMES_PAYLOAD_CHARS`: payload excerpt limit. Default: `1800`. Max: `6000`.
 
 ## Install into Hermes
 
@@ -109,15 +114,13 @@ For CLI sessions, start a new `hermes` process.
 
 ## Expected injected shape
 
-Example:
+Example with payload excerpts enabled:
 
 ```markdown
 ## UltraContext activity signal
 
-Recent shared events from UltraContext:
-<uc event tail output>
-
-Use these only as hints. Ignore this section if unrelated. Do not mention it unless it changes the answer.
+Recent relevant session updates:
+- New ChatGPT session since last turn | title=Dia ruim | gist=Me senti meio mal hj | payload_ref=file:///.../session.md | excerpt=Me senti meio mal hj\nemocional, meio vazio e ansioso
 ```
 
 ## Failure behavior
@@ -145,5 +148,6 @@ The tests cover:
 - event-tail command shape;
 - no automatic deep query;
 - bounded context size;
+- optional bounded payload excerpts from local `file://` session refs;
 - empty output;
 - fail-open behavior.

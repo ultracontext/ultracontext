@@ -155,6 +155,46 @@ class HermesUltraContextPluginTests(unittest.TestCase):
             self.assertNotIn("Assistant:", context)
             self.assertLess(len(context), 1200)
 
+    def test_session_updated_can_include_bounded_payload_excerpt_when_enabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            session_path = tmp_path / "chatgpt-session.md"
+            session_path.write_text(
+                "# Dia ruim\n\n"
+                "## Transcript\n\n"
+                "User: Me senti meio mal hj\n\n"
+                "Assistant: Sinto muito. Foi físico ou emocional?\n\n"
+                "User: emocional, meio vazio e ansioso\n",
+            )
+            event = {
+                "event_id": "new-session",
+                "kind": "chatgpt.session.updated",
+                "subject": "chatgpt:session:bad-day",
+                "payload_ref": f"file://{session_path}",
+                "labels": {"title": "Dia ruim"},
+            }
+            fake_uc = make_fake_uc(tmp_path, '{"event_id":"baseline","kind":"baseline"}\n' + json.dumps(event) + "\n")
+            state_path = tmp_path / "state.json"
+            state_path.write_text(json.dumps({"s1": "baseline"}))
+
+            with patched_env(
+                ULTRACONTEXT_CLI=str(fake_uc),
+                ULTRACONTEXT_HERMES_STATE_FILE=str(state_path),
+                ULTRACONTEXT_HERMES_INCLUDE_PAYLOAD="true",
+                ULTRACONTEXT_HERMES_PAYLOAD_CHARS="180",
+            ):
+                plugin = load_plugin()
+                result = plugin.on_pre_llm_call(session_id="s1", user_message="o que aconteceu no ChatGPT?")
+
+            self.assertIsInstance(result, dict)
+            context = result["context"]
+            self.assertIn("excerpt=", context)
+            self.assertIn("Me senti meio mal hj", context)
+            self.assertIn("emocional, meio vazio", context)
+            self.assertNotIn("User:", context)
+            self.assertNotIn("Assistant:", context)
+            self.assertLess(len(context), 900)
+
     def test_session_payload_is_bounded(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -175,7 +215,11 @@ class HermesUltraContextPluginTests(unittest.TestCase):
             state_path = tmp_path / "state.json"
             state_path.write_text(json.dumps({"s1": "baseline"}))
 
-            with patched_env(ULTRACONTEXT_CLI=str(fake_uc), ULTRACONTEXT_HERMES_STATE_FILE=str(state_path)):
+            with patched_env(
+                ULTRACONTEXT_CLI=str(fake_uc),
+                ULTRACONTEXT_HERMES_STATE_FILE=str(state_path),
+                ULTRACONTEXT_HERMES_INCLUDE_PAYLOAD="false",
+            ):
                 plugin = load_plugin()
                 result = plugin.on_pre_llm_call(session_id="s1", user_message="Hermes deve ler sessão nova?")
 
