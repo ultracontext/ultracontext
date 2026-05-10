@@ -151,7 +151,7 @@ Ignore files live under `~/.ultracontext/ignores/` and use Mutagen's gitignore-s
 
 ## Agent skill
 
-`uc init` installs the UltraContext skill into supported agent skill directories. That skill is the retrieval protocol: it tells agents to enumerate all synced hosts, inspect the right source folders, rank by internal timestamps, use fast paths like Codex `history.jsonl`, and open original transcripts when details matter.
+`uc init` and `uc update` install the UltraContext skill into supported agent skill directories, including Claude, Codex-style `.agents`, OpenClaw, and Hermes (`~/.hermes/skills/ultracontext/SKILL.md`). That skill is the retrieval protocol: it tells agents to enumerate all synced hosts, inspect the right source folders, rank by internal timestamps, use fast paths like Codex `history.jsonl`, and open original transcripts when details matter.
 
 For example, when a user asks for the latest Codex session, an agent should compare every `<host>/.codex/history.jsonl` and `<host>/.codex/sessions/**/rollout-*.jsonl`, not just the current machine. Local-only lookup is wrong unless the workspace itself is local-only.
 

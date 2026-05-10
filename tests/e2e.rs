@@ -178,6 +178,13 @@ fn init_configures_skills_sources_and_workspace() {
             .join("SKILL.md")
             .is_file()
     );
+    assert!(
+        home.join(".hermes")
+            .join("skills")
+            .join("ultracontext")
+            .join("SKILL.md")
+            .is_file()
+    );
     assert!(remote_root.join("workspace").join(&host_id).is_dir());
 
     let _ = fs::remove_dir_all(&home);
@@ -971,6 +978,18 @@ fn update_respects_npm_installer_env_and_refreshes_runtime_assets() {
         .join("ultracontext")
         .join("SKILL.md");
     assert!(codex_skill.is_file());
+
+    let hermes_skill = home
+        .join(".hermes")
+        .join("skills")
+        .join("ultracontext")
+        .join("SKILL.md");
+    assert!(hermes_skill.is_file());
+    let hermes_skill_text = fs::read_to_string(&hermes_skill).unwrap();
+    assert!(
+        hermes_skill_text.contains("name: ultracontext"),
+        "{hermes_skill_text}"
+    );
 
     let _ = fs::remove_dir_all(&home);
 }

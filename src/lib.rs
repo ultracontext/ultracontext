@@ -3489,6 +3489,7 @@ fn skill_targets() -> Result<Vec<PathBuf>> {
         home.join(".claude/skills"),
         home.join(".agents/skills"),
         home.join(".openclaw/skills"),
+        home.join(".hermes/skills"),
     ])
 }
 
