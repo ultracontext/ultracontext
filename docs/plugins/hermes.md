@@ -51,7 +51,8 @@ On each turn, the plugin:
 4. Computes only the event delta since the previous Hermes turn for that Hermes session.
 5. For relevant `*.session.updated` events with local `file://` payloads, reads a bounded prefix and injects a short gist.
 6. If an app lifecycle event says `changed_sessions>0`, prefers its matching `*.session.updated` child event over lifecycle metadata, even for generic follow-ups like greetings.
-7. If `ULTRACONTEXT_HERMES_INCLUDE_PAYLOAD=true`, also injects a sanitized bounded excerpt from that payload.
+7. Adds an explicit provenance instruction: UC-injected session payloads are external ChatGPT/Claude app sync, not the current chat; agents should attribute them when used.
+8. If `ULTRACONTEXT_HERMES_INCLUDE_PAYLOAD=true`, also injects a sanitized bounded excerpt from that payload.
 
 ## Privacy rules
 

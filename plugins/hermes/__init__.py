@@ -204,7 +204,11 @@ def _compact_events(events: str, user_message: Any = None) -> str:
             session_lines.append(session_line)
 
     if session_lines:
-        return "Recent relevant session updates:\n" + "\n".join(session_lines)
+        return (
+            "Provenance: UltraContext event log; session lines below are external ChatGPT session payload or Claude session payload, "
+            "not from the current chat. If you use them, explicitly say they came from UltraContext/external app sync.\n"
+            "Recent relevant session updates:\n" + "\n".join(session_lines)
+        )
 
     non_session_lines = []
     for event in parsed_events:
