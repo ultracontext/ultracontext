@@ -16,6 +16,7 @@ The injected text is only a hint. It contains the bounded event tail summary alr
 - It is not a driver.
 - It does not sync ChatGPT, Claude, or Hermes sessions into UltraContext.
 - By default, it injects compact metadata plus a short gist for relevant session updates.
+- When an app lifecycle event reports `changed_sessions>0`, the matching `*.session.updated` child event wins over lifecycle metadata even for generic follow-ups like greetings.
 - If `ULTRACONTEXT_HERMES_INCLUDE_PAYLOAD=true`, it can also read local `file://` payload refs and inject a bounded sanitized excerpt.
 - It fails open: if `uc` is missing, slow, or returns no events, it injects nothing.
 

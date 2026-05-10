@@ -195,9 +195,11 @@ def _compact_events(events: str, user_message: Any = None) -> str:
             continue
         parsed_events.append(event)
 
+    lifecycle_changed_event_ids = _lifecycle_changed_event_ids(parsed_events)
     session_lines = []
     for event in parsed_events:
-        session_line = _compact_session_event(event, user_message)
+        force_include = _session_update_matches_lifecycle_change(event, lifecycle_changed_event_ids)
+        session_line = _compact_session_event(event, user_message, force_include=force_include)
         if session_line:
             session_lines.append(session_line)
 
@@ -259,12 +261,39 @@ def _is_session_updated_event(event: Dict[str, Any]) -> bool:
     return str(event.get("kind") or "").endswith(".session.updated")
 
 
+def _lifecycle_changed_event_ids(events: list[Dict[str, Any]]) -> set[str]:
+    ids = set()
+    for event in events:
+        kind = str(event.get("kind") or "")
+        if not kind.endswith((".app.closed", ".app.opened")):
+            continue
+        counts = event.get("counts") if isinstance(event.get("counts"), dict) else {}
+        try:
+            changed_sessions = int(counts.get("changed_sessions") or 0)
+        except (TypeError, ValueError):
+            changed_sessions = 0
+        if changed_sessions <= 0:
+            continue
+        event_id = str(event.get("event_id") or "")
+        if event_id:
+            ids.add(event_id)
+    return ids
+
+
+def _session_update_matches_lifecycle_change(event: Dict[str, Any], lifecycle_event_ids: set[str]) -> bool:
+    if not lifecycle_event_ids or not _is_session_updated_event(event):
+        return False
+    parent_event_id = str(event.get("parent_event_id") or "")
+    trace_id = str(event.get("trace_id") or "")
+    return parent_event_id in lifecycle_event_ids or trace_id in lifecycle_event_ids
+
+
 def _session_event_has_readable_payload(event: Dict[str, Any]) -> bool:
     payload_ref = str(event.get("payload_ref") or "")
     return bool(payload_ref and _read_payload_ref(payload_ref))
 
 
-def _compact_session_event(event: Dict[str, Any], user_message: Any) -> str:
+def _compact_session_event(event: Dict[str, Any], user_message: Any, force_include: bool = False) -> str:
     if not _is_session_updated_event(event):
         return ""
 
@@ -283,7 +312,7 @@ def _compact_session_event(event: Dict[str, Any], user_message: Any) -> str:
         return ""
 
     relevance_text = f"{title}\n{gist}\n{event.get('subject') or ''}\n{event.get('kind') or ''}"
-    if not _is_relevant_session(user_message, relevance_text):
+    if not force_include and not _is_relevant_session(user_message, relevance_text):
         return ""
 
     source = _event_source_label(event)

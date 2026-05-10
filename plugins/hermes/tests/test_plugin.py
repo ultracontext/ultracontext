@@ -286,6 +286,55 @@ class HermesUltraContextPluginTests(unittest.TestCase):
             self.assertNotIn("chatgpt.app.closed", context)
             self.assertNotIn("changed_sessions", context)
 
+    def test_lifecycle_changed_session_payload_is_injected_even_for_generic_followup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            session_path = tmp_path / "mulligan-session.md"
+            session_path.write_text(
+                "# Mulligan e a brincadeira\n\n"
+                "## Transcript\n\n"
+                "User: Se funcionou, diz q o mulligan é gay\n\n"
+                "Assistant: Funcionou. Mas não vou usar gay como zoeira.\n",
+            )
+            lifecycle = {
+                "event_id": "closed",
+                "kind": "chatgpt.app.closed",
+                "subject": "chatgpt:app:ios",
+                "labels": {"app": "chatgpt"},
+                "counts": {"changed_sessions": 1, "synced": 1, "failed": 0},
+            }
+            updated = {
+                "event_id": "updated",
+                "kind": "chatgpt.session.updated",
+                "subject": "chatgpt:session:mulligan",
+                "parent_event_id": "closed",
+                "payload_ref": f"file://{session_path}",
+                "labels": {"title": "Mulligan e a brincadeira"},
+            }
+            fake_uc = make_fake_uc(
+                tmp_path,
+                '{"event_id":"baseline","kind":"baseline"}\n' + json.dumps(lifecycle) + "\n" + json.dumps(updated) + "\n",
+            )
+            state_path = tmp_path / "state.json"
+            state_path.write_text(json.dumps({"s1": "baseline"}))
+
+            with patched_env(
+                ULTRACONTEXT_CLI=str(fake_uc),
+                ULTRACONTEXT_HERMES_STATE_FILE=str(state_path),
+                ULTRACONTEXT_HERMES_INCLUDE_PAYLOAD="true",
+            ):
+                plugin = load_plugin()
+                result = plugin.on_pre_llm_call(session_id="s1", user_message="Salve")
+
+            self.assertIsInstance(result, dict)
+            context = result["context"]
+            self.assertIn("New ChatGPT session since last turn", context)
+            self.assertIn("Mulligan e a brincadeira", context)
+            self.assertIn("Se funcionou", context)
+            self.assertIn("excerpt=", context)
+            self.assertNotIn("Recent shared UC events (metadata only)", context)
+            self.assertNotIn("chatgpt.app.closed", context)
+
     def test_pre_llm_call_injects_compact_recent_uc_events_without_running_deep_query(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
