@@ -7,20 +7,13 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 const BIN: &str = env!("CARGO_BIN_EXE_ultracontext");
 
 #[test]
-fn initializes_and_queries_local_workspace() {
+fn init_installs_skill_only_context_retrieval_protocol() {
     let run_id = unique_run_id();
     let host_id = format!("uc-local-{run_id}");
     let home = env::temp_dir().join(format!("uc-local-home-{run_id}"));
     let remote_root = home.join("ultracontext-root");
-    let query_bin = home.join("query-capture");
 
     fs::create_dir_all(home.join(".claude")).unwrap();
-    fs::write(
-        &query_bin,
-        "#!/bin/sh\nprintf 'cwd=%s\\n' \"$PWD\"\nprintf 'args=%s\\n' \"$*\"\n",
-    )
-    .unwrap();
-    make_executable(&query_bin);
 
     let setup = uc(&home)
         .args([
@@ -40,6 +33,17 @@ fn initializes_and_queries_local_workspace() {
     let config_path = home.join(".ultracontext").join("config.toml");
     let config = fs::read_to_string(&config_path).unwrap();
     assert!(config.contains("remote = \"local\""), "{config}");
+    assert!(
+        !config.contains(&["[", "q", "uery", "]"].concat()),
+        "{config}"
+    );
+    assert!(
+        !home
+            .join(".ultracontext")
+            .join("prompts")
+            .join(["q", "uery", ".md"].concat())
+            .exists()
+    );
     assert!(remote_root.join("workspace").join(&host_id).is_dir());
     assert!(
         remote_root
@@ -57,25 +61,38 @@ fn initializes_and_queries_local_workspace() {
     assert!(status_stdout.contains("sync"), "{status_stdout}");
     assert!(status_stdout.contains("claude"), "{status_stdout}");
 
-    let config = config.replace(
-        "command = \"claude\"\nargs = \"-p {{prompt}} --dangerously-skip-permissions --effort medium --model sonnet\"",
-        &format!(
-            "command = \"{}\"\nargs = \"--mode local --prompt {{{{prompt}}}}\"",
-            query_bin.display()
-        ),
-    );
-    fs::write(&config_path, config).unwrap();
-
-    let marker = format!("latest local context marker {run_id}");
-    let query = uc(&home).args(["query", marker.as_str()]).output().unwrap();
-    let stdout = String::from_utf8_lossy(&query.stdout).to_string();
-    assert_success("uc query local", query);
+    let help = uc(&home).args(["--help"]).output().unwrap();
+    let help_stdout = String::from_utf8_lossy(&help.stdout).to_string();
+    assert_success("uc --help", help);
     assert!(
-        stdout.contains(remote_root.join("workspace").to_str().unwrap()),
-        "{stdout}"
+        !help_stdout.contains(&["uc ", "q", "uery"].concat()),
+        "{help_stdout}"
     );
-    assert!(stdout.contains(&marker), "{stdout}");
-    assert!(stdout.contains("--mode local"), "{stdout}");
+
+    let removed_name = ["q", "uery"].concat();
+    let removed = uc(&home)
+        .args([removed_name.as_str(), "anything"])
+        .output()
+        .unwrap();
+    assert!(
+        !removed.status.success(),
+        "removed command unexpectedly succeeded"
+    );
+
+    let skill = fs::read_to_string(
+        home.join(".claude")
+            .join("skills")
+            .join("ultracontext")
+            .join("SKILL.md"),
+    )
+    .unwrap();
+    assert!(
+        skill.contains("Never assume there is only one machine"),
+        "{skill}"
+    );
+    assert!(skill.contains("Codex fast path"), "{skill}");
+    assert!(!skill.contains(&["uc ", "q", "uery"].concat()), "{skill}");
+    assert!(!skill.contains(&["q", "uery", ".md"].concat()), "{skill}");
 
     let _ = fs::remove_dir_all(&home);
 }
@@ -307,26 +324,6 @@ fn event_log_emits_and_tails_jsonl_events_only() {
     assert_success("uc event tail", tail);
     assert!(tail_stdout.contains("user_message"), "{tail_stdout}");
 
-    let help = uc(&home).args(["event", "--help"]).output().unwrap();
-    let help_stdout = String::from_utf8_lossy(&help.stdout).to_string();
-    assert_success("uc event help", help);
-    let removed_help_line = ["event", "query"].join(" ");
-    assert!(!help_stdout.contains(&removed_help_line), "{help_stdout}");
-
-    let removed_query = uc(&home)
-        .args(["event", "query", "user_message"])
-        .output()
-        .unwrap();
-    let removed_query_stderr = String::from_utf8_lossy(&removed_query.stderr).to_string();
-    assert!(
-        !removed_query.status.success(),
-        "removed event subcommand should fail"
-    );
-    assert!(
-        removed_query_stderr.contains("unknown event command: query"),
-        "{removed_query_stderr}"
-    );
-
     let _ = fs::remove_dir_all(&home);
 }
 
@@ -520,7 +517,7 @@ fn event_commit_from_stdin_adds_and_overwrites_received_at() {
     fs::write(
         home.join(".ultracontext").join("config.toml"),
         format!(
-            "remote = \"local\"\nremote_root = \"{}\"\nhost_id = \"server-{run_id}\"\n\n[query]\ncommand = \"claude\"\nargs = \"-p {{{{prompt}}}}\"\n",
+            "remote = \"local\"\nremote_root = \"{}\"\nhost_id = \"server-{run_id}\"\n",
             remote_root.display()
         ),
     )
@@ -566,7 +563,7 @@ fn event_commit_from_stdin_dedupes_by_event_id() {
     fs::write(
         home.join(".ultracontext").join("config.toml"),
         format!(
-            "remote = \"local\"\nremote_root = \"{}\"\nhost_id = \"server-{run_id}\"\n\n[query]\ncommand = \"claude\"\nargs = \"-p {{{{prompt}}}}\"\n",
+            "remote = \"local\"\nremote_root = \"{}\"\nhost_id = \"server-{run_id}\"\n",
             remote_root.display()
         ),
     )
@@ -759,7 +756,7 @@ fn event_emit_remote_ssh_uses_event_commit_command() {
     fs::write(
         home.join(".ultracontext").join("config.toml"),
         format!(
-            "remote = \"fake-remote\"\nremote_root = \"{}\"\nhost_id = \"client-{run_id}\"\n\n[query]\ncommand = \"claude\"\nargs = \"-p {{{{prompt}}}}\"\n",
+            "remote = \"fake-remote\"\nremote_root = \"{}\"\nhost_id = \"client-{run_id}\"\n",
             remote_root.display()
         ),
     )
@@ -824,7 +821,7 @@ fn event_tail_reads_remote_ssh_server_log() {
     fs::write(
         home.join(".ultracontext").join("config.toml"),
         format!(
-            "remote = \"fake-remote\"\nremote_root = \"{}\"\nhost_id = \"host-{run_id}\"\n\n[query]\ncommand = \"claude\"\nargs = \"-p {{{{prompt}}}}\"\n",
+            "remote = \"fake-remote\"\nremote_root = \"{}\"\nhost_id = \"host-{run_id}\"\n",
             remote_root.display()
         ),
     )
@@ -868,7 +865,7 @@ fn event_flush_keeps_pending_events_when_remote_append_fails() {
     fs::write(
         home.join(".ultracontext").join("config.toml"),
         format!(
-            "remote = \"no-such-remote-host\"\nremote_root = \"{remote_root}\"\nhost_id = \"host-{run_id}\"\n\n[query]\ncommand = \"claude\"\nargs = \"-p {{{{prompt}}}}\"\n"
+            "remote = \"no-such-remote-host\"\nremote_root = \"{remote_root}\"\nhost_id = \"host-{run_id}\"\n"
         ),
     )
     .unwrap();
@@ -927,10 +924,6 @@ fn update_respects_npm_installer_env_and_refreshes_runtime_assets() {
     fs::create_dir_all(stale_skill.parent().unwrap()).unwrap();
     fs::write(&stale_skill, "stale skill\n").unwrap();
 
-    let custom_prompt = home.join(".ultracontext").join("prompts").join("query.md");
-    fs::create_dir_all(custom_prompt.parent().unwrap()).unwrap();
-    fs::write(&custom_prompt, "custom prompt owned by user\n").unwrap();
-
     let fake_bin = home.join("fake-bin");
     fs::create_dir_all(&fake_bin).unwrap();
     let npm_log = home.join("npm.log");
@@ -970,10 +963,6 @@ fn update_respects_npm_installer_env_and_refreshes_runtime_assets() {
     assert!(
         refreshed_skill.contains("uc event tail"),
         "{refreshed_skill}"
-    );
-    assert_eq!(
-        fs::read_to_string(&custom_prompt).unwrap(),
-        "custom prompt owned by user\n"
     );
 
     let codex_skill = home
@@ -1445,17 +1434,6 @@ fn syncs_agent_directories_to_remote_workspace() {
     .output()
     .unwrap();
     assert_success("global ignored files", ignored_files);
-
-    if env::var("UC_E2E_QUERY").ok().as_deref() == Some("1") {
-        let query = uc(&home)
-            .args([
-                "query",
-                &format!("Find the e2e marker {run_id}. Which agents mention it?"),
-            ])
-            .output()
-            .unwrap();
-        assert_success("uc query", query);
-    }
 
     drop(_cleanup);
 }

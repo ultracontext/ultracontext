@@ -14,15 +14,6 @@ const APP_DIR: &str = ".ultracontext";
 const IGNORE_FILE: &str = ".ultracontextignore";
 const IGNORES_DIR: &str = "ignores";
 const DEFAULT_REMOTE_ROOT: &str = "~/.ultracontext";
-const DEFAULT_QUERY_COMMAND: &str = "claude";
-const QUERY_PROMPT_PLACEHOLDER: &str = "{{prompt}}";
-const DEFAULT_QUERY_ARGS: &str =
-    "-p {{prompt}} --dangerously-skip-permissions --effort medium --model sonnet";
-// Seed contents shipped with the binary; written to disk on `uc init` so users
-// can edit it without rebuilding. At runtime we read from disk; if the file is
-// missing we send the raw user query straight to the query agent.
-const DEFAULT_QUERY_PROMPT: &str = include_str!("prompts/query.md");
-const PROMPT_FILE: &str = "prompts/query.md";
 const ULTRACONTEXT_SKILL: &str = include_str!("../skills/ultracontext/SKILL.md");
 const INSTALL_URL: &str = "https://ultracontext.com/install.sh";
 // Ignore patterns live under ~/.ultracontext/ignores:
@@ -71,17 +62,10 @@ struct KnownSource {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct QueryConfig {
-    command: String,
-    args: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 struct Config {
     remote: String,
     remote_root: String,
     host_id: String,
-    query: QueryConfig,
     sources: Vec<Source>,
 }
 
@@ -187,7 +171,6 @@ fn run(args: Vec<String>) -> Result<()> {
         Some("source" | "sources") => cmd_source(&args[2..]),
         Some("event" | "events") => cmd_event(&args[2..]),
         Some("driver" | "drivers") => cmd_driver(&args[2..]),
-        Some("query") => cmd_query(&args[2..]),
         Some("status") => cmd_status(&args[2..]),
         Some("doctor") => cmd_doctor(),
         Some("update") => cmd_update(&args[2..]),
@@ -202,7 +185,7 @@ fn run(args: Vec<String>) -> Result<()> {
 
 fn print_help() {
     println!(
-        "UltraContext {}\n\nUsage:\n  uc init [local|user@host]\n  uc status\n  uc sync <start|list|status|stop|reset>\n  uc source <list|add|remove|enable|disable>\n  uc event <emit|commit|tail|query|flush|status>\n  uc driver <list|run>\n  uc query <query>\n  uc doctor\n  uc update\n",
+        "UltraContext {}\n\nUsage:\n  uc init [local|user@host]\n  uc status\n  uc sync <start|list|status|stop|reset>\n  uc source <list|add|remove|enable|disable>\n  uc event <emit|commit|tail|flush|status>\n  uc driver <list|run>\n  uc doctor\n  uc update\n",
         env!("CARGO_PKG_VERSION")
     );
 }
@@ -666,10 +649,8 @@ fn keyboard_multiselect(
                 Key::ArrowUp | Key::Char('k') => {
                     cursor = cursor.saturating_sub(1);
                 }
-                Key::ArrowDown | Key::ArrowRight | Key::Char('j') => {
-                    if cursor + 1 < options.len() {
-                        cursor += 1;
-                    }
+                Key::ArrowDown | Key::ArrowRight | Key::Char('j') if cursor + 1 < options.len() => {
+                    cursor += 1;
                 }
                 Key::Char(' ') => {
                     let value = options[cursor].value.clone();
@@ -752,9 +733,7 @@ fn render_keyboard_select<T>(
         };
         let hint = if option.hint.is_empty() {
             String::new()
-        } else if option.disabled {
-            format!(" {}", style(format!("({})", option.hint)).dim())
-        } else if selected && !submitted {
+        } else if option.disabled || selected && !submitted {
             format!(" {}", style(format!("({})", option.hint)).dim())
         } else {
             String::new()
@@ -855,10 +834,6 @@ fn initialize_config(remote: RemoteSpec, host_id: String, sources: Vec<Source>) 
         remote: remote.target,
         remote_root: remote.root,
         host_id,
-        query: QueryConfig {
-            command: DEFAULT_QUERY_COMMAND.to_string(),
-            args: DEFAULT_QUERY_ARGS.to_string(),
-        },
         sources,
     };
 
@@ -869,7 +844,6 @@ fn initialize_config(remote: RemoteSpec, host_id: String, sources: Vec<Source>) 
     fs::write(config_path()?, config.to_toml())?;
     ensure_ignore_file()?;
     ensure_source_ignore_files(&config.sources)?;
-    ensure_prompt_file()?;
     prepare_remote_workspace(&config)?;
     Ok(config)
 }
@@ -1498,10 +1472,8 @@ fn source_add(args: &[String]) -> Result<()> {
     } else {
         ui_success(format!("source {name}: added"));
     }
-    if path_changed {
-        if let Some(old_source) = old_source.as_ref() {
-            apply_source_sync_terminate(&config, old_source);
-        }
+    if path_changed && let Some(old_source) = old_source.as_ref() {
+        apply_source_sync_terminate(&config, old_source);
     }
     if enabled {
         apply_source_sync_start(&config, &source);
@@ -2009,12 +1981,12 @@ fn parse_event_emit_args(args: &[String]) -> Result<EventInput> {
         )));
     }
     validate_privacy(&privacy)?;
-    if let Some(hash) = payload_hash.as_deref() {
-        if !hash.starts_with("sha256:") {
-            return Err(UcError::Message(
-                "invalid --payload-hash: expected sha256:<hash>".to_string(),
-            ));
-        }
+    if let Some(hash) = payload_hash.as_deref()
+        && !hash.starts_with("sha256:")
+    {
+        return Err(UcError::Message(
+            "invalid --payload-hash: expected sha256:<hash>".to_string(),
+        ));
     }
     Ok(EventInput {
         event_id,
@@ -2305,9 +2277,9 @@ fn insert_json_string_field_after(
         value_end += 1;
     }
     Ok(format!(
-        "{},{}{}",
+        "{},\"{field}\":{}{}",
         &event_json[..value_end],
-        format!("\"{field}\":{}", json_string(value)),
+        json_string(value),
         &event_json[value_end..]
     ))
 }
@@ -2447,10 +2419,6 @@ fn load_event_config() -> Result<Config> {
             remote: "local".to_string(),
             remote_root: config_dir()?.to_string_lossy().to_string(),
             host_id: default_host_id(),
-            query: QueryConfig {
-                command: DEFAULT_QUERY_COMMAND.to_string(),
-                args: DEFAULT_QUERY_ARGS.to_string(),
-            },
             sources: Vec::new(),
         })
     })
@@ -2634,25 +2602,6 @@ fn event_field(event_json: &str, field: &str) -> Option<String> {
     Some(rest.split('"').next()?.to_string())
 }
 
-fn cmd_query(args: &[String]) -> Result<()> {
-    if args.is_empty() || args.iter().any(|arg| arg == "-h" || arg == "--help") {
-        println!("Usage: uc query <query>");
-        return Ok(());
-    }
-
-    let config = load_config()?;
-    let user_query = args.join(" ");
-    let workspace_path = format!("{}/workspace", config.remote_root);
-    let prompt = query_prompt(&workspace_path, &user_query);
-
-    if config.is_local() {
-        run_local_query(&config, &workspace_path, &prompt)
-    } else {
-        let remote_command = query_remote_command(&config, &workspace_path, &prompt)?;
-        run_command("ssh", [config.remote.as_str(), remote_command.as_str()])
-    }
-}
-
 fn cmd_status(args: &[String]) -> Result<()> {
     if args.iter().any(|arg| arg == "-h" || arg == "--help") {
         println!("Usage: uc status");
@@ -2743,111 +2692,6 @@ fn status_source(config: &Config, source: &Source, mutagen_list: Option<&str>) {
     }
 }
 
-fn query_remote_command(config: &Config, workspace_path: &str, prompt: &str) -> Result<String> {
-    let command_setup = query_command_setup(config);
-    let args = query_command_shell_args(&config.query, prompt)?;
-    Ok(format!(
-        "{}; \
-cd {} && \"$QUERY_BIN\" {} < /dev/null",
-        command_setup,
-        remote_path_arg(&workspace_path),
-        args
-    ))
-}
-
-fn run_local_query(config: &Config, workspace_path: &str, prompt: &str) -> Result<()> {
-    let workspace_dir = expand_home(workspace_path)?;
-    if !workspace_dir.exists() {
-        return Err(UcError::Message(format!(
-            "local workspace directory does not exist: {}",
-            workspace_dir.display()
-        )));
-    }
-
-    let command = resolve_local_query_command(&config.query.command)?;
-    let args = query_command_args(&config.query, prompt)?;
-    let mut child = external_command(&command)
-        .args(&args)
-        .current_dir(workspace_dir)
-        .stdin(Stdio::null())
-        .spawn()?;
-    let status = child.wait()?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(UcError::Message(format!(
-            "{} exited with {}",
-            command_display(&command, &query_command_display_args(&config.query)),
-            status
-        )))
-    }
-}
-
-fn query_command_args(config: &QueryConfig, prompt: &str) -> Result<Vec<String>> {
-    let args = shell_words(&config.args);
-    if !args
-        .iter()
-        .any(|arg| arg.contains(QUERY_PROMPT_PLACEHOLDER))
-    {
-        return Err(UcError::Message(format!(
-            "[query].args must include {QUERY_PROMPT_PLACEHOLDER}; for Claude use: args = \"{DEFAULT_QUERY_ARGS}\""
-        )));
-    }
-
-    Ok(args
-        .into_iter()
-        .map(|arg| arg.replace(QUERY_PROMPT_PLACEHOLDER, prompt))
-        .collect())
-}
-
-fn query_command_display_args(config: &QueryConfig) -> Vec<String> {
-    shell_words(&config.args)
-        .into_iter()
-        .map(|arg| arg.replace(QUERY_PROMPT_PLACEHOLDER, "<prompt>"))
-        .collect()
-}
-
-fn query_command_shell_args(config: &QueryConfig, prompt: &str) -> Result<String> {
-    Ok(query_command_args(config, prompt)?
-        .iter()
-        .map(|arg| sh_quote(arg))
-        .collect::<Vec<_>>()
-        .join(" "))
-}
-
-fn resolve_local_query_command(command: &str) -> Result<String> {
-    if command.contains('/') {
-        return Ok(command.to_string());
-    }
-    if command == "claude" {
-        let local_bin = home_dir()?.join(".local/bin/claude");
-        if local_bin.exists() {
-            return Ok(local_bin.to_string_lossy().to_string());
-        }
-    }
-    Ok(command.to_string())
-}
-
-fn query_command_setup(config: &Config) -> String {
-    let command_setup = if config.query.command == "claude" {
-        "QUERY_BIN=$(command -v claude || true); \
-if [ -z \"$QUERY_BIN\" ] && [ -x \"$HOME/.local/bin/claude\" ]; then QUERY_BIN=\"$HOME/.local/bin/claude\"; fi; \
-if [ -z \"$QUERY_BIN\" ]; then echo 'claude not found on remote PATH or ~/.local/bin/claude' >&2; exit 127; fi"
-            .to_string()
-    } else {
-        format!(
-            "QUERY_BIN=$(command -v {} || true); \
-if [ -z \"$QUERY_BIN\" ]; then echo {} >&2; exit 127; fi",
-            sh_quote(&config.query.command),
-            sh_quote(&format!(
-                "{} not found on remote PATH",
-                config.query.command
-            ))
-        )
-    };
-    command_setup
-}
-
 fn cmd_doctor() -> Result<()> {
     let config = load_config().ok();
 
@@ -2871,7 +2715,6 @@ fn cmd_doctor() -> Result<()> {
 
         if config.is_local() {
             check_local_workspace(&config);
-            check_local_query_command(&config.query.command);
         } else {
             check_remote(&config, "ssh", "true");
             check_remote(
@@ -2881,11 +2724,6 @@ fn cmd_doctor() -> Result<()> {
                     "test -d {}",
                     remote_path_arg(&format!("{}/workspace", config.remote_root))
                 ),
-            );
-            check_remote(
-                &config,
-                &config.query.command,
-                &format!("command -v {} >/dev/null", sh_quote(&config.query.command)),
             );
         }
     } else {
@@ -2960,7 +2798,6 @@ fn refresh_runtime_assets_with_updated_binary() -> Result<()> {
 
 fn refresh_runtime_assets() -> Result<()> {
     install_agent_skills()?;
-    ensure_prompt_file()?;
     Ok(())
 }
 
@@ -3067,48 +2904,6 @@ fn move_local_workspace(
     }
     ui_step(format!("move workspace {old_host_id} -> {new_host_id}"));
     fs::rename(old_path, new_path)?;
-    Ok(())
-}
-
-// Render the prompt the query agent will receive.
-// If the user has a prompt file at ~/.ultracontext/prompts/query.md,
-// substitute {{workspace_path}} and {{query}} into it. If not, return the bare
-// user query so the agent sees only that.
-fn query_prompt(workspace_path: &str, user_query: &str) -> String {
-    match read_prompt_file() {
-        Some(template) => render_prompt(&template, workspace_path, user_query),
-        None => user_query.to_string(),
-    }
-}
-
-// Pure substitution, separated for testability.
-fn render_prompt(template: &str, workspace_path: &str, user_query: &str) -> String {
-    template
-        .replace("{{workspace_path}}", workspace_path)
-        .replace("{{query}}", user_query)
-}
-
-fn prompt_path() -> Result<PathBuf> {
-    Ok(config_dir()?.join(PROMPT_FILE))
-}
-
-fn read_prompt_file() -> Option<String> {
-    let path = prompt_path().ok()?;
-    fs::read_to_string(&path)
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-}
-
-// Seed the default prompt on disk if missing; non-fatal on error.
-fn ensure_prompt_file() -> Result<()> {
-    let path = prompt_path()?;
-    if path.exists() {
-        return Ok(());
-    }
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(path, DEFAULT_QUERY_PROMPT)?;
     Ok(())
 }
 
@@ -3333,10 +3128,8 @@ fn mutagen_session_status(mutagen_list: &str, name: &str) -> Option<String> {
             in_session = session_name == name;
             continue;
         }
-        if in_session {
-            if let Some(status) = line.strip_prefix("Status: ") {
-                return Some(status.to_string());
-            }
+        if in_session && let Some(status) = line.strip_prefix("Status: ") {
+            return Some(status.to_string());
         }
     }
 
@@ -3707,19 +3500,6 @@ fn check_local_workspace(config: &Config) {
     }
 }
 
-fn check_local_query_command(name: &str) {
-    match resolve_local_query_command(name) {
-        Ok(command) if command.contains('/') && Path::new(&command).is_file() => {
-            ui_success(format!("local {name}: ok ({command})"))
-        }
-        Ok(command) if command.contains('/') => {
-            ui_warn(format!("local {name}: missing ({command})"))
-        }
-        Ok(command) => check_local_command(&command),
-        Err(_) => ui_warn(format!("local {name}: missing")),
-    }
-}
-
 fn check_installation() {
     match env::current_exe() {
         Ok(path) => ui_info(format!("binary: {}", path.display())),
@@ -4081,42 +3861,6 @@ fn find_path_commands(command: &str) -> Result<Vec<String>> {
     Ok(paths)
 }
 
-fn shell_words(input: &str) -> Vec<String> {
-    let mut words = Vec::new();
-    let mut current = String::new();
-    let mut chars = input.chars().peekable();
-    let mut quote: Option<char> = None;
-
-    while let Some(ch) = chars.next() {
-        match (quote, ch) {
-            (Some(q), c) if c == q => quote = None,
-            (Some(_), '\\') => {
-                if let Some(next) = chars.next() {
-                    current.push(next);
-                }
-            }
-            (Some(_), c) => current.push(c),
-            (None, '\'' | '"') => quote = Some(ch),
-            (None, '\\') => {
-                if let Some(next) = chars.next() {
-                    current.push(next);
-                }
-            }
-            (None, c) if c.is_whitespace() => {
-                if !current.is_empty() {
-                    words.push(std::mem::take(&mut current));
-                }
-            }
-            (None, c) => current.push(c),
-        }
-    }
-
-    if !current.is_empty() {
-        words.push(current);
-    }
-    words
-}
-
 fn external_command(program: &str) -> Command {
     let mut command = Command::new(program);
     if let Some(home) = env::var_os("ULTRACONTEXT_EXTERNAL_HOME") {
@@ -4221,13 +3965,6 @@ impl Config {
         ));
         out.push_str(&format!("host_id = \"{}\"\n", escape_toml(&self.host_id)));
         out.push('\n');
-        out.push_str("[query]\n");
-        out.push_str(&format!(
-            "command = \"{}\"\n",
-            escape_toml(&self.query.command)
-        ));
-        out.push_str(&format!("args = \"{}\"\n", escape_toml(&self.query.args)));
-        out.push('\n');
         for source in &self.sources {
             out.push_str(&format!("[sources.{}]\n", source.agent));
             out.push_str(&format!("path = \"{}\"\n", escape_toml(&source.local_path)));
@@ -4240,10 +3977,6 @@ impl Config {
         let mut remote = String::new();
         let mut remote_root = DEFAULT_REMOTE_ROOT.to_string();
         let mut host_id = String::new();
-        let mut query = QueryConfig {
-            command: DEFAULT_QUERY_COMMAND.to_string(),
-            args: DEFAULT_QUERY_ARGS.to_string(),
-        };
         let mut sources = Vec::<Source>::new();
         let mut current_source: Option<Source> = None;
         let mut section = ConfigSection::Root;
@@ -4259,9 +3992,7 @@ impl Config {
                     sources.push(source);
                 }
                 let section_name = &line[1..line.len() - 1];
-                if section_name == "query" {
-                    section = ConfigSection::Query;
-                } else if let Some(agent) = section_name.strip_prefix("sources.") {
+                if let Some(agent) = section_name.strip_prefix("sources.") {
                     validate_source_name(agent)?;
                     section = ConfigSection::Source;
                     current_source = Some(Source {
@@ -4289,11 +4020,6 @@ impl Config {
                     "remote_root" => remote_root = parse_string_value(value)?,
                     "host_id" => host_id = parse_string_value(value)?,
                     _ => return Err(UcError::Message(format!("unknown config key: {key}"))),
-                },
-                ConfigSection::Query => match key {
-                    "command" => query.command = parse_string_value(value)?,
-                    "args" => query.args = parse_string_value(value)?,
-                    _ => return Err(UcError::Message(format!("unknown query key: {key}"))),
                 },
                 ConfigSection::Source => {
                     let source = current_source.as_mut().ok_or_else(|| {
@@ -4345,7 +4071,6 @@ impl Config {
             remote,
             remote_root,
             host_id,
-            query,
             sources,
         })
     }
@@ -4354,7 +4079,6 @@ impl Config {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ConfigSection {
     Root,
-    Query,
     Source,
 }
 
@@ -4399,10 +4123,6 @@ mod tests {
             remote: "user@vps".to_string(),
             remote_root: "~/.ultracontext".to_string(),
             host_id: "work-laptop".to_string(),
-            query: QueryConfig {
-                command: "claude".to_string(),
-                args: "--dangerously-skip-permissions --effort low".to_string(),
-            },
             sources: vec![Source {
                 agent: "claude".to_string(),
                 local_path: "~/.claude".to_string(),
@@ -4419,10 +4139,6 @@ mod tests {
             remote: "user@vps".to_string(),
             remote_root: "~/.ultracontext".to_string(),
             host_id: "work-laptop".to_string(),
-            query: QueryConfig {
-                command: "claude".to_string(),
-                args: "--dangerously-skip-permissions".to_string(),
-            },
             sources: vec![],
         };
         let source = Source {
@@ -4453,10 +4169,6 @@ mod tests {
             remote: "local".to_string(),
             remote_root: "/tmp/uc".to_string(),
             host_id: "mini".to_string(),
-            query: QueryConfig {
-                command: "claude".to_string(),
-                args: "--dangerously-skip-permissions".to_string(),
-            },
             sources: vec![],
         };
         let source = Source {
@@ -4485,10 +4197,6 @@ mod tests {
             remote: "local".to_string(),
             remote_root: root.to_string_lossy().to_string(),
             host_id: "mini".to_string(),
-            query: QueryConfig {
-                command: "claude".to_string(),
-                args: "--dangerously-skip-permissions".to_string(),
-            },
             sources: vec![],
         };
         let source = Source {
@@ -4564,10 +4272,6 @@ enabled = true
             remote: "local".to_string(),
             remote_root: "~/.ultracontext".to_string(),
             host_id: "mini".to_string(),
-            query: QueryConfig {
-                command: "claude".to_string(),
-                args: "--dangerously-skip-permissions".to_string(),
-            },
             sources: vec![],
         };
 
@@ -4589,10 +4293,6 @@ enabled = true
             remote: "user@vps".to_string(),
             remote_root: "/srv/ultracontext".to_string(),
             host_id: "work-laptop".to_string(),
-            query: QueryConfig {
-                command: "claude".to_string(),
-                args: "--dangerously-skip-permissions".to_string(),
-            },
             sources: vec![
                 Source {
                     agent: "codex".to_string(),
@@ -4630,10 +4330,6 @@ enabled = true
             remote: "user@vps".to_string(),
             remote_root: "/srv/ultracontext".to_string(),
             host_id: "work-laptop".to_string(),
-            query: QueryConfig {
-                command: "claude".to_string(),
-                args: DEFAULT_QUERY_ARGS.to_string(),
-            },
             sources: vec![Source {
                 agent: "codex".to_string(),
                 local_path: "~/CustomCodex".to_string(),
@@ -4671,10 +4367,6 @@ enabled = true
             remote: "local".to_string(),
             remote_root: "~/.ultracontext".to_string(),
             host_id: "mini".to_string(),
-            query: QueryConfig {
-                command: "claude".to_string(),
-                args: "--dangerously-skip-permissions".to_string(),
-            },
             sources: vec![],
         };
         let existing = "Name: uc-mini-claude\nName: uc-mini-oldsource\nName: uc-other-codex\n";
@@ -4691,10 +4383,6 @@ enabled = true
             remote: "user@vps".to_string(),
             remote_root: "/srv/uc".to_string(),
             host_id: "work-laptop".to_string(),
-            query: QueryConfig {
-                command: "claude".to_string(),
-                args: DEFAULT_QUERY_ARGS.to_string(),
-            },
             sources: vec![
                 Source {
                     agent: "claude".to_string(),
@@ -4768,161 +4456,6 @@ Status: Watching for changes
         assert!(message.contains("`uc sync remove` was removed"));
         assert!(message.contains("uc source remove codex"));
         assert!(message.contains("uc sync stop"));
-    }
-
-    #[test]
-    fn renders_default_query_prompt_from_template() {
-        let prompt = render_prompt(DEFAULT_QUERY_PROMPT, "/remote/workspace", "what changed?");
-
-        assert!(prompt.contains("/remote/workspace"));
-        assert!(prompt.contains("what changed?"));
-        assert!(prompt.contains("subagents"));
-        assert!(!prompt.contains("{{workspace_path}}"));
-        assert!(!prompt.contains("{{query}}"));
-    }
-
-    #[test]
-    fn render_prompt_returns_template_with_substitutions() {
-        let template = "ctx={{workspace_path}} q={{query}}";
-        assert_eq!(
-            render_prompt(template, "/tmp/workspace", "find X"),
-            "ctx=/tmp/workspace q=find X"
-        );
-    }
-
-    #[test]
-    fn uses_configured_query_command_and_args() {
-        let cfg = Config {
-            remote: "user@vps".to_string(),
-            remote_root: "~/.ultracontext".to_string(),
-            host_id: "work-laptop".to_string(),
-            query: QueryConfig {
-                command: "custom-query".to_string(),
-                args: "-p {{prompt}} --dangerously-skip-permissions --effort low --model sonnet"
-                    .to_string(),
-            },
-            sources: vec![],
-        };
-
-        let command = query_remote_command(&cfg, "~/.ultracontext/workspace", "prompt").unwrap();
-
-        assert!(command.contains("command -v 'custom-query'"), "{command}");
-        assert!(command.contains("'-p' 'prompt'"), "{command}");
-        assert!(
-            command.contains("'--dangerously-skip-permissions'"),
-            "{command}"
-        );
-        assert!(command.contains("'--effort' 'low'"), "{command}");
-        assert!(command.contains("'--model' 'sonnet'"), "{command}");
-    }
-
-    #[test]
-    fn splits_query_args_for_local_execution() {
-        assert_eq!(
-            shell_words("--dangerously-skip-permissions --model 'sonnet 4' --effort low"),
-            vec![
-                "--dangerously-skip-permissions",
-                "--model",
-                "sonnet 4",
-                "--effort",
-                "low"
-            ]
-        );
-    }
-
-    #[test]
-    fn query_args_require_prompt_placeholder() {
-        let query = QueryConfig {
-            command: "custom-query".to_string(),
-            args: "--mode local".to_string(),
-        };
-
-        let error = query_command_args(&query, "find context").unwrap_err();
-
-        assert!(
-            error.to_string().contains("must include {{prompt}}"),
-            "{error}"
-        );
-    }
-
-    #[test]
-    fn query_args_can_place_prompt_with_template() {
-        let query = QueryConfig {
-            command: "pi".to_string(),
-            args: "--thinking high -p {{prompt}}".to_string(),
-        };
-
-        assert_eq!(
-            query_command_args(&query, "find context").unwrap(),
-            vec!["--thinking", "high", "-p", "find context"]
-        );
-    }
-
-    #[test]
-    fn query_args_template_can_embed_prompt_in_arg() {
-        let query = QueryConfig {
-            command: "custom-query".to_string(),
-            args: "--prompt={{prompt}}".to_string(),
-        };
-
-        assert_eq!(
-            query_command_args(&query, "find context").unwrap(),
-            vec!["--prompt=find context"]
-        );
-    }
-
-    #[test]
-    fn defaults_query_config_when_missing() {
-        let raw = r#"
-remote = "user@vps"
-remote_root = "~/.ultracontext"
-host_id = "work-laptop"
-"#;
-
-        let cfg = Config::from_toml(raw).unwrap();
-
-        assert_eq!(cfg.query.command, "claude");
-        assert_eq!(cfg.query.args, DEFAULT_QUERY_ARGS);
-    }
-
-    #[test]
-    fn parses_query_section() {
-        let raw = r#"
-remote = "user@vps"
-remote_root = "~/.ultracontext"
-host_id = "work-laptop"
-
-[query]
-command = "custom-query"
-args = "--fast"
-"#;
-
-        let cfg = Config::from_toml(raw).unwrap();
-
-        assert_eq!(cfg.query.command, "custom-query");
-        assert_eq!(cfg.query.args, "--fast");
-        assert_eq!(
-            cfg.to_toml(),
-            "remote = \"user@vps\"\nremote_root = \"~/.ultracontext\"\nhost_id = \"work-laptop\"\n\n[query]\ncommand = \"custom-query\"\nargs = \"--fast\"\n\n"
-        );
-    }
-
-    #[test]
-    fn keeps_claude_path_fallback_for_default_query_command() {
-        let cfg = Config {
-            remote: "user@vps".to_string(),
-            remote_root: "~/.ultracontext".to_string(),
-            host_id: "work-laptop".to_string(),
-            query: QueryConfig {
-                command: "claude".to_string(),
-                args: DEFAULT_QUERY_ARGS.to_string(),
-            },
-            sources: vec![],
-        };
-
-        let command = query_remote_command(&cfg, "~/.ultracontext/workspace", "prompt").unwrap();
-
-        assert!(command.contains("$HOME/.local/bin/claude"), "{command}");
     }
 
     #[test]
@@ -5061,24 +4594,6 @@ dist/
         assert!(!args.contains(&"--ignore=auth.json".to_string()));
         assert_eq!(args[args.len() - 2], "/tmp/source");
         assert!(DEFAULT_SYNC_IGNORES.is_empty());
-    }
-
-    #[test]
-    fn query_command_does_not_read_stdin() {
-        let cfg = Config {
-            remote: "user@vps".to_string(),
-            remote_root: "~/.ultracontext".to_string(),
-            host_id: "work-laptop".to_string(),
-            query: QueryConfig {
-                command: "claude".to_string(),
-                args: DEFAULT_QUERY_ARGS.to_string(),
-            },
-            sources: vec![],
-        };
-
-        let command = query_remote_command(&cfg, "~/.ultracontext/workspace", "prompt").unwrap();
-
-        assert!(command.ends_with("< /dev/null"), "{command}");
     }
 
     #[test]

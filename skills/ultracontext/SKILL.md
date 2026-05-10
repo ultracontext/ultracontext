@@ -1,136 +1,172 @@
 ---
 name: ultracontext
 description: |
-  ultracontext is the user's GLOBAL context layer — a shared, always-on memory across every AI
-  agent the user (and their team) runs (Claude, Codex, OpenClaw, Hermes) plus any folder they've
-  indexed (notes, docs, knowledge bases). You are NOT the only agent the user works with;
-  ultracontext is how you reach what the OTHER agents (and past you, on other machines, or
-  teammates) already know.
+  ultracontext is the user's GLOBAL context layer: shared workspace state across every synced
+  machine, AI agent, session, and indexed folder. Trigger immediately when the user references
+  prior work, another agent, another machine, synced context, notes, history, or "ultracontext".
 
-  STRONG TRIGGER: any mention of "ultracontext" — fire immediately.
-
-  ALSO TRIGGER when the user references prior work or context plausibly outside this session:
-  "what did we ship", "where did we leave off", "what did Codex say", "the OpenClaw thread on X",
-  "in my notes", "what did $teammate write", "remember when".
-
-  Also handles setup: `uc init`, `uc sync`, `uc source`, `uc doctor`.
-
-  IMPORTANT — if the user wants to "edit my prompt" / "tweak the ultracontext prompt" or similar:
-  the file is `~/.ultracontext/prompts/query.md`. NEVER point them to SKILL.md.
+  Also handles setup: `uc init`, `uc sync`, `uc source`, `uc event`, `uc driver`, `uc doctor`.
 allowed-tools:
   - Bash
   - Read
+  - Grep
+  - Glob
 ---
 
 # ultracontext
 
-The user's **global context layer**. One CLI: `uc` (alias of `ultracontext`).
+UltraContext is a shared filesystem context layer for agents. It does not answer for you. It gives you the synced workspace so *you* can inspect the right evidence and answer accurately. Revolutionary idea: files still exist.
 
-## Editing the user's prompt — common pitfall
+## Mental model
 
-If the user asks to **edit/tweak/change "their prompt" of ultracontext**, the file is:
+You are one agent in a fleet. The user may also run Claude, Codex, OpenClaw, Hermes, and other tools on several machines. UltraContext syncs those sources into one workspace tree.
 
-```
-~/.ultracontext/prompts/query.md
-```
+- Workspace root: `~/.ultracontext/workspace/`
+- Layout: `<host-id>/<source-folder>/<native-agent-layout>`
+- Built-in source folders usually include `.claude`, `.codex`, `.openclaw`, `.hermes`
+- Custom indexed folders use their configured source name
+- Events may live outside host folders under `~/.ultracontext/events/`
 
-This is the prompt that wraps every `uc query`. User-owned, fully editable. Delete it to skip the template entirely. Re-create the default by deleting + running `uc init`.
+Never assume there is only one machine. That is the whole bloody point.
 
-**Do NOT** direct them to:
-- `~/.claude/skills/ultracontext/SKILL.md` — this file. It's how agents use ultracontext, not what the user owns.
-- `~/.agents/skills/ultracontext/SKILL.md` — same, just a different install location.
+## When to use UltraContext
 
-If the user is asking about the *skill behavior* (when ultracontext triggers, what the agent does), then yes, SKILL.md is right. But "edit my prompt" almost always means the query prompt.
+Use it whenever the user references context that may live outside the current chat or repo:
 
-## Mental model — read this first
+- "what did we ship last week?"
+- "where did Codex leave this?"
+- "the Claude session on the macbook last night"
+- "pick up the OpenClaw thread about X"
+- "in my notes / docs / brain dump"
+- "what agents have been doing?"
+- "latest Codex session"
 
-You are one agent in a fleet. The user also runs Claude on other machines, Codex, OpenClaw, Hermes, and whatever else. They may also have pointed ultracontext at extra folders (notes, project dirs, knowledge bases). They are likely even working with other people, and everyone shares this same global context layer. ultracontext continuously syncs **all of that** into one workspace tree and exposes it through `uc query`.
+Do **not** use it for things clearly available in the current conversation or current repo. Use normal file/git inspection for that. Don't summon the interdimensional archive to read the file already open in front of you.
 
-So when the user says "what did we...", "remember when...", "find that..." — they mean across **everything**, not just this conversation. You are not expected to know it. ultracontext is how you go fetch it.
+## Core retrieval strategy
 
-- Workspace root: `~/.ultracontext/workspace/`. Each synced source lives at `workspace/<host-id>/<source-folder>/<native-layout>`; built-in agents use native dot-folder names like `.claude`, `.codex`, `.openclaw`, and `.hermes`, while custom sources use their source name. Future categories (event logs, etc.) live alongside under their own subfolders. `uc query` operates at the workspace root, so it sees everything.
-- Sources can be agents (`claude`, `codex`, `openclaw`, `hermes`) or arbitrary folders the user indexed via `uc source add`.
-- Sync is realtime, one-way, conflict-free, Mutagen-backed. Files are the source of truth — no DB, no index.
-- `uc query "<query>"` runs a context-engineer agent over the whole workspace and returns **context**, not a final answer.
+1. Locate the workspace root.
+   - Prefer configured/known root: `~/.ultracontext/workspace/`.
+   - If remote sync is configured, inspect the remote workspace, not just the local machine.
+   - `uc status` can show the workspace, host, and enabled sources.
 
-## When to use `uc query`
+2. Enumerate all relevant hosts first.
+   - List matching `<host-id>/<source-folder>/` folders across the workspace.
+   - Source-specific means every host for that source:
+     - Codex: `<host>/.codex/`
+     - Claude: `<host>/.claude/`
+     - OpenClaw: `<host>/.openclaw/`
+     - Hermes: `<host>/.hermes/`
 
-Use it whenever the user references something outside the current session:
+3. Rank candidates by internal timestamps.
+   - Prefer JSONL/session metadata timestamps over file mtime.
+   - Use file mtime only as fallback.
+   - Include host name when multiple hosts match or when it clarifies where work happened.
 
-**Cross-session recall:**
-- "what did we work on last week?"
-- "what was that fix for the auth bug?"
-- "find the prompt we used for X"
-- "where did we leave off on project Y?"
-- "what command did I run on the VPS yesterday?"
+4. Return evidence-backed context.
+   - Include file paths, agents, hosts, timestamps, session ids, and short excerpts when useful.
+   - If nothing clearly useful exists, say `NONE` internally or tell the user you found nothing relevant.
+   - Never preserve secrets; redact tokens, credentials, cookies, signed URLs, and headers as `[REDACTED]`.
 
-**Conversations with other agents:**
-- "what did I tell Codex about the rate limiter?"
-- "find that OpenClaw thread where we debated the schema"
-- "what did Hermes propose for the deploy pipeline?"
-- "Codex was helping me with X yesterday — pick that up"
-- "the Claude session on the macbook last night, what did we conclude?"
+## Latest/recent requests
 
-**Indexed sources / shared context:**
-- "in my notes, the API key rotation policy"
-- "the design doc on Y"
-- "the meeting notes from Tuesday"
-- "what did $teammate write about Z in the team workspace?"
-- "the brain dump I wrote in the journal folder"
+For "latest", "last", "newest", "recent", or "most recent":
 
-If unsure whether the answer lives outside this session, **query first**. Cheaper than guessing.
+- Do not rely on semantic relevance alone.
+- Enumerate candidate sessions across all hosts and relevant agents.
+- Inspect internal timestamps before deciding.
+- For "latest thing we did", compare Codex, Claude, OpenClaw, Hermes, and event records when relevant.
 
-Do **not** use for things obviously in the current conversation or current repo — `git log`, `Grep`, and `Read` are faster.
+## Codex fast path
+
+Use this path for Codex recall. It is faster and less stupid than brute-forcing every rollout first.
+
+1. Start with every `<host>/.codex/history.jsonl`.
+   - Compact JSONL index with `session_id`, `ts` epoch seconds, and `text`.
+   - Search exact terms, user wording, project names, and recent activity here first.
+
+2. For latest/recent Codex activity:
+   - Compare `history.jsonl` entries by `ts` across all hosts.
+   - If history is sparse or missing, enumerate newest `<host>/.codex/sessions/**/rollout-*.jsonl` and inspect the first `session_meta` line.
+
+3. Map history hits to full transcripts:
+   - Find `<host>/.codex/sessions/**/rollout-*<session_id>.jsonl`.
+   - Open the rollout when details matter.
+
+4. In Codex rollouts:
+   - First line is usually `session_meta` with `payload.id`, `payload.timestamp`, `payload.cwd`, CLI version, and model provider.
+   - User prompts appear in `event_msg` with `type=user_message` and in `response_item` messages with `role=user`.
+   - Assistant replies, tool calls, command outputs, and errors appear later in `response_item` and `event_msg` records.
+   - Skip giant system/developer instruction blobs unless the user asks about prompts, permissions, or agent setup.
+
+5. Resume snapshots:
+   - `<host>/.codex/resume/ctx_*.md` are compact resume snapshots.
+   - Use them for continue/context-transfer questions, but use rollouts for authoritative detail.
+
+## Claude fast path
+
+1. Start with every `<host>/.claude/history.jsonl`.
+   - Fields usually include `display`, `timestamp` epoch milliseconds, `project`, `sessionId`, and sometimes pasted content.
+
+2. Map a hit to transcript:
+   - Encode `project` like Claude does for project dirs: replace `/` and `.` with `-`.
+   - Open `<host>/.claude/projects/<encoded-project>/<sessionId>.jsonl`.
+   - If missing, search `<host>/.claude/projects/**/<sessionId>.jsonl`.
+
+3. If history is sparse, scan `<host>/.claude/projects/**/*.jsonl` directly and rank by internal `timestamp`.
+
+## OpenClaw fast path
+
+1. Start with `<host>/.openclaw/agents/<agent-id>/sessions/sessions.json`.
+   - Values may include `sessionId`, `sessionFile`, `label`, `status`, `spawnedBy`, `startedAt`, `updatedAt`, `endedAt`, `runtimeMs`.
+   - Treat `updatedAt`, `startedAt`, and `endedAt` as epoch milliseconds.
+
+2. Open referenced transcript:
+   - `<host>/.openclaw/agents/<agent-id>/sessions/<session-id>.jsonl`
+   - If `sessionFile` is an absolute local path, map it into the synced workspace path.
+
+3. For reset/deleted history, inspect siblings:
+   - `<session-id>.jsonl.reset.<timestamp>`
+   - `<session-id>.jsonl.deleted.<timestamp>`
+   - `<session-id>.trajectory.jsonl`
+   - `<session-id>.trajectory.jsonl.deleted.<timestamp>`
+   - `<session-id>.trajectory-path.json`
+
+## Search helpers
+
+If the workspace is indexed with QMD, use:
 
 ```sh
-uc query "<query in user's own words>"
+qmd search "exact project/file/error/user wording"
 ```
 
-The agent returns prior context to inject before the user query. Output `NONE` means nothing relevant found. Otherwise paste/quote the returned context and continue answering.
-
-Quote project names, file names, errors, branches, and user wording exactly — the query is more precise that way.
+Use QMD to narrow candidates, not as a substitute for opening source files. Trust, but verify. Mostly don't trust.
 
 ## Setup commands
 
-| Command | Purpose |
-|---|---|
-| `uc init <local\|user@host>` | Configure workspace, choose agents, install the agent skill, and start sync in one onboarding flow. |
-| `uc sync start` | Start syncing every enabled source. Idempotent — resumes existing sessions. |
-| `uc sync list` | List configured sync sessions and their current state. |
-| `uc sync status` | Show Mutagen session state. |
-| `uc sync stop` | Pause every enabled source. |
-| `uc sync reset` | Terminate + recreate sessions. Run after editing `config.toml` or files under `~/.ultracontext/ignores/`. |
-| `uc source list` | List configured sources and enable state. |
-| `uc source add <name> <path>` | Add a new source folder (any agent or notes dir). Name = folder under workspace. |
-| `uc source remove <name> [--yes]` | Confirm, terminate sync, delete the remote copy, and remove the source from config. Local files stay in place. |
-| `uc source enable <name>` / `disable <name>` | Toggle one source. |
-| `uc doctor` | Verify deps (mutagen, ssh), config, remote reachability, query agent. |
-| `uc update` | Update using the active install manager without switching managers silently. |
-| `uc event tail [--limit <n>]` | Show the most recent shared activity/events. Use this first when the user asks where things stopped or what agents have been doing. |
+- `uc init <local|user@host>`: configure workspace, choose sources, install this skill, optionally start sync.
+- `uc status`: show workspace, host, and sync/source status.
+- `uc sync start`: start syncing enabled sources.
+- `uc sync list`: list configured sync sessions.
+- `uc sync status`: show Mutagen session state.
+- `uc sync stop`: pause enabled sync sessions.
+- `uc sync reset`: terminate and recreate sessions after config or ignore edits.
+- `uc source list`: list sources.
+- `uc source add <name> <path>`: add arbitrary indexed folder.
+- `uc source remove <name> [--yes]`: terminate sync, delete remote copy, remove config entry. Local files stay.
+- `uc source enable <name>` / `uc source disable <name>`: toggle one source.
+- `uc event tail [--limit <n>]`: show recent shared activity/events; use first when the user asks what agents have been doing.
+- `uc event emit` / `uc event commit`: record small activity facts only.
+- `uc driver <list|run>`: manage/run configured drivers.
+- `uc doctor`: verify installation, config, remote reachability, and workspace health.
+- `uc update`: update using the active install manager.
 
-Event rule: events are for small activity facts. Do not put raw prompts, full transcripts, secrets, cookies, tokens, headers, signed URLs, or huge payloads in events. Use `uc query` or referenced artifacts for deep context.
-
-Source names: letters, numbers, `-`, `_`. Start with letter or number.
-
-## Files
-
-- Config: `~/.ultracontext/config.toml`
-- Ignores: `~/.ultracontext/ignores/.ultracontextignore` for global rules and `~/.ultracontext/ignores/<source>/.ultracontextignore` for source-specific rules. `uc init` syncs Claude/Codex broadly with no source-specific default ignores; OpenClaw starts with conversations and complete workspace directories, excluding `node_modules`. Edit then `uc sync reset`.
-- **Query prompt**: `~/.ultracontext/prompts/query.md` — user-owned; this is what wraps every `uc query`. **When the user asks to "edit my prompt", "tweak the ultracontext prompt", "change how ultracontext searches", or anything similar, this is the file to point them to or edit.** Delete it to send the raw query with no template. Regenerate the default by deleting the file and running `uc init`.
-- Workspace: `~/.ultracontext/workspace/<host-id>/<source-folder>/`
-
-> **Do NOT** direct the user to this `SKILL.md` for prompt edits. `SKILL.md` describes how agents use ultracontext. The query prompt at `~/.ultracontext/prompts/query.md` is what the user owns and tunes.
-
-`config.toml` shape:
+## Config shape
 
 ```toml
 remote      = "user@vps"        # or "local"
 remote_root = "~/.ultracontext"
 host_id     = "macbook"
-
-[query]
-command = "claude"
-args    = "-p {{prompt}} --dangerously-skip-permissions --effort medium --model sonnet"
 
 [sources.claude]
 path    = "~/.claude"
@@ -141,75 +177,13 @@ path    = "~/.codex"
 enabled = true
 ```
 
-Defaults: query agent is `claude`, sources are selected during `uc init`.
+## Files
 
-## Typical agent workflows
+- Config: `~/.ultracontext/config.toml`
+- Ignores: `~/.ultracontext/ignores/.ultracontextignore` and `~/.ultracontext/ignores/<source>/.ultracontextignore`
+- Workspace: `~/.ultracontext/workspace/<host-id>/<source-folder>/`
+- Events: `~/.ultracontext/events/events.jsonl`
 
-**User asks about past work:**
-```sh
-uc query "what was the rewrite plan?"
-```
-Read the returned context. If `NONE`, fall back to `git log` / repo grep.
+## Event rule
 
-**User wants to add a new source (e.g. notes folder):**
-```sh
-uc source add notes ~/notes
-```
-Sync starts immediately if enabled.
-
-**User says sync is broken:**
-```sh
-uc doctor
-uc sync status
-```
-If sessions are stuck after a config edit: `uc sync reset`.
-
-**User wants to update ultracontext:**
-```sh
-uc update
-```
-If installed through npm or Cargo, follow the command it prints instead of switching managers.
-
-**User on a fresh machine:**
-```sh
-uc init user@vps
-```
-Use a unique `host-id` per machine — it becomes the folder under `workspace/`.
-
-## Query behavior
-
-`uc query` invokes the configured query command (default `claude`) with the prompt at `~/.ultracontext/prompts/query.md` (created on `uc init`, fully editable). The prompt instructs the agent to spawn parallel subagents, prefer recent files by mtime for "latest" queries, and inspect internal JSONL timestamps in Claude / Codex session files. Output is context, not a reply. If the prompt file is missing, `uc query` passes the raw user query to the agent with no template.
-
-To swap the query agent:
-
-```toml
-[query]
-command = "codex"
-args    = "-p {{prompt}} --model gpt-5"
-```
-
-`uc query` replaces `{{prompt}}` in `args` with the rendered prompt. That
-keeps the command shape configurable instead of hardcoding one prompt flag.
-
-```toml
-[query]
-command = "pi"
-args    = "--thinking high -p {{prompt}}"
-```
-
-Any CLI that accepts a prompt and a working directory can work.
-
-## Expectations
-
-- `uc query` may take seconds to a minute — it spawns a real model. Don't poll.
-- It runs locally if `remote = "local"`, otherwise over SSH on the configured remote.
-- It needs the query binary on the remote PATH (or `~/.local/bin/claude` for the Claude default).
-- `NONE` means **truly nothing relevant found** — trust it, don't retry with paraphrases unless the user asks.
-- Sources sync one-way (laptop → workspace). Editing files in the workspace does **not** flow back.
-
-## Failure modes
-
-- `mutagen not found` → installer didn't finish; rerun `curl -fsSL https://ultracontext.com/install.sh | sh` or `brew install mutagen-io/mutagen/mutagen`.
-- `local sessions directory does not exist` → `uc sync start` first, or wrong `host_id`.
-- `claude not found on remote PATH` → install the query agent on the remote, or change `[query].command`.
-- Stuck sync after editing ignore rules → `uc sync reset`.
+Events are for small activity facts. Do not put raw prompts, full transcripts, secrets, cookies, tokens, headers, signed URLs, or huge payloads in events. Store deep context as files/artifacts and reference them.

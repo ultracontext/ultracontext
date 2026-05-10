@@ -1,7 +1,7 @@
 {
   "name": "ultracontext",
   "version": "2.0.0-alpha.0",
-  "description": "Remote sync and query for AI agent context",
+  "description": "Remote context sync for AI agents",
   "license": "Apache-2.0",
   "type": "module",
   "repository": {

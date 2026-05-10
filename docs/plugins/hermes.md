@@ -148,7 +148,7 @@ The tests cover:
 
 - hook registration;
 - event-tail command shape;
-- no automatic deep query;
+- no automatic deep retrieval;
 - bounded context size;
 - optional bounded payload excerpts from local `file://` session refs;
 - empty output;
