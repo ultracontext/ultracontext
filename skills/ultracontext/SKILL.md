@@ -161,6 +161,45 @@ Use QMD to narrow candidates, not as a substitute for opening source files. Trus
 - `uc doctor`: verify installation, config, remote reachability, and workspace health.
 - `uc update`: update using the active install manager.
 
+## Core, drivers, extensions, and sources
+
+Use this boundary when reasoning about UltraContext architecture:
+
+- **Core**: mandatory runtime primitives: workspace layout, event log, outbox, identity, privacy, locks, subscriptions, scheduler.
+- **Driver**: code/package that connects an external system to UltraContext. Drivers bring outside state into UC and may emit metadata-only events.
+- **Extension**: behavior that transforms or acts on context already inside UltraContext, such as summarizers, indexers, digests, routers, or policy engines.
+- **Agent**: a user-space process that reads/writes UC while doing work.
+
+Rule of thumb: **drivers bring the outside world in; extensions transform what is already inside**.
+
+Do not confuse a mirrored source folder with the driver that maintains it:
+
+- `.chatgpt` is the **source mirror / workspace folder** for ChatGPT data.
+- The **ChatGPT driver** may include bounded sync, iOS lifecycle relay, raw-to-Markdown parsing, checkpoints/watermarks, and `uc.event.v1` event mapping.
+- `.claude-web` is the **source mirror / workspace folder** for Claude.ai web data.
+- The **Claude.ai driver** may include bounded sync, parser/transpiler, checkpoints/watermarks, and event mapping.
+
+Concrete examples:
+
+```text
+ChatGPT driver
+  source mirror: .chatgpt
+  lifecycle hook: iOS Shortcut relay
+  sync: bounded recent sync
+  parser/transpiler: raw -> markdown
+  event mapper: sync.completed -> uc.event.v1
+  checkpoint/watermark
+
+Claude.ai driver
+  source mirror: .claude-web
+  sync: bounded recent sync
+  parser/transpiler
+  event mapper
+  checkpoint/watermark
+```
+
+When reporting synced external app content, explicitly say it came from UltraContext/external app sync, not the current chat.
+
 ## Config shape
 
 ```toml
