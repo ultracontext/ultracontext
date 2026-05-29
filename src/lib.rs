@@ -4011,6 +4011,8 @@ impl Config {
                         local_path: String::new(),
                         enabled: true,
                     });
+                } else if section_name == "query" {
+                    section = ConfigSection::Query;
                 } else {
                     return Err(UcError::Message(format!(
                         "unsupported section: {section_name}"
@@ -4045,6 +4047,12 @@ impl Config {
                         _ => return Err(UcError::Message(format!("unknown source key: {key}"))),
                     }
                 }
+                ConfigSection::Query => match key {
+                    "command" | "args" => {
+                        let _ = parse_string_value(value)?;
+                    }
+                    _ => return Err(UcError::Message(format!("unknown query key: {key}"))),
+                },
             }
         }
 
@@ -4091,6 +4099,7 @@ impl Config {
 enum ConfigSection {
     Root,
     Source,
+    Query,
 }
 
 fn escape_toml(value: &str) -> String {
@@ -4126,6 +4135,28 @@ mod tests {
     #[test]
     fn sanitizes_host_id() {
         assert_eq!(sanitize_id("User's Laptop.local"), "user-s-laptop-local");
+    }
+
+    #[test]
+    fn ignores_legacy_query_section_in_config() {
+        let raw = r#"
+remote = "uc"
+remote_root = "~/.ultracontext"
+host_id = "fabios-macbook-pro"
+
+[query]
+command = "claude"
+args = "-p {{prompt}}"
+
+[sources.claude]
+path = "~/.claude"
+enabled = true
+"#;
+
+        let cfg = Config::from_toml(raw).unwrap();
+        assert_eq!(cfg.remote, "uc");
+        assert_eq!(cfg.sources.len(), 1);
+        assert_eq!(cfg.sources[0].agent, "claude");
     }
 
     #[test]
