@@ -2972,6 +2972,16 @@ fn known_source_specs() -> &'static [KnownSource] {
             label: "Codex",
             path: "~/.codex",
         },
+        KnownSource {
+            agent: "chatgpt",
+            label: "ChatGPT",
+            path: "~/.chatgpt",
+        },
+        KnownSource {
+            agent: "claude-web",
+            label: "Claude.ai",
+            path: "~/.claude-web",
+        },
     ]
 }
 
@@ -4153,6 +4163,26 @@ mod tests {
             "~/.ultracontext/workspace/work-laptop/.codex"
         );
 
+        let chatgpt_source = Source {
+            agent: "chatgpt".to_string(),
+            local_path: "~/.chatgpt".to_string(),
+            enabled: true,
+        };
+        assert_eq!(
+            remote_dir(&cfg, &chatgpt_source),
+            "~/.ultracontext/workspace/work-laptop/.chatgpt"
+        );
+
+        let claude_web_source = Source {
+            agent: "claude-web".to_string(),
+            local_path: "~/.claude-web".to_string(),
+            enabled: true,
+        };
+        assert_eq!(
+            remote_dir(&cfg, &claude_web_source),
+            "~/.ultracontext/workspace/work-laptop/.claude-web"
+        );
+
         let custom_source = Source {
             agent: "project_notes".to_string(),
             local_path: "~/notes".to_string(),
@@ -4320,7 +4350,15 @@ enabled = true
                 .iter()
                 .map(|source| source.agent.as_str())
                 .collect::<Vec<_>>(),
-            vec!["codex", "project_notes", "openclaw", "claude", "hermes"]
+            vec![
+                "codex",
+                "project_notes",
+                "openclaw",
+                "claude",
+                "hermes",
+                "chatgpt",
+                "claude-web",
+            ]
         );
         assert_eq!(sources[0].local_path, "~/CustomCodex");
     }
