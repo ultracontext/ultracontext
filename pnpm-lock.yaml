@@ -16,21 +16,18 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.27.1
         version: 1.27.1(zod@3.25.76)
-      '@supabase/supabase-js':
-        specifier: ^2.49.4
-        version: 2.98.0
+      '@ultracontext/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@ultracontext/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
       dotenv:
         specifier: ^17.2.3
         version: 17.3.1
-      drizzle-orm:
-        specifier: ^0.44.5
-        version: 0.44.7(@cloudflare/workers-types@4.20260307.1)(better-sqlite3@11.10.0)(postgres@3.4.8)
       hono:
         specifier: ^4.10.7
         version: 4.12.0
-      postgres:
-        specifier: ^3.4.7
-        version: 3.4.8
       ultracontext-mcp-server:
         specifier: workspace:*
         version: link:../mcp-server
@@ -137,11 +134,45 @@ importers:
         specifier: ^1.0.1
         version: 1.0.2
 
+  packages/core:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.18.6
+        version: 22.19.11
+      tsx:
+        specifier: ^4.20.5
+        version: 4.21.0
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
   packages/parsers:
     dependencies:
       fast-glob:
         specifier: ^3.3.3
         version: 3.3.3
+
+  packages/storage:
+    dependencies:
+      '@supabase/supabase-js':
+        specifier: ^2.49.4
+        version: 2.98.0
+      '@ultracontext/core':
+        specifier: workspace:*
+        version: link:../core
+      drizzle-orm:
+        specifier: ^0.44.5
+        version: 0.44.7(@cloudflare/workers-types@4.20260307.1)(better-sqlite3@11.10.0)(postgres@3.4.8)
+      postgres:
+        specifier: ^3.4.7
+        version: 3.4.8
+    devDependencies:
+      '@types/node':
+        specifier: ^22.18.6
+        version: 22.19.11
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
 
 packages:
 

@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, gt, inArray, isNull, lt, ne, sql } from 'drizzle-orm';
 
-import { nodes, api_keys, projects, type ApiDb } from '../db';
-import type { StorageAdapter, NodeRow, NodeInsertRow, ApiKeyRow, ProjectRow, ContextFilters, TransactionOptions } from './types';
+import type { StorageAdapter, NodeRow, NodeInsertRow, ApiKeyRow, ProjectRow, ContextFilters, TransactionOptions } from '@ultracontext/core';
+import { nodes, api_keys, projects, type ApiDb } from './db';
 
 // =============================================================================
 // DRIZZLE ADAPTER — wraps existing Drizzle/PostgreSQL queries

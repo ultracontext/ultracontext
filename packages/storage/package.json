@@ -1,0 +1,24 @@
+{
+    "name": "@ultracontext/storage",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "exports": {
+        ".": "./src/index.ts",
+        "./drizzle": "./src/drizzle.ts",
+        "./supabase": "./src/supabase.ts"
+    },
+    "scripts": {
+        "check": "tsc --noEmit"
+    },
+    "dependencies": {
+        "@supabase/supabase-js": "^2.49.4",
+        "@ultracontext/core": "workspace:*",
+        "drizzle-orm": "^0.44.5",
+        "postgres": "^3.4.7"
+    },
+    "devDependencies": {
+        "@types/node": "^22.18.6",
+        "typescript": "^5.9.3"
+    }
+}

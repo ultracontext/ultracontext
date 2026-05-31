@@ -1,5 +1,5 @@
+import type { StorageAdapter } from '@ultracontext/core';
 import type { ApiConfig } from '../types/api';
-import type { StorageAdapter } from '../storage/types';
 import type { HttpMiddleware } from '../types/http';
 
 // -- factory: injects storage + config into request context -------------------

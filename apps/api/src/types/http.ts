@@ -1,6 +1,6 @@
 import type { Context, MiddlewareHandler } from 'hono';
 
-import type { StorageAdapter } from '../storage/types';
+import type { StorageAdapter } from '@ultracontext/core';
 import type { ApiConfig, Auth } from './api';
 
 export type AppVariables = {

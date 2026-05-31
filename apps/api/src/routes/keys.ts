@@ -1,35 +1,20 @@
-import { KEY_PREFIX_LEN } from '../constants';
-import { generateKey, hashKey } from '../domain/api-keys';
+import { createKey, resultStatus, type ErrorCode } from '@ultracontext/core';
+import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { HttpApp } from '../types/http';
 
+// -- error status (core code -> Hono-typed HTTP status) -----------------------
+
+const status = (code: ErrorCode) => resultStatus(code) as ContentfulStatusCode;
+
 export function registerKeyRoutes(app: HttpApp) {
+    // create key — parse body (default {} on bad JSON), call core, map Result
     app.post('/v1/keys', async (c) => {
+        const storage = c.get('storage');
         const body = await c.req.json().catch(() => ({}));
         const { name } = body;
 
-        if (!name || typeof name !== 'string') {
-            return c.json({ error: 'name is required' }, 400);
-        }
-
-        const storage = c.get('storage');
-        const project = await storage.insertProject(name);
-        if (!project) return c.json({ error: 'Failed to create project' }, 500);
-
-        try {
-            const raw = generateKey();
-            const prefix = raw.slice(0, KEY_PREFIX_LEN);
-            const hash = await hashKey(raw);
-
-            await storage.insertApiKey({ project_id: project.id, key_prefix: prefix, key_hash: hash });
-            return c.json({ key: raw, prefix, project_id: project.id });
-        } catch {
-            try {
-                await storage.deleteProject(project.id);
-            } catch (rollbackError) {
-                const message = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
-                console.error(`Rollback failed for project ${project.id}: ${message}`);
-            }
-            return c.json({ error: 'Failed to create key' }, 500);
-        }
+        const result = await createKey(storage, name);
+        if (!result.ok) return c.json({ error: result.message }, status(result.code));
+        return c.json(result.data);
     });
 }

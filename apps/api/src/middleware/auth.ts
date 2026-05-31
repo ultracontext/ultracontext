@@ -1,6 +1,5 @@
+import { hashToken, verifyKeyHash } from '@ultracontext/core';
 import type { KeyCache } from '../cache/types';
-import { KEY_PREFIX_LEN } from '../constants';
-import { hashKey } from '../domain/api-keys';
 import type { HttpApp, HttpContext, HttpMiddleware } from '../types/http';
 
 // -- helpers ------------------------------------------------------------------
@@ -44,8 +43,8 @@ function bearerAuthMiddleware(verify: (token: string, c: HttpContext) => Promise
 
 function createTokenVerifier(keyCache?: KeyCache) {
     return async function verifyToken(token: string, c: HttpContext) {
-        const prefix = token.slice(0, KEY_PREFIX_LEN);
-        const hash = await hashKey(token);
+        // hash once — reused for cache lookup, storage verify, and cache put
+        const { prefix, hash } = await hashToken(token);
 
         // check cache first
         if (keyCache) {
@@ -57,23 +56,23 @@ function createTokenVerifier(keyCache?: KeyCache) {
             }
         }
 
-        // fallback to storage
+        // fallback to storage with the precomputed prefix+hash (no re-hash)
         const storage = c.get('storage');
-        const tokenRow = await storage.findApiKeyByPrefix(prefix);
-        if (!tokenRow || hash !== tokenRow.key_hash) return false;
+        const verified = await verifyKeyHash(storage, prefix, hash);
+        if (!verified) return false;
 
-        c.set('auth', { apiKeyId: tokenRow.id, projectId: tokenRow.project_id });
+        c.set('auth', { apiKeyId: verified.apiKeyId, projectId: verified.projectId });
 
         // populate cache on success
         if (keyCache) {
             await keyCache.put(prefix, {
                 keyHash: hash,
-                apiKeyId: tokenRow.id,
-                projectId: tokenRow.project_id,
+                apiKeyId: verified.apiKeyId,
+                projectId: verified.projectId,
             });
         }
 
-        await recordApiKeyUse(c, tokenRow.id);
+        await recordApiKeyUse(c, verified.apiKeyId);
 
         return true;
     };

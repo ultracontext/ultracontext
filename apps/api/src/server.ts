@@ -2,7 +2,7 @@ import { serve } from '@hono/node-server';
 
 import { createApp } from './app';
 import { getApiConfig } from './config.node';
-import { createStorageAdapter } from './storage';
+import { createStorageAdapter } from '@ultracontext/storage';
 
 // -- Node.js entrypoint -------------------------------------------------------
 

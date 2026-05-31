@@ -8,7 +8,7 @@ import { registerContextRoutes } from './routes/contexts';
 import { registerKeyRoutes } from './routes/keys';
 import { registerMcpRoutes } from './routes/mcp';
 import { registerRootRoutes } from './routes/root';
-import type { StorageAdapter } from './storage/types';
+import type { StorageAdapter } from '@ultracontext/core';
 import type { ApiConfig } from './types/api';
 import type { AppEnv } from './types/http';
 

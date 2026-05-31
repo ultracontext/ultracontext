@@ -1,4 +1,4 @@
-import type { StorageAdapter } from '../storage/types';
+import type { StorageAdapter } from './storage';
 import { generatePublicId } from './public-ids';
 
 export type NodeInsertInput = {

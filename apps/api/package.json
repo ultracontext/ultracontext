@@ -9,12 +9,11 @@
     },
     "dependencies": {
         "@hono/node-server": "^1.19.6",
+        "@ultracontext/core": "workspace:*",
+        "@ultracontext/storage": "workspace:*",
         "@modelcontextprotocol/sdk": "^1.27.1",
-        "@supabase/supabase-js": "^2.49.4",
         "dotenv": "^17.2.3",
-        "drizzle-orm": "^0.44.5",
         "hono": "^4.10.7",
-        "postgres": "^3.4.7",
         "ultracontext-mcp-server": "workspace:*",
         "zod": "^3.25.76"
     },

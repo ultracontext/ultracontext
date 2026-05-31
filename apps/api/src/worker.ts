@@ -1,7 +1,7 @@
 import { KvKeyCache } from './cache/kv';
 import { buildApiConfig } from './config';
 import { createApp } from './app';
-import { SupabaseAdapter } from './storage/supabase';
+import { SupabaseAdapter } from '@ultracontext/storage/supabase';
 
 // =============================================================================
 // CF WORKERS ENTRYPOINT
