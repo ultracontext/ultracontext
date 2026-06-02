@@ -1,21 +1,24 @@
 // =============================================================================
 // resolve-client — pick the backing ContextClient. Local by default
-// (sqlite + @ultracontext/core), remote when --remote is passed.
-// Stub: returns a not-implemented Local client until the clients land.
+// (sqlite + @ultracontext/core), remote when --remote (or config) asks.
+// The remote client lands in the Remote phase; for now it throws clearly.
 // =============================================================================
 
 import type { ContextClient } from './context-client';
+import { createLocalClient } from './clients/local';
+import { dbUrl as defaultDbUrl } from './config';
 
 // -- options ------------------------------------------------------------------
 
-export type ResolveOptions = { remote?: boolean };
+// remote toggles the hosted backend; dbUrl/cwd override the local defaults
+export type ResolveOptions = { remote?: boolean; dbUrl?: string; cwd?: string };
 
-// -- placeholder client -------------------------------------------------------
+// -- remote stub --------------------------------------------------------------
 
-// throws on every verb until LocalContextClient/RemoteContextClient are wired
-function notImplemented(name: string): ContextClient {
-    const stub = async () => {
-        throw new Error(`${name} client not implemented`);
+// every verb throws until RemoteContextClient (@ultracontext/js) is wired
+function remoteStub(): ContextClient {
+    const stub = async (): Promise<never> => {
+        throw new Error('remote client not implemented');
     };
     return { add: stub, get: stub, update: stub, delete: stub, list: stub };
 }
@@ -23,6 +26,13 @@ function notImplemented(name: string): ContextClient {
 // -- resolver -----------------------------------------------------------------
 
 // choose remote vs local; both share the ContextClient interface
-export function resolveClient(opts: ResolveOptions = {}): ContextClient {
-    return opts.remote ? notImplemented('remote') : notImplemented('local');
+export async function resolveClient(opts: ResolveOptions = {}): Promise<ContextClient> {
+    // remote backend (hosted API) — stubbed until the Remote phase
+    if (opts.remote) return remoteStub();
+
+    // local backend — sqlite at ~/.ultracontext/uc.db, scoped to the cwd
+    return createLocalClient({
+        dbUrl: opts.dbUrl ?? defaultDbUrl(),
+        cwd: opts.cwd ?? process.cwd(),
+    });
 }
