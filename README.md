@@ -48,20 +48,6 @@
 
 ---
 
-![ultracontext-gif](https://github.com/user-attachments/assets/be73afe5-161d-4fa3-8f4d-c4987fe63cb4)
-
-What Claude Code knows, Codex doesn't. What your teammate is shipping right now? Your agent has no idea.
-
-UltraContext captures every agent's context in realtime and makes it available to all of them. It's like having a personal context engineer everywhere. Continue a session in a different agent, or just ask what's happeming.
-
-For example:
-
-- *"Codex, grab the last plan Claude Code made and implement it."*
-- *"What's the team building today?"*
-- *"What is Alex working on in Codex right now?"*
-
-Open source. Framework-agnostic. Customizable via the git-like Context API.
-
 ## Features
 
 | `uc` CLI | Local-first context versioning from your terminal. Create, append, get, update, delete, list — backed by SQLite, no server required. |
