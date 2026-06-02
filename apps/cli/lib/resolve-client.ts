@@ -1,7 +1,8 @@
 // =============================================================================
-// resolve-client — pick the backing ContextClient. Local by default
-// (sqlite + @ultracontext/core), remote when --remote or when config/env carry
-// a hosted baseUrl + token. Both share the ContextClient interface, so the
+// resolve-client — pick the backing ContextClient. LOCAL by default
+// (sqlite + @ultracontext/core); remote ONLY on an explicit --remote flag or an
+// explicit config mode:'remote'. Stale creds in the config must NOT hijack
+// commands to remote. Both share the ContextClient interface, so the
 // context verbs stay client-agnostic.
 // =============================================================================
 
@@ -13,8 +14,10 @@ import { dbUrl as defaultDbUrl, projectDir as defaultProjectDir } from './config
 
 // -- options ------------------------------------------------------------------
 
-// the persisted CLI config slice that selects/credentials the hosted backend
-export type ClientConfig = { baseUrl?: string; apiKey?: string };
+// the persisted CLI config slice that selects/credentials the hosted backend.
+// mode:'remote' is the explicit opt-in to use the hosted backend by default;
+// without it (the norm) the CLI is local-first regardless of stored creds.
+export type ClientConfig = { baseUrl?: string; apiKey?: string; mode?: 'local' | 'remote' };
 
 // remote forces the hosted backend; dbUrl/cwd override the local defaults.
 // env/config are injectable so credential resolution is testable without HTTP.
@@ -56,8 +59,10 @@ export async function resolveClient(opts: ResolveOptions = {}): Promise<ContextC
     const apiKey = resolveApiKey(env, config);
     const baseUrl = resolveBaseUrl(env, config);
 
-    // remote is chosen by an explicit --remote, or implicitly when config has both
-    const wantRemote = opts.remote || Boolean(baseUrl && apiKey);
+    // LOCAL-FIRST: remote only when explicitly requested — the --remote flag or
+    // an explicit config mode:'remote'. Merely having creds in config does NOT
+    // flip to remote (that would hijack every command on a configured machine).
+    const wantRemote = opts.remote === true || config.mode === 'remote';
 
     // remote backend (hosted API) — backed by the @ultracontext/js SDK
     if (wantRemote) {

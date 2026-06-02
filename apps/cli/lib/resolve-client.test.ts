@@ -46,10 +46,22 @@ describe('resolveClient', () => {
         );
     });
 
-    // config baseUrl + token (no --remote flag) → remote is chosen implicitly
-    it('chooses remote when config carries a baseUrl + token', async () => {
+    // LOCAL-FIRST: stale creds in config must NOT auto-flip to remote
+    it('stays local by default even when config carries creds', async () => {
         const client = await resolveClient({
+            dbUrl: tempDbUrl(),
+            cwd: '/work/resolve-local-creds',
             config: { baseUrl: 'https://api.example.com', apiKey: 'sk_cfg' },
+        });
+
+        const added = await client.add({ messages: [{ role: 'user', content: 'hi' }] });
+        assert.equal(added.data.length, 1);
+    });
+
+    // explicit config mode:'remote' opts into the hosted backend by default
+    it('chooses remote when config sets mode:remote', async () => {
+        const client = await resolveClient({
+            config: { mode: 'remote', baseUrl: 'https://api.example.com', apiKey: 'sk_cfg' },
         });
 
         await assert.rejects(() => client.get({}), /context id/i);
