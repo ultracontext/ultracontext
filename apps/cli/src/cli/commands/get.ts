@@ -35,10 +35,14 @@ export type GetContext = { dbUrl?: string; cwd?: string; remote?: boolean; io?: 
 
 // -- human formatter ----------------------------------------------------------
 
-// render the read messages as one line per message (role: content)
+// render the read messages, one per line — "role: content", or just content
+// when the message has no role (e.g. a plain `uc add "text"` capture)
 function humanGet(result: GetResult): string {
     return result.data
-        .map((m) => `${String(m.role ?? '')}: ${String(m.content ?? '')}`.trim())
+        .map((m) => {
+            const role = m.role ? `${String(m.role)}: ` : '';
+            return `${role}${String(m.content ?? '')}`.trim();
+        })
         .join('\n');
 }
 
@@ -80,20 +84,23 @@ export async function runGet(opts: GetOptions, ctx: GetContext = {}): Promise<nu
 export function buildGetCommand(): Command {
     const command = new Command('get');
 
-    // describe the verb + its selectors
+    // describe the verb + its selectors. an optional positional id mirrors the
+    // ids that `uc list` prints; --context is kept as an explicit alternative.
     command
         .description('read a context')
+        .argument('[id]', 'context id to read (defaults to the cwd context)')
         .option('--context <id>', 'read an explicit context id (else the cwd default)')
         .option('--version <n>', 'read a specific version', (v) => parseInt(v, 10))
         .option('--at <index>', 'read at a message index', (v) => parseInt(v, 10))
         .option('--before <timestamp>', 'read the version before a timestamp')
         .option('--history', 'include the version history');
 
-    // parse globals + locals, then run the handler and exit with its code
-    command.action(async (opts, cmd) => {
+    // parse globals + locals, then run the handler and exit with its code.
+    // positional id wins over --context; both fall back to the cwd default.
+    command.action(async (id, opts, cmd) => {
         const globals = cmd.optsWithGlobals() as { json?: boolean; remote?: boolean };
         const code = await runGet(
-            { ...opts, json: globals.json },
+            { ...opts, context: id ?? opts.context, json: globals.json },
             { remote: globals.remote },
         );
         process.exitCode = code;
