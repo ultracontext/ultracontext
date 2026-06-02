@@ -31,14 +31,25 @@ connect a hosted backend, or `uc init --yes` to accept local-only defaults.
 ## 3. Capture and read context
 
 ```bash bash
-uc add "remember: deploy uses Fly.io"   # capture context for this project
-uc list                                  # list contexts in this project
-uc get                                   # read this project's context
-uc get --history                         # time-travel through versions
+id=$(uc create)                              # create a context → prints its id
+uc append "$id" "remember: deploy uses Fly.io"   # append a message
+uc get "$id"                                 # read the context
+uc get "$id" --history                       # time-travel through versions
+uc list                                      # list all contexts
 ```
 
-Contexts are scoped per project directory, so `uc add` and `uc get` just work from
-inside any repo. See the [CLI reference](/fundamentals/cli) for the full command tree.
+UltraContext manages **many contexts explicitly** — there is no default context. Every
+targeted verb takes a context id, so you always know exactly what you're reading or
+writing. Set `UC_CONTEXT` to drop the id from each command:
+
+```bash bash
+export UC_CONTEXT=$id    # set once
+uc append "another note"
+uc get
+```
+
+Fork or clone with `uc create --from <id>`. Attach `--meta key=val` (repeatable) on any
+verb. See the [CLI reference](/fundamentals/cli) for the full command tree.
 
 <Tip>Every command is pipe-aware: add <code>--json</code> (or pipe stdout) for machine-readable output. Run <code>uc commands --json</code> for the authoritative command tree.</Tip>
 

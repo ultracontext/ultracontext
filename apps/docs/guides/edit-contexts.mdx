@@ -475,6 +475,9 @@ const uc = new UltraContext({ apiKey: process.env.ULTRACONTEXT_API_KEY });
 
 const { results, deleted_count } = await uc.deleteMany(['ctx_abc123', 'ctx_def456']);
 
+// with audit metadata (logged server-side)
+await uc.deleteMany(['ctx_abc123', 'ctx_def456'], { metadata: { reason: 'GDPR request' } });
+
 for (const r of results) {
     if (r.deleted) console.log(`Deleted ${r.id}`);
     else console.log(`Failed ${r.id}: ${r.error}`);

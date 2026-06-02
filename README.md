@@ -64,7 +64,7 @@ Open source. Framework-agnostic. Customizable via the git-like Context API.
 
 ## Features
 
-| `uc` CLI | Local-first context versioning from your terminal. Add, get, update, list — backed by SQLite, no server required. |
+| `uc` CLI | Local-first context versioning from your terminal. Create, append, get, update, delete, list — backed by SQLite, no server required. |
 | --- | --- |
 | Sync | fs-first Mutagen orchestration. Mirror agent session files across machines. |
 | MCP Server | Share context everywhere. Built into the API, or run standalone via stdio. |
@@ -76,7 +76,7 @@ Open source. Framework-agnostic. Customizable via the git-like Context API.
 
 1. **Init.** `uc init` sets up a local SQLite store under `~/.ultracontext`.
 
-2. **Capture.** Add context from your terminal, or sync agent session files across machines.
+2. **Capture.** Create a context and append to it from your terminal, or sync agent session files across machines.
 
 3. **Add the MCP server.** Any agent gets full awareness of every other agent.
 
@@ -94,24 +94,36 @@ npm install ultracontext      # the SDK + CLI, in a project
 ## Quick Start
 
 ```bash
-uc init               # set up the local SQLite store
-uc add "remember: deploy uses Fly.io"   # capture context for this project
-uc list               # list contexts in the current project
-uc get                # read the current project's context
+uc init                                  # set up the local SQLite store
+id=$(uc create)                          # create a context → prints its id
+uc append "$id" "remember: deploy uses Fly.io"   # append a message
+uc get "$id"                             # read the context
+uc list                                  # list all contexts
+```
+
+The CLI manages **many contexts explicitly** — there is no default context. Every
+targeted verb takes a context id (or the `UC_CONTEXT` env var), so you always know
+exactly what you're touching:
+
+```bash
+export UC_CONTEXT=$id    # set once, then drop the id from each verb
+uc append "another note"
+uc get
 ```
 
 The CLI is **local-first**: every command talks to a local SQLite database at
-`~/.ultracontext/uc.db`, scoped per project directory. No server, no API key needed.
-Pass `--remote` (or run `uc init` with a hosted backend) to talk to the Context API instead.
+`~/.ultracontext/uc.db`. No server, no API key needed. Pass `--remote` (or run
+`uc init` with a hosted backend) to talk to the Context API instead.
 
 ### Command tree
 
 ```bash
-uc add [text]         # append a message to a context (quick-capture)
-uc get                # read a context (--version / --at / --before / --history)
-uc update             # update messages in a context
-uc delete [id]        # delete a context (--permanent) or messages (--ids)
-uc list               # list contexts (--source / --project_path / --limit)
+uc create [--from <id>]                 # create a context, or fork/clone from <id>
+uc append <id> [text]                   # append a message (text | --json | stdin)
+uc get <id>                             # read a context (--version / --at / --before / --history)
+uc update <id> --content <c>            # update messages (--id <m> | --index <i>)
+uc delete <id>                          # delete a context (--permanent) or messages (--ids)
+uc list                                 # list ALL contexts (--source / --project_path / --limit)
 
 uc sync init <target> # set up fs-first sync to local | user@host
 uc sync source add    # add a synced source
@@ -124,6 +136,13 @@ uc upgrade            # self-update the CLI
 uc commands --json    # the full command tree, machine-readable (for agents)
 ```
 
+Every targeted verb resolves its context from the explicit `<id>` arg, else
+`$UC_CONTEXT`, else a clear error. **Fork/clone** is `uc create --from <id>`
+(optionally `--version` / `--at` / `--before`) — it mirrors the SDK's `create({ from })`.
+`--meta key=val` (repeatable) attaches metadata: the **context** on `create`, the
+**message** on `append`, the **version** on `update`/`delete`, an **audit** record on
+`delete --permanent`.
+
 Every command is pipe-aware: pass `--json` (or pipe stdout) to get machine-readable
 output. Data goes to stdout; status and errors go to stderr. Run `uc commands --json`
 for the authoritative, always-current tree.
@@ -132,10 +151,17 @@ for the authoritative, always-current tree.
 
 For builders who want to go deeper. Git-like primitives for context engineering.
 
-- **Five methods** — Create, get, append, update, delete. That's it.
-- **Automatic versioning** — Every change creates a new version. Full history out of the box.
+- **Core methods** — `create`, `append`, `get`, `update`, `delete` (+ `deleteMany`). That's it.
+- **Fork/clone** — `create({ from })` copies a context, optionally at a past `version` / `at` / `before`.
+- **Metadata everywhere** — Tag the context (`create`), the message (`append`), or the version (`update` / `delete`).
+- **Automatic versioning** — Every update or delete creates a new version. Full history out of the box.
 - **Time-travel** — Jump to any point in your context history.
 - **Framework-agnostic** — Works with any LLM framework. No vendor lock-in.
+
+The CLI mirrors these names one-to-one (`uc create` / `uc append` / `uc get` /
+`uc update` / `uc delete`). **Sharing** is the architecture, not a method: a central
+store reached over the Context API, exposed to agents via the MCP server, and kept in
+step across machines by `uc sync`.
 
 Use the API standalone to build your own agents, or extend existing ones in UltraContext.
 

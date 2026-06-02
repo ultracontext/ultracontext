@@ -4,9 +4,18 @@ description: 'Version control for agent context, from your terminal'
 ---
 
 The `uc` CLI is **local-first**: every command talks to a SQLite database at
-`~/.ultracontext/uc.db`, scoped to the project directory you run it from. No server
-and no API key are required to get started. Point it at the hosted Context API with
-`--remote` whenever you want.
+`~/.ultracontext/uc.db`. No server and no API key are required to get started. Point
+it at the hosted Context API with `--remote` whenever you want.
+
+It manages **many contexts explicitly** — there is no default context. Every targeted
+verb (`append`, `get`, `update`, `delete`) takes a context id, resolved in this order:
+
+1. the explicit `<id>` argument, else
+2. the `UC_CONTEXT` environment variable, else
+3. a clear error (`no context — pass an id or set UC_CONTEXT`).
+
+The CLI mirrors the SDK method names one-to-one: `create`, `append`, `get`, `update`,
+`delete`.
 
 <Info>New here? Start with the [Quickstart](/quickstart) for a 2-minute setup.</Info>
 
@@ -23,59 +32,90 @@ The binary is available as both `uc` and `ultracontext`.
 ## Get started
 
 ```bash bash
-uc init                                  # set up the local SQLite store
-uc add "remember: deploy uses Fly.io"    # capture context for this project
-uc list                                  # list contexts in this project
-uc get                                   # read this project's context
+uc init                                       # set up the local SQLite store
+id=$(uc create)                               # create a context → prints its id
+uc append "$id" "remember: deploy uses Fly.io"    # append a message
+uc get "$id"                                  # read the context
+uc list                                       # list all contexts
 ```
 
-Contexts are scoped per directory. Running `uc add` from a project resolves (or
-creates) that project's default context, so you rarely pass an explicit id.
+`uc create` prints the new context id to stdout (a bare id in human mode, so
+`id=$(uc create)` works in a shell). Every other targeted verb takes that id — or set
+`UC_CONTEXT` once and drop it:
+
+```bash bash
+export UC_CONTEXT=$id
+uc append "another note"
+uc get
+```
 
 ## Context commands
 
-### `uc add [text]`
+### `uc create`
 
-Append a message to a context (quick-capture). Reads the body from the positional
-argument, piped stdin, or a `--json` object.
+Create a new context, or **fork/clone** from an existing one with `--from`. Prints the
+new context id. `--meta key=val` (repeatable) tags the **context** itself.
+
+| Flag | Description |
+|------|-------------|
+| `--from <id>` | Fork/clone from an existing context id |
+| `--version <n>` | Fork at a specific version |
+| `--at <index>` | Fork at a message index |
+| `--before <timestamp>` | Fork at the version before a timestamp |
+| `--meta <key=val>` | Attach context metadata (repeatable) |
+
+```bash bash
+uc create                                     # new empty context
+uc create --meta user_id=u_123 --meta env=prod
+uc create --from ctx_abc123                   # full fork/clone
+uc create --from ctx_abc123 --at 5            # fork the first 6 messages
+uc create --from ctx_abc123 --version 2 --meta reason=rollback
+```
+
+<Info>Fork/clone is `uc create --from <id>`, mirroring the SDK's `create({ from })` — there is no separate `fork` verb. The `--version` / `--at` / `--before` selectors require `--from`.</Info>
+
+### `uc append <id> [text]`
+
+Append a message to context `<id>`. Reads the body from the positional argument, piped
+stdin, or a `--json` object. `--meta key=val` (repeatable) tags the **message**.
 
 | Flag | Description |
 |------|-------------|
 | `--role <role>` | Message role (e.g. `user`, `assistant`) |
-| `--meta <key=val...>` | Metadata pairs (repeatable) |
-| `--context <id>` | Target an explicit context id |
-| `--new` | Force a brand-new context |
+| `--meta <key=val...>` | Message metadata pairs (repeatable) |
 | `--json [body]` | Machine output, or parse a raw message object |
 
 ```bash bash
-uc add "the API runs on port 8787" --role user
-echo "piped note" | uc add
-uc add --json '{"role":"assistant","content":"done","metadata":{"task":"deploy"}}'
+uc append ctx_abc123 "the API runs on port 8787" --role user
+echo "piped note" | uc append ctx_abc123
+uc append ctx_abc123 --json '{"role":"assistant","content":"done","metadata":{"task":"deploy"}}'
+
+# with UC_CONTEXT set, the id is implied
+UC_CONTEXT=ctx_abc123 uc append "another note"
 ```
 
-### `uc get`
+### `uc get <id>`
 
-Read a context. Defaults to the current project's context; time-travel with the
-version selectors.
+Read context `<id>`. Time-travel with the version selectors.
 
 | Flag | Description |
 |------|-------------|
-| `--context <id>` | Read an explicit context id |
 | `--version <n>` | Read a specific version |
 | `--at <index>` | Read at a message index |
 | `--before <timestamp>` | Read the version before a timestamp |
 | `--history` | Include the version history |
 
 ```bash bash
-uc get --history
-uc get --version 2
-uc get --context ctx_abc123 --at 5
+uc get ctx_abc123
+uc get ctx_abc123 --history
+uc get ctx_abc123 --version 2
+uc get ctx_abc123 --at 5
 ```
 
-### `uc update`
+### `uc update <id>`
 
-Update messages in a context. Target one message by id **or** index, with optional
-version metadata.
+Update messages in context `<id>`. Target one message by id **or** index. `--meta`
+attaches **version** metadata to the resulting update.
 
 | Flag | Description |
 |------|-------------|
@@ -85,36 +125,40 @@ version metadata.
 | `--meta <key=val>` | Attach version metadata (repeatable) |
 
 ```bash bash
-uc update --index 0 --content "New system prompt"
-uc update --id msg_xyz --content "Fixed!" --meta reason=typo
+uc update ctx_abc123 --index 0 --content "New system prompt"
+uc update ctx_abc123 --id msg_xyz --content "Fixed!" --meta reason=typo
 ```
 
-### `uc delete [id]`
+### `uc delete <id>`
 
-Delete a whole context (`--permanent`) or specific messages (`--ids`). Defaults to
-the current project's context.
+Delete the whole context `<id>` (`--permanent`) or specific messages (`--ids`). The
+`--meta` flag attaches an **audit** record on a permanent delete, or **version**
+metadata on a message delete.
 
 | Flag | Description |
 |------|-------------|
-| `--permanent` | Permanently delete the whole context |
+| `--permanent` | Permanently delete the whole context (irreversible) |
 | `--ids <ids...>` | Delete only these message indices/ids |
+| `--meta <key=val...>` | Metadata pairs — audit (permanent) or version (messages) |
 
 ```bash bash
-uc delete --permanent
-uc delete ctx_abc123 --ids 0 2 -1
+uc delete ctx_abc123 --permanent --meta reason="GDPR request"
+uc delete ctx_abc123 --ids 0 2 -1 --meta reason=cleanup
 ```
 
 ### `uc list`
 
-List the project's contexts. Defaults to the current directory.
+List **all** contexts by default. Filters are optional and combinable — there is no
+cwd default.
 
 | Flag | Description |
 |------|-------------|
 | `--source <source>` | Filter by capture source |
-| `--project_path <path>` | Filter by project path (defaults to cwd) |
+| `--project_path <path>` | Filter by project path |
 | `--limit <n>` | Max contexts to return |
 
 ```bash bash
+uc list
 uc list --limit 20
 uc list --source claude --project_path /Users/alice/Code/myapp
 ```
@@ -188,10 +232,11 @@ By default the CLI is local-only. It switches to the hosted Context API when:
 | `UC_API_URL` | Hosted API base url (overrides config) |
 | `UC_API_KEY` | Hosted API key (overrides config) |
 | `UC_DB_URL` | Local SQLite url (overrides `~/.ultracontext/uc.db`) |
+| `UC_CONTEXT` | Default context id for targeted verbs (`append` / `get` / `update` / `delete`) |
 
 ```bash bash
-uc list --remote                 # one-off against the hosted API
-UC_API_KEY=uc_live_... uc add "synced note"
+uc list --remote                          # one-off against the hosted API
+UC_API_KEY=uc_live_... uc append "$id" "synced note"
 ```
 
 ## Output

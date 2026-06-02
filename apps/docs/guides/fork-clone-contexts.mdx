@@ -94,6 +94,24 @@ fork = uc.create(
 The `version`, `before`, and `at` params require `from`.
 </Info>
 
+### From the CLI
+
+Forking is `uc create --from <id>` — the same `create({ from })` shape, no separate
+`fork` verb. It prints the new context id.
+
+```bash bash
+# full fork/clone
+fork=$(uc create --from ctx_abc123)
+
+# at a past version / index / timestamp (each requires --from)
+uc create --from ctx_abc123 --version 1
+uc create --from ctx_abc123 --at 5
+uc create --from ctx_abc123 --before 2024-01-10T10:30:00Z
+
+# tag the fork with --meta (repeatable, attaches CONTEXT metadata)
+uc create --from ctx_abc123 --version 1 --meta reason=rollback --meta ticket=JIRA-123
+```
+
 ### By Version
 
 Gets exact state after that update or delete.

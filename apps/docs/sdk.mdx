@@ -116,6 +116,47 @@ uc.append(ctx["id"], {
 ```
 </CodeGroup>
 
+## 4. Metadata at every level
+
+Attach `metadata` to tag the **context** (`create`), the **message** (`append`), or
+the **version** an `update` / `delete` creates. `deleteMany` accepts an audit metadata
+record too.
+
+<CodeGroup>
+```typescript Node.js
+// context metadata
+const ctx = await uc.create({ metadata: { user_id: 'u_123', env: 'prod' } });
+
+// message metadata
+await uc.append(ctx.id, { role: 'user', content: 'Hi', metadata: { source: 'web' } });
+
+// version metadata on update / delete
+await uc.update(ctx.id, { index: 0, content: 'Fixed' }, { metadata: { reason: 'typo' } });
+await uc.delete(ctx.id, -1, { metadata: { reason: 'hallucination' } });
+
+// audit metadata on bulk + permanent delete
+await uc.deleteMany(['ctx_a', 'ctx_b'], { metadata: { reason: 'GDPR request' } });
+await uc.delete('ctx_a', { permanent: true, metadata: { reason: 'GDPR request' } });
+```
+
+```python Python
+# context metadata
+ctx = uc.create(metadata={"user_id": "u_123", "env": "prod"})
+
+# message metadata
+uc.append(ctx["id"], {"role": "user", "content": "Hi", "metadata": {"source": "web"}})
+
+# version metadata on update / delete
+uc.update(ctx["id"], index=0, content="Fixed", metadata={"reason": "typo"})
+uc.delete(ctx["id"], -1, metadata={"reason": "hallucination"})
+
+# audit metadata on permanent delete
+uc.delete("ctx_a", permanent=True, metadata={"reason": "GDPR request"})
+```
+</CodeGroup>
+
+<Tip>The same metadata flows through the CLI as <code>--meta key=val</code> on <code>uc create</code> / <code>append</code> / <code>update</code> / <code>delete</code>.</Tip>
+
 ## Next steps
 
 <CardGroup cols={2}>

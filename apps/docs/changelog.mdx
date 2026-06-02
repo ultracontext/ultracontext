@@ -8,13 +8,14 @@ rss: true
 ## The `uc` CLI
 
 The CLI is now a full TypeScript rewrite, and it's **local-first**. Every command
-talks to a SQLite database at `~/.ultracontext/uc.db`, scoped per project. No server
-and no API key required to get started — point it at the hosted API with `--remote`
-whenever you want.
+talks to a SQLite database at `~/.ultracontext/uc.db`. No server and no API key
+required to get started — point it at the hosted API with `--remote` whenever you want.
 
 ### Features
 
--   Context verbs from your terminal: `uc add`, `uc get`, `uc update`, `uc delete`, `uc list`
+-   Context verbs from your terminal, mirroring the SDK: `uc create`, `uc append`, `uc get`, `uc update`, `uc delete`, `uc list`
+-   Explicit context management — every verb targets a context id (or `UC_CONTEXT`); no default context
+-   Fork/clone with `uc create --from <id>`, and `--meta key=val` on create/append/update/delete
 -   `uc sync` — fs-first Mutagen orchestration to mirror agent sessions across machines
 -   `uc init`, `uc doctor`, `uc upgrade`, and `uc commands --json` (machine-readable tree for agents)
 -   Pipe-aware output: `--json` (or a non-TTY stdout) emits machine JSON; data → stdout, status → stderr

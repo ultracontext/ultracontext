@@ -38,10 +38,15 @@ Environment variables override the config file.
 | `UC_API_URL` | Hosted API base url (overrides `baseUrl`) |
 | `UC_API_KEY` | Hosted API key (overrides `apiKey`) |
 | `UC_DB_URL` | Local SQLite url (overrides `~/.ultracontext/uc.db`) |
+| `UC_CONTEXT` | Default context id for targeted verbs (`append` / `get` / `update` / `delete`) |
 
 ```bash bash
 # one-off command against the hosted API
-UC_API_KEY=uc_live_... uc add "synced note"
+UC_API_KEY=uc_live_... uc append "$id" "synced note"
+
+# set a default context, then drop the id from each verb
+export UC_CONTEXT=ctx_abc123
+uc append "another note"
 
 # point at a different local database (e.g. for tests)
 UC_DB_URL=file:/tmp/scratch.db uc list

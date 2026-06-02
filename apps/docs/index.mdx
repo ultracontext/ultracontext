@@ -22,7 +22,7 @@ UltraContext captures every agent's context in realtime and makes it available t
 
 |                            |                                                                          |
 | -------------------------- | ------------------------------------------------------------------------ |
-| **`uc` CLI**               | Local-first context versioning from your terminal. Add, get, update, list — backed by SQLite, no server required. [Learn more](/fundamentals/cli). |
+| **`uc` CLI**               | Local-first context versioning from your terminal. Create, append, get, update, delete, list — backed by SQLite, no server required. [Learn more](/fundamentals/cli). |
 | **MCP Server**             | Share context everywhere. Built into the API, or run standalone via stdio. [Learn more](/fundamentals/mcp-server). |
 | **Context API**            | Git-like context engineering API. Store, version, and retrieve agent context with zero complexity. |
 
@@ -30,7 +30,7 @@ UltraContext captures every agent's context in realtime and makes it available t
 
 1. **Init.** `uc init` sets up a local SQLite store under `~/.ultracontext`.
 
-2. **Capture.** Add context from your terminal, or sync agent session files across machines.
+2. **Capture.** Create a context and append to it from your terminal, or sync agent session files across machines.
 
 3. **Add the MCP server.** Any agent gets full awareness of every other agent.
 
@@ -97,7 +97,7 @@ For builders who want to go deeper. Git-like primitives for context engineering.
 
 |                          |                                                                     |
 | ------------------------ | ------------------------------------------------------------------- |
-| **Simple API**           | Five methods. That's it.                                            |
+| **Simple API**           | Core methods: create, append, get, update, delete. That's it.       |
 | **Automatic versioning** | Changes create versions automatically. Full history out of the box. |
 | **Time-travel**          | Jump to any point in your context history.                          |
 | **Fast**                 | Globally distributed. Low latency.                                  |
