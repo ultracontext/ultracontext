@@ -13,17 +13,18 @@ describe('ContextClient contract', () => {
     // a minimal in-memory mock implements every verb with the right shapes
     it('a conforming client returns the declared result shapes', async () => {
         const client: ContextClient = {
-            add: async (input) => ({ data: input.messages.map((m, index) => ({ ...m, id: 'm' + index, index, metadata: {} })), version: 0 }),
+            add: async (input) => ({ data: input.messages.map((m, index) => ({ ...m, id: 'm' + index, index, metadata: {} })), version: 0, id: input.id ?? 'ctx_root' }),
             get: async () => ({ data: [], version: 0 }),
             update: async () => ({ data: [], version: 1 }),
             delete: async (input) => ({ deleted: true, id: input.id ?? 'root' }),
             list: async () => ({ data: [] }),
         };
 
-        // add echoes messages back as views with id + index
+        // add echoes messages back as views with id + index, plus the context id
         const added = await client.add({ messages: [{ role: 'user', content: 'hi' }] });
         assert.equal(added.data.length, 1);
         assert.equal(added.data[0].index, 0);
+        assert.equal(added.id, 'ctx_root');
 
         // delete reports the removed id
         const deleted = await client.delete({ id: 'ctx_x' });

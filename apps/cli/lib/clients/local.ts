@@ -51,11 +51,14 @@ class LocalContextClient implements ContextClient {
         return id ?? resolveDefaultContext(this.storage, this.projectId, this.cwd, metadata);
     }
 
-    // append messages, returning the created views + version
+    // append messages, returning the created views + version + the context id
     async add(input: AddInput): Promise<AddResult> {
         // input.metadata tags a freshly-created default context (e.g. its source)
         const id = await this.targetId(input.id, input.metadata);
-        return unwrap(await appendMessages(this.storage, this.projectId, id, input.messages));
+
+        // surface the resolved id so callers (and agents) can chain on it
+        const result = unwrap(await appendMessages(this.storage, this.projectId, id, input.messages));
+        return { ...result, id };
     }
 
     // read the context's messages at the selected version/index

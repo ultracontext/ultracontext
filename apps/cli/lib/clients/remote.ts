@@ -26,8 +26,9 @@ class RemoteContextClient implements ContextClient {
         // no id → create a fresh context (carrying any root metadata), then append
         const id = input.id ?? (await this.sdk.create({ metadata: input.metadata })).id;
 
+        // surface the resolved id so callers (and agents) can chain on it
         const res = await this.sdk.append(id, input.messages);
-        return { data: res.data as MessageView[], version: res.version };
+        return { data: res.data as MessageView[], version: res.version, id };
     }
 
     // read an explicit context at the selected version/index (no cwd default remotely)

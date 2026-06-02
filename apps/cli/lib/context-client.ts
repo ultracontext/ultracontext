@@ -35,8 +35,8 @@ export type ListInput = { limit?: number; source?: string; project_path?: string
 
 // -- command outputs ----------------------------------------------------------
 
-// add → the created/appended messages + the resulting version
-export type AddResult = { data: MessageView[]; version: number };
+// add → the created/appended messages + the resulting version + the context id
+export type AddResult = { data: MessageView[]; version: number; id: string };
 
 // get → the context's messages at the selected version
 export type GetResult = { data: MessageView[]; version: number };

@@ -113,8 +113,7 @@ export async function runAdd(text: string | undefined, opts: AddOptions, runtime
         const result = await client.add({ id: opts.context, messages: [message] });
 
         // the resolved context id rides along the envelope for agents to chain on
-        const id = opts.context ?? (result.data[0] as { context_id?: string }).context_id ?? '';
-        const view = { data: result.data, version: result.version, id };
+        const view = { data: result.data, version: result.version, id: result.id };
 
         // data → stdout; one JSON line in machine mode, a short line otherwise
         emit(view, { json, human: (d) => `captured (v${(d as typeof view).version})` }, io);

@@ -46,6 +46,19 @@ describe('LocalContextClient', () => {
         assert.equal(got.data[1].content, 'hi');
     });
 
+    // add returns the resolved context id so callers can chain on it
+    it('add returns the resolved context id', async () => {
+        const client = await freshClient('/work/add-id');
+
+        // the appended envelope carries the context id (matches the listing)
+        const added = await client.add({ messages: [{ role: 'user', content: 'x' }] });
+        assert.equal(typeof added.id, 'string');
+        assert.ok(added.id.length > 0, 'a non-empty context id is returned');
+
+        const listed = await client.list({});
+        assert.equal(added.id, listed.data[0].id, 'id matches the created context');
+    });
+
     // the default context is stable across calls (same cwd → same context)
     it('appends accumulate on the same default context', async () => {
         const client = await freshClient('/work/accumulate');

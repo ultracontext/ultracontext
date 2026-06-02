@@ -134,6 +134,7 @@ describe('uc add', () => {
         assert.equal(typeof out.data[0].id, 'string');
         assert.equal(typeof out.version, 'number');
         assert.equal(typeof out.id, 'string');
+        assert.ok(out.id.length > 0, 'the resolved context id is non-empty');
     });
 
     // -- raw json body ------------------------------------------------------------
@@ -167,8 +168,7 @@ describe('uc add', () => {
         // seed a separate context directly through the client
         const client = await resolveClient({ dbUrl, cwd });
         const seeded = await client.add({ messages: [{ role: 'user', content: 'seed' }] });
-        const targetId = (seeded.data[0] as { context_id?: string }).context_id
-            ?? (await client.list({})).data[0].id;
+        const targetId = seeded.id;
 
         await runAdd(['targeted', '--context', targetId]);
 
