@@ -1,31 +1,23 @@
 // =============================================================================
-// main — the `uc` Commander program root. Registers context verbs + command
-// groups as stubs for now. Global --json/--remote wired to the output helper.
+// main — the `uc` Commander program root. Registers the context verbs, the sync
+// group, the utility commands (doctor/init/upgrade/commands), and the global
+// --json/--remote flags consumed by the output helper + client resolver.
 // =============================================================================
 
 import { Command } from '@commander-js/extra-typings';
 
-import { emit, status } from '../../lib/output';
+import { status } from '../../lib/output';
+import { VERSION } from '../../lib/version';
 import { buildAddCommand } from './commands/add';
 import { buildGetCommand } from './commands/get';
 import { buildUpdateCommand } from './commands/update';
 import { registerList } from './commands/list';
 import { buildDeleteCommand } from './commands/delete';
 import { buildSyncCommand } from './commands/sync';
-
-// -- stub action --------------------------------------------------------------
-
-// read the global --json flag off any command (extra-typings can't infer it)
-function jsonFlag(cmd: Command): boolean {
-    return Boolean((cmd.optsWithGlobals() as { json?: boolean }).json);
-}
-
-// every command currently reports "not implemented" via the pipe-aware emit
-function stub(name: string) {
-    return (_opts: unknown, cmd: Command) => {
-        emit({ command: name, status: 'not_implemented' }, { json: jsonFlag(cmd), human: () => `${name}: not implemented` });
-    };
-}
+import { buildDoctorCommand } from './commands/doctor';
+import { buildInitCommand } from './commands/init';
+import { buildUpgradeCommand } from './commands/upgrade';
+import { buildCommandsCommand } from './commands/commands';
 
 // -- context verbs ------------------------------------------------------------
 
@@ -49,28 +41,17 @@ function registerSync(program: Command): void {
 
 // self-update, environment doctor, project init
 function registerStandalone(program: Command): void {
-    program.command('upgrade').description('self-update the uc CLI').action(stub('upgrade'));
-    program.command('doctor').description('diagnose the local environment').action(stub('doctor'));
-    program.command('init').description('initialize ultracontext for this project').action(stub('init'));
+    program.addCommand(buildUpgradeCommand());
+    program.addCommand(buildDoctorCommand());
+    program.addCommand(buildInitCommand());
 }
 
 // -- commands (machine-readable tree) -----------------------------------------
 
-// `uc commands --json` → the full command tree for agents to introspect
+// `uc commands --json` → the full command tree for agents to introspect.
+// registered last so the serializer walks a fully-populated program.
 function registerCommands(program: Command): void {
-    program
-        .command('commands')
-        .description('print the command tree (machine-readable with --json)')
-        .action((_opts, cmd) => {
-            // serialize each registered command into a flat tree
-            const tree = program.commands.map((c) => ({
-                name: c.name(),
-                description: c.description(),
-                subcommands: c.commands.map((s) => s.name()),
-            }));
-
-            emit({ commands: tree }, { json: jsonFlag(cmd), human: () => tree.map((c) => c.name).join('\n') });
-        });
+    program.addCommand(buildCommandsCommand(program));
 }
 
 // -- program factory ----------------------------------------------------------
@@ -79,17 +60,17 @@ function registerCommands(program: Command): void {
 export function buildProgram(): Command {
     const program = new Command();
 
-    // root metadata
+    // root metadata — version sourced from package.json (single source of truth)
     program
         .name('uc')
         .description('UltraContext — version control for AI agent context')
-        .version('1.5.0');
+        .version(VERSION);
 
     // global options consumed by the output helper + client resolver
     program.option('--json', 'emit machine-readable JSON');
     program.option('--remote', 'talk to the hosted API instead of local storage');
 
-    // register every command group
+    // register every command group (commands last — it walks the whole tree)
     registerContextVerbs(program);
     registerSync(program);
     registerStandalone(program);
