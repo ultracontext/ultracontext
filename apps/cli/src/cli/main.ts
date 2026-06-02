@@ -6,6 +6,11 @@
 import { Command } from '@commander-js/extra-typings';
 
 import { emit, status } from '../../lib/output';
+import { buildAddCommand } from './commands/add';
+import { buildGetCommand } from './commands/get';
+import { buildUpdateCommand } from './commands/update';
+import { registerList } from './commands/list';
+import { buildDeleteCommand } from './commands/delete';
 
 // -- stub action --------------------------------------------------------------
 
@@ -25,11 +30,11 @@ function stub(name: string) {
 
 // top-level add/get/update/delete/list talk to a ContextClient (local | remote)
 function registerContextVerbs(program: Command): void {
-    program.command('add').description('append messages to a context').action(stub('add'));
-    program.command('get').description('read a context').action(stub('get'));
-    program.command('update').description('update messages in a context').action(stub('update'));
-    program.command('delete').description('delete a context or messages').action(stub('delete'));
-    program.command('list').description('list contexts').action(stub('list'));
+    program.addCommand(buildAddCommand());
+    program.addCommand(buildGetCommand());
+    program.addCommand(buildUpdateCommand());
+    program.addCommand(buildDeleteCommand());
+    registerList(program);
 }
 
 // -- sync group ---------------------------------------------------------------

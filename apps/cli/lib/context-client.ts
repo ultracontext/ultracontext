@@ -27,8 +27,8 @@ export type GetInput = { id?: string; version?: number; at?: number; before?: st
 // update: patch messages by id or index (copy-on-write → new version)
 export type UpdateInput = { id?: string; updates: Array<Record<string, unknown>>; metadata?: Record<string, unknown> };
 
-// delete: drop a whole context (permanent) — message-level delete added later
-export type DeleteInput = { id?: string; permanent?: boolean };
+// delete: drop a whole context (permanent), or specific messages by id/index
+export type DeleteInput = { id?: string; permanent?: boolean; ids?: (string | number)[] };
 
 // list: filter the project's contexts
 export type ListInput = { limit?: number; source?: string; project_path?: string; session_id?: string };

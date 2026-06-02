@@ -10,6 +10,7 @@ import {
     getContext,
     updateMessages,
     deleteContextPermanent,
+    deleteMessages,
     listContexts,
 } from '@ultracontext/core';
 import { createSqliteAdapter } from '@ultracontext/storage/sqlite';
@@ -43,13 +44,14 @@ class LocalContextClient implements ContextClient {
     ) {}
 
     // resolve the target context — explicit id, else the cwd's default
-    private async targetId(id?: string): Promise<string> {
-        return id ?? resolveDefaultContext(this.storage, this.projectId, this.cwd);
+    private async targetId(id?: string, metadata?: Record<string, unknown>): Promise<string> {
+        return id ?? resolveDefaultContext(this.storage, this.projectId, this.cwd, metadata);
     }
 
     // append messages, returning the created views + version
     async add(input: AddInput): Promise<AddResult> {
-        const id = await this.targetId(input.id);
+        // input.metadata tags a freshly-created default context (e.g. its source)
+        const id = await this.targetId(input.id, input.metadata);
         return unwrap(await appendMessages(this.storage, this.projectId, id, input.messages));
     }
 
@@ -75,9 +77,17 @@ class LocalContextClient implements ContextClient {
         }));
     }
 
-    // permanently delete a whole context
+    // delete specific messages (--ids) or, otherwise, the whole context
     async delete(input: DeleteInput): Promise<DeleteResult> {
         const id = await this.targetId(input.id);
+
+        // message-level delete — drop the targeted indices/ids, keep the context
+        if (input.ids && input.ids.length > 0) {
+            unwrap(await deleteMessages(this.storage, this.projectId, id, { ids: input.ids }));
+            return { deleted: true, id };
+        }
+
+        // whole-context delete — remove the context permanently
         const res = unwrap(await deleteContextPermanent(this.storage, this.projectId, id, {}));
         return { deleted: true, id: res.id };
     }

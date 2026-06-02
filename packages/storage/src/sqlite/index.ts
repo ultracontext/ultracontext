@@ -158,6 +158,12 @@ export class SqliteAdapter implements StorageAdapter {
 
     // -- projects -------------------------------------------------------------
 
+    // look up an existing project by name (local-first reuses a single 'local' row)
+    async findProjectByName(name: string): Promise<ProjectRow | null> {
+        const rows = await this.db.select({ id: projects.id }).from(projects).where(eq(projects.name, name)).limit(1);
+        return rows[0] ?? null;
+    }
+
     async insertProject(name: string): Promise<ProjectRow | null> {
         const rows = await this.db.insert(projects).values({ name }).returning({ id: projects.id });
         return rows[0] ?? null;
