@@ -11,6 +11,7 @@ import { buildGetCommand } from './commands/get';
 import { buildUpdateCommand } from './commands/update';
 import { registerList } from './commands/list';
 import { buildDeleteCommand } from './commands/delete';
+import { buildSyncCommand } from './commands/sync';
 
 // -- stub action --------------------------------------------------------------
 
@@ -41,11 +42,7 @@ function registerContextVerbs(program: Command): void {
 
 // `uc sync <init|start|stop|status|source|event>` → @ultracontext/sync
 function registerSync(program: Command): void {
-    const sync = program.command('sync').description('fs-first sync orchestration');
-
-    for (const sub of ['init', 'start', 'stop', 'status', 'source', 'event']) {
-        sync.command(sub).description(`sync ${sub}`).action(stub(`sync ${sub}`));
-    }
+    program.addCommand(buildSyncCommand());
 }
 
 // -- standalone groups --------------------------------------------------------
