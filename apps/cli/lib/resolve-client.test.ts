@@ -36,10 +36,12 @@ describe('resolveClient', () => {
         await assert.rejects(() => client.get({}), /context id/i);
     });
 
-    // --remote without any credential → a clear, actionable error
+    // --remote without any credential → a clear, actionable error.
+    // inject config:{} so it never reads the dev's real ~/.ultracontext (which
+    // may carry an apiKey) — keeps the assertion deterministic on any machine.
     it('throws a clear error when --remote without an api key', async () => {
         await assert.rejects(
-            () => resolveClient({ remote: true, env: {} }),
+            () => resolveClient({ remote: true, env: {}, config: {} }),
             /api key/i,
         );
     });

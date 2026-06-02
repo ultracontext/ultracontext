@@ -18,8 +18,10 @@ type Runtime = { io?: { stdout?: Writable; stderr?: Writable; isTTY?: boolean } 
 
 // -- serialized shape ---------------------------------------------------------
 
-// one option as the agent sees it: its flags + description + whether required
-type OptionNode = { flags: string; description: string; required: boolean };
+// one option as the agent sees it. Commander has TWO distinct "required"
+// notions, so we surface both: valueRequired = the flag takes a value when
+// present (<v> not [v]); mandatory = the flag itself must be supplied.
+type OptionNode = { flags: string; description: string; valueRequired: boolean; mandatory: boolean };
 
 // one positional argument: its name + description + required/variadic markers
 type ArgNode = { name: string; description: string; required: boolean; variadic: boolean };
@@ -35,9 +37,17 @@ export type CommandNode = {
 
 // -- serializer ---------------------------------------------------------------
 
-// project a command's options into flat {flags, description, required} nodes
+// project a command's options into flat nodes, splitting the two "required"
+// notions so agents don't misread an optional flag as mandatory
 function serializeOptions(cmd: Command): OptionNode[] {
-    return cmd.options.map((o) => ({ flags: o.flags, description: o.description ?? '', required: Boolean(o.required) }));
+    return cmd.options.map((o) => ({
+        flags: o.flags,
+        description: o.description ?? '',
+        // o.required = the value is required when the flag is present (<v>)
+        valueRequired: Boolean(o.required),
+        // o.mandatory = the flag itself must be supplied (requiredOption)
+        mandatory: Boolean(o.mandatory),
+    }));
 }
 
 // project a command's positionals into flat arg nodes (name/required/variadic)

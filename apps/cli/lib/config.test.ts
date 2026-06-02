@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 
-import { configDir, configPath, dbUrl, writeJsonAtomic, readJson } from './config';
+import { configDir, configPath, dbUrl, projectDir, writeJsonAtomic, readJson } from './config';
 
 // -- temp dir cleanup ---------------------------------------------------------
 
@@ -40,7 +40,39 @@ describe('config paths', () => {
 
     // db url is a libsql file: url pointing at uc.db in the root dir
     it('resolves the local db url', () => {
-        assert.equal(dbUrl(), 'file:' + path.join(configDir(), 'uc.db'));
+        const prev = process.env.UC_DB_URL;
+        delete process.env.UC_DB_URL;
+        try {
+            assert.equal(dbUrl(), 'file:' + path.join(configDir(), 'uc.db'));
+        } finally {
+            if (prev !== undefined) process.env.UC_DB_URL = prev;
+        }
+    });
+
+    // UC_DB_URL overrides the default db location (env-aware resolution)
+    it('honors UC_DB_URL over the default db url', () => {
+        const prev = process.env.UC_DB_URL;
+        process.env.UC_DB_URL = 'file:/tmp/override.db';
+        try {
+            assert.equal(dbUrl(), 'file:/tmp/override.db');
+        } finally {
+            if (prev === undefined) delete process.env.UC_DB_URL;
+            else process.env.UC_DB_URL = prev;
+        }
+    });
+
+    // projectDir defaults to cwd, but UC_PROJECT_DIR overrides it
+    it('resolves the project dir (UC_PROJECT_DIR over cwd)', () => {
+        const prev = process.env.UC_PROJECT_DIR;
+        delete process.env.UC_PROJECT_DIR;
+        try {
+            assert.equal(projectDir(), process.cwd());
+            process.env.UC_PROJECT_DIR = '/work/scope';
+            assert.equal(projectDir(), '/work/scope');
+        } finally {
+            if (prev === undefined) delete process.env.UC_PROJECT_DIR;
+            else process.env.UC_PROJECT_DIR = prev;
+        }
     });
 });
 

@@ -53,6 +53,20 @@ describe('serializeProgram', () => {
         assert.ok(add!.arguments.some((a) => a.name === 'text'), 'positional captured');
     });
 
+    // an optional flag like --role is NOT mandatory (its <role> only means the
+    // value is required WHEN present) — agents must not read it as required
+    it('distinguishes valueRequired from mandatory for an optional flag', () => {
+        const tree = serializeProgram(fakeProgram());
+        const add = tree.subcommands.find((c) => c.name === 'add');
+        const role = add!.options.find((o) => o.flags.includes('--role'));
+
+        assert.ok(role, '--role option present');
+        // <role> ⇒ a value is required when the flag is passed
+        assert.equal(role!.valueRequired, true, '--role takes a value when present');
+        // but the flag itself is optional — never mandatory
+        assert.equal(role!.mandatory, false, '--role is not a mandatory flag');
+    });
+
     // nested groups recurse — subcommands carry their own subcommands
     it('recurses into nested groups', () => {
         const tree = serializeProgram(fakeProgram());

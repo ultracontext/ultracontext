@@ -9,7 +9,7 @@ import type { ContextClient } from './context-client';
 import { createLocalClient } from './clients/local';
 import { createRemoteClientFromConfig } from './clients/remote';
 import { loadClientConfig } from './client-config';
-import { dbUrl as defaultDbUrl } from './config';
+import { dbUrl as defaultDbUrl, projectDir as defaultProjectDir } from './config';
 
 // -- options ------------------------------------------------------------------
 
@@ -44,9 +44,10 @@ function resolveBaseUrl(env: Record<string, string | undefined>, config: ClientC
 export async function resolveClient(opts: ResolveOptions = {}): Promise<ContextClient> {
     const env = opts.env ?? process.env;
 
-    // an explicit dbUrl is an unambiguous "use this local db" signal — when set
-    // (tests, UC_DB_URL), skip the persisted config so it can't flip us to remote
-    const skipPersisted = opts.dbUrl !== undefined;
+    // an explicit local-db signal — an opts.dbUrl override OR UC_DB_URL in env —
+    // means "use this local db", so skip the persisted config (it can't flip us
+    // to remote). Keeps env-driven local runs from reading a hosted config.
+    const skipPersisted = opts.dbUrl !== undefined || env.UC_DB_URL !== undefined;
 
     // injected config wins (tests); else read the persisted ~/.ultracontext config
     const config = opts.config ?? (skipPersisted ? {} : await loadClientConfig());
@@ -65,9 +66,11 @@ export async function resolveClient(opts: ResolveOptions = {}): Promise<ContextC
         return createRemoteClientFromConfig({ apiKey, baseUrl });
     }
 
-    // local backend — sqlite at ~/.ultracontext/uc.db, scoped to the cwd
+    // local backend — env-aware db (UC_DB_URL else ~/.ultracontext/uc.db),
+    // scoped to the env-aware project dir (UC_PROJECT_DIR else cwd). Defaults
+    // flow through config so every verb resolves the SAME local store.
     return createLocalClient({
         dbUrl: opts.dbUrl ?? defaultDbUrl(),
-        cwd: opts.cwd ?? process.cwd(),
+        cwd: opts.cwd ?? defaultProjectDir(),
     });
 }

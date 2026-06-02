@@ -15,8 +15,11 @@ export const configDir = (): string => join(homedir(), '.ultracontext');
 // config file: ~/.ultracontext/config.json
 export const configPath = (): string => join(configDir(), 'config.json');
 
-// local sqlite db: ~/.ultracontext/uc.db (libsql url form)
-export const dbUrl = (): string => 'file:' + join(configDir(), 'uc.db');
+// local sqlite db: UC_DB_URL override, else ~/.ultracontext/uc.db (libsql url)
+export const dbUrl = (): string => process.env.UC_DB_URL ?? 'file:' + join(configDir(), 'uc.db');
+
+// project scope dir: UC_PROJECT_DIR override, else the current working dir
+export const projectDir = (): string => process.env.UC_PROJECT_DIR ?? process.cwd();
 
 // -- atomic write -------------------------------------------------------------
 

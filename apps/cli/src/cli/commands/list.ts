@@ -66,19 +66,12 @@ export function registerList(program: Command): void {
         .option('--source <source>', 'filter by capture source')
         .option('--project_path <path>', 'filter by project path (defaults to cwd)')
         .option('--limit <n>', 'max contexts to return', (v) => Number(v))
-        .action((opts, cmd) => {
+        .action(async (opts, cmd) => {
             // merge in the global --json/--remote flags off the program root
             const globals = cmd.optsWithGlobals() as { json?: boolean; remote?: boolean };
-            const code = listActionSync({ ...opts, json: globals.json, remote: globals.remote });
-            void code;
+
+            // await the action so output settles before the program resolves;
+            // surface failures via exitCode (not process.exit, which races writes)
+            process.exitCode = await listAction({ ...opts, json: globals.json, remote: globals.remote });
         });
-}
-
-// -- commander bridge ---------------------------------------------------------
-
-// run the action with live process io, then exit with its returned code
-function listActionSync(opts: ListOptions): Promise<void> {
-    return listAction(opts).then((code) => {
-        if (code !== 0) process.exit(code);
-    });
 }

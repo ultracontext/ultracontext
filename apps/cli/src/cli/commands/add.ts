@@ -2,12 +2,14 @@
 // add — `uc add` quick-capture. Append one message (or create the cwd default
 // context on first write). Body sources: positional text | stdin | --json | a
 // --meta key=val pair set. Flags: --role, --context <id>, --new. Local-first:
-// runs through a ContextClient resolved from UC_DB_URL / UC_PROJECT_DIR env.
+// the resolved ContextClient uses the centralized env-aware config (UC_DB_URL /
+// UC_PROJECT_DIR) — no per-command env reads here.
 // =============================================================================
 
 import { Command } from '@commander-js/extra-typings';
 
 import { resolveClient } from '../../../lib/resolve-client';
+import { projectDir } from '../../../lib/config';
 import { emit, outputError, shouldJson } from '../../../lib/output';
 import type { Message } from '../../../lib/context-client';
 
@@ -101,13 +103,13 @@ export async function runAdd(text: string | undefined, opts: AddOptions, runtime
         // assemble the message before touching storage so bad input fails fast
         const message = await buildMessage(text, opts, runtime.stdin);
 
-        // local-first client scoped to the cwd; env overrides keep tests isolated
-        const dbUrl = process.env.UC_DB_URL;
-        const cwd = process.env.UC_PROJECT_DIR ?? process.cwd();
+        // env-aware project scope (UC_PROJECT_DIR else cwd) from centralized config
+        const cwd = projectDir();
 
-        // --new targets a synthetic scope so resolve-or-create makes a fresh context
-        const scope = opts.new ? `${cwd}/new-${Date.now()}-${Math.random().toString(36).slice(2)}` : cwd;
-        const client = await resolveClient({ remote: opts.remote, dbUrl, cwd: scope });
+        // --new targets a synthetic scope so resolve-or-create makes a fresh context;
+        // omit cwd otherwise so resolveClient uses the centralized env-aware default
+        const scope = opts.new ? `${cwd}/new-${Date.now()}-${Math.random().toString(36).slice(2)}` : undefined;
+        const client = await resolveClient({ remote: opts.remote, cwd: scope });
 
         // append to the explicit --context id, else the (possibly new) default
         const result = await client.add({ id: opts.context, messages: [message] });
