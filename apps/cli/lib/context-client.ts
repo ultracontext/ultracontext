@@ -70,8 +70,9 @@ export type GetResult = { data: MessageView[]; version: number; versions?: Versi
 // update → the updated messages + the new version
 export type UpdateResult = { data: MessageView[]; version: number };
 
-// delete → confirmation of the removed context
-export type DeleteResult = { deleted: true; id: string };
+// delete → confirmation of the removed context, plus the audit/version metadata
+// that core recorded (echoed back so a permanent delete's --meta is observable).
+export type DeleteResult = { deleted: true; id: string; metadata?: Record<string, unknown> };
 
 // list → the project's contexts (newest first)
 export type ListResult = { data: Array<{ id: string; metadata: Record<string, unknown>; created_at: string }> };

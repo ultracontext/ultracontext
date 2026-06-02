@@ -67,11 +67,16 @@ async function driveCreate(): Promise<string> {
     return JSON.parse(captured.out().trim()).id;
 }
 
-// drive `uc append <id> --json`, appending one message to the explicit context
+// drive `uc append <id> <text>`, appending one message to the explicit context.
+// io is non-tty (machine mode) and stdin is an EMPTY iterable so the command
+// never reads the real process.stdin.
 async function driveAppend(id: string, text: string): Promise<void> {
     const captured = makeIo();
-    const command = buildAppendCommand({ io: captured.io, exit: () => {} });
-    await command.parseAsync(['node', 'append', id, text, '--json']);
+    const empty = (async function* (): AsyncGenerator<string> { /* no chunks */ })();
+    const root = new Command('uc');
+    root.option('--json');
+    root.addCommand(buildAppendCommand({ io: captured.io, stdin: empty, exit: () => {} }));
+    await root.parseAsync(['node', 'uc', 'append', id, text]);
 }
 
 // drive `uc get <id>` through the real program so it resolves via env (no ctx)

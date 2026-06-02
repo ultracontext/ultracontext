@@ -1,7 +1,8 @@
 // =============================================================================
 // get — the `uc get` verb. Reads a context local-first through a ContextClient.
-// Targets an explicit id (positional <id> or --context, else $UC_CONTEXT — no
-// default), optionally at a past --version/--at/--before or with --history.
+// Targets an explicit id (positional <id>, else $UC_CONTEXT — no default and no
+// --context flag, for a uniform surface across the four targeted verbs),
+// optionally at a past --version/--at/--before or with --history.
 // Data → stdout, errors → stderr.
 // =============================================================================
 
@@ -38,7 +39,7 @@ export type GetContext = { dbUrl?: string; cwd?: string; remote?: boolean; io?: 
 // -- human formatter ----------------------------------------------------------
 
 // render the read messages, one per line — "role: content", or just content
-// when the message has no role (e.g. a plain `uc add "text"` capture)
+// when the message has no role (e.g. a plain `uc append <id> "text"` capture)
 function humanGet(result: GetResult): string {
     return result.data
         .map((m) => {
@@ -87,22 +88,22 @@ export async function runGet(opts: GetOptions, ctx: GetContext = {}): Promise<nu
 
 // build the `get` command and wire its action to the handler
 export function buildGetCommand(): Command {
-    // describe the verb + its selectors. an optional positional id mirrors the
-    // ids that `uc list` prints; --context is kept as an explicit alternative.
+    // describe the verb + its selectors. the positional id mirrors the ids that
+    // `uc list` prints and falls back to $UC_CONTEXT (no --context flag — the
+    // surface is uniform across the four targeted verbs).
     // the action is wired on the chained command so its arg/opts types resolve.
     const command = new Command('get')
         .description('read a context')
         .argument('[id]', 'context id to read (or set UC_CONTEXT)')
-        .option('--context <id>', 'read an explicit context id (or set UC_CONTEXT)')
         .option('--version <n>', 'read a specific version', (v) => parseInt(v, 10))
         .option('--at <index>', 'read at a message index', (v) => parseInt(v, 10))
         .option('--before <timestamp>', 'read the version before a timestamp')
         .option('--history', 'include the version history')
-        // positional id wins over --context; both fall back to $UC_CONTEXT
+        // the positional id falls back to $UC_CONTEXT inside the handler
         .action(async (id, opts, cmd) => {
             const globals = cmd.optsWithGlobals() as { json?: boolean; remote?: boolean };
             const code = await runGet(
-                { ...opts, context: id ?? opts.context, json: globals.json },
+                { ...opts, context: id, json: globals.json },
                 { remote: globals.remote },
             );
             process.exitCode = code;

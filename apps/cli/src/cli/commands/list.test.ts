@@ -1,8 +1,8 @@
 // =============================================================================
-// list.test — `uc list` lists a project's contexts via the local-first
-// ContextClient. Filters: --source --project_path --limit. Defaults to the
-// current project (cwd). Exercised against a TEMP SQLite db (db path injected
-// so it never touches ~/.ultracontext); stdout + exit code are captured.
+// list.test — `uc list` lists contexts via the local-first ContextClient. Lists
+// ALL contexts by default (no cwd default); filters: --source --project_path
+// --limit. Exercised against a TEMP SQLite db (db path injected so it never
+// touches ~/.ultracontext); stdout + exit code are captured.
 // =============================================================================
 
 import { describe, it, after } from 'node:test';
@@ -39,7 +39,7 @@ async function seedDb(): Promise<string> {
     return url;
 }
 
-// -- happy path: defaults to the current project (cwd) ------------------------
+// -- happy path: lists all contexts by default --------------------------------
 
 describe('uc list', () => {
     // with no filters, list returns ALL contexts (no cwd default)

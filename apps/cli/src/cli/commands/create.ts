@@ -11,6 +11,11 @@ import { Command } from '@commander-js/extra-typings';
 import { resolveClient } from '../../../lib/resolve-client';
 import { emit, outputError } from '../../../lib/output';
 
+// resolve an injected stdout sink against the live process stream
+function resolveStdout(io?: Io): Writable {
+    return io?.stdout ?? process.stdout;
+}
+
 // -- io types -----------------------------------------------------------------
 
 // a minimal writable sink — the real process streams satisfy this
@@ -56,8 +61,15 @@ export async function runCreate(opts: CreateOptions, ctx: CreateContext = {}): P
             metadata: opts.meta,
         });
 
-        // data → stdout: the full envelope in machine mode, the bare id in human
-        emit(result, { json: opts.json, human: (d) => (d as { id: string }).id }, io);
+        // an id is already machine-friendly, so the BARE id is the default for
+        // BOTH humans and pipes — this is what `id=$(uc create)` captures. Only
+        // an explicit --json opts into the full { id, metadata, created_at }
+        // envelope (machine consumers that want the metadata back).
+        if (opts.json) {
+            emit(result, { json: true }, io);
+        } else {
+            resolveStdout(io).write(result.id + '\n');
+        }
         return 0;
     } catch (error) {
         // failure → stderr, exit 1 (130 on user cancel)
@@ -67,8 +79,10 @@ export async function runCreate(opts: CreateOptions, ctx: CreateContext = {}): P
 
 // -- command factory ----------------------------------------------------------
 
-// `uc create` — collect --from/--version/--at/--before/--meta, then run the handler
-export function buildCreateCommand(): Command {
+// `uc create` — collect --from/--version/--at/--before/--meta, then run the
+// handler. An optional io is injectable so argv-level tests capture stdout
+// deterministically (real runs fall back to the live process streams).
+export function buildCreateCommand(runtime: { io?: Io } = {}): Command {
     const command = new Command('create');
 
     // collect repeated --meta key=val pairs into one object (context metadata)
@@ -91,7 +105,7 @@ export function buildCreateCommand(): Command {
             const globals = cmd.optsWithGlobals() as { json?: boolean; remote?: boolean };
 
             // run the handler; surface failures via process.exitCode
-            process.exitCode = await runCreate({ ...opts, json: globals.json, remote: globals.remote });
+            process.exitCode = await runCreate({ ...opts, json: globals.json, remote: globals.remote }, { io: runtime.io });
         });
 
     return command as unknown as Command;

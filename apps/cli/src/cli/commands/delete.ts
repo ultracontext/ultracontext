@@ -97,6 +97,15 @@ export async function runDelete(args: string[], deps: DeleteDeps = {}): Promise<
             return 0;
         }
 
+        // GUARD: a bare delete (no --permanent, no --ids) is too destructive to be
+        // the default — it would silently wipe the whole context. Require an
+        // explicit intent flag instead.
+        if (!opts.permanent) {
+            throw new Error(
+                'specify --permanent to delete the whole context, or --ids <...> to delete messages',
+            );
+        }
+
         // whole-context delete — remove the context permanently (with audit metadata)
         const result = await client.delete({ id, permanent: true, metadata });
         emit(result, { json, human: () => `deleted ${result.id}` }, io);
@@ -145,7 +154,10 @@ export function buildDeleteCommand(): Command {
             resolveClient: () => resolveClient({ remote }),
             json,
         });
-        if (code !== 0) process.exit(code);
+
+        // surface failures via exitCode (not process.exit, which races writes
+        // AND would kill the host process under argv-level tests)
+        process.exitCode = code;
     });
 
     return command as unknown as Command;

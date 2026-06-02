@@ -87,17 +87,24 @@ class LocalContextClient implements ContextClient {
 
     // delete specific messages (--ids) or, otherwise, the whole context.
     // input.metadata is plumbed through: version metadata for a message delete,
-    // audit metadata for a permanent delete.
+    // audit metadata for a permanent delete. The recorded metadata is echoed back
+    // on the result so a delete's --meta is observable (not silently dropped).
     async delete(input: DeleteInput): Promise<DeleteResult> {
-        // message-level delete — drop the targeted indices/ids, keep the context
+        // a sentinel so an absent --meta stays absent on the result
+        const echo = input.metadata && Object.keys(input.metadata).length > 0 ? input.metadata : undefined;
+
+        // message-level delete — drop the targeted indices/ids, keep the context.
+        // core records --meta as version metadata (visible via get --history);
+        // we also echo it on the result for symmetry with the permanent path.
         if (input.ids && input.ids.length > 0) {
             unwrap(await deleteMessages(this.storage, this.projectId, input.id, { ids: input.ids, userMetadata: input.metadata }));
-            return { deleted: true, id: input.id };
+            return { deleted: true, id: input.id, ...(echo ? { metadata: echo } : {}) };
         }
 
-        // whole-context delete — remove the context permanently, recording the audit
+        // whole-context delete — remove the context permanently. core echoes the
+        // audit metadata back; surface it on the result so --meta is observable.
         const res = unwrap(await deleteContextPermanent(this.storage, this.projectId, input.id, { auditMetadata: input.metadata }));
-        return { deleted: true, id: res.id };
+        return { deleted: true, id: res.id, ...(res.metadata ? { metadata: res.metadata } : {}) };
     }
 
     // list the project's contexts (newest first), filtered

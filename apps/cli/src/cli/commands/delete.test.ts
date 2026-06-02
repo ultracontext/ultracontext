@@ -144,22 +144,84 @@ describe('uc delete --ids --meta', () => {
 // -- --meta plumbing (permanent delete) ---------------------------------------
 
 describe('uc delete --permanent --meta', () => {
-    // --meta is echoed as audit metadata on the permanent-delete JSON envelope
-    it('echoes --meta as audit metadata on a permanent delete', async () => {
+    // --meta must be OBSERVABLE on the permanent-delete result, not silently
+    // dropped: core echoes audit metadata back, and the client must surface it.
+    it('echoes --meta as audit metadata on the permanent-delete envelope', async () => {
         const db = { dbUrl: tempDbUrl(), cwd: '/work/del-perm-meta' };
         const id = await seedContext(db, [{ role: 'user', content: 'bye' }]);
 
         const { stdout, code } = await runWithDb(
-            [id, '--permanent', '--meta', 'reason=gdpr'],
+            [id, '--permanent', '--meta', 'reason=gdpr', '--meta', 'by=cli'],
             db,
             { json: true },
         );
         assert.equal(code, 0);
 
-        // the envelope still confirms the deleted id (audit rides core-side)
-        const parsed = JSON.parse(stdout.trim()) as { deleted: boolean; id: string };
+        // the envelope confirms the deleted id AND surfaces the audit metadata
+        const parsed = JSON.parse(stdout.trim()) as {
+            deleted: boolean;
+            id: string;
+            metadata?: Record<string, unknown>;
+        };
         assert.equal(parsed.deleted, true);
         assert.equal(parsed.id, id);
+        assert.ok(parsed.metadata, 'audit metadata is surfaced on the result');
+        assert.equal(parsed.metadata!.reason, 'gdpr');
+        assert.equal(parsed.metadata!.by, 'cli');
+    });
+});
+
+// -- bare delete is an error (no --permanent, no --ids) -----------------------
+
+describe('uc delete (bare, no flags) is an error', () => {
+    // A bare `delete <id>` must NOT wipe the whole context — that is far too
+    // destructive to be the default. It errors (exit 1) and leaves the context.
+    it('errors and deletes nothing without --permanent or --ids (handler)', async () => {
+        const db = { dbUrl: tempDbUrl(), cwd: '/work/del-bare' };
+        const id = await seedContext(db, [{ role: 'user', content: 'precious' }]);
+
+        const { code, stderr } = await runWithDb([id], db);
+        assert.equal(code, 1);
+        assert.match(stderr, /--permanent|--ids/);
+
+        // the context is STILL there — nothing was deleted
+        const client = await createLocalClient(db);
+        const got = await client.get({ id });
+        assert.equal(got.data.length, 1);
+        assert.equal(got.data[0].content, 'precious');
+    });
+
+    // same guarantee through the REAL registered action (argv path)
+    it('errors and deletes nothing via the registered action (argv)', async () => {
+        const db = { dbUrl: tempDbUrl(), cwd: '/work/del-bare-argv' };
+        const id = await seedContext(db, [{ role: 'user', content: 'keepme' }]);
+
+        const savedDb = process.env.UC_DB_URL;
+        const savedCode = process.exitCode;
+        process.env.UC_DB_URL = db.dbUrl;
+        process.exitCode = 0;
+
+        try {
+            const program = new Command('uc');
+            program.option('--json');
+            program.addCommand(buildDeleteCommand());
+            program.exitOverride();
+            // `uc delete <id>` with NO flags — the wipe footgun
+            await program.parseAsync(['node', 'uc', 'delete', id]);
+
+            // the registered action must have flagged a non-zero exit
+            assert.notEqual(process.exitCode, 0);
+        } finally {
+            process.exitCode = savedCode;
+            if (savedDb === undefined) delete process.env.UC_DB_URL;
+            else process.env.UC_DB_URL = savedDb;
+        }
+
+        // the context is untouched — a bare delete never wipes
+        const client = await createLocalClient(db);
+        const got = await client.get({ id });
+        assert.equal(got.data.length, 1);
+        assert.equal(got.data[0].content, 'keepme');
     });
 });
 

@@ -7,7 +7,6 @@
 import { Command } from '@commander-js/extra-typings';
 
 import { status } from '../../lib/output';
-import { VERSION } from '../../lib/version';
 import { buildCreateCommand } from './commands/create';
 import { buildAppendCommand } from './commands/append';
 import { buildGetCommand } from './commands/get';
@@ -19,6 +18,7 @@ import { buildDoctorCommand } from './commands/doctor';
 import { buildInitCommand } from './commands/init';
 import { buildUpgradeCommand } from './commands/upgrade';
 import { buildCommandsCommand } from './commands/commands';
+import { buildVersionCommand } from './commands/version';
 
 // -- context verbs ------------------------------------------------------------
 
@@ -43,11 +43,15 @@ function registerSync(program: Command): void {
 
 // -- standalone groups --------------------------------------------------------
 
-// self-update, environment doctor, project init
+// self-update, environment doctor, project init, tool version.
+// version is a SUBCOMMAND (`uc version`), NOT Commander's global --version flag:
+// a global --version is inherited by subcommands and would shadow the
+// `--version <n>` time-travel selector on get/create.
 function registerStandalone(program: Command): void {
     program.addCommand(buildUpgradeCommand());
     program.addCommand(buildDoctorCommand());
     program.addCommand(buildInitCommand());
+    program.addCommand(buildVersionCommand());
 }
 
 // -- commands (machine-readable tree) -----------------------------------------
@@ -64,11 +68,12 @@ function registerCommands(program: Command): void {
 export function buildProgram(): Command {
     const program = new Command();
 
-    // root metadata — version sourced from package.json (single source of truth)
+    // root metadata. NO .version() — a global --version flag is inherited by
+    // subcommands and shadows the `--version <n>` time-travel selector. The tool
+    // version lives behind `uc version` / `uc doctor` instead.
     program
         .name('uc')
-        .description('UltraContext — version control for AI agent context')
-        .version(VERSION);
+        .description('UltraContext — version control for AI agent context');
 
     // global options consumed by the output helper + client resolver
     program.option('--json', 'emit machine-readable JSON');

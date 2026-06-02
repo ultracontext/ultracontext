@@ -5,12 +5,15 @@
 // captures stdout/stderr/exit. Covers: prints an id, --from forks, --meta tags.
 // =============================================================================
 
-import { describe, it, after } from 'node:test';
+import { describe, it, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { runCreate } from './create';
+import { Command } from '@commander-js/extra-typings';
+
+import { runCreate, buildCreateCommand } from './create';
 import { createLocalClient } from '../../../lib/clients/local';
 import { tempDbUrl, cleanupTempDbs } from '../../../lib/testing/temp-db';
+import { buildProgram } from '../main';
 
 after(cleanupTempDbs);
 
@@ -112,5 +115,137 @@ describe('runCreate', () => {
         const printed = cap.out().trim();
         assert.ok(printed.length > 0);
         assert.ok(!printed.includes('{'), 'human mode is the bare id, not JSON');
+    });
+
+    // --json still emits the full envelope (machine consumers want metadata)
+    it('emits the full JSON envelope with --json', async () => {
+        const dbUrl = tempDbUrl();
+        const cwd = '/work/create-json-envelope';
+
+        const cap = captureIo();
+        const code = await runCreate({ json: true }, { dbUrl, cwd, io: cap.io });
+        assert.equal(code, 0);
+
+        // a parseable envelope carrying id + metadata + created_at
+        const out = JSON.parse(cap.out().trim()) as { id: string; metadata: unknown; created_at: string };
+        assert.ok(out.id.startsWith('ctx_'));
+        assert.ok('metadata' in out && 'created_at' in out);
+    });
+});
+
+// -- bare-id vs envelope output (argv, real command) --------------------------
+
+// `id=$(uc create)` in a pipe must capture ONLY the bare id, not the JSON
+// envelope. Drive the REAL command through argv (a root carrying the global
+// --json + an io-injected create) so the human/json split is exercised
+// end-to-end. `create` → bare id; `create --json` → full envelope.
+describe('uc create output (argv)', () => {
+    let saved: { db?: string; dir?: string };
+    beforeEach(() => {
+        saved = { db: process.env.UC_DB_URL, dir: process.env.UC_PROJECT_DIR };
+    });
+    afterEach(() => {
+        if (saved.db === undefined) delete process.env.UC_DB_URL;
+        else process.env.UC_DB_URL = saved.db;
+        if (saved.dir === undefined) delete process.env.UC_PROJECT_DIR;
+        else process.env.UC_PROJECT_DIR = saved.dir;
+    });
+
+    // run the built create command through argv with an injected, non-tty io
+    async function driveCreate(args: string[]): Promise<string> {
+        let stdout = '';
+        const io = {
+            stdout: { write: (s: string) => ((stdout += s), true) },
+            stderr: { write: () => true },
+            isTTY: false,
+        };
+
+        // a root carrying the global --json, the way buildProgram wires it
+        const program = new Command('uc');
+        program.option('--json');
+        program.addCommand(buildCreateCommand({ io }));
+        await program.parseAsync(['node', 'uc', ...args]);
+        return stdout.trim();
+    }
+
+    // bare `create` in a pipe → exactly the id, no envelope (the $(…) pattern)
+    it('prints the bare id on stdout (no --json)', async () => {
+        const dbUrl = tempDbUrl();
+        process.env.UC_DB_URL = dbUrl;
+        process.env.UC_PROJECT_DIR = '/work/create-bare-argv';
+
+        const printed = await driveCreate(['create']);
+        assert.ok(printed.startsWith('ctx_'), `expected a bare id, got: ${printed}`);
+        assert.ok(!printed.includes('{'), 'pipe mode emits the bare id, not JSON');
+    });
+
+    // `create --json` in a pipe → the full envelope (id + metadata + created_at)
+    it('emits the JSON envelope with --json', async () => {
+        const dbUrl = tempDbUrl();
+        process.env.UC_DB_URL = dbUrl;
+        process.env.UC_PROJECT_DIR = '/work/create-json-argv';
+
+        const printed = await driveCreate(['--json', 'create']);
+        const out = JSON.parse(printed) as { id: string; metadata: unknown; created_at: string };
+        assert.ok(out.id.startsWith('ctx_'));
+        assert.ok('metadata' in out && 'created_at' in out);
+    });
+});
+
+// -- --from --version time-travel (argv, real program) ------------------------
+
+// Drive `uc create --from <id> --version 0` through buildProgram(). The bug: the
+// global .version() shadows --version, so the fork-at-version selector never
+// reaches the handler. After the fix it forks from version 0's snapshot.
+describe('uc create --from --version (argv)', () => {
+    let saved: { db?: string; dir?: string };
+    beforeEach(() => {
+        saved = { db: process.env.UC_DB_URL, dir: process.env.UC_PROJECT_DIR };
+    });
+    afterEach(() => {
+        if (saved.db === undefined) delete process.env.UC_DB_URL;
+        else process.env.UC_DB_URL = saved.db;
+        if (saved.dir === undefined) delete process.env.UC_PROJECT_DIR;
+        else process.env.UC_PROJECT_DIR = saved.dir;
+    });
+
+    // redirect process.stdout.write to a sink (the verb writes live io)
+    function patchStdout(sink: (s: string) => boolean): () => void {
+        const original = process.stdout.write.bind(process.stdout);
+        const originalIsTTY = process.stdout.isTTY;
+        Object.defineProperty(process.stdout, 'isTTY', { value: false, configurable: true });
+        process.stdout.write = ((chunk: string) => sink(String(chunk))) as typeof process.stdout.write;
+        return () => {
+            process.stdout.write = original;
+            Object.defineProperty(process.stdout, 'isTTY', { value: originalIsTTY, configurable: true });
+        };
+    }
+
+    // forks the SOURCE at version 0 (the original message), not its latest state
+    it('forks from a source at --version 0', async () => {
+        const dbUrl = tempDbUrl();
+        const cwd = '/work/create-from-version';
+        process.env.UC_DB_URL = dbUrl;
+        process.env.UC_PROJECT_DIR = cwd;
+
+        // a source with two versions: v0 original, v1 mutated
+        const client = await createLocalClient({ dbUrl, cwd });
+        const source = await client.create({});
+        await client.append({ id: source.id, messages: [{ role: 'user', content: 'v0' }] });
+        await client.update({ id: source.id, updates: [{ index: 0, content: 'v1' }] });
+
+        let stdout = '';
+        const restore = patchStdout((s) => ((stdout += s), true));
+        try {
+            await buildProgram().parseAsync(['node', 'uc', '--json', 'create', '--from', source.id, '--version', '0']);
+        } finally {
+            restore();
+        }
+
+        // the fork carries v0's content (not the CLI version string, not v1)
+        assert.doesNotMatch(stdout.trim(), /^\d+\.\d+\.\d+$/, 'must not print the CLI version string');
+        const forkId = (JSON.parse(stdout.trim()) as { id: string }).id;
+        const forked = await client.get({ id: forkId });
+        assert.equal(forked.data[0].content, 'v0');
     });
 });

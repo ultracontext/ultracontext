@@ -1,7 +1,7 @@
 // =============================================================================
-// list — `uc list` lists a project's contexts via the local-first
-// ContextClient. Filters: --source --project_path --limit. Defaults to the
-// current project (cwd). Pipe-aware: --json (or non-tty) → machine JSON.
+// list — `uc list` lists contexts via the local-first ContextClient. Lists ALL
+// contexts by default (no cwd default); narrow with --source / --project_path /
+// --limit. Pipe-aware: --json (or non-tty) → machine JSON.
 // =============================================================================
 
 import { Command } from '@commander-js/extra-typings';

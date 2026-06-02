@@ -15,9 +15,16 @@ describe('buildProgram', () => {
         const program = buildProgram();
         const names = program.commands.map((c) => c.name());
 
-        for (const expected of ['create', 'append', 'get', 'update', 'delete', 'list', 'sync', 'upgrade', 'doctor', 'init', 'commands']) {
+        for (const expected of ['create', 'append', 'get', 'update', 'delete', 'list', 'sync', 'upgrade', 'doctor', 'init', 'commands', 'version']) {
             assert.ok(names.includes(expected), `missing command: ${expected}`);
         }
+    });
+
+    // the root must NOT register Commander's global --version — it would shadow
+    // the `--version <n>` time-travel selector on the get/create verbs
+    it('does not register a global --version flag', () => {
+        const flags = buildProgram().options.map((o) => o.long);
+        assert.ok(!flags.includes('--version'), 'root must not carry a global --version');
     });
 
     // sync exposes its subcommands

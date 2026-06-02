@@ -8,6 +8,8 @@
 import { describe, it, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { Command } from '@commander-js/extra-typings';
+
 import { runUpdate, buildUpdateCommand } from './update';
 import { resolveClient } from '../../../lib/resolve-client';
 import { tempDbUrl, cleanupTempDbs } from '../../../lib/testing/temp-db';
@@ -136,6 +138,15 @@ describe('uc update <id>', () => {
         if (saved.ctx === undefined) delete process.env.UC_CONTEXT; else process.env.UC_CONTEXT = saved.ctx;
     });
 
+    // wrap the verb in a root carrying the global --json, the way main.ts wires
+    // it (update no longer has a local --json — it relies on the root global)
+    function program(): Command {
+        const root = new Command('uc');
+        root.option('--json');
+        root.addCommand(buildUpdateCommand());
+        return root;
+    }
+
     // `uc update <id> --index 0 --content new` patches via the positional id
     it('patches via a positional context id', async () => {
         const dbUrl = tempDbUrl();
@@ -143,12 +154,19 @@ describe('uc update <id>', () => {
         process.env.UC_DB_URL = dbUrl;
         const id = await seed(dbUrl, cwd, 'old');
 
-        // drive the real command (machine mode via the program's global --json)
-        const command = buildUpdateCommand();
-        await command.parseAsync(['node', 'update', id, '--index', '0', '--content', 'new', '--json']);
+        // drive the real command via the root's global --json (machine mode)
+        await program().parseAsync(['node', 'uc', '--json', 'update', id, '--index', '0', '--content', 'new']);
 
         const messages = await readBack(dbUrl, cwd, id);
         assert.equal(messages[0].content, 'new');
+    });
+
+    // surface consistency: update drops --context + its duplicate local --json
+    // (the root global --json + positional/$UC_CONTEXT cover both, uniformly)
+    it('does not register --context or a duplicate --json option', () => {
+        const flags = buildUpdateCommand().options.map((o: { long?: string }) => o.long);
+        assert.ok(!flags.includes('--context'), 'update must not carry --context');
+        assert.ok(!flags.includes('--json'), 'update must not carry a local --json (use the root global)');
     });
 
     // with no positional id, $UC_CONTEXT supplies the target context
@@ -159,8 +177,7 @@ describe('uc update <id>', () => {
         const id = await seed(dbUrl, cwd, 'old');
         process.env.UC_CONTEXT = id;
 
-        const command = buildUpdateCommand();
-        await command.parseAsync(['node', 'update', '--index', '0', '--content', 'fromenv', '--json']);
+        await program().parseAsync(['node', 'uc', '--json', 'update', '--index', '0', '--content', 'fromenv']);
 
         const messages = await readBack(dbUrl, cwd, id);
         assert.equal(messages[0].content, 'fromenv');

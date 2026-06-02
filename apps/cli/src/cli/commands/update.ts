@@ -21,8 +21,8 @@ type Io = { stdout?: Writable; stderr?: Writable; isTTY?: boolean };
 // -- handler options ----------------------------------------------------------
 
 // what to patch: a single message by id OR index, with new content + metadata.
-// context targets the CONTEXT (explicit arg or $UC_CONTEXT); id/index target a
-// MESSAGE within it.
+// context targets the CONTEXT (the resolved positional id or $UC_CONTEXT);
+// id/index target a MESSAGE within it.
 export type UpdateOptions = {
     context?: string;
     id?: string;
@@ -87,21 +87,21 @@ export function buildUpdateCommand(): Command {
     command
         .description('update messages in a context')
         .argument('[id]', 'target context id (or set UC_CONTEXT)')
-        .option('--context <id>', 'target context id (or set UC_CONTEXT)')
         .option('--id <id>', 'target message by id')
         .option('--index <n>', 'target message by index', (v) => Number.parseInt(v, 10))
         .option('--content <text>', 'new message content')
         .option('--meta <key=val>', 'attach version metadata (repeatable)', collectMeta, {})
-        .option('--json', 'emit machine-readable JSON')
+        // no local --json (the root global covers it) and no --context flag —
+        // the positional id + $UC_CONTEXT is uniform across the targeted verbs
         .action(async (id, opts, cmd) => {
             // merge in the global --json/--remote flags off the program root
             const globals = cmd.optsWithGlobals() as { json?: boolean; remote?: boolean };
 
-            // positional id wins over --context; both fall back to $UC_CONTEXT
+            // the positional id falls back to $UC_CONTEXT inside the handler
             const code = await runUpdate({
                 ...opts,
-                context: id ?? opts.context,
-                json: opts.json ?? globals.json,
+                context: id,
+                json: globals.json,
                 remote: globals.remote,
             });
 
