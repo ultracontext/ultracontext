@@ -59,6 +59,9 @@ importers:
       '@commander-js/extra-typings':
         specifier: ^14.0.0
         version: 14.0.0(commander@14.0.3)
+      '@libsql/client':
+        specifier: ^0.17.3
+        version: 0.17.3
       '@ultracontext/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -77,6 +80,12 @@ importers:
       commander:
         specifier: ^14.0.0
         version: 14.0.3
+      drizzle-orm:
+        specifier: ^0.44.5
+        version: 0.44.7(@cloudflare/workers-types@4.20260307.1)(@libsql/client@0.17.3)(better-sqlite3@11.10.0)(postgres@3.4.8)
+      libsql:
+        specifier: ^0.5.28
+        version: 0.5.29
       picocolors:
         specifier: ^1.1.1
         version: 1.1.1

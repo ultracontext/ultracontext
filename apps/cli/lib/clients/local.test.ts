@@ -5,11 +5,22 @@
 
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
+import os from 'node:os';
+import path from 'node:path';
+import fs from 'node:fs';
 
 import { createLocalClient } from './local';
 import { tempDbUrl, cleanupTempDbs } from '../testing/temp-db';
 
-after(cleanupTempDbs);
+// extra temp dirs created by the fresh-home test (removed recursively after)
+const tmpDirs: string[] = [];
+
+after(() => {
+    cleanupTempDbs();
+    for (const dir of tmpDirs) {
+        try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+});
 
 // build a fresh client bound to a temp db + a fixed cwd
 async function freshClient(cwd = '/work/local-test') {
@@ -91,5 +102,18 @@ describe('LocalContextClient', () => {
     it('throws when getting a non-existent explicit id', async () => {
         const client = await freshClient('/work/missing');
         await assert.rejects(() => client.get({ id: 'ctx_does_not_exist' }));
+    });
+
+    // a db url under a not-yet-existent dir works — the dir is created first
+    // (mirrors a fresh HOME where ~/.ultracontext does not exist yet)
+    it('creates the db parent dir when missing', async () => {
+        // a nested path that does not exist — opening would SQLITE_CANTOPEN
+        const root = path.join(os.tmpdir(), `uc-cli-freshhome-${process.pid}-${Date.now()}`);
+        tmpDirs.push(root);
+        const dbUrl = 'file:' + path.join(root, 'nested', 'uc.db');
+
+        const client = await createLocalClient({ dbUrl, cwd: '/work/freshhome' });
+        const added = await client.add({ messages: [{ role: 'user', content: 'hi' }] });
+        assert.equal(added.data.length, 1);
     });
 });

@@ -4,6 +4,9 @@
 // resolving the default context (per cwd) when a verb omits an explicit id.
 // =============================================================================
 
+import { dirname } from 'node:path';
+import { mkdir } from 'node:fs/promises';
+
 import type { StorageAdapter, Result } from '@ultracontext/core';
 import {
     appendMessages,
@@ -105,8 +108,17 @@ class LocalContextClient implements ContextClient {
 
 // -- factory ------------------------------------------------------------------
 
+// ensure a `file:` db url's parent dir exists — on a fresh HOME ~/.ultracontext
+// is absent, and libsql fails with SQLITE_CANTOPEN(14) opening into a missing
+// dir. :memory: and remote (libsql://, http) urls have no local dir to create.
+async function ensureDbDir(dbUrl: string): Promise<void> {
+    if (!dbUrl.startsWith('file:')) return;
+    await mkdir(dirname(dbUrl.slice('file:'.length)), { recursive: true });
+}
+
 // open the local adapter + ensure the project, then build the client
 export async function createLocalClient(opts: { dbUrl: string; cwd: string }): Promise<ContextClient> {
+    await ensureDbDir(opts.dbUrl);
     const storage = await createSqliteAdapter(opts.dbUrl);
     const projectId = await ensureProject(storage);
     return new LocalContextClient(storage, projectId, opts.cwd);
