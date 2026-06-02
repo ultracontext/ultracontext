@@ -1,11 +1,10 @@
 // =============================================================================
-// context-resolver — the local project + the default context for a cwd.
-// Local storage holds a single project; the default context is keyed by a
-// `project_path` metadata tag (= cwd), resolved-or-created on demand.
+// context-resolver — the single local project under which all contexts live.
+// Local storage holds one 'local' project (no key needed). There is NO default
+// context: every verb targets an explicit context id (see lib/context-id.ts).
 // =============================================================================
 
 import type { StorageAdapter } from '@ultracontext/core';
-import { createContext, listContexts } from '@ultracontext/core';
 
 // -- local project ------------------------------------------------------------
 
@@ -34,25 +33,4 @@ export async function ensureProject(storage: StorageAdapter): Promise<number> {
 
     projectCache.set(storage, project.id);
     return project.id;
-}
-
-// -- default context ----------------------------------------------------------
-
-// resolve-or-create the default context for a cwd, tagged by project_path.
-// extra metadata (e.g. a capture source) is merged onto a freshly-created root.
-export async function resolveDefaultContext(
-    storage: StorageAdapter,
-    projectId: number,
-    cwd: string,
-    metadata?: Record<string, unknown>,
-): Promise<string> {
-    // existing default for this cwd? return its root id
-    const existing = await listContexts(storage, projectId, { project_path: cwd, limit: 1 });
-    if (existing.data.length > 0) return existing.data[0].id;
-
-    // none yet — create one tagged with the cwd plus any extra root metadata
-    const created = await createContext(storage, projectId, { metadata: { project_path: cwd, ...metadata } });
-    if (!created.ok) throw new Error(created.message);
-
-    return created.data.id;
 }

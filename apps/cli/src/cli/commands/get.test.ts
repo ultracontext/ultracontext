@@ -36,32 +36,30 @@ function captureIo() {
 
 // -- fixtures -----------------------------------------------------------------
 
-// seed a fresh temp db with a default context for `cwd`, returning its url + id
+// seed a fresh temp db with a context, returning its url + id (no cwd default)
 async function seed(cwd: string, messages: Array<Record<string, unknown>>) {
     const dbUrl = tempDbUrl();
 
     // write through the same local client the command resolves under the hood
     const client = await createLocalClient({ dbUrl, cwd });
-    await client.add({ messages });
-
-    // discover the created default context id via the listing
-    const listed = await client.list({ project_path: cwd });
-    return { dbUrl, id: listed.data[0].id };
+    const ctx = await client.create({});
+    await client.append({ id: ctx.id, messages });
+    return { dbUrl, id: ctx.id };
 }
 
 // -- happy path ---------------------------------------------------------------
 
 describe('runGet', () => {
-    // default cwd context → reads its messages back, exits 0, writes to stdout
-    it('reads the default cwd context', async () => {
+    // an explicit context id reads its messages back, exits 0, writes to stdout
+    it('reads an explicit context id', async () => {
         const cwd = '/work/get-default';
-        const { dbUrl } = await seed(cwd, [
+        const { dbUrl, id } = await seed(cwd, [
             { role: 'user', content: 'hello' },
             { role: 'assistant', content: 'hi' },
         ]);
 
         const { out, err, io } = captureIo();
-        const code = await runGet({}, { dbUrl, cwd, io });
+        const code = await runGet({ context: id }, { dbUrl, cwd, io });
 
         // success exit + the messages surfaced on stdout (not stderr)
         assert.equal(code, 0);
@@ -86,10 +84,10 @@ describe('runGet', () => {
     // --json emits one parseable JSON line with the { data, version } envelope
     it('emits a JSON envelope with --json', async () => {
         const cwd = '/work/get-json';
-        const { dbUrl } = await seed(cwd, [{ role: 'user', content: 'structured' }]);
+        const { dbUrl, id } = await seed(cwd, [{ role: 'user', content: 'structured' }]);
 
         const { out, io } = captureIo();
-        const code = await runGet({ json: true }, { dbUrl, cwd, io });
+        const code = await runGet({ context: id, json: true }, { dbUrl, cwd, io });
 
         assert.equal(code, 0);
 

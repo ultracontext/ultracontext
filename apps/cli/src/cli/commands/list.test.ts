@@ -23,17 +23,18 @@ function sink() {
     return { write: (s: string) => { chunks.push(s); return true; }, text: () => chunks.join('') };
 }
 
-// seed N contexts into a temp db under distinct cwds/sources, return its url
+// seed two contexts into a temp db with distinct project_path/source metadata
 async function seedDb(): Promise<string> {
     const url = tempDbUrl();
+    const client = await resolveClient({ dbUrl: url, cwd: '/unused' });
 
-    // two contexts under cwd A — one tagged with a source, one plain
-    const a = await resolveClient({ dbUrl: url, cwd: '/work/list-a' });
-    await a.add({ messages: [{ role: 'user', content: 'a1' }], metadata: { source: 'claude-code' } });
+    // context A — tagged with a project_path + a capture source
+    const a = await client.create({ metadata: { project_path: '/work/list-a', source: 'claude-code' } });
+    await client.append({ id: a.id, messages: [{ role: 'user', content: 'a1' }] });
 
-    // a second context under a different cwd B (different project_path)
-    const b = await resolveClient({ dbUrl: url, cwd: '/work/list-b' });
-    await b.add({ messages: [{ role: 'user', content: 'b1' }] });
+    // context B — a different project_path, no source
+    const b = await client.create({ metadata: { project_path: '/work/list-b' } });
+    await client.append({ id: b.id, messages: [{ role: 'user', content: 'b1' }] });
 
     return url;
 }
@@ -41,23 +42,21 @@ async function seedDb(): Promise<string> {
 // -- happy path: defaults to the current project (cwd) ------------------------
 
 describe('uc list', () => {
-    // with no filters, list is scoped to the current cwd's project only
-    it('defaults to the current project (cwd)', async () => {
+    // with no filters, list returns ALL contexts (no cwd default)
+    it('lists all contexts by default', async () => {
         const url = await seedDb();
         const out = sink();
         const errs = sink();
 
-        // run against cwd A → only A's context is listed, not B's
         const code = await listAction(
             {},
-            { dbUrl: url, cwd: '/work/list-a', io: { stdout: out, stderr: errs, isTTY: false } },
+            { dbUrl: url, cwd: '/unused', io: { stdout: out, stderr: errs, isTTY: false } },
         );
 
         assert.equal(code, 0);
 
         const payload = JSON.parse(out.text());
-        assert.equal(payload.data.length, 1);
-        assert.equal(payload.data[0].metadata.project_path, '/work/list-a');
+        assert.equal(payload.data.length, 2, 'both seeded contexts are listed');
     });
 
     // -- --json output shape --------------------------------------------------
@@ -105,15 +104,15 @@ describe('uc list', () => {
         assert.equal(payload.data[0].metadata.source, 'claude-code');
     });
 
-    // --project_path overrides the cwd default to target another project
-    it('filters by --project_path (overriding the cwd default)', async () => {
+    // --project_path narrows to contexts tagged with that path
+    it('filters by --project_path', async () => {
         const url = await seedDb();
         const out = sink();
 
-        // run from cwd A but explicitly target B → only B's context comes back
+        // explicitly target B → only B's context comes back
         await listAction(
             { project_path: '/work/list-b' },
-            { dbUrl: url, cwd: '/work/list-a', io: { stdout: out, stderr: sink(), isTTY: false } },
+            { dbUrl: url, cwd: '/unused', io: { stdout: out, stderr: sink(), isTTY: false } },
         );
 
         const payload = JSON.parse(out.text());

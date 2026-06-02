@@ -34,10 +34,10 @@ export async function listAction(opts: ListOptions, ctx: ListContext = {}): Prom
         // pick the backend (local sqlite by default, remote stub when asked)
         const client = await resolveClient({ remote, dbUrl: ctx.dbUrl, cwd: ctx.cwd });
 
-        // default scope is the current project (cwd); --project_path overrides
+        // list ALL contexts by default; filters are optional (no cwd default)
         const filters: ListInput = {
             source: opts.source,
-            project_path: opts.project_path ?? ctx.cwd,
+            project_path: opts.project_path,
             limit: opts.limit,
         };
 
@@ -65,7 +65,7 @@ export function registerList(program: Command): void {
         .alias('ls')
         .description('list contexts')
         .option('--source <source>', 'filter by capture source')
-        .option('--project_path <path>', 'filter by project path (defaults to cwd)')
+        .option('--project_path <path>', 'filter by project path')
         .option('--limit <n>', 'max contexts to return', (v) => Number(v))
         .action(async (opts, cmd) => {
             // merge in the global --json/--remote flags off the program root

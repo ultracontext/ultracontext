@@ -1,15 +1,14 @@
 // =============================================================================
-// add — `uc add` quick-capture. Append one message (or create the cwd default
-// context on first write). Body sources: positional text | stdin | --json | a
-// --meta key=val pair set. Flags: --role, --context <id>, --new. Local-first:
-// the resolved ContextClient uses the centralized env-aware config (UC_DB_URL /
-// UC_PROJECT_DIR) — no per-command env reads here.
+// add — `uc add` quick-capture. Append one message to an explicit context
+// (--context <id> or $UC_CONTEXT), else create a fresh one (--new always does).
+// There is NO default context. Body sources: positional text | stdin | --json |
+// a --meta key=val pair set. Flags: --role, --context <id>, --new. Local-first:
+// the resolved ContextClient uses the centralized env-aware config (UC_DB_URL).
 // =============================================================================
 
 import { Command } from '@commander-js/extra-typings';
 
 import { resolveClient } from '../../../lib/resolve-client';
-import { projectDir } from '../../../lib/config';
 import { emit, outputError, shouldJson } from '../../../lib/output';
 import type { Message } from '../../../lib/context-client';
 
@@ -103,16 +102,17 @@ export async function runAdd(text: string | undefined, opts: AddOptions, runtime
         // assemble the message before touching storage so bad input fails fast
         const message = await buildMessage(text, opts, runtime.stdin);
 
-        // env-aware project scope (UC_PROJECT_DIR else cwd) from centralized config
-        const cwd = projectDir();
+        // resolve the backing client (local sqlite by default)
+        const client = await resolveClient({ remote: opts.remote });
 
-        // --new targets a synthetic scope so resolve-or-create makes a fresh context;
-        // omit cwd otherwise so resolveClient uses the centralized env-aware default
-        const scope = opts.new ? `${cwd}/new-${Date.now()}-${Math.random().toString(36).slice(2)}` : undefined;
-        const client = await resolveClient({ remote: opts.remote, cwd: scope });
+        // target an explicit --context id (or $UC_CONTEXT); --new and the no-id
+        // case both create a fresh context to append into — there is no default
+        const id = opts.new
+            ? (await client.create({})).id
+            : opts.context ?? process.env.UC_CONTEXT ?? (await client.create({})).id;
 
-        // append to the explicit --context id, else the (possibly new) default
-        const result = await client.add({ id: opts.context, messages: [message] });
+        // append the message to the resolved context id
+        const result = await client.append({ id, messages: [message] });
 
         // the resolved context id rides along the envelope for agents to chain on
         const view = { data: result.data, version: result.version, id: result.id };

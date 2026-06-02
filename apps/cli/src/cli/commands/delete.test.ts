@@ -52,10 +52,11 @@ async function runWithDb(
 // seed a single context (via the Foundation client) and return its id
 async function seedContext(db: { dbUrl: string; cwd: string }, messages: Record<string, unknown>[]): Promise<string> {
     const client = await createLocalClient(db);
-    await client.add({ messages });
 
-    const listed = await client.list({});
-    return listed.data[0].id;
+    // explicit create → append (no default context anymore)
+    const ctx = await client.create({});
+    await client.append({ id: ctx.id, messages });
+    return ctx.id;
 }
 
 // -- whole-context delete (--permanent) ---------------------------------------
@@ -69,10 +70,9 @@ describe('uc delete --permanent', () => {
         const { code } = await runWithDb([id, '--permanent'], db);
         assert.equal(code, 0);
 
-        // the context is gone — re-listing the cwd's project yields nothing
+        // the context is gone — reading it back now rejects (not_found)
         const client = await createLocalClient(db);
-        const after = await client.list({ project_path: db.cwd });
-        assert.equal(after.data.length, 0);
+        await assert.rejects(() => client.get({ id }));
     });
 
     // --json output shape: a one-line JSON envelope with deleted:true + id

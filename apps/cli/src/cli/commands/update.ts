@@ -7,6 +7,7 @@
 import { Command } from '@commander-js/extra-typings';
 
 import { resolveClient } from '../../../lib/resolve-client';
+import { requireContextId } from '../../../lib/context-id';
 import { emit, outputError } from '../../../lib/output';
 
 // -- io shape -----------------------------------------------------------------
@@ -19,8 +20,11 @@ type Io = { stdout?: Writable; stderr?: Writable; isTTY?: boolean };
 
 // -- handler options ----------------------------------------------------------
 
-// what to patch: a single message by id OR index, with new content + metadata
+// what to patch: a single message by id OR index, with new content + metadata.
+// context targets the CONTEXT (explicit arg or $UC_CONTEXT); id/index target a
+// MESSAGE within it.
 export type UpdateOptions = {
+    context?: string;
     id?: string;
     index?: number;
     content?: string;
@@ -50,9 +54,12 @@ export async function runUpdate(opts: UpdateOptions, ctx: UpdateContext = {}): P
         if (opts.index !== undefined) patch.index = opts.index;
         if (opts.content !== undefined) patch.content = opts.content;
 
+        // resolve the target context — explicit --context, else $UC_CONTEXT, else throw
+        const contextId = requireContextId(opts.context);
+
         // talk to the resolved backend (local sqlite by default)
         const client = await resolveClient({ remote: ctx.remote ?? opts.remote, dbUrl: ctx.dbUrl, cwd: ctx.cwd });
-        const result = await client.update({ updates: [patch], metadata: opts.meta });
+        const result = await client.update({ id: contextId, updates: [patch], metadata: opts.meta });
 
         // data → stdout: the updated views + the new version
         emit(result, { json: opts.json }, io);
@@ -79,6 +86,7 @@ export function buildUpdateCommand(): Command {
 
     command
         .description('update messages in a context')
+        .option('--context <id>', 'target context id (or set UC_CONTEXT)')
         .option('--id <id>', 'target message by id')
         .option('--index <n>', 'target message by index', (v) => Number.parseInt(v, 10))
         .option('--content <text>', 'new message content')

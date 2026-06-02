@@ -57,14 +57,18 @@ function makeIo() {
 
 // -- command drivers ----------------------------------------------------------
 
-// drive `uc add` with an injected io runtime + the given args
-async function driveAdd(args: string[], io: ReturnType<typeof makeIo>['io']): Promise<void> {
-    const command = buildAddCommand({ io, exit: () => {} });
-    await command.parseAsync(['node', 'add', ...args]);
+// drive `uc add --json`, returning the resolved context id off the JSON envelope
+async function driveAdd(args: string[]): Promise<string> {
+    const captured = makeIo();
+    const command = buildAddCommand({ io: captured.io, exit: () => {} });
+    await command.parseAsync(['node', 'add', ...args, '--json']);
+
+    // the envelope carries the resolved context id for the next verb to target
+    return JSON.parse(captured.out().trim()).id;
 }
 
-// drive `uc get` through the real program so it resolves via env (no ctx)
-async function driveGet(io: ReturnType<typeof makeIo>['io']): Promise<string> {
+// drive `uc get <id>` through the real program so it resolves via env (no ctx)
+async function driveGet(id: string): Promise<string> {
     // wrap the verb in a root carrying the global --json so machine output is on
     const program = new Command('uc');
     program.option('--json');
@@ -75,11 +79,10 @@ async function driveGet(io: ReturnType<typeof makeIo>['io']): Promise<string> {
     const captured = makeIo();
     const restore = patchStdout(captured.io.stdout.write);
     try {
-        await program.parseAsync(['node', 'uc', '--json', 'get']);
+        await program.parseAsync(['node', 'uc', '--json', 'get', id]);
     } finally {
         restore();
     }
-    void io;
     return captured.out();
 }
 
@@ -119,22 +122,20 @@ function patchStdout(sink: (s: string) => boolean): () => void {
 // -- the round-trip -----------------------------------------------------------
 
 describe('env-aware round-trip across verbs', () => {
-    // add writes through env; get reads the SAME env-specified db back
+    // add writes through env; get reads the SAME env-specified db back by id
     it('add → get round-trips through the env-specified db', async () => {
-        const addIo = makeIo();
-        await driveAdd(['cross-verb note'], addIo.io);
+        const id = await driveAdd(['cross-verb note']);
 
         // get must hit the same UC_DB_URL/UC_PROJECT_DIR add used
-        const getOut = await driveGet(addIo.io);
+        const getOut = await driveGet(id);
         const parsed = JSON.parse(getOut.trim());
         assert.equal(parsed.data.length, 1);
         assert.equal(parsed.data[0].content, 'cross-verb note');
     });
 
-    // list sees the context add created under the env-specified cwd
+    // list sees the context add created in the env-specified db
     it('add → list surfaces the context from the env-specified db', async () => {
-        const addIo = makeIo();
-        await driveAdd(['listed note'], addIo.io);
+        await driveAdd(['listed note']);
 
         const listOut = await driveList();
         const parsed = JSON.parse(listOut.trim());

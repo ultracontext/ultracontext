@@ -1,7 +1,9 @@
 // =============================================================================
 // resolve-client.test — local by default (real client), remote when --remote
-// or when config carries a baseUrl + token. The resolver reads creds from the
-// injected env/config, so the choice is testable without real HTTP.
+// or when config sets mode:'remote'. The resolver reads creds from the injected
+// env/config, so the choice is testable without real HTTP. Local clients are
+// proven by a create round-trip; remote clients are proven by a real HTTP
+// attempt against an unreachable host (no local fallback).
 // =============================================================================
 
 import { describe, it, after } from 'node:test';
@@ -15,25 +17,26 @@ after(cleanupTempDbs);
 // -- local path ---------------------------------------------------------------
 
 describe('resolveClient', () => {
-    // default → a working LocalContextClient (add round-trips, no server)
+    // default → a working LocalContextClient (create round-trips, no server)
     it('returns a working local client by default', async () => {
-        const client = await resolveClient({ dbUrl: tempDbUrl(), cwd: '/work/resolve-local', env: {}, config: {} });
+        const client = await resolveClient({ dbUrl: tempDbUrl(), cwd: '/unused', env: {}, config: {} });
 
-        const added = await client.add({ messages: [{ role: 'user', content: 'hi' }] });
-        assert.equal(added.data.length, 1);
+        const created = await client.create({});
+        const appended = await client.append({ id: created.id, messages: [{ role: 'user', content: 'hi' }] });
+        assert.equal(appended.data.length, 1);
     });
 
     // -- remote path ----------------------------------------------------------
 
-    // --remote with creds → a remote client (get requires an id, proving it's not local)
+    // --remote with creds → a remote client (create hits the network, no local store)
     it('returns a remote client when --remote with creds', async () => {
         const client = await resolveClient({
             remote: true,
-            env: { UC_API_KEY: 'sk_test' },
+            env: { UC_API_KEY: 'sk_test', UC_API_URL: 'https://api.invalid.example' },
         });
 
-        // the remote client rejects an id-less get (local would resolve a default)
-        await assert.rejects(() => client.get({}), /context id/i);
+        // a remote create attempts a real request to the unreachable host
+        await assert.rejects(() => client.create({}));
     });
 
     // --remote without any credential → a clear, actionable error.
@@ -50,32 +53,34 @@ describe('resolveClient', () => {
     it('stays local by default even when config carries creds', async () => {
         const client = await resolveClient({
             dbUrl: tempDbUrl(),
-            cwd: '/work/resolve-local-creds',
+            cwd: '/unused',
             config: { baseUrl: 'https://api.example.com', apiKey: 'sk_cfg' },
         });
 
-        const added = await client.add({ messages: [{ role: 'user', content: 'hi' }] });
-        assert.equal(added.data.length, 1);
+        const created = await client.create({});
+        const appended = await client.append({ id: created.id, messages: [{ role: 'user', content: 'hi' }] });
+        assert.equal(appended.data.length, 1);
     });
 
     // explicit config mode:'remote' opts into the hosted backend by default
     it('chooses remote when config sets mode:remote', async () => {
         const client = await resolveClient({
-            config: { mode: 'remote', baseUrl: 'https://api.example.com', apiKey: 'sk_cfg' },
+            config: { mode: 'remote', baseUrl: 'https://api.invalid.example', apiKey: 'sk_cfg' },
         });
 
-        await assert.rejects(() => client.get({}), /context id/i);
+        await assert.rejects(() => client.create({}));
     });
 
     // config baseUrl alone (no token) → falls back to local
     it('falls back to local when config has a baseUrl but no token', async () => {
         const client = await resolveClient({
             dbUrl: tempDbUrl(),
-            cwd: '/work/resolve-cfg-notoken',
+            cwd: '/unused',
             config: { baseUrl: 'https://api.example.com' },
         });
 
-        const added = await client.add({ messages: [{ role: 'user', content: 'hi' }] });
-        assert.equal(added.data.length, 1);
+        const created = await client.create({});
+        const appended = await client.append({ id: created.id, messages: [{ role: 'user', content: 'hi' }] });
+        assert.equal(appended.data.length, 1);
     });
 });

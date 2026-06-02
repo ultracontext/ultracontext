@@ -1,7 +1,8 @@
 // =============================================================================
 // LocalContextClient — the ContextClient backed by local SQLite + core ops.
-// No server: it opens a libsql adapter and calls @ultracontext/core directly,
-// resolving the default context (per cwd) when a verb omits an explicit id.
+// No server: it opens a libsql adapter and calls @ultracontext/core directly.
+// Every targeted verb takes an EXPLICIT context id — there is no default
+// context. The single 'local' project is ensured once via ensureProject.
 // =============================================================================
 
 import { dirname } from 'node:path';
@@ -9,6 +10,7 @@ import { mkdir } from 'node:fs/promises';
 
 import type { StorageAdapter, Result } from '@ultracontext/core';
 import {
+    createContext,
     appendMessages,
     getContext,
     updateMessages,
@@ -20,14 +22,15 @@ import { createSqliteAdapter } from '@ultracontext/storage/sqlite';
 
 import type {
     ContextClient,
-    AddInput, AddResult,
+    CreateInput, CreateResult,
+    AppendInput, AppendResult,
     GetInput, GetResult,
     UpdateInput, UpdateResult,
     DeleteInput, DeleteResult,
     ListInput, ListResult,
-    MessageView,
+    MessageView, VersionEntry,
 } from '../context-client';
-import { ensureProject, resolveDefaultContext } from '../context-resolver';
+import { ensureProject } from '../context-resolver';
 
 // -- result unwrap ------------------------------------------------------------
 
@@ -43,58 +46,57 @@ class LocalContextClient implements ContextClient {
     constructor(
         private storage: StorageAdapter,
         private projectId: number,
-        private cwd: string,
     ) {}
 
-    // resolve the target context — explicit id, else the cwd's default
-    private async targetId(id?: string, metadata?: Record<string, unknown>): Promise<string> {
-        return id ?? resolveDefaultContext(this.storage, this.projectId, this.cwd, metadata);
+    // create a root context, or FORK from input.from (optionally at a past
+    // version/index/timestamp). input.metadata tags the CONTEXT.
+    async create(input: CreateInput): Promise<CreateResult> {
+        return unwrap(await createContext(this.storage, this.projectId, {
+            from: input.from,
+            version: input.version,
+            at: input.at,
+            before: input.before,
+            metadata: input.metadata,
+        }));
     }
 
-    // append messages, returning the created views + version + the context id
-    async add(input: AddInput): Promise<AddResult> {
-        // input.metadata tags a freshly-created default context (e.g. its source)
-        const id = await this.targetId(input.id, input.metadata);
-
-        // surface the resolved id so callers (and agents) can chain on it
-        const result = unwrap(await appendMessages(this.storage, this.projectId, id, input.messages));
-        return { ...result, id };
+    // append messages to an explicit context, returning views + version + id
+    async append(input: AppendInput): Promise<AppendResult> {
+        const result = unwrap(await appendMessages(this.storage, this.projectId, input.id, input.messages));
+        return { ...result, id: input.id };
     }
 
-    // read the context's messages at the selected version/index
+    // read an explicit context at the selected version/index (+ history)
     async get(input: GetInput): Promise<GetResult> {
-        const id = await this.targetId(input.id);
-        const result = await getContext(this.storage, this.projectId, id, {
+        const data = unwrap(await getContext(this.storage, this.projectId, input.id, {
             version: input.version,
             at: input.at,
             before: input.before,
             history: input.history,
-        });
-        const data = unwrap(result);
-        return { data: data.data as MessageView[], version: data.version };
+        }));
+        return { data: data.data as MessageView[], version: data.version, versions: data.versions as VersionEntry[] | undefined };
     }
 
-    // patch messages (copy-on-write → new version)
+    // patch messages (copy-on-write → new version); input.metadata tags the version
     async update(input: UpdateInput): Promise<UpdateResult> {
-        const id = await this.targetId(input.id);
-        return unwrap(await updateMessages(this.storage, this.projectId, id, {
+        return unwrap(await updateMessages(this.storage, this.projectId, input.id, {
             updates: input.updates,
             metadata: input.metadata,
         }));
     }
 
-    // delete specific messages (--ids) or, otherwise, the whole context
+    // delete specific messages (--ids) or, otherwise, the whole context.
+    // input.metadata is plumbed through: version metadata for a message delete,
+    // audit metadata for a permanent delete.
     async delete(input: DeleteInput): Promise<DeleteResult> {
-        const id = await this.targetId(input.id);
-
         // message-level delete — drop the targeted indices/ids, keep the context
         if (input.ids && input.ids.length > 0) {
-            unwrap(await deleteMessages(this.storage, this.projectId, id, { ids: input.ids }));
-            return { deleted: true, id };
+            unwrap(await deleteMessages(this.storage, this.projectId, input.id, { ids: input.ids, userMetadata: input.metadata }));
+            return { deleted: true, id: input.id };
         }
 
-        // whole-context delete — remove the context permanently
-        const res = unwrap(await deleteContextPermanent(this.storage, this.projectId, id, {}));
+        // whole-context delete — remove the context permanently, recording the audit
+        const res = unwrap(await deleteContextPermanent(this.storage, this.projectId, input.id, { auditMetadata: input.metadata }));
         return { deleted: true, id: res.id };
     }
 
@@ -119,10 +121,12 @@ async function ensureDbDir(dbUrl: string): Promise<void> {
     await mkdir(dirname(dbUrl.slice('file:'.length)), { recursive: true });
 }
 
-// open the local adapter + ensure the project, then build the client
-export async function createLocalClient(opts: { dbUrl: string; cwd: string }): Promise<ContextClient> {
+// open the local adapter + ensure the project, then build the client.
+// cwd is accepted for signature compatibility but no longer drives a default
+// context — every verb targets an explicit id.
+export async function createLocalClient(opts: { dbUrl: string; cwd?: string }): Promise<ContextClient> {
     await ensureDbDir(opts.dbUrl);
     const storage = await createSqliteAdapter(opts.dbUrl);
     const projectId = await ensureProject(storage);
-    return new LocalContextClient(storage, projectId, opts.cwd);
+    return new LocalContextClient(storage, projectId);
 }

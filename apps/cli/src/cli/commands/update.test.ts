@@ -27,36 +27,38 @@ function pipedIo() {
     return { stdout: sink(), stderr: sink(), isTTY: false };
 }
 
-// seed a default context (per cwd) with one message via the local client
-async function seed(dbUrl: string, cwd: string, content: string) {
+// seed a context with one message via the local client, returning its id
+async function seed(dbUrl: string, cwd: string, content: string): Promise<string> {
     const client = await resolveClient({ dbUrl, cwd });
-    await client.add({ messages: [{ role: 'user', content }] });
+    const ctx = await client.create({});
+    await client.append({ id: ctx.id, messages: [{ role: 'user', content }] });
+    return ctx.id;
 }
 
-// read the default context's messages back via the local client
-async function readBack(dbUrl: string, cwd: string) {
+// read the context's messages back via the local client
+async function readBack(dbUrl: string, cwd: string, id: string) {
     const client = await resolveClient({ dbUrl, cwd });
-    return (await client.get({})).data;
+    return (await client.get({ id })).data;
 }
 
 // -- happy path: patch by index ----------------------------------------------
 
 describe('runUpdate', () => {
     // updating index 0 rewrites that message and the change persists locally
-    it('patches a message by index against the default context', async () => {
+    it('patches a message by index in an explicit context', async () => {
         const dbUrl = tempDbUrl();
         const cwd = '/work/update-index';
-        await seed(dbUrl, cwd, 'old');
+        const id = await seed(dbUrl, cwd, 'old');
 
         const io = pipedIo();
         const code = await runUpdate(
-            { index: 0, content: 'new', json: true },
+            { context: id, index: 0, content: 'new', json: true },
             { dbUrl, cwd, io },
         );
 
         // success exit + the patch is observable through the ContextClient
         assert.equal(code, 0);
-        const messages = await readBack(dbUrl, cwd);
+        const messages = await readBack(dbUrl, cwd, id);
         assert.equal(messages[0].content, 'new');
     });
 
@@ -66,11 +68,11 @@ describe('runUpdate', () => {
     it('emits the updated views + version as JSON on stdout', async () => {
         const dbUrl = tempDbUrl();
         const cwd = '/work/update-json';
-        await seed(dbUrl, cwd, 'first');
+        const id = await seed(dbUrl, cwd, 'first');
 
         const io = pipedIo();
         const code = await runUpdate(
-            { index: 0, content: 'second', json: true },
+            { context: id, index: 0, content: 'second', json: true },
             { dbUrl, cwd, io },
         );
 
@@ -90,11 +92,11 @@ describe('runUpdate', () => {
     it('accepts --meta on the update', async () => {
         const dbUrl = tempDbUrl();
         const cwd = '/work/update-meta';
-        await seed(dbUrl, cwd, 'x');
+        const id = await seed(dbUrl, cwd, 'x');
 
         const io = pipedIo();
         const code = await runUpdate(
-            { index: 0, content: 'y', meta: { note: 'edited' }, json: true },
+            { context: id, index: 0, content: 'y', meta: { note: 'edited' }, json: true },
             { dbUrl, cwd, io },
         );
 

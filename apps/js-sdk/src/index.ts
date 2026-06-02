@@ -221,11 +221,11 @@ export class UltraContext {
         });
     }
 
-    async deleteMany(ids: string[]): Promise<DeleteManyResponse> {
+    async deleteMany(ids: string[], options?: MutationOptions): Promise<DeleteManyResponse> {
         // 200 (all ok), 207 (partial), 500 (all failed) all carry a results body — surface directly.
         return this.request<DeleteManyResponse>('/contexts/delete-many', {
             method: 'POST',
-            body: { ids },
+            body: options?.metadata ? { ids, metadata: options.metadata } : { ids },
             acceptStatuses: [200, 207, 500],
         });
     }

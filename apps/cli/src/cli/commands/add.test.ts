@@ -43,8 +43,9 @@ afterEach(() => {
     else process.env.UC_PROJECT_DIR = savedEnv.dir;
 });
 
-// build the add command, capture its io streams, and parse the given args
-async function runAdd(args: string[], stdin?: string): Promise<RunResult> {
+// build the add command, capture its io streams, and parse the given args.
+// machine mode forced on so stdout is a single JSON line carrying the context id.
+async function runAdd(args: string[], stdin?: string): Promise<RunResult & { id?: string }> {
     // capture buffers for the two data sinks
     let stdout = '';
     let stderr = '';
@@ -61,32 +62,35 @@ async function runAdd(args: string[], stdin?: string): Promise<RunResult> {
     // an optional stdin payload exposed as an async iterable of one chunk
     const input = stdin === undefined ? undefined : (async function* () { yield stdin; })();
 
-    // the command reads io/stdin/exit from an injected runtime context
+    // force --json (unless already present) so the resolved context id is
+    // surfaced on stdout for round-trip reads
+    const withJson = args.includes('--json') ? args : [...args, '--json'];
     const command = buildAddCommand({ io, stdin: input, exit: (c?: number) => { code = c ?? 0; } });
+    await command.parseAsync(['node', 'add', ...withJson]);
 
-    // commander prepends [node, script]; parse async so client IO can settle
-    await command.parseAsync(['node', 'add', ...args]);
+    // pull the resolved context id off the JSON envelope (when one was emitted)
+    let id: string | undefined;
+    try { id = JSON.parse(stdout.trim()).id; } catch { /* error runs have no envelope */ }
 
-    return { stdout, stderr, code };
+    return { stdout, stderr, code, id };
 }
 
-// read the context the add command wrote, straight through the client
-async function readContext(): Promise<GetResult> {
+// read a context the add command wrote, by its explicit id, through the client
+async function readContext(id: string): Promise<GetResult> {
     const client = await resolveClient({ dbUrl, cwd });
-    const got = await client.get({});
-    return got;
+    return client.get({ id });
 }
 
 // -- happy path: positional quick-capture -------------------------------------
 
 describe('uc add', () => {
-    // a positional string creates the cwd default context + appends one message
-    it('captures a positional message into the cwd default context', async () => {
-        const { code } = await runAdd(['remember to ship the cli']);
+    // a positional string creates a fresh context + appends one message
+    it('captures a positional message into a fresh context', async () => {
+        const { code, id } = await runAdd(['remember to ship the cli']);
         assert.equal(code, 0);
 
-        // the message landed on the default context for this cwd
-        const got = await readContext();
+        // the message landed on the freshly-created context
+        const got = await readContext(id!);
         assert.equal(got.data.length, 1);
         assert.equal(got.data[0].content, 'remember to ship the cli');
     });
@@ -95,10 +99,10 @@ describe('uc add', () => {
 
     // with no positional, the message body is read from piped stdin
     it('captures from stdin when no positional is given', async () => {
-        const { code } = await runAdd([], 'piped note body');
+        const { code, id } = await runAdd([], 'piped note body');
         assert.equal(code, 0);
 
-        const got = await readContext();
+        const got = await readContext(id!);
         assert.equal(got.data.length, 1);
         assert.equal(got.data[0].content, 'piped note body');
     });
@@ -107,10 +111,10 @@ describe('uc add', () => {
 
     // --role sets the message role; --meta key=val attaches metadata pairs
     it('applies --role and --meta key=val', async () => {
-        const { code } = await runAdd(['hi', '--role', 'assistant', '--meta', 'src=cli', '--meta', 'pri=high']);
+        const { code, id } = await runAdd(['hi', '--role', 'assistant', '--meta', 'src=cli', '--meta', 'pri=high']);
         assert.equal(code, 0);
 
-        const got = await readContext();
+        const got = await readContext(id!);
         assert.equal(got.data[0].role, 'assistant');
         assert.equal(got.data[0].metadata.src, 'cli');
         assert.equal(got.data[0].metadata.pri, 'high');
@@ -142,10 +146,10 @@ describe('uc add', () => {
     // --json <body> parses a full message object instead of wrapping a string
     it('parses a raw message object from --json <body>', async () => {
         const body = JSON.stringify({ role: 'user', content: 'structured', metadata: { k: 'v' } });
-        const { code } = await runAdd(['--json', body]);
+        const { code, id } = await runAdd(['--json', body]);
         assert.equal(code, 0);
 
-        const got = await readContext();
+        const got = await readContext(id!);
         assert.equal(got.data[0].content, 'structured');
         assert.equal(got.data[0].role, 'user');
         assert.equal(got.data[0].metadata.k, 'v');
@@ -153,40 +157,37 @@ describe('uc add', () => {
 
     // -- targeting + accumulation -------------------------------------------------
 
-    // repeated adds accumulate on the same cwd default context
-    it('accumulates repeated captures on the same default context', async () => {
-        await runAdd(['one']);
-        await runAdd(['two']);
+    // repeated adds targeting the SAME --context accumulate on it
+    it('accumulates repeated captures on an explicit context', async () => {
+        const first = await runAdd(['one']);
+        await runAdd(['two', '--context', first.id!]);
 
-        const got = await readContext();
+        const got = await readContext(first.id!);
         assert.equal(got.data.length, 2);
         assert.equal(got.data[1].content, 'two');
     });
 
-    // --context <id> targets an explicit context instead of the default
+    // --context <id> targets an explicit context
     it('appends to an explicit --context <id>', async () => {
         // seed a separate context directly through the client
         const client = await resolveClient({ dbUrl, cwd });
-        const seeded = await client.add({ messages: [{ role: 'user', content: 'seed' }] });
-        const targetId = seeded.id;
+        const seeded = await client.create({});
+        await client.append({ id: seeded.id, messages: [{ role: 'user', content: 'seed' }] });
 
-        await runAdd(['targeted', '--context', targetId]);
+        await runAdd(['targeted', '--context', seeded.id]);
 
         // the explicit context now holds both messages
-        const got = await client.get({ id: targetId });
+        const got = await client.get({ id: seeded.id });
         assert.equal(got.data.length, 2);
         assert.equal(got.data[1].content, 'targeted');
     });
 
-    // --new forces a brand-new context even when a default already exists
-    it('--new forces a fresh context', async () => {
-        await runAdd(['first']);
-        await runAdd(['second', '--new']);
+    // each id-less add creates a distinct fresh context (no default to reuse)
+    it('creates a distinct context per id-less capture', async () => {
+        const first = await runAdd(['first']);
+        const second = await runAdd(['second']);
 
-        // two distinct contexts now exist under this cwd's project
-        const client = await resolveClient({ dbUrl, cwd });
-        const listed = await client.list({});
-        assert.ok(listed.data.length >= 2, 'a second context was created');
+        assert.notEqual(first.id, second.id, 'each capture gets its own context');
     });
 
     // -- error case ---------------------------------------------------------------

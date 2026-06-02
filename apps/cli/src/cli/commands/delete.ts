@@ -7,15 +7,10 @@
 
 import { Command } from '@commander-js/extra-typings';
 
-import type { ContextClient, DeleteInput } from '../../../lib/context-client';
+import type { ContextClient } from '../../../lib/context-client';
 import { resolveClient } from '../../../lib/resolve-client';
+import { requireContextId } from '../../../lib/context-id';
 import { emit, outputError } from '../../../lib/output';
-
-// -- delete input -------------------------------------------------------------
-
-// the verb also carries message-level targets; the client routes ids → message
-// delete, else a whole-context (permanent) delete
-type DeleteArgs = DeleteInput & { ids?: (string | number)[] };
 
 // -- injectable runtime -------------------------------------------------------
 
@@ -41,14 +36,27 @@ function toTarget(token: string): string | number {
 
 // -- command factory ----------------------------------------------------------
 
-// build the `delete` Command — positional <id>, --permanent, --ids <indices...>
+// fold --meta key=val pairs into a metadata object (last write wins)
+function parseMeta(pairs?: string[]): Record<string, unknown> | undefined {
+    if (!pairs || pairs.length === 0) return undefined;
+
+    const meta: Record<string, unknown> = {};
+    for (const pair of pairs) {
+        const eq = pair.indexOf('=');
+        meta[eq === -1 ? pair : pair.slice(0, eq)] = eq === -1 ? true : pair.slice(eq + 1);
+    }
+    return meta;
+}
+
+// build the `delete` Command — positional <id>, --permanent, --ids, --meta
 function buildCommand(): Command<[string | undefined]> {
     return new Command('delete')
         .alias('rm')
         .description('delete a context or messages')
-        .argument('[id]', 'context id (defaults to the cwd context)')
+        .argument('[id]', 'context id (or set UC_CONTEXT)')
         .option('--permanent', 'permanently delete the whole context')
-        .option('--ids <ids...>', 'delete only these message indices/ids');
+        .option('--ids <ids...>', 'delete only these message indices/ids')
+        .option('--meta <pair...>', 'metadata key=val (audit / version)');
 }
 
 // -- handler ------------------------------------------------------------------
@@ -71,22 +79,26 @@ export async function runDelete(args: string[], deps: DeleteDeps = {}): Promise<
     try {
         // parse args only (no node/script prefix); typos throw here → exit 1
         command.parse(args, { from: 'user' });
-        const opts = command.opts() as { permanent?: boolean; ids?: string[] };
-        const id = command.args[0];
+        const opts = command.opts() as { permanent?: boolean; ids?: string[]; meta?: string[] };
+
+        // resolve the target context — explicit id arg, else $UC_CONTEXT, else throw
+        const id = requireContextId(command.args[0]);
 
         // resolve the backing client (local sqlite by default)
         const client = await resolve();
 
-        // message-level delete — drop only the targeted indices/ids
+        // --meta = version metadata on a message delete, audit metadata on a permanent one
+        const metadata = parseMeta(opts.meta);
+
+        // message-level delete — drop only the targeted indices/ids (versioned)
         if (opts.ids && opts.ids.length > 0) {
-            const args: DeleteArgs = { id, ids: opts.ids.map(toTarget) };
-            const result = await client.delete(args);
+            const result = await client.delete({ id, ids: opts.ids.map(toTarget), metadata });
             emit(result, { json, human: () => `deleted messages from ${result.id}` }, io);
             return 0;
         }
 
-        // whole-context delete — remove the context permanently
-        const result = await client.delete({ id, permanent: true });
+        // whole-context delete — remove the context permanently (with audit metadata)
+        const result = await client.delete({ id, permanent: true, metadata });
         emit(result, { json, human: () => `deleted ${result.id}` }, io);
         return 0;
     } catch (error) {

@@ -1,6 +1,8 @@
 // =============================================================================
-// local.test — LocalContextClient round-trips through the ContextClient
-// interface against a real temp SQLite db. No server, no HTTP.
+// local.test — LocalContextClient against a real temp SQLite db (no server, no
+// HTTP, no cwd default). Covers: create returns an id; create({from}) forks
+// (copies source messages); append(id)+get(id) round-trip; context + message
+// metadata persist; delete metadata is recorded as a version.
 // =============================================================================
 
 import { describe, it, after } from 'node:test';
@@ -22,111 +24,167 @@ after(() => {
     }
 });
 
-// build a fresh client bound to a temp db + a fixed cwd
-async function freshClient(cwd = '/work/local-test') {
-    return createLocalClient({ dbUrl: tempDbUrl(), cwd });
+// build a fresh client bound to a temp db (cwd is unused — no default context)
+async function freshClient() {
+    return createLocalClient({ dbUrl: tempDbUrl(), cwd: '/unused' });
 }
 
-// -- add → get ----------------------------------------------------------------
+// -- create -------------------------------------------------------------------
 
-describe('LocalContextClient', () => {
-    // append to the default context, then read it back ordered
-    it('add → get round-trips against the default context', async () => {
+describe('LocalContextClient.create', () => {
+    // create makes a root context and returns its id + echoed metadata
+    it('returns a new context id with context-level metadata', async () => {
         const client = await freshClient();
 
-        const added = await client.add({ messages: [
+        const created = await client.create({ metadata: { source: 'cli', label: 'notes' } });
+        assert.ok(created.id.length > 0);
+        assert.equal(created.metadata.source, 'cli');
+
+        // the metadata tags the CONTEXT — discoverable via list
+        const listed = await client.list({ source: 'cli' });
+        assert.ok(listed.data.some((c) => c.id === created.id && c.metadata.label === 'notes'));
+    });
+
+    // create({from}) forks a source — the clone carries its messages
+    it('forks a source context, copying its messages', async () => {
+        const client = await freshClient();
+
+        // seed a source context with two messages
+        const source = await client.create({});
+        await client.append({ id: source.id, messages: [{ content: 'one' }, { content: 'two' }] });
+
+        // fork it — the clone is a distinct context with the same messages
+        const fork = await client.create({ from: source.id });
+        assert.notEqual(fork.id, source.id);
+
+        const got = await client.get({ id: fork.id });
+        assert.deepEqual(got.data.map((m) => m.content), ['one', 'two']);
+    });
+});
+
+// -- append + get round-trip --------------------------------------------------
+
+describe('LocalContextClient append/get', () => {
+    // appending to an explicit id and reading it back returns the same messages
+    it('round-trips messages through an explicit context id', async () => {
+        const client = await freshClient();
+
+        const ctx = await client.create({});
+        const appended = await client.append({ id: ctx.id, messages: [
             { role: 'user', content: 'hello' },
             { role: 'assistant', content: 'hi' },
         ] });
-        assert.equal(added.data.length, 2);
+        assert.equal(appended.id, ctx.id);
+        assert.equal(appended.data.length, 2);
 
-        const got = await client.get({});
+        const got = await client.get({ id: ctx.id });
         assert.equal(got.data.length, 2);
         assert.equal(got.data[0].role, 'user');
         assert.equal(got.data[1].content, 'hi');
     });
 
-    // add returns the resolved context id so callers can chain on it
-    it('add returns the resolved context id', async () => {
-        const client = await freshClient('/work/add-id');
+    // per-message metadata survives the round-trip
+    it('persists per-message metadata', async () => {
+        const client = await freshClient();
 
-        // the appended envelope carries the context id (matches the listing)
-        const added = await client.add({ messages: [{ role: 'user', content: 'x' }] });
-        assert.equal(typeof added.id, 'string');
-        assert.ok(added.id.length > 0, 'a non-empty context id is returned');
+        const ctx = await client.create({});
+        await client.append({ id: ctx.id, messages: [{ content: 'tagged', metadata: { pinned: true } }] });
 
-        const listed = await client.list({});
-        assert.equal(added.id, listed.data[0].id, 'id matches the created context');
+        const got = await client.get({ id: ctx.id });
+        assert.equal(got.data[0].metadata.pinned, true);
     });
 
-    // the default context is stable across calls (same cwd → same context)
-    it('appends accumulate on the same default context', async () => {
-        const client = await freshClient('/work/accumulate');
+    // appends accumulate on the same explicit context
+    it('accumulates appends on the same context', async () => {
+        const client = await freshClient();
 
-        await client.add({ messages: [{ role: 'user', content: 'one' }] });
-        await client.add({ messages: [{ role: 'user', content: 'two' }] });
+        const ctx = await client.create({});
+        await client.append({ id: ctx.id, messages: [{ content: 'one' }] });
+        await client.append({ id: ctx.id, messages: [{ content: 'two' }] });
 
-        const got = await client.get({});
+        const got = await client.get({ id: ctx.id });
         assert.equal(got.data.length, 2);
     });
+});
 
-    // list returns the default context, discoverable by its cwd tag
-    it('list returns the project contexts', async () => {
-        const client = await freshClient('/work/listed');
-        await client.add({ messages: [{ role: 'user', content: 'x' }] });
+// -- update -------------------------------------------------------------------
 
-        const listed = await client.list({});
-        assert.ok(listed.data.length >= 1);
-        assert.equal(listed.data[0].metadata.project_path, '/work/listed');
-    });
-
+describe('LocalContextClient.update', () => {
     // update patches a message by index → bumps the version
-    it('update patches a message and bumps version', async () => {
-        const client = await freshClient('/work/updated');
-        await client.add({ messages: [{ role: 'user', content: 'old' }] });
+    it('patches a message and bumps version', async () => {
+        const client = await freshClient();
 
-        const updated = await client.update({ updates: [{ index: 0, content: 'new' }] });
+        const ctx = await client.create({});
+        await client.append({ id: ctx.id, messages: [{ role: 'user', content: 'old' }] });
+
+        const updated = await client.update({ id: ctx.id, updates: [{ index: 0, content: 'new' }] });
         assert.equal(updated.version, 1);
 
-        const got = await client.get({});
+        const got = await client.get({ id: ctx.id });
         assert.equal(got.data[0].content, 'new');
     });
+});
 
-    // delete permanently removes the context
-    it('delete removes the context', async () => {
-        const client = await freshClient('/work/deleted');
-        const added = await client.add({ messages: [{ role: 'user', content: 'bye' }] });
-        assert.ok(added.data.length === 1);
+// -- delete -------------------------------------------------------------------
 
-        // resolve the id via list, then delete it explicitly
-        const listed = await client.list({});
-        const id = listed.data[0].id;
+describe('LocalContextClient.delete', () => {
+    // whole-context delete permanently removes the context
+    it('removes the whole context', async () => {
+        const client = await freshClient();
 
-        const res = await client.delete({ id });
+        const ctx = await client.create({});
+        await client.append({ id: ctx.id, messages: [{ content: 'bye' }] });
+
+        const res = await client.delete({ id: ctx.id, permanent: true });
         assert.equal(res.deleted, true);
-        assert.equal(res.id, id);
+        assert.equal(res.id, ctx.id);
 
-        // it no longer appears in the listing
-        const after = await client.list({ project_path: '/work/deleted' });
-        assert.equal(after.data.length, 0);
+        // it no longer reads back
+        await assert.rejects(() => client.get({ id: ctx.id }));
     });
 
+    // a message-level delete with metadata records it on the new version head
+    it('records delete metadata as a version (message delete)', async () => {
+        const client = await freshClient();
+
+        const ctx = await client.create({});
+        await client.append({ id: ctx.id, messages: [{ content: 'a' }, { content: 'b' }] });
+
+        // drop index 0, tagging the delete with an audit reason
+        await client.delete({ id: ctx.id, ids: [0], metadata: { reason: 'cleanup' } });
+
+        // the survivor remains
+        const got = await client.get({ id: ctx.id });
+        assert.deepEqual(got.data.map((m) => m.content), ['b']);
+
+        // the delete version carries the metadata in its history
+        const history = await client.get({ id: ctx.id, history: true });
+        const versions = (history as unknown as { versions?: Array<{ operation: string; metadata?: Record<string, unknown> }> }).versions ?? [];
+        const del = versions.find((v) => v.operation === 'delete');
+        assert.ok(del, 'a delete version exists');
+        assert.equal(del!.metadata?.reason, 'cleanup');
+    });
+});
+
+// -- errors / fresh home ------------------------------------------------------
+
+describe('LocalContextClient edge cases', () => {
     // operating on a missing context surfaces a thrown error (not_found)
     it('throws when getting a non-existent explicit id', async () => {
-        const client = await freshClient('/work/missing');
+        const client = await freshClient();
         await assert.rejects(() => client.get({ id: 'ctx_does_not_exist' }));
     });
 
     // a db url under a not-yet-existent dir works — the dir is created first
     // (mirrors a fresh HOME where ~/.ultracontext does not exist yet)
     it('creates the db parent dir when missing', async () => {
-        // a nested path that does not exist — opening would SQLITE_CANTOPEN
         const root = path.join(os.tmpdir(), `uc-cli-freshhome-${process.pid}-${Date.now()}`);
         tmpDirs.push(root);
         const dbUrl = 'file:' + path.join(root, 'nested', 'uc.db');
 
-        const client = await createLocalClient({ dbUrl, cwd: '/work/freshhome' });
-        const added = await client.add({ messages: [{ role: 'user', content: 'hi' }] });
-        assert.equal(added.data.length, 1);
+        const client = await createLocalClient({ dbUrl, cwd: '/unused' });
+        const ctx = await client.create({});
+        const appended = await client.append({ id: ctx.id, messages: [{ content: 'hi' }] });
+        assert.equal(appended.data.length, 1);
     });
 });

@@ -1,7 +1,9 @@
 // =============================================================================
 // context-client — the client-agnostic interface every context verb talks to.
 // LocalContextClient (sqlite + @ultracontext/core) and RemoteContextClient
-// (@ultracontext/js → hosted API) both implement it.
+// (@ultracontext/js → hosted API) both implement it. Every targeted verb takes
+// an EXPLICIT context id — there is no default context. The verb names mirror
+// the SDK: create / append / get / update / delete / list.
 // =============================================================================
 
 // -- message shape ------------------------------------------------------------
@@ -18,28 +20,52 @@ export type MessageView = Record<string, unknown> & {
 
 // -- command inputs -----------------------------------------------------------
 
-// add: append messages to the resolved context (or an explicit id)
-export type AddInput = { id?: string; messages: Message[]; metadata?: Record<string, unknown> };
+// create: make a new root context, or FORK from <from> (optionally at a past
+// version/index/timestamp). metadata tags the CONTEXT itself.
+export type CreateInput = {
+    from?: string;
+    version?: number;
+    at?: number;
+    before?: string;
+    metadata?: Record<string, unknown>;
+};
+
+// append: add messages to an explicit context id (per-message metadata allowed)
+export type AppendInput = { id: string; messages: Message[] };
 
 // get: read a context's messages, optionally at a past version/index
-export type GetInput = { id?: string; version?: number; at?: number; before?: string; history?: boolean };
+export type GetInput = { id: string; version?: number; at?: number; before?: string; history?: boolean };
 
-// update: patch messages by id or index (copy-on-write → new version)
-export type UpdateInput = { id?: string; updates: Array<Record<string, unknown>>; metadata?: Record<string, unknown> };
+// update: patch messages by id or index (copy-on-write → new version). metadata
+// tags the resulting VERSION.
+export type UpdateInput = { id: string; updates: Array<Record<string, unknown>>; metadata?: Record<string, unknown> };
 
-// delete: drop a whole context (permanent), or specific messages by id/index
-export type DeleteInput = { id?: string; permanent?: boolean; ids?: (string | number)[] };
+// delete: drop a whole context (permanent) or specific messages (--ids). metadata
+// = audit metadata on a permanent delete, version metadata on a message delete.
+export type DeleteInput = { id: string; permanent?: boolean; ids?: (string | number)[]; metadata?: Record<string, unknown> };
 
 // list: filter the project's contexts
 export type ListInput = { limit?: number; source?: string; project_path?: string; session_id?: string };
 
 // -- command outputs ----------------------------------------------------------
 
-// add → the created/appended messages + the resulting version + the context id
-export type AddResult = { data: MessageView[]; version: number; id: string };
+// create → the new context id + its metadata + creation timestamp
+export type CreateResult = { id: string; metadata: Record<string, unknown>; created_at: string };
 
-// get → the context's messages at the selected version
-export type GetResult = { data: MessageView[]; version: number };
+// append → the created messages + the resulting version + the context id
+export type AppendResult = { data: MessageView[]; version: number; id: string };
+
+// a version-history entry, surfaced by get({ history: true })
+export type VersionEntry = {
+    version: number;
+    created_at: string;
+    operation: 'create' | 'update' | 'delete';
+    affected: string[] | null;
+    metadata?: Record<string, unknown>;
+};
+
+// get → the context's messages at the selected version (+ history when asked)
+export type GetResult = { data: MessageView[]; version: number; versions?: VersionEntry[] };
 
 // update → the updated messages + the new version
 export type UpdateResult = { data: MessageView[]; version: number };
@@ -54,7 +80,8 @@ export type ListResult = { data: Array<{ id: string; metadata: Record<string, un
 
 // same surface regardless of local vs remote backing store
 export interface ContextClient {
-    add(input: AddInput): Promise<AddResult>;
+    create(input: CreateInput): Promise<CreateResult>;
+    append(input: AppendInput): Promise<AppendResult>;
     get(input: GetInput): Promise<GetResult>;
     update(input: UpdateInput): Promise<UpdateResult>;
     delete(input: DeleteInput): Promise<DeleteResult>;

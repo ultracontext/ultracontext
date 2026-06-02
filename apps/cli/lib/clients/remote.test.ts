@@ -1,7 +1,8 @@
 // =============================================================================
 // remote.test — RemoteContextClient delegates the ContextClient interface to
 // the @ultracontext/js SDK. The SDK is faked here (no HTTP): each verb asserts
-// it calls the matching SDK method with mapped args and reshapes the response.
+// it calls the matching SDK method with mapped args (metadata included) and
+// reshapes the response. Every targeted verb takes an explicit context id.
 // =============================================================================
 
 import { describe, it } from 'node:test';
@@ -22,12 +23,11 @@ function fakeSdk() {
 
     // canned responses keyed by SDK method name (overridable per test)
     const responses: Record<string, unknown> = {
-        create: { id: 'ctx_new', metadata: {}, created_at: 't0' },
+        create: { id: 'ctx_new', metadata: { source: 'cli' }, created_at: 't0' },
         append: { data: [{ id: 'm1', index: 0, metadata: {}, role: 'user', content: 'hi' }], version: 1 },
         get: { data: [{ id: 'm1', index: 0, metadata: {}, role: 'user', content: 'hi' }], version: 1 },
         update: { data: [{ id: 'm1', index: 0, metadata: {}, role: 'user', content: 'new' }], version: 2 },
         delete: { deleted: true, id: 'ctx_42' },
-        deleteMessages: { data: [], version: 2 },
     };
 
     // the fake exposes only the methods the client uses + the call log
@@ -37,47 +37,63 @@ function fakeSdk() {
         get: record('get'),
         update: record('update'),
         delete: record('delete'),
-        deleteMessages: record('deleteMessages'),
     } as unknown as UltraContext;
 
     return { sdk, calls, responses };
 }
 
-// -- add ----------------------------------------------------------------------
+// -- create -------------------------------------------------------------------
 
-describe('RemoteContextClient', () => {
-    // add with an explicit id → SDK.append(id, messages), reshaped to AddResult
-    it('add appends to an explicit context via the SDK', async () => {
+describe('RemoteContextClient.create', () => {
+    // create → SDK.create({from?, metadata?}), returning the new context
+    it('creates a context via the SDK, passing metadata', async () => {
         const { sdk, calls } = fakeSdk();
         const client = createRemoteClient(sdk);
 
-        const res = await client.add({ id: 'ctx_42', messages: [{ role: 'user', content: 'hi' }] });
-
-        assert.equal(calls[0].method, 'append');
-        assert.deepEqual(calls[0].args[0], 'ctx_42');
-        assert.deepEqual(calls[0].args[1], [{ role: 'user', content: 'hi' }]);
-        assert.equal(res.version, 1);
-        assert.equal(res.data.length, 1);
-    });
-
-    // add without an id → SDK.create() first, then append to the new context
-    it('add creates a context when no id is given, then appends', async () => {
-        const { sdk, calls } = fakeSdk();
-        const client = createRemoteClient(sdk);
-
-        const res = await client.add({ messages: [{ role: 'user', content: 'hi' }], metadata: { source: 'cli' } });
+        const res = await client.create({ metadata: { source: 'cli' } });
 
         assert.equal(calls[0].method, 'create');
-        assert.deepEqual(calls[0].args[0], { metadata: { source: 'cli' } });
-        assert.equal(calls[1].method, 'append');
-        assert.equal(calls[1].args[0], 'ctx_new');
-        assert.equal(res.version, 1);
+        assert.deepEqual(calls[0].args[0], { from: undefined, version: undefined, at: undefined, before: undefined, metadata: { source: 'cli' } });
+        assert.equal(res.id, 'ctx_new');
+        assert.equal(res.metadata.source, 'cli');
     });
 
-    // -- get ------------------------------------------------------------------
+    // create({from}) forks via the SDK, forwarding the source id
+    it('forks via the SDK when from is given', async () => {
+        const { sdk, calls } = fakeSdk();
+        const client = createRemoteClient(sdk);
 
-    // get requires an explicit id → SDK.get(id, selectors), reshaped to GetResult
-    it('get reads an explicit context via the SDK', async () => {
+        await client.create({ from: 'ctx_src', version: 2 });
+
+        assert.equal(calls[0].method, 'create');
+        assert.equal((calls[0].args[0] as { from?: string }).from, 'ctx_src');
+        assert.equal((calls[0].args[0] as { version?: number }).version, 2);
+    });
+});
+
+// -- append -------------------------------------------------------------------
+
+describe('RemoteContextClient.append', () => {
+    // append → SDK.append(id, messages), reshaped to AppendResult
+    it('appends to an explicit context via the SDK', async () => {
+        const { sdk, calls } = fakeSdk();
+        const client = createRemoteClient(sdk);
+
+        const res = await client.append({ id: 'ctx_42', messages: [{ role: 'user', content: 'hi' }] });
+
+        assert.equal(calls[0].method, 'append');
+        assert.equal(calls[0].args[0], 'ctx_42');
+        assert.deepEqual(calls[0].args[1], [{ role: 'user', content: 'hi' }]);
+        assert.equal(res.version, 1);
+        assert.equal(res.id, 'ctx_42');
+    });
+});
+
+// -- get ----------------------------------------------------------------------
+
+describe('RemoteContextClient.get', () => {
+    // get → SDK.get(id, selectors), reshaped to GetResult
+    it('reads an explicit context via the SDK', async () => {
         const { sdk, calls } = fakeSdk();
         const client = createRemoteClient(sdk);
 
@@ -89,19 +105,13 @@ describe('RemoteContextClient', () => {
         assert.equal(res.version, 1);
         assert.equal(res.data[0].content, 'hi');
     });
+});
 
-    // get without an id throws (no cwd default concept remotely)
-    it('get throws when no context id is given', async () => {
-        const { sdk } = fakeSdk();
-        const client = createRemoteClient(sdk);
+// -- update -------------------------------------------------------------------
 
-        await assert.rejects(() => client.get({}), /context id/i);
-    });
-
-    // -- update ---------------------------------------------------------------
-
+describe('RemoteContextClient.update', () => {
     // update → SDK.update(id, updates, {metadata}), reshaped to UpdateResult
-    it('update patches messages via the SDK', async () => {
+    it('patches messages via the SDK with version metadata', async () => {
         const { sdk, calls } = fakeSdk();
         const client = createRemoteClient(sdk);
 
@@ -113,41 +123,46 @@ describe('RemoteContextClient', () => {
         assert.deepEqual(calls[0].args[2], { metadata: { e: 1 } });
         assert.equal(res.version, 2);
     });
+});
 
-    // -- delete ---------------------------------------------------------------
+// -- delete -------------------------------------------------------------------
 
-    // whole-context delete → SDK.delete(id, {permanent:true}), reshaped to DeleteResult
-    it('delete removes a whole context via the SDK', async () => {
+describe('RemoteContextClient.delete', () => {
+    // whole-context delete → SDK.delete(id, {permanent:true}), audit metadata plumbed
+    it('removes a whole context via the SDK with audit metadata', async () => {
         const { sdk, calls } = fakeSdk();
         const client = createRemoteClient(sdk);
 
-        const res = await client.delete({ id: 'ctx_42', permanent: true });
+        const res = await client.delete({ id: 'ctx_42', permanent: true, metadata: { reason: 'gdpr' } });
 
         assert.equal(calls[0].method, 'delete');
         assert.equal(calls[0].args[0], 'ctx_42');
-        assert.deepEqual(calls[0].args[1], { permanent: true });
+        assert.deepEqual(calls[0].args[1], { permanent: true, metadata: { reason: 'gdpr' } });
         assert.equal(res.deleted, true);
         assert.equal(res.id, 'ctx_42');
     });
 
-    // message-level delete → SDK.delete(id, ids), reshaped to DeleteResult
-    it('delete removes specific messages via the SDK', async () => {
+    // message-level delete → SDK.delete(id, ids, {metadata}), version metadata plumbed
+    it('removes specific messages via the SDK with version metadata', async () => {
         const { sdk, calls } = fakeSdk();
         const client = createRemoteClient(sdk);
 
-        const res = await client.delete({ id: 'ctx_42', ids: [0, 1] });
+        const res = await client.delete({ id: 'ctx_42', ids: [0, 1], metadata: { reason: 'cleanup' } });
 
         assert.equal(calls[0].method, 'delete');
         assert.equal(calls[0].args[0], 'ctx_42');
         assert.deepEqual(calls[0].args[1], [0, 1]);
+        assert.deepEqual(calls[0].args[2], { metadata: { reason: 'cleanup' } });
         assert.equal(res.deleted, true);
         assert.equal(res.id, 'ctx_42');
     });
+});
 
-    // -- list -----------------------------------------------------------------
+// -- list ---------------------------------------------------------------------
 
+describe('RemoteContextClient.list', () => {
     // list → SDK.get(filters) (overloaded list form), reshaped to ListResult
-    it('list filters contexts via the SDK', async () => {
+    it('filters contexts via the SDK', async () => {
         const { sdk, calls, responses } = fakeSdk();
         responses.get = { data: [{ id: 'ctx_42', metadata: { project_path: '/p' }, created_at: 't0' }] };
         const client = createRemoteClient(sdk);
