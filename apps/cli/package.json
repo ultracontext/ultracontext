@@ -2,7 +2,7 @@
     "name": "ultracontext",
     "description": "UltraContext CLI + SDK — version control for AI agent context",
     "type": "module",
-    "version": "1.5.0",
+    "version": "1.6.0",
     "engines": {
         "node": ">=22.12.0"
     },
@@ -24,6 +24,7 @@
     ],
     "scripts": {
         "build": "tsdown",
+        "build:binaries": "bash scripts/build-binaries.sh",
         "prepack": "pnpm run build",
         "check": "tsc --noEmit",
         "test": "node --import tsx --test 'src/**/*.test.ts' 'lib/**/*.test.ts'"

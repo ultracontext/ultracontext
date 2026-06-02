@@ -1,23 +1,73 @@
 import { and, asc, desc, eq, gt, inArray, isNull, lt, ne, sql } from 'drizzle-orm';
-import { drizzle, type LibSQLDatabase } from 'drizzle-orm/libsql';
-import { createClient } from '@libsql/client';
+import type { BaseSQLiteDatabase } from 'drizzle-orm/sqlite-core';
 
 import type { StorageAdapter, NodeRow, NodeInsertRow, ApiKeyRow, ProjectRow, ContextFilters, TransactionOptions } from '@ultracontext/core';
 import { schema, nodes, api_keys, projects, SCHEMA_SQL } from './schema';
 
 // =============================================================================
-// SQLITE ADAPTER — local-first StorageAdapter over libsql (file or :memory:)
+// SQLITE ADAPTER — local-first StorageAdapter over SQLite (file or :memory:).
+// Dual-driver: under Bun → bun:sqlite (embeds in `bun --compile`); under Node →
+// libsql (native @libsql binding). Same SqliteAdapter, schema, and DDL for both.
 // =============================================================================
 
-type SqliteDb = LibSQLDatabase<typeof schema>;
+// drizzle's driver-agnostic SQLite db — both libsql ('async') and bun:sqlite
+// ('sync') produce a compatible BaseSQLiteDatabase, so the adapter is identical.
+type SqliteDb = BaseSQLiteDatabase<'sync' | 'async', unknown, typeof schema>;
+
+// -- runtime detection --------------------------------------------------------
+
+// true inside the Bun runtime (incl. the `bun --compile` standalone binary)
+const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
+
+// -- url handling -------------------------------------------------------------
+
+// bun:sqlite + drizzle/bun-sqlite want a plain fs path, not a libsql `file:`
+// url. ':memory:' passes through unchanged; 'file:/p/uc.db' → '/p/uc.db'.
+function toBunPath(url: string): string {
+    return url.startsWith('file:') ? url.slice('file:'.length) : url;
+}
 
 // -- client + schema bootstrap ------------------------------------------------
 
-// open a libsql client (url: 'file:/path/uc.db' or ':memory:'), apply DDL once
+// open a SQLite adapter (url: 'file:/path/uc.db' or ':memory:'), apply DDL once.
+// the driver is picked at runtime via dynamic import so Node never loads
+// bun:sqlite and Bun never requires the @libsql native binding.
 export async function createSqliteAdapter(url: string): Promise<SqliteAdapter> {
+    const db = isBun ? await createBunDb(url) : await createLibsqlDb(url);
+    return new SqliteAdapter(db);
+}
+
+// -- libsql driver (Node) -----------------------------------------------------
+
+// Node path — libsql client + drizzle's async wrapper. executeMultiple applies
+// the whole DDL script in one call.
+async function createLibsqlDb(url: string): Promise<SqliteDb> {
+    const { drizzle } = await import('drizzle-orm/libsql');
+    const { createClient } = await import('@libsql/client');
+
     const client = createClient({ url });
     await client.executeMultiple(SCHEMA_SQL);
-    return new SqliteAdapter(drizzle(client, { schema }));
+    return drizzle(client, { schema }) as unknown as SqliteDb;
+}
+
+// -- bun:sqlite driver (Bun / compiled binary) --------------------------------
+
+// Bun path — drizzle's bun-sqlite wrapper over a native bun:sqlite Database.
+// Both modules embed cleanly in `bun --compile`. DDL goes through the raw
+// Database (run() executes a multi-statement script). The adapter's async
+// transaction callback is fine here: bun:sqlite ops are synchronous, so the
+// whole BEGIN/COMMIT body runs before any real microtask yield.
+async function createBunDb(url: string): Promise<SqliteDb> {
+    const { drizzle } = await import('drizzle-orm/bun-sqlite');
+    // bun:sqlite is a Bun built-in — no @types/bun installed (would clash with
+    // @types/node globals), and Node never reaches this branch. Suppress the
+    // module-resolution error; it resolves at runtime under Bun.
+    // @ts-expect-error — built-in module, only present under the Bun runtime
+    const { Database } = await import('bun:sqlite');
+
+    const client = new Database(toBunPath(url));
+    client.run(SCHEMA_SQL);
+    return drizzle(client, { schema }) as unknown as SqliteDb;
 }
 
 // -- adapter ------------------------------------------------------------------
@@ -176,8 +226,13 @@ export class SqliteAdapter implements StorageAdapter {
     // -- transactions ---------------------------------------------------------
 
     // SQLite serializes writes by default — isolationLevel is accepted for API
-    // parity and ignored. The callback runs inside a real libsql transaction.
+    // parity and ignored. The async callback runs inside a real BEGIN/COMMIT.
+    // libsql (async): transaction() awaits the callback and returns a Promise.
+    // bun:sqlite (sync): the callback's ops are synchronous, so the BEGIN/COMMIT
+    // body completes before any yield; transaction() returns the pending Promise
+    // which we await here. Both collapse to the same Promise<T> at the await.
     async transaction<T>(fn: (tx: StorageAdapter) => Promise<T>, _options?: TransactionOptions): Promise<T> {
-        return this.db.transaction(async (tx) => fn(new SqliteAdapter(tx as unknown as SqliteDb)));
+        const run = (tx: unknown) => fn(new SqliteAdapter(tx as SqliteDb));
+        return await (this.db.transaction as (cb: typeof run) => Promise<T> | T)(run);
     }
 }

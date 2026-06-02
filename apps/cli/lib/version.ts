@@ -8,6 +8,14 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
+// -- compile-time version -----------------------------------------------------
+
+// the `bun --compile` build injects this via --define UC_COMPILED_VERSION="x.y.z"
+// (see scripts/build-binaries.sh). The standalone binary can't readFileSync the
+// package.json (it isn't embedded), so the define is its source of truth.
+// Under Node the define is absent and we fall through to the package.json reader.
+declare const UC_COMPILED_VERSION: string | undefined;
+
 // -- reader -------------------------------------------------------------------
 
 // read the package.json text next to the built/source module (../package.json)
@@ -18,8 +26,17 @@ function defaultReader(): string {
 
 // -- resolver -----------------------------------------------------------------
 
-// parse the version out of package.json; degrade to 0.0.0 when unreadable
+// the compiled-binary version when present (define is replaced inline by the
+// bundler); '' under Node so resolveVersion falls back to the package.json read.
+function compiledVersion(): string {
+    return typeof UC_COMPILED_VERSION !== 'undefined' ? UC_COMPILED_VERSION : '';
+}
+
+// prefer the compile-time define; otherwise parse package.json; else 0.0.0
 export function resolveVersion(read: () => string = defaultReader): string {
+    const injected = compiledVersion();
+    if (injected) return injected;
+
     try {
         const pkg = JSON.parse(read()) as { version?: string };
         return pkg.version ?? '0.0.0';
