@@ -28,7 +28,7 @@
 </p>
 
 <p align="center">
-  <strong>All you need to manage what your agents see.</strong>
+  <strong>Everything you need to manage what your agents see.</strong>
 </p>
 
 <div align="center">
