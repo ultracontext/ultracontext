@@ -32,6 +32,7 @@ type AddOptions = {
     context?: string;
     new?: boolean;
     json?: string | boolean;
+    remote?: boolean;
 };
 
 // -- stdin read ---------------------------------------------------------------
@@ -106,7 +107,7 @@ export async function runAdd(text: string | undefined, opts: AddOptions, runtime
 
         // --new targets a synthetic scope so resolve-or-create makes a fresh context
         const scope = opts.new ? `${cwd}/new-${Date.now()}-${Math.random().toString(36).slice(2)}` : cwd;
-        const client = await resolveClient({ dbUrl, cwd: scope });
+        const client = await resolveClient({ remote: opts.remote, dbUrl, cwd: scope });
 
         // append to the explicit --context id, else the (possibly new) default
         const result = await client.add({ id: opts.context, messages: [message] });
@@ -139,9 +140,12 @@ export function buildAddCommand(runtime: Runtime = {}): Command {
         .option('--context <id>', 'target an explicit context id')
         .option('--new', 'force a brand-new context')
         .option('--json [body]', 'machine output, or parse a raw message object')
-        .action(async (text, opts) => {
+        .action(async (text, opts, cmd) => {
+            // fold the global --remote off the program root into the verb options
+            const remote = Boolean((cmd.optsWithGlobals() as { remote?: boolean }).remote);
+
             // run the handler and route its exit code through the injected exit
-            const code = await runAdd(text, opts as AddOptions, runtime);
+            const code = await runAdd(text, { ...(opts as AddOptions), remote }, runtime);
             if (code !== 0) (runtime.exit ?? process.exit)(code);
             else runtime.exit?.(0);
         });

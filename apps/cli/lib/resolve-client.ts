@@ -1,34 +1,69 @@
 // =============================================================================
 // resolve-client — pick the backing ContextClient. Local by default
-// (sqlite + @ultracontext/core), remote when --remote (or config) asks.
-// The remote client lands in the Remote phase; for now it throws clearly.
+// (sqlite + @ultracontext/core), remote when --remote or when config/env carry
+// a hosted baseUrl + token. Both share the ContextClient interface, so the
+// context verbs stay client-agnostic.
 // =============================================================================
 
 import type { ContextClient } from './context-client';
 import { createLocalClient } from './clients/local';
+import { createRemoteClientFromConfig } from './clients/remote';
+import { loadClientConfig } from './client-config';
 import { dbUrl as defaultDbUrl } from './config';
 
 // -- options ------------------------------------------------------------------
 
-// remote toggles the hosted backend; dbUrl/cwd override the local defaults
-export type ResolveOptions = { remote?: boolean; dbUrl?: string; cwd?: string };
+// the persisted CLI config slice that selects/credentials the hosted backend
+export type ClientConfig = { baseUrl?: string; apiKey?: string };
 
-// -- remote stub --------------------------------------------------------------
+// remote forces the hosted backend; dbUrl/cwd override the local defaults.
+// env/config are injectable so credential resolution is testable without HTTP.
+export type ResolveOptions = {
+    remote?: boolean;
+    dbUrl?: string;
+    cwd?: string;
+    env?: Record<string, string | undefined>;
+    config?: ClientConfig;
+};
 
-// every verb throws until RemoteContextClient (@ultracontext/js) is wired
-function remoteStub(): ContextClient {
-    const stub = async (): Promise<never> => {
-        throw new Error('remote client not implemented');
-    };
-    return { add: stub, get: stub, update: stub, delete: stub, list: stub };
+// -- credential resolution ----------------------------------------------------
+
+// the api key from env (UC_API_KEY) first, else the persisted config
+function resolveApiKey(env: Record<string, string | undefined>, config: ClientConfig): string | undefined {
+    return env.UC_API_KEY ?? config.apiKey;
+}
+
+// the base url from env (UC_API_URL) first, else the persisted config
+function resolveBaseUrl(env: Record<string, string | undefined>, config: ClientConfig): string | undefined {
+    return env.UC_API_URL ?? config.baseUrl;
 }
 
 // -- resolver -----------------------------------------------------------------
 
 // choose remote vs local; both share the ContextClient interface
 export async function resolveClient(opts: ResolveOptions = {}): Promise<ContextClient> {
-    // remote backend (hosted API) — stubbed until the Remote phase
-    if (opts.remote) return remoteStub();
+    const env = opts.env ?? process.env;
+
+    // an explicit dbUrl is an unambiguous "use this local db" signal — when set
+    // (tests, UC_DB_URL), skip the persisted config so it can't flip us to remote
+    const skipPersisted = opts.dbUrl !== undefined;
+
+    // injected config wins (tests); else read the persisted ~/.ultracontext config
+    const config = opts.config ?? (skipPersisted ? {} : await loadClientConfig());
+
+    // gather hosted creds from env (preferred) or persisted config
+    const apiKey = resolveApiKey(env, config);
+    const baseUrl = resolveBaseUrl(env, config);
+
+    // remote is chosen by an explicit --remote, or implicitly when config has both
+    const wantRemote = opts.remote || Boolean(baseUrl && apiKey);
+
+    // remote backend (hosted API) — backed by the @ultracontext/js SDK
+    if (wantRemote) {
+        // an explicit --remote without a key is a user error — fail clearly
+        if (!apiKey) throw new Error('remote mode needs an api key — set UC_API_KEY or run `uc init`');
+        return createRemoteClientFromConfig({ apiKey, baseUrl });
+    }
 
     // local backend — sqlite at ~/.ultracontext/uc.db, scoped to the cwd
     return createLocalClient({

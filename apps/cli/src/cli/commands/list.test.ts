@@ -121,10 +121,10 @@ describe('uc list', () => {
         assert.equal(payload.data[0].metadata.project_path, '/work/list-b');
     });
 
-    // -- error case: --remote is not implemented yet --------------------------
+    // -- error case: --remote without credentials -----------------------------
 
-    // remote backend isn't wired → clean failure, exit 1, error on stderr, stdout clean
-    it('exits 1 with an error when --remote is requested', async () => {
+    // remote with no api key → clean failure, exit 1, actionable error on stderr
+    it('exits 1 with an error when --remote without an api key', async () => {
         const url = await seedDb();
         const out = sink();
         const errs = sink();
@@ -136,7 +136,7 @@ describe('uc list', () => {
 
         assert.equal(code, 1);
         assert.equal(out.text(), '');
-        assert.match(JSON.parse(errs.text()).error, /not implemented/i);
+        assert.match(JSON.parse(errs.text()).error, /api key/i);
     });
 
     // -- Commander wiring -----------------------------------------------------
