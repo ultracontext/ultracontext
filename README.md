@@ -7,16 +7,6 @@
 <h3 align="center">The Context SDK for AI agents.</h3>
 
 <p align="center">
-  UltraContext lets you manage what your agents see:<br/>
-  create, update, version, fork, retrieve, and share context windows across tools.
-</p>
-
-<p align="center">
-  Use it directly through the Context API, connect agents through MCP, or let the<br/>
-  daemon auto-capture sessions from Claude Code, Codex, and OpenClaw.
-</p>
-
-<p align="center">
   <a href="https://ultracontext.ai/docs">Documentation</a> ·
   <a href="https://ultracontext.ai/docs/api-reference/introduction">API Reference</a> ·
   <a href="https://ultracontext.ai/docs/changelog">Changelog</a>
@@ -37,6 +27,10 @@
   </a>
 </p>
 
+<p align="center">
+  <strong>All you need to manage what your agents see.</strong>
+</p>
+
 <div align="center">
   <a href="https://twitter.com/ultracontext">
     <img src="https://img.shields.io/badge/Follow%20on%20X-000000?style=for-the-badge&logo=x&logoColor=white" alt="Follow on X" />
@@ -47,6 +41,10 @@
 </div>
 
 ---
+
+UltraContext lets you manage what your agents see: create, update, version, fork, retrieve, and share context windows across tools.
+
+Use it directly through the Context API, connect agents through MCP, or let the daemon auto-capture sessions from Claude Code, Codex, and OpenClaw.
 
 ## Features
 
