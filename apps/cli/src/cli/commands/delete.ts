@@ -107,17 +107,41 @@ export async function runDelete(args: string[], deps: DeleteDeps = {}): Promise<
     }
 }
 
+// -- arg reconstruction --------------------------------------------------------
+
+// Commander consumes option tokens during the outer parse, so cmd.args holds
+// ONLY positionals. runDelete re-parses from scratch, so we must rebuild the
+// full token list (positional + flags) — otherwise --ids/--meta/--permanent are
+// lost and a message delete silently becomes a permanent whole-context delete.
+function reconstructArgs(
+    positionals: string[],
+    opts: { permanent?: boolean; ids?: string[]; meta?: string[] },
+): string[] {
+    const args = [...positionals];
+
+    // --permanent is a boolean flag
+    if (opts.permanent) args.push('--permanent');
+
+    // --ids / --meta are variadic — re-emit each value after its flag
+    if (opts.ids && opts.ids.length > 0) args.push('--ids', ...opts.ids);
+    if (opts.meta && opts.meta.length > 0) args.push('--meta', ...opts.meta);
+
+    return args;
+}
+
 // -- registration factory -----------------------------------------------------
 
 // the Command registered on the program root — delegates to the handler
 export function buildDeleteCommand(): Command {
     const command = buildCommand();
 
-    // hand parsing back to runDelete so behavior matches the tested handler
-    command.action(async (_id, _opts, cmd) => {
+    // hand parsing back to runDelete so behavior matches the tested handler.
+    // rebuild the full token list first — cmd.args drops consumed option tokens.
+    command.action(async (_id, opts, cmd) => {
         const json = Boolean((cmd.optsWithGlobals() as { json?: boolean }).json);
         const remote = Boolean((cmd.optsWithGlobals() as { remote?: boolean }).remote);
-        const code = await runDelete(cmd.args, {
+        const args = reconstructArgs(cmd.args, opts as { permanent?: boolean; ids?: string[]; meta?: string[] });
+        const code = await runDelete(args, {
             resolveClient: () => resolveClient({ remote }),
             json,
         });

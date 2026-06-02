@@ -10,7 +10,9 @@
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { runDelete } from './delete';
+import { Command } from '@commander-js/extra-typings';
+
+import { runDelete, buildDeleteCommand } from './delete';
 import { createLocalClient } from '../../../lib/clients/local';
 import type { ContextClient } from '../../../lib/context-client';
 import { tempDbUrl, cleanupTempDbs } from '../../../lib/testing/temp-db';
@@ -175,6 +177,46 @@ describe('uc delete errors', () => {
         assert.equal(stdout, '');
         const parsed = JSON.parse(stderr.trim()) as { error: string };
         assert.ok(typeof parsed.error === 'string' && parsed.error.length > 0);
+    });
+});
+
+// -- registered command wiring (real action path) ----------------------------
+
+describe('uc delete --ids (registered command)', () => {
+    // Drive the REAL buildDeleteCommand action through a program, the way argv
+    // hits it. Commander consumes --ids into the action's parsed opts, so the
+    // action must NOT lose it: a message delete must keep the context intact and
+    // never silently fall through to a permanent (whole-context) delete.
+    it('soft-deletes a message via the registered action, leaving the context', async () => {
+        const db = { dbUrl: tempDbUrl(), cwd: '/work/del-registered' };
+        const id = await seedContext(db, [
+            { role: 'user', content: 'keep' },
+            { role: 'assistant', content: 'drop' },
+        ]);
+
+        // point the registered action's resolveClient at the SAME temp db via env
+        const savedDb = process.env.UC_DB_URL;
+        process.env.UC_DB_URL = db.dbUrl;
+
+        try {
+            // a root program carrying the global --json + the real delete command
+            const program = new Command('uc');
+            program.option('--json');
+            program.addCommand(buildDeleteCommand());
+            program.exitOverride();
+
+            // argv: `uc --json delete <id> --ids 1` — the path that was broken
+            await program.parseAsync(['node', 'uc', '--json', 'delete', id, '--ids', '1']);
+        } finally {
+            if (savedDb === undefined) delete process.env.UC_DB_URL;
+            else process.env.UC_DB_URL = savedDb;
+        }
+
+        // the context still exists with only the survivor — NOT wiped
+        const client = await createLocalClient(db);
+        const got = await client.get({ id });
+        assert.equal(got.data.length, 1);
+        assert.equal(got.data[0].content, 'keep');
     });
 });
 
