@@ -4,11 +4,16 @@
   </a>
 </p>
 
-<h3 align="center">Same context. Everywhere.</h3>
+<h3 align="center">The Context SDK for AI agents.</h3>
 
 <p align="center">
-  Start on Claude Code. Continue on Codex.<br/>
-  Open source, realtime and invisible context infrastructure for the ones shipping at inference speed.
+  UltraContext lets you manage what your agents see:<br/>
+  create, update, version, fork, retrieve, and share context windows across tools.
+</p>
+
+<p align="center">
+  Use it directly through the Context API, connect agents through MCP, or let the<br/>
+  daemon auto-capture sessions from Claude Code, Codex, and OpenClaw.
 </p>
 
 <p align="center">
