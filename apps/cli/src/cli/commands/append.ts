@@ -1,14 +1,15 @@
 // =============================================================================
-// add — `uc add` quick-capture. Append one message to an explicit context
-// (--context <id> or $UC_CONTEXT), else create a fresh one (--new always does).
-// There is NO default context. Body sources: positional text | stdin | --json |
-// a --meta key=val pair set. Flags: --role, --context <id>, --new. Local-first:
-// the resolved ContextClient uses the centralized env-aware config (UC_DB_URL).
+// append — `uc append <id>` quick-capture. Append message(s) to an EXPLICIT
+// context: the id is a required positional, resolved via requireContextId so
+// $UC_CONTEXT works as a fallback. There is NO default context. Body sources:
+// positional text | stdin | --json full object. Flags: --role, --meta (MESSAGE
+// metadata). Local-first through the resolved ContextClient (UC_DB_URL).
 // =============================================================================
 
 import { Command } from '@commander-js/extra-typings';
 
 import { resolveClient } from '../../../lib/resolve-client';
+import { requireContextId } from '../../../lib/context-id';
 import { emit, outputError, shouldJson } from '../../../lib/output';
 import type { Message } from '../../../lib/context-client';
 
@@ -17,21 +18,20 @@ import type { Message } from '../../../lib/context-client';
 // a minimal writable sink — the real process streams satisfy this
 type Writable = { write(s: string): boolean };
 
-// io + stdin + exit injected by tests; real process bindings are the defaults
+// io + stdin + exit + env injected by tests; real process bindings are defaults
 type Runtime = {
     io?: { stdout?: Writable; stderr?: Writable; isTTY?: boolean };
     stdin?: AsyncIterable<string>;
     exit?: (code?: number) => void;
+    env?: Record<string, string | undefined>;
 };
 
 // -- parsed options -----------------------------------------------------------
 
-// commander-collected flags for the verb
-type AddOptions = {
+// commander-collected flags for the verb (--meta tags the MESSAGE)
+type AppendOptions = {
     role?: string;
     meta?: string[];
-    context?: string;
-    new?: boolean;
     json?: string | boolean;
     remote?: boolean;
 };
@@ -68,7 +68,7 @@ function parseMeta(pairs?: string[]): Record<string, unknown> {
 // a raw --json <body> object, else positional/stdin text wrapped as content.
 async function buildMessage(
     text: string | undefined,
-    opts: AddOptions,
+    opts: AppendOptions,
     stdin?: AsyncIterable<string>,
 ): Promise<Message> {
     // --json <body> carries a full message object (role/content/metadata)
@@ -81,7 +81,7 @@ async function buildMessage(
     const content = text ?? (await readStdin(stdin));
     if (!content) throw new Error('nothing to capture (pass text, pipe stdin, or use --json)');
 
-    // assemble content + optional role + --meta metadata
+    // assemble content + optional role + --meta MESSAGE metadata
     const message: Message = { content };
     if (opts.role) message.role = opts.role;
 
@@ -91,34 +91,57 @@ async function buildMessage(
     return message;
 }
 
+// -- positional resolution ----------------------------------------------------
+
+// reconcile the two positionals against $UC_CONTEXT. When the env supplies a
+// context AND only ONE positional was given (id present, text absent), that lone
+// positional is the message TEXT — the id comes from the env. This lets
+// `UC_CONTEXT=x uc append "note"` work while `uc append <id> <text>` is intact.
+function resolvePositionals(
+    id: string | undefined,
+    text: string | undefined,
+    env: Record<string, string | undefined>,
+): { id: string | undefined; text: string | undefined } {
+    if (env.UC_CONTEXT && id !== undefined && text === undefined) {
+        return { id: undefined, text: id };
+    }
+    return { id, text };
+}
+
 // -- handler ------------------------------------------------------------------
 
-// parse input, append through the client, and emit the appended view + version
-export async function runAdd(text: string | undefined, opts: AddOptions, runtime: Runtime): Promise<number> {
+// resolve the target id, append through the client, emit the appended view + id
+export async function runAppend(
+    idArg: string | undefined,
+    textArg: string | undefined,
+    opts: AppendOptions,
+    runtime: Runtime,
+): Promise<number> {
     const io = runtime.io;
+    const env = runtime.env ?? process.env;
     const json = shouldJson({ json: Boolean(opts.json) }, io);
 
     try {
+        // env-aware: a lone positional is TEXT when $UC_CONTEXT supplies the id
+        const { id, text } = resolvePositionals(idArg, textArg, env);
+
+        // target an explicit <id> positional, else $UC_CONTEXT, else a clear error
+        const contextId = requireContextId(id, env);
+
         // assemble the message before touching storage so bad input fails fast
         const message = await buildMessage(text, opts, runtime.stdin);
 
         // resolve the backing client (local sqlite by default)
         const client = await resolveClient({ remote: opts.remote });
 
-        // target an explicit --context id (or $UC_CONTEXT); --new and the no-id
-        // case both create a fresh context to append into — there is no default
-        const id = opts.new
-            ? (await client.create({})).id
-            : opts.context ?? process.env.UC_CONTEXT ?? (await client.create({})).id;
-
         // append the message to the resolved context id
-        const result = await client.append({ id, messages: [message] });
+        const result = await client.append({ id: contextId, messages: [message] });
 
         // the resolved context id rides along the envelope for agents to chain on
         const view = { data: result.data, version: result.version, id: result.id };
 
         // data → stdout; one JSON line in machine mode, a short line otherwise
-        emit(view, { json, human: (d) => `captured (v${(d as typeof view).version})` }, io);
+        emit(view, { json, human: (d) => `appended (v${(d as typeof view).version})` }, io);
         return 0;
     } catch (error) {
         // failure → stderr only, non-zero exit (no data on stdout)
@@ -128,25 +151,24 @@ export async function runAdd(text: string | undefined, opts: AddOptions, runtime
 
 // -- command factory ----------------------------------------------------------
 
-// build the `uc add` Command, wiring its action to the injectable handler
-export function buildAddCommand(runtime: Runtime = {}): Command {
-    const command = new Command('add');
+// build the `uc append` Command, wiring its action to the injectable handler
+export function buildAppendCommand(runtime: Runtime = {}): Command {
+    const command = new Command('append');
 
-    // quick-capture surface: positional body + role/meta/target flags
+    // quick-capture surface: required id positional + body + role/meta flags
     command
-        .description('append a message to a context (quick-capture)')
+        .description('append a message to a context')
+        .argument('[id]', 'target context id (or set UC_CONTEXT)')
         .argument('[text]', 'message body (omit to read stdin)')
         .option('--role <role>', 'message role (e.g. user, assistant)')
-        .option('--meta <pair...>', 'metadata key=val (repeatable)')
-        .option('--context <id>', 'target an explicit context id')
-        .option('--new', 'force a brand-new context')
+        .option('--meta <pair...>', 'message metadata key=val (repeatable)')
         .option('--json [body]', 'machine output, or parse a raw message object')
-        .action(async (text, opts, cmd) => {
+        .action(async (id, text, opts, cmd) => {
             // fold the global --remote off the program root into the verb options
             const remote = Boolean((cmd.optsWithGlobals() as { remote?: boolean }).remote);
 
             // run the handler and route its exit code through the injected exit
-            const code = await runAdd(text, { ...(opts as AddOptions), remote }, runtime);
+            const code = await runAppend(id, text, { ...(opts as AppendOptions), remote }, runtime);
             if (code !== 0) (runtime.exit ?? process.exit)(code);
             else runtime.exit?.(0);
         });

@@ -86,20 +86,28 @@ export function buildUpdateCommand(): Command {
 
     command
         .description('update messages in a context')
+        .argument('[id]', 'target context id (or set UC_CONTEXT)')
         .option('--context <id>', 'target context id (or set UC_CONTEXT)')
         .option('--id <id>', 'target message by id')
         .option('--index <n>', 'target message by index', (v) => Number.parseInt(v, 10))
         .option('--content <text>', 'new message content')
         .option('--meta <key=val>', 'attach version metadata (repeatable)', collectMeta, {})
         .option('--json', 'emit machine-readable JSON')
-        .action(async (opts, cmd) => {
-            // pull the global --remote off the program root
-            const remote = Boolean((cmd.optsWithGlobals() as { remote?: boolean }).remote);
+        .action(async (id, opts, cmd) => {
+            // merge in the global --json/--remote flags off the program root
+            const globals = cmd.optsWithGlobals() as { json?: boolean; remote?: boolean };
 
-            // run the handler; map its exit code onto the process
-            const code = await runUpdate({ ...opts, remote });
-            if (code !== 0) process.exit(code);
+            // positional id wins over --context; both fall back to $UC_CONTEXT
+            const code = await runUpdate({
+                ...opts,
+                context: id ?? opts.context,
+                json: opts.json ?? globals.json,
+                remote: globals.remote,
+            });
+
+            // surface failures via exitCode (not process.exit, which races writes)
+            process.exitCode = code;
         });
 
-    return command;
+    return command as unknown as Command;
 }

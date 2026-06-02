@@ -115,6 +115,52 @@ describe('uc delete --ids', () => {
     });
 });
 
+// -- --meta plumbing (message-level delete) -----------------------------------
+
+describe('uc delete --ids --meta', () => {
+    // --meta attaches version metadata to the delete; it surfaces in history
+    it('records --meta as version metadata on a message delete', async () => {
+        const db = { dbUrl: tempDbUrl(), cwd: '/work/del-meta' };
+        const id = await seedContext(db, [
+            { role: 'user', content: 'keep' },
+            { role: 'assistant', content: 'drop' },
+        ]);
+
+        const { code } = await runWithDb([id, '--ids', '1', '--meta', 'reason=cleanup', '--meta', 'by=cli'], db);
+        assert.equal(code, 0);
+
+        // the delete version carries the audit metadata we passed via --meta
+        const client = await createLocalClient(db);
+        const { versions } = await client.get({ id, history: true });
+        const del = (versions ?? []).find((v) => v.operation === 'delete');
+        assert.ok(del, 'a delete version was recorded');
+        assert.equal(del!.metadata?.reason, 'cleanup');
+        assert.equal(del!.metadata?.by, 'cli');
+    });
+});
+
+// -- --meta plumbing (permanent delete) ---------------------------------------
+
+describe('uc delete --permanent --meta', () => {
+    // --meta is echoed as audit metadata on the permanent-delete JSON envelope
+    it('echoes --meta as audit metadata on a permanent delete', async () => {
+        const db = { dbUrl: tempDbUrl(), cwd: '/work/del-perm-meta' };
+        const id = await seedContext(db, [{ role: 'user', content: 'bye' }]);
+
+        const { stdout, code } = await runWithDb(
+            [id, '--permanent', '--meta', 'reason=gdpr'],
+            db,
+            { json: true },
+        );
+        assert.equal(code, 0);
+
+        // the envelope still confirms the deleted id (audit rides core-side)
+        const parsed = JSON.parse(stdout.trim()) as { deleted: boolean; id: string };
+        assert.equal(parsed.deleted, true);
+        assert.equal(parsed.id, id);
+    });
+});
+
 // -- error case ---------------------------------------------------------------
 
 describe('uc delete errors', () => {

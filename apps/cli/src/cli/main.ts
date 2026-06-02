@@ -8,7 +8,8 @@ import { Command } from '@commander-js/extra-typings';
 
 import { status } from '../../lib/output';
 import { VERSION } from '../../lib/version';
-import { buildAddCommand } from './commands/add';
+import { buildCreateCommand } from './commands/create';
+import { buildAppendCommand } from './commands/append';
 import { buildGetCommand } from './commands/get';
 import { buildUpdateCommand } from './commands/update';
 import { registerList } from './commands/list';
@@ -21,9 +22,12 @@ import { buildCommandsCommand } from './commands/commands';
 
 // -- context verbs ------------------------------------------------------------
 
-// top-level add/get/update/delete/list talk to a ContextClient (local | remote)
+// top-level create/append/get/update/delete/list talk to a ContextClient
+// (local | remote). The verb names mirror the SDK; every targeted verb takes an
+// EXPLICIT context id — there is no default context.
 function registerContextVerbs(program: Command): void {
-    program.addCommand(buildAddCommand());
+    program.addCommand(buildCreateCommand());
+    program.addCommand(buildAppendCommand());
     program.addCommand(buildGetCommand());
     program.addCommand(buildUpdateCommand());
     program.addCommand(buildDeleteCommand());

@@ -15,7 +15,7 @@ describe('buildProgram', () => {
         const program = buildProgram();
         const names = program.commands.map((c) => c.name());
 
-        for (const expected of ['add', 'get', 'update', 'delete', 'list', 'sync', 'upgrade', 'doctor', 'init', 'commands']) {
+        for (const expected of ['create', 'append', 'get', 'update', 'delete', 'list', 'sync', 'upgrade', 'doctor', 'init', 'commands']) {
             assert.ok(names.includes(expected), `missing command: ${expected}`);
         }
     });

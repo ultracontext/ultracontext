@@ -5,10 +5,10 @@
 // patch lands (read-back via get), the --json output shape, and a key error.
 // =============================================================================
 
-import { describe, it, after } from 'node:test';
+import { describe, it, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { runUpdate } from './update';
+import { runUpdate, buildUpdateCommand } from './update';
 import { resolveClient } from '../../../lib/resolve-client';
 import { tempDbUrl, cleanupTempDbs } from '../../../lib/testing/temp-db';
 
@@ -121,5 +121,48 @@ describe('runUpdate', () => {
         assert.equal(code, 1);
         assert.match(io.stderr.text, /both id and index/i);
         assert.equal(io.stdout.text, '');
+    });
+});
+
+// -- positional id + $UC_CONTEXT (command factory) ----------------------------
+
+// these drive the built Command so the positional <id> + env fallback are wired
+describe('uc update <id>', () => {
+    // restore env between cases so UC_CONTEXT never leaks across tests
+    let saved: { db?: string; ctx?: string };
+    beforeEach(() => { saved = { db: process.env.UC_DB_URL, ctx: process.env.UC_CONTEXT }; delete process.env.UC_CONTEXT; });
+    afterEach(() => {
+        if (saved.db === undefined) delete process.env.UC_DB_URL; else process.env.UC_DB_URL = saved.db;
+        if (saved.ctx === undefined) delete process.env.UC_CONTEXT; else process.env.UC_CONTEXT = saved.ctx;
+    });
+
+    // `uc update <id> --index 0 --content new` patches via the positional id
+    it('patches via a positional context id', async () => {
+        const dbUrl = tempDbUrl();
+        const cwd = '/work/update-positional';
+        process.env.UC_DB_URL = dbUrl;
+        const id = await seed(dbUrl, cwd, 'old');
+
+        // drive the real command (machine mode via the program's global --json)
+        const command = buildUpdateCommand();
+        await command.parseAsync(['node', 'update', id, '--index', '0', '--content', 'new', '--json']);
+
+        const messages = await readBack(dbUrl, cwd, id);
+        assert.equal(messages[0].content, 'new');
+    });
+
+    // with no positional id, $UC_CONTEXT supplies the target context
+    it('falls back to $UC_CONTEXT for the target context', async () => {
+        const dbUrl = tempDbUrl();
+        const cwd = '/work/update-env';
+        process.env.UC_DB_URL = dbUrl;
+        const id = await seed(dbUrl, cwd, 'old');
+        process.env.UC_CONTEXT = id;
+
+        const command = buildUpdateCommand();
+        await command.parseAsync(['node', 'update', '--index', '0', '--content', 'fromenv', '--json']);
+
+        const messages = await readBack(dbUrl, cwd, id);
+        assert.equal(messages[0].content, 'fromenv');
     });
 });

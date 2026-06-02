@@ -1,15 +1,16 @@
 // =============================================================================
 // roundtrip.test — integration. ALL context verbs must honor the SAME env-aware
 // local store. We set UC_DB_URL + UC_PROJECT_DIR in env (NOT via injected ctx),
-// drive the real command actions (add → get → list), and assert the message
-// round-trips through the one env-specified db. Guards the centralized-config
-// fix: before it, get/list ignored the env and read a different db.
+// drive the real command actions (create → append → get → list), and assert the
+// message round-trips through the one env-specified db. Guards the centralized-
+// config fix: before it, get/list ignored the env and read a different db.
 // =============================================================================
 
 import { describe, it, beforeEach, afterEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildAddCommand } from './add';
+import { runCreate } from './create';
+import { buildAppendCommand } from './append';
 import { buildGetCommand } from './get';
 import { registerList } from './list';
 import { Command } from '@commander-js/extra-typings';
@@ -57,14 +58,20 @@ function makeIo() {
 
 // -- command drivers ----------------------------------------------------------
 
-// drive `uc add --json`, returning the resolved context id off the JSON envelope
-async function driveAdd(args: string[]): Promise<string> {
+// drive `uc create` with injected io (resolving the store via env), returning
+// the new context id off the JSON envelope. No global stdout patch needed: the
+// create handler takes an injectable io directly.
+async function driveCreate(): Promise<string> {
     const captured = makeIo();
-    const command = buildAddCommand({ io: captured.io, exit: () => {} });
-    await command.parseAsync(['node', 'add', ...args, '--json']);
-
-    // the envelope carries the resolved context id for the next verb to target
+    await runCreate({ json: true }, { io: captured.io });
     return JSON.parse(captured.out().trim()).id;
+}
+
+// drive `uc append <id> --json`, appending one message to the explicit context
+async function driveAppend(id: string, text: string): Promise<void> {
+    const captured = makeIo();
+    const command = buildAppendCommand({ io: captured.io, exit: () => {} });
+    await command.parseAsync(['node', 'append', id, text, '--json']);
 }
 
 // drive `uc get <id>` through the real program so it resolves via env (no ctx)
@@ -122,24 +129,26 @@ function patchStdout(sink: (s: string) => boolean): () => void {
 // -- the round-trip -----------------------------------------------------------
 
 describe('env-aware round-trip across verbs', () => {
-    // add writes through env; get reads the SAME env-specified db back by id
-    it('add → get round-trips through the env-specified db', async () => {
-        const id = await driveAdd(['cross-verb note']);
+    // create+append write through env; get reads the SAME env-specified db by id
+    it('create → append → get round-trips through the env-specified db', async () => {
+        const id = await driveCreate();
+        await driveAppend(id, 'cross-verb note');
 
-        // get must hit the same UC_DB_URL/UC_PROJECT_DIR add used
+        // get must hit the same UC_DB_URL/UC_PROJECT_DIR create+append used
         const getOut = await driveGet(id);
         const parsed = JSON.parse(getOut.trim());
         assert.equal(parsed.data.length, 1);
         assert.equal(parsed.data[0].content, 'cross-verb note');
     });
 
-    // list sees the context add created in the env-specified db
-    it('add → list surfaces the context from the env-specified db', async () => {
-        await driveAdd(['listed note']);
+    // list sees the context create minted in the env-specified db
+    it('create → list surfaces the context from the env-specified db', async () => {
+        const id = await driveCreate();
+        await driveAppend(id, 'listed note');
 
         const listOut = await driveList();
         const parsed = JSON.parse(listOut.trim());
         assert.ok(Array.isArray(parsed.data), 'list returns a data array');
-        assert.ok(parsed.data.length >= 1, 'the added context is listed');
+        assert.ok(parsed.data.length >= 1, 'the created context is listed');
     });
 });
