@@ -94,6 +94,8 @@ describe("writeClaudeSession — claude@1.0.x format", () => {
         const content = fs.readFileSync(result.filePath, "utf8").trim().split("\n");
         const entry = JSON.parse(content[0]);
         assert.equal(entry.type, "assistant");
-        assert.ok(entry.message.content.includes("[system]"));
+        // content is an array of text blocks — assert the [system] prefix lives in the block text
+        const text = entry.message.content.map((block) => block.text).join("");
+        assert.ok(text.includes("[system]"));
     });
 });
