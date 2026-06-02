@@ -92,8 +92,8 @@ targeted verb takes a context id (or the `UC_CONTEXT` env var), so you always kn
 exactly what you're touching:
 
 ```bash
-export UC_CONTEXT=$id    # set once, then drop the id from each verb
-uc append "another note"
+export UC_CONTEXT=$id              # set once, then drop the id from each verb
+echo "another note" | uc append    # body via stdin ($UC_CONTEXT is the target)
 uc get
 ```
 
@@ -105,7 +105,7 @@ The CLI is **local-first**: every command talks to a local SQLite database at
 
 ```bash
 uc create [--from <id>]                 # create a context, or fork/clone from <id>
-uc append <id> [text]                   # append a message (text | --json | stdin)
+uc append <id> [text]                   # append a message (text | --message | stdin)
 uc get <id>                             # read a context (--version / --at / --before / --history)
 uc update <id> --content <c>            # update messages (--id <m> | --index <i>)
 uc delete <id>                          # delete a context (--permanent) or messages (--ids)
@@ -133,23 +133,17 @@ Every command is pipe-aware: pass `--json` (or pipe stdout) to get machine-reada
 output. Data goes to stdout; status and errors go to stderr. Run `uc commands --json`
 for the authoritative, always-current tree.
 
-## Context API
+## SDK
 
-For builders who want to go deeper. Git-like primitives for context engineering.
+Building an agent? The SDK is how you manage its context window in code — create, version, fork, and retrieve context windows, with any LLM framework.
 
-- **Core methods** — `create`, `append`, `get`, `update`, `delete` (+ `deleteMany`). That's it.
-- **Fork/clone** — `create({ from })` copies a context, optionally at a past `version` / `at` / `before`.
-- **Metadata everywhere** — Tag the context (`create`), the message (`append`), or the version (`update` / `delete`).
-- **Automatic versioning** — Every update or delete creates a new version. Full history out of the box.
-- **Time-travel** — Jump to any point in your context history.
-- **Framework-agnostic** — Works with any LLM framework. No vendor lock-in.
+- **`create` · `append` · `get` · `update` · `delete`** (+ `deleteMany`) — that's the whole surface.
+- **Versioned by default** — every `update`/`delete` is a new version; jump back with `version` / `at` / `before`.
+- **Fork** — `create({ from })` branches a context, optionally from a past point.
+- **Metadata** — tag the context, a message, or a version.
+- **Framework-agnostic** — hand the messages to any model. No lock-in.
 
-The CLI mirrors these names one-to-one (`uc create` / `uc append` / `uc get` /
-`uc update` / `uc delete`). **Sharing** is the architecture, not a method: a central
-store reached over the Context API, exposed to agents via the MCP server, and kept in
-step across machines by `uc sync`.
-
-Use the API standalone to build your own agents, or extend existing ones in UltraContext.
+The CLI mirrors the SDK one-to-one (`uc create` / `uc append` / `uc get` / …).
 
 | SDK                   | Install                    | Source                               |
 | --------------------- | -------------------------- | ------------------------------------ |
@@ -169,9 +163,10 @@ const uc = new UltraContext({ apiKey: 'uc_live_...' });
 
 const ctx = await uc.create();
 await uc.append(ctx.id, { role: 'user', content: 'Hello!' });
+const { data } = await uc.get(ctx.id);
 
 // use with any LLM framework
-const response = await generateText({ model, messages: ctx.data });
+const response = await generateText({ model, messages: data });
 ```
 
 ### Python
@@ -203,31 +198,9 @@ response = generate_text(model=model, messages=uc.get(ctx["id"])["data"])
   <a href="https://ultracontext.ai/docs/guides/view-context-history">View History</a>
 </p>
 
-## Monorepo
-
-A pnpm monorepo. `npm i ultracontext` installs one package (`apps/cli`, published as
-`ultracontext`) that bundles the CLI binary **and** re-exports the SDK.
-
-```
-packages/
-  core      — @ultracontext/core: IO-free context engine + StorageAdapter port
-  storage   — @ultracontext/storage: Drizzle / Supabase / SQLite adapters
-  parsers   — @ultracontext/parsers: agent session parsers
-  sync      — @ultracontext/sync: fs-first Mutagen orchestration
-
-apps/
-  cli         — the `uc` binary, published as `ultracontext` (CLI + SDK in one install)
-  js-sdk      — @ultracontext/js: the TypeScript SDK source (private; re-exported by the CLI)
-  api         — Hono REST API (the hosted Context API)
-  mcp-server  — stdio + HTTP MCP server
-  python-sdk  — the Python SDK (PyPI)
-  postgres    — local Postgres + schema for self-hosting
-  docs        — Mintlify documentation (this site)
-```
-
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=ultracontext/ultracontext-node&type=date&legend=top-left)](https://www.star-history.com/#ultracontext/ultracontext-node&type=date&legend=top-left)
+[![Star History Chart](https://api.star-history.com/svg?repos=ultracontext/ultracontext&type=date&legend=top-left)](https://www.star-history.com/#ultracontext/ultracontext&type=date&legend=top-left)
 
 ## Documentation
 
