@@ -20,8 +20,5 @@ export { extractClaudeTokenUsage } from "./token-usage.mjs";
 export { writeClaudeSession, hasLocalClaudeSession } from "./writers/claude.mjs";
 export { writeCodexSession, hasLocalCodexSession } from "./writers/codex.mjs";
 
-// switch: cross-agent session portability
-export { switchSession, readLocalSession } from "./switch.mjs";
-
 // compatibility matrix
 export { AGENT_COMPAT, isResumePairTested, getTestedVersions } from "./compat.mjs";

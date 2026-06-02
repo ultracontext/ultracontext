@@ -6,14 +6,10 @@
     "engines": {
         "node": ">=22.12.0"
     },
-    "bin": {
-        "ultracontext": "ultracontext.mjs"
-    },
     "scripts": {
         "build": "tsdown",
         "dev": "tsdown --watch",
         "prepack": "pnpm run build",
-        "postinstall": "node postinstall.mjs",
         "test": "node --test tests/**/*.test.mjs"
     },
     "main": "./dist/index.mjs",
@@ -43,10 +39,7 @@
         "rollback",
         "chat",
         "conversation",
-        "typescript",
-        "cli",
-        "daemon",
-        "tui"
+        "typescript"
     ],
     "exports": {
         ".": {
@@ -56,24 +49,13 @@
         }
     },
     "files": [
-        "dist/",
-        "lib/",
-        "ultracontext.mjs",
-        "postinstall.mjs",
-        "assets/",
-        "plugin/"
+        "dist/"
     ],
     "dependencies": {
-        "@mishieck/ink-titled-box": "^0.4.2",
-        "fast-glob": "^3.3.3",
-        "figlet": "^1.10.0",
-        "ink": "^6.7.0",
-        "react": "^19.2.4"
+        "fast-glob": "^3.3.3"
     },
     "devDependencies": {
         "@ultracontext/parsers": "workspace:*",
-        "@ultracontext/sync": "workspace:*",
-        "node-pty": "^1.1.0",
         "tsdown": "^0.20.3",
         "typescript": "^5.9.3"
     },

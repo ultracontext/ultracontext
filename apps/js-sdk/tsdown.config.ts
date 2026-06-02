@@ -10,25 +10,4 @@ export default defineConfig([
     dts: true,
     clean: true,
   },
-
-  // CLI bundles (plain ESM, externalize heavy deps)
-  {
-    entry: {
-      "cli/entry": "src/cli/entry.mjs",
-      "cli/onboarding": "src/cli/onboarding.mjs",
-      "cli/sdk-sync": "src/cli/sdk-sync.mjs",
-      "cli/switch": "src/cli/switch.mjs",
-    },
-    outDir: "dist",
-    format: "esm",
-    platform: "node",
-    external: [
-      "react",
-      "ink",
-      "@mishieck/ink-titled-box",
-      "figlet",
-      "fast-glob",
-      "ultracontext",
-    ],
-  },
 ]);
