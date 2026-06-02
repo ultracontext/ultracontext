@@ -1,31 +1,48 @@
 ---
 title: 'Quickstart'
-description: 'Sync and share agent context in 2 minutes'
+description: 'Version and share agent context in 2 minutes'
 ---
 
 ## Prerequisites
 
 - **Node.js >= 22**
-- **A Context API key** -- [Get yours](https://ultracontext.ai) or [self-host](/guides/self-hosting)
+
+That's it. The `uc` CLI is **local-first** — it stores context in a local SQLite
+database and needs no API key to start. A hosted [Context API key](https://ultracontext.ai)
+(or a [self-hosted](/guides/self-hosting) API) is optional, for syncing across machines.
 
 ## 1. Install
+
+One install gives you both the `uc` binary and the [SDK](/sdk).
 
 ```bash bash
 npm install -g ultracontext
 ```
 
-## 2. Run
+## 2. Initialize
 
 ```bash bash
-ultracontext
+uc init
 ```
 
-The setup wizard asks for your API key and bootstrap mode. After that, the daemon starts syncing agent sessions in the background and opens the terminal dashboard.
-See [Configuration](/fundamentals/configuration) for all options.
+This sets up the local store at `~/.ultracontext`. Run it interactively to optionally
+connect a hosted backend, or `uc init --yes` to accept local-only defaults.
 
-<Tip>The CLI watches session files from Claude Code, Codex, and OpenClaw automatically. No extra configuration needed.</Tip>
+## 3. Capture and read context
 
-## 3. Add MCP Server
+```bash bash
+uc add "remember: deploy uses Fly.io"   # capture context for this project
+uc list                                  # list contexts in this project
+uc get                                   # read this project's context
+uc get --history                         # time-travel through versions
+```
+
+Contexts are scoped per project directory, so `uc add` and `uc get` just work from
+inside any repo. See the [CLI reference](/fundamentals/cli) for the full command tree.
+
+<Tip>Every command is pipe-aware: add <code>--json</code> (or pipe stdout) for machine-readable output. Run <code>uc commands --json</code> for the authoritative command tree.</Tip>
+
+## 4. Add MCP Server
 
 Give your agents access to context from other agents.
 
@@ -47,7 +64,7 @@ args = ["tsx", "/path/to/ultracontext/apps/mcp-server/src/stdio.ts"]
 
 <Info>The MCP server reads your API key from `~/.ultracontext/config.json` automatically -- the same config file used by the CLI.</Info>
 
-## 4. Try it
+## 5. Try it
 
 Ask your agent:
 
@@ -60,7 +77,7 @@ Ask your agent:
 
 <CardGroup cols={2}>
     <Card title='CLI reference' icon='terminal' href='/fundamentals/cli'>
-        Commands, metadata, configuration.
+        Commands, local-first storage, and remote mode.
     </Card>
     <Card title='MCP Server reference' icon='plug' href='/fundamentals/mcp-server'>
         Tools, filters, remote mode.

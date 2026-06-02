@@ -3,15 +3,15 @@ title: 'MCP Server'
 description: 'Share context between AI agents via Model Context Protocol'
 ---
 
-The MCP Server gives any MCP-compatible agent (Claude Code, Codex, etc.) access to contexts stored in the Context API -- whether ingested automatically via the [CLI](/fundamentals/cli) or created programmatically via the [SDKs](/sdk) and REST API.
+The MCP Server gives any MCP-compatible agent (Claude Code, Codex, etc.) access to contexts stored in the Context API -- whether captured via the [CLI](/fundamentals/cli) or created programmatically via the [SDKs](/sdk) and REST API.
 
 Ask Claude Code what Codex did last, filter sessions by project, machine, or time range.
 
 ## Prerequisites
 
 - **Node.js >= 22**
-- **A Context API key** configured in `~/.ultracontext/config.json` (set up by `ultracontext config`)
-- **CLI** running to ingest sessions (see [CLI](/fundamentals/cli))
+- **A Context API key** configured in `~/.ultracontext/config.json` (set up by `uc init`)
+- **Contexts to read** — capture them with the [CLI](/fundamentals/cli) or the [SDKs](/sdk)
 
 ## Setup
 

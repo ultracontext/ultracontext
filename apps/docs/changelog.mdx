@@ -4,6 +4,26 @@ description: 'Product updates and announcements'
 rss: true
 ---
 
+<Update label="June 2, 2026">
+## The `uc` CLI
+
+The CLI is now a full TypeScript rewrite, and it's **local-first**. Every command
+talks to a SQLite database at `~/.ultracontext/uc.db`, scoped per project. No server
+and no API key required to get started — point it at the hosted API with `--remote`
+whenever you want.
+
+### Features
+
+-   Context verbs from your terminal: `uc add`, `uc get`, `uc update`, `uc delete`, `uc list`
+-   `uc sync` — fs-first Mutagen orchestration to mirror agent sessions across machines
+-   `uc init`, `uc doctor`, `uc upgrade`, and `uc commands --json` (machine-readable tree for agents)
+-   Pipe-aware output: `--json` (or a non-TTY stdout) emits machine JSON; data → stdout, status → stderr
+-   One install ships both the `uc` binary and the SDK — `npm i ultracontext`
+
+See the [CLI reference](/fundamentals/cli) to get started.
+
+</Update>
+
 <Update label="January 1, 2026">
 ## The Beginning of Infinity
 

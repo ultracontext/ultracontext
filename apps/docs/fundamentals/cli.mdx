@@ -1,56 +1,205 @@
 ---
 title: 'CLI'
-description: 'Sync agent sessions to the Context API automatically'
+description: 'Version control for agent context, from your terminal'
 ---
 
-The UltraContext CLI watches agent session files in the background, parses events, and syncs them to the Context API in real time.
+The `uc` CLI is **local-first**: every command talks to a SQLite database at
+`~/.ultracontext/uc.db`, scoped to the project directory you run it from. No server
+and no API key are required to get started. Point it at the hosted Context API with
+`--remote` whenever you want.
 
 <Info>New here? Start with the [Quickstart](/quickstart) for a 2-minute setup.</Info>
 
-## Supported agents
+## Install
 
-| Agent | Session files |
-|-------|-------------|
-| **Claude Code** | `~/.claude/projects/**/*.jsonl` |
-| **Codex** | `~/.codex/sessions/**/*.jsonl` |
-| **OpenClaw** | `~/.openclaw/agents/*/sessions/**/*.jsonl` |
-
-## Context metadata
-
-The daemon enriches each context with metadata you can use to filter and search:
-
-| Field | Description | Example |
-|-------|-------------|---------|
-| `source` | Agent that created the session | `claude`, `codex`, `openclaw` |
-| `user_id` | User identifier (`DAEMON_USER_ID` or `$USER`) | `alice` |
-| `host` | Machine hostname | `Alices-MacBook-Pro.local` |
-| `project_path` | Project directory (Claude Code only) | `/Users/alice/Code/myapp` |
-| `session_id` | Original agent session ID | `b1ae8187-56cb-...` |
-| `started_at` | Timestamp of the first event | `2026-03-08T00:01:20Z` |
-
-These fields are filterable via `GET /contexts` and the [MCP Server](/fundamentals/mcp-server).
-
-## CLI commands
+One install gives you both the `uc` binary and the [SDK](/sdk).
 
 ```bash bash
-ultracontext              # start sync (daemon + dashboard)
-ultracontext sync         # start sync (daemon + dashboard)
-ultracontext stop         # stop daemon
-ultracontext config       # run setup wizard
-ultracontext update       # update CLI globally
-ultracontext version      # print version
-ultracontext help         # show help
+npm install -g ultracontext   # the `uc` CLI, globally
 ```
 
-<Info>See [Configuration](/fundamentals/configuration) for config file, environment variables, and setup options.</Info>
+The binary is available as both `uc` and `ultracontext`.
 
-## Updating
+## Get started
 
 ```bash bash
-ultracontext update
+uc init                                  # set up the local SQLite store
+uc add "remember: deploy uses Fly.io"    # capture context for this project
+uc list                                  # list contexts in this project
+uc get                                   # read this project's context
 ```
 
-Updates to the latest version. The package manager is auto-detected from your install.
+Contexts are scoped per directory. Running `uc add` from a project resolves (or
+creates) that project's default context, so you rarely pass an explicit id.
+
+## Context commands
+
+### `uc add [text]`
+
+Append a message to a context (quick-capture). Reads the body from the positional
+argument, piped stdin, or a `--json` object.
+
+| Flag | Description |
+|------|-------------|
+| `--role <role>` | Message role (e.g. `user`, `assistant`) |
+| `--meta <key=val...>` | Metadata pairs (repeatable) |
+| `--context <id>` | Target an explicit context id |
+| `--new` | Force a brand-new context |
+| `--json [body]` | Machine output, or parse a raw message object |
+
+```bash bash
+uc add "the API runs on port 8787" --role user
+echo "piped note" | uc add
+uc add --json '{"role":"assistant","content":"done","metadata":{"task":"deploy"}}'
+```
+
+### `uc get`
+
+Read a context. Defaults to the current project's context; time-travel with the
+version selectors.
+
+| Flag | Description |
+|------|-------------|
+| `--context <id>` | Read an explicit context id |
+| `--version <n>` | Read a specific version |
+| `--at <index>` | Read at a message index |
+| `--before <timestamp>` | Read the version before a timestamp |
+| `--history` | Include the version history |
+
+```bash bash
+uc get --history
+uc get --version 2
+uc get --context ctx_abc123 --at 5
+```
+
+### `uc update`
+
+Update messages in a context. Target one message by id **or** index, with optional
+version metadata.
+
+| Flag | Description |
+|------|-------------|
+| `--id <id>` | Target a message by id |
+| `--index <n>` | Target a message by index |
+| `--content <text>` | New message content |
+| `--meta <key=val>` | Attach version metadata (repeatable) |
+
+```bash bash
+uc update --index 0 --content "New system prompt"
+uc update --id msg_xyz --content "Fixed!" --meta reason=typo
+```
+
+### `uc delete [id]`
+
+Delete a whole context (`--permanent`) or specific messages (`--ids`). Defaults to
+the current project's context.
+
+| Flag | Description |
+|------|-------------|
+| `--permanent` | Permanently delete the whole context |
+| `--ids <ids...>` | Delete only these message indices/ids |
+
+```bash bash
+uc delete --permanent
+uc delete ctx_abc123 --ids 0 2 -1
+```
+
+### `uc list`
+
+List the project's contexts. Defaults to the current directory.
+
+| Flag | Description |
+|------|-------------|
+| `--source <source>` | Filter by capture source |
+| `--project_path <path>` | Filter by project path (defaults to cwd) |
+| `--limit <n>` | Max contexts to return |
+
+```bash bash
+uc list --limit 20
+uc list --source claude --project_path /Users/alice/Code/myapp
+```
+
+## Sync commands
+
+`uc sync` is fs-first orchestration over [Mutagen](https://mutagen.io). It mirrors
+agent session files between machines so your context follows you. Requires the
+`mutagen` binary on your `PATH` (`uc doctor` checks for it).
+
+```bash bash
+uc sync init user@vps:/home/alice/.ultracontext   # set up a sync target
+uc sync source add claude ~/.claude/projects       # add a synced source
+uc sync start                                       # start enabled sources
+uc sync status                                      # show live sessions
+uc sync list                                        # configured sources + state
+uc sync stop                                        # pause enabled sources
+```
+
+| Subcommand | Description |
+|-----------|-------------|
+| `init <target>` | Initialize sync for a workspace target (`local` \| `user@host[:root]`) |
+| `source add <name> <path>` | Add or update a synced source (`--disabled` to add without starting) |
+| `source list` | List configured sources |
+| `start` / `stop` | Start / pause sync for enabled sources |
+| `status` | Show live sync session status |
+| `list` | List configured sources with sync state |
+
+## Utility commands
+
+### `uc init`
+
+First-run onboarding. Interactive on a TTY; non-interactive with `--yes` (or when
+piped). Optionally seed a hosted backend.
+
+| Flag | Description |
+|------|-------------|
+| `--yes` | Accept defaults without prompting |
+| `--remote <baseUrl>` | Seed a hosted backend base url |
+| `--api-key <key>` | Seed a hosted backend api key |
+
+### `uc doctor`
+
+Diagnose the local environment: uc version, `~/.ultracontext` presence, local DB
+reachability, `mutagen` availability, remote reachability (only when configured),
+and the credential source.
+
+### `uc upgrade`
+
+Self-update the CLI. The install method (npm / brew / curl) is auto-detected. Use
+`--dry-run` to print the command without running it.
+
+### `uc commands`
+
+Print the command tree. With `--json` it emits the full, machine-readable tree —
+the authoritative source of truth for agents introspecting the CLI.
+
+```bash bash
+uc commands --json
+```
+
+## Local vs remote
+
+By default the CLI is local-only. It switches to the hosted Context API when:
+
+- you pass `--remote` on any context command, **or**
+- a base url **and** api key are configured (via `uc init` or env vars).
+
+| Variable | Description |
+|----------|-------------|
+| `UC_API_URL` | Hosted API base url (overrides config) |
+| `UC_API_KEY` | Hosted API key (overrides config) |
+| `UC_DB_URL` | Local SQLite url (overrides `~/.ultracontext/uc.db`) |
+
+```bash bash
+uc list --remote                 # one-off against the hosted API
+UC_API_KEY=uc_live_... uc add "synced note"
+```
+
+## Output
+
+Every command is pipe-aware. With `--json` — or whenever stdout is not a TTY —
+output is machine-readable JSON. Data goes to **stdout**; status, spinners, and
+errors go to **stderr**. Exit code is `0` on success, `1` on error, `130` on user
+cancel.
 
 <CardGroup cols={2}>
     <Card title='MCP Server' icon='plug' href='/fundamentals/mcp-server'>
