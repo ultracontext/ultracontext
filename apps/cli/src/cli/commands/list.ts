@@ -62,6 +62,7 @@ export async function listAction(opts: ListOptions, ctx: ListContext = {}): Prom
 export function registerList(program: Command): void {
     program
         .command('list')
+        .alias('ls')
         .description('list contexts')
         .option('--source <source>', 'filter by capture source')
         .option('--project_path <path>', 'filter by project path (defaults to cwd)')

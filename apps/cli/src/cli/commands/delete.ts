@@ -44,6 +44,7 @@ function toTarget(token: string): string | number {
 // build the `delete` Command — positional <id>, --permanent, --ids <indices...>
 function buildCommand(): Command<[string | undefined]> {
     return new Command('delete')
+        .alias('rm')
         .description('delete a context or messages')
         .argument('[id]', 'context id (defaults to the cwd context)')
         .option('--permanent', 'permanently delete the whole context')
