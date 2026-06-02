@@ -1,0 +1,68 @@
+{
+    "name": "ultracontext",
+    "description": "UltraContext CLI + SDK — version control for AI agent context",
+    "type": "module",
+    "version": "1.5.0",
+    "engines": {
+        "node": ">=22.12.0"
+    },
+    "bin": {
+        "uc": "./dist/uc.mjs",
+        "ultracontext": "./dist/uc.mjs"
+    },
+    "main": "./dist/index.mjs",
+    "types": "./dist/index.d.mts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.mts",
+            "import": "./dist/index.mjs",
+            "default": "./dist/index.mjs"
+        }
+    },
+    "files": [
+        "dist/"
+    ],
+    "scripts": {
+        "build": "tsdown",
+        "prepack": "pnpm run build",
+        "check": "tsc --noEmit",
+        "test": "node --import tsx --test 'src/**/*.test.ts'"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/ultracontext/ultracontext.git",
+        "directory": "apps/cli"
+    },
+    "author": "Ultracontext",
+    "license": "Apache-2.0",
+    "bugs": {
+        "url": "https://github.com/ultracontext/ultracontext/issues"
+    },
+    "homepage": "https://ultracontext.ai",
+    "keywords": [
+        "ai",
+        "llm",
+        "context",
+        "agents",
+        "cli",
+        "context-engineering",
+        "typescript"
+    ],
+    "dependencies": {
+        "@ultracontext/core": "workspace:*",
+        "@ultracontext/js": "workspace:*",
+        "@ultracontext/parsers": "workspace:*",
+        "@ultracontext/storage": "workspace:*",
+        "@ultracontext/sync": "workspace:*",
+        "@commander-js/extra-typings": "^14.0.0",
+        "@clack/prompts": "^0.11.0",
+        "commander": "^14.0.0",
+        "picocolors": "^1.1.1"
+    },
+    "devDependencies": {
+        "@types/node": "^22.18.6",
+        "tsdown": "^0.20.3",
+        "tsx": "^4.21.0",
+        "typescript": "^5.9.3"
+    }
+}

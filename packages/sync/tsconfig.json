@@ -6,7 +6,7 @@
         "strict": true,
         "skipLibCheck": true,
         "noEmit": true,
-        "lib": ["ESNext", "DOM"],
+        "lib": ["ESNext"],
         "types": ["node"]
     },
     "include": ["src/**/*.ts"]
