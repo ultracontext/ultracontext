@@ -45,7 +45,7 @@ uc list                                       # list all contexts
 
 ```bash bash
 export UC_CONTEXT=$id
-uc append "another note"
+echo "another note" | uc append    # body via stdin (id from UC_CONTEXT)
 uc get
 ```
 
@@ -76,23 +76,27 @@ uc create --from ctx_abc123 --version 2 --meta reason=rollback
 
 ### `uc append <id> [text]`
 
-Append a message to context `<id>`. Reads the body from the positional argument, piped
-stdin, or a `--json` object. `--meta key=val` (repeatable) tags the **message**.
+Append a message to context `<id>`. Reads the body from the positional `text`, piped
+stdin, or a `--message <json>` object. `--meta key=val` (repeatable) tags the
+**message** (and merges into a `--message` body).
 
 | Flag | Description |
 |------|-------------|
 | `--role <role>` | Message role (e.g. `user`, `assistant`) |
 | `--meta <key=val...>` | Message metadata pairs (repeatable) |
-| `--json [body]` | Machine output, or parse a raw message object |
+| `--message <json>` | Parse a raw JSON message object (`role` / `content` / `metadata`) |
 
 ```bash bash
 uc append ctx_abc123 "the API runs on port 8787" --role user
 echo "piped note" | uc append ctx_abc123
-uc append ctx_abc123 --json '{"role":"assistant","content":"done","metadata":{"task":"deploy"}}'
+uc append ctx_abc123 --message '{"role":"assistant","content":"done","metadata":{"task":"deploy"}}'
+uc append ctx_abc123 "tagged note" --meta source=cli
 
-# with UC_CONTEXT set, the id is implied
-UC_CONTEXT=ctx_abc123 uc append "another note"
+# with UC_CONTEXT set, the id is implied (body must come from stdin or --message)
+UC_CONTEXT=ctx_abc123 uc append --message '{"content":"another note"}'
 ```
+
+<Info>`--json` is the **global** machine-output toggle, not a body source. Raw message objects go through `--message`.</Info>
 
 ### `uc get <id>`
 

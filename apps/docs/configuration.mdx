@@ -46,7 +46,7 @@ UC_API_KEY=uc_live_... uc append "$id" "synced note"
 
 # set a default context, then drop the id from each verb
 export UC_CONTEXT=ctx_abc123
-uc append "another note"
+echo "another note" | uc append    # body via stdin (id from UC_CONTEXT)
 
 # point at a different local database (e.g. for tests)
 UC_DB_URL=file:/tmp/scratch.db uc list

@@ -43,10 +43,12 @@ targeted verb takes a context id, so you always know exactly what you're reading
 writing. Set `UC_CONTEXT` to drop the id from each command:
 
 ```bash bash
-export UC_CONTEXT=$id    # set once
-uc append "another note"
+export UC_CONTEXT=$id                 # set once
+echo "another note" | uc append      # body via stdin (id from UC_CONTEXT)
 uc get
 ```
+
+<Note>With `UC_CONTEXT` set, the lone positional on `uc append` is still read as the context id — so pipe the body via stdin or pass `--message '{...}'`.</Note>
 
 Fork or clone with `uc create --from <id>`. Attach `--meta key=val` (repeatable) on any
 verb. See the [CLI reference](/fundamentals/cli) for the full command tree.
