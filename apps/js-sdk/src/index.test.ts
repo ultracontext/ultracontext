@@ -68,6 +68,78 @@ describe('UltraContext', () => {
         assert.equal(res.version, 2);
     });
 
+    // -- create + metadata ----------------------------------------------------
+
+    // create with context metadata POSTs to /contexts carrying the metadata
+    it('shapes a create request with metadata', async () => {
+        const { fetch, calls } = fakeFetch({ id: 'ctx_new', metadata: { project: 'acme' }, created_at: 'now' });
+        const uc = new UltraContext({ apiKey: 'sk_live', baseUrl: 'https://api.example.com', fetch });
+
+        const res = await uc.create({ metadata: { project: 'acme' } });
+
+        const { url, init } = calls[0];
+        assert.equal(url, 'https://api.example.com/contexts');
+        assert.equal(init.method, 'POST');
+
+        // the body carries the context metadata
+        assert.deepEqual(JSON.parse(init.body as string), { metadata: { project: 'acme' } });
+
+        // the parsed response surfaces back to the caller
+        assert.equal(res.id, 'ctx_new');
+    });
+
+    // -- fork = create-from ---------------------------------------------------
+
+    // create({ from }) (fork/clone) shapes a body carrying the source + selector
+    it('shapes a fork (create from) request body', async () => {
+        const { fetch, calls } = fakeFetch({ id: 'ctx_fork', metadata: {}, created_at: 'now' });
+        const uc = new UltraContext({ apiKey: 'sk_live', baseUrl: 'https://api.example.com', fetch });
+
+        await uc.create({ from: 'ctx_src', version: 3, metadata: { forked: true } });
+
+        const { url, init } = calls[0];
+        assert.equal(url, 'https://api.example.com/contexts');
+        assert.equal(init.method, 'POST');
+
+        // the body carries from + the version selector + metadata
+        assert.deepEqual(JSON.parse(init.body as string), {
+            from: 'ctx_src',
+            version: 3,
+            metadata: { forked: true },
+        });
+    });
+
+    // -- deleteMany + metadata ------------------------------------------------
+
+    // deleteMany POSTs ids + metadata to the batch endpoint
+    it('shapes a deleteMany request with metadata', async () => {
+        const { fetch, calls } = fakeFetch({ results: [], deleted_count: 0 });
+        const uc = new UltraContext({ apiKey: 'sk_live', baseUrl: 'https://api.example.com', fetch });
+
+        await uc.deleteMany(['ctx_1', 'ctx_2'], { metadata: { reason: 'cleanup' } });
+
+        const { url, init } = calls[0];
+        assert.equal(url, 'https://api.example.com/contexts/delete-many');
+        assert.equal(init.method, 'POST');
+
+        // the body carries the ids + audit metadata
+        assert.deepEqual(JSON.parse(init.body as string), {
+            ids: ['ctx_1', 'ctx_2'],
+            metadata: { reason: 'cleanup' },
+        });
+    });
+
+    // deleteMany without metadata omits the metadata key entirely
+    it('shapes a deleteMany request without metadata', async () => {
+        const { fetch, calls } = fakeFetch({ results: [], deleted_count: 0 });
+        const uc = new UltraContext({ apiKey: 'sk_live', baseUrl: 'https://api.example.com', fetch });
+
+        await uc.deleteMany(['ctx_1']);
+
+        // no metadata key when none is passed
+        assert.deepEqual(JSON.parse(calls[0].init.body as string), { ids: ['ctx_1'] });
+    });
+
     // -- error mapping --------------------------------------------------------
 
     // a non-2xx response surfaces a typed UltraContextHttpError with the status
