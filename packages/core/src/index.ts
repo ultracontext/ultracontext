@@ -59,9 +59,19 @@ export { createKey } from './ops/create-key';
 export { verifyKey, verifyKeyHash, hashToken } from './ops/verify-key';
 export type { VerifiedKey } from './ops/verify-key';
 
+// -- events -------------------------------------------------------------------
+
+export { validateEnvelope, validateEmitInput, SCHEMA_VERSION, PRIVACY_LEVELS, DEFAULT_PRIVACY } from './events/envelope';
+export type { EventEnvelope, EventInput, EventError, Privacy } from './events/envelope';
+
+export type { EventStore, EventRow, DeliveryState, DeliveryCounts, EventListFilters } from './events/event-store';
+
+export { emitEvent, commitEvent, tailEvents, eventStatus, flushPending } from './events/ops';
+export type { EmitOptions, TailFilters, TailOptions, StatusContext, EventStatus, Deliver } from './events/ops';
+
 // -- public ids ---------------------------------------------------------------
 
-export { generatePublicId } from './public-ids';
+export { generatePublicId, generateEventId } from './public-ids';
 
 // -- api keys -----------------------------------------------------------------
 
