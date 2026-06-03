@@ -63,15 +63,26 @@ class RemoteContextClient implements ContextClient {
 
     // delete specific messages (--ids), else the whole context (--permanent).
     // metadata is plumbed through: version metadata for a message delete, audit
-    // metadata for a permanent delete.
+    // metadata for a permanent delete. Mirrors the local client's guards: an
+    // empty ids list and an implicit permanent are refused, never executed.
     async delete(input: DeleteInput): Promise<DeleteResult> {
-        // message-level delete — drop the targeted indices/ids, keep the context
-        if (input.ids && input.ids.length > 0) {
-            await this.sdk.delete(input.id, input.ids, input.metadata ? { metadata: input.metadata } : undefined);
-            return { deleted: true, id: input.id };
+        // message-level delete — ids PRESENT selects this branch; an EMPTY list
+        // is a caller bug, refused so it can never reach the permanent wipe.
+        // The API answers {data, version} — surface it so the CLI soft-delete
+        // envelope matches the local client's {deleted, id, data, version}.
+        if (input.ids) {
+            if (input.ids.length === 0) throw new Error('no message ids to delete — pass at least one id/index');
+            const res = await this.sdk.delete(input.id, input.ids, input.metadata ? { metadata: input.metadata } : undefined);
+            return { deleted: true, id: input.id, data: res.data as MessageView[], version: res.version };
         }
 
-        // whole-context delete — permanent removal on the hosted side, with audit
+        // whole-context delete — requires an EXPLICIT permanent:true, so a
+        // malformed input can never silently wipe a hosted context.
+        if (input.permanent !== true) {
+            throw new Error('nothing to delete — pass ids for a message delete, or permanent: true to delete the whole context');
+        }
+
+        // permanent removal on the hosted side, with audit metadata
         const res = await this.sdk.delete(input.id, input.metadata ? { permanent: true, metadata: input.metadata } : { permanent: true });
         return { deleted: true, id: res.id };
     }

@@ -142,9 +142,12 @@ describe('RemoteContextClient.delete', () => {
         assert.equal(res.id, 'ctx_42');
     });
 
-    // message-level delete → SDK.delete(id, ids, {metadata}), version metadata plumbed
-    it('removes specific messages via the SDK with version metadata', async () => {
-        const { sdk, calls } = fakeSdk();
+    // message-level delete → SDK.delete(id, ids, {metadata}), version metadata
+    // plumbed AND the API's {data, version} surfaced (not discarded) so the CLI
+    // soft-delete envelope matches the local client's {deleted,id,data,version}
+    it('removes specific messages via the SDK, surfacing {data, version}', async () => {
+        const { sdk, calls, responses } = fakeSdk();
+        responses.delete = { data: [{ id: 'm2', index: 0, metadata: {}, role: 'user', content: 'kept' }], version: 2 };
         const client = createRemoteClient(sdk);
 
         const res = await client.delete({ id: 'ctx_42', ids: [0, 1], metadata: { reason: 'cleanup' } });
@@ -155,6 +158,19 @@ describe('RemoteContextClient.delete', () => {
         assert.deepEqual(calls[0].args[2], { metadata: { reason: 'cleanup' } });
         assert.equal(res.deleted, true);
         assert.equal(res.id, 'ctx_42');
+        assert.equal(res.version, 2);
+        assert.equal((res.data ?? []).length, 1);
+    });
+
+    // an EMPTY ids list must throw — never fall through to the permanent branch
+    // (mirrors the local client guard; the hosted context must survive)
+    it('refuses empty ids and implicit permanent deletes', async () => {
+        const { sdk, calls } = fakeSdk();
+        const client = createRemoteClient(sdk);
+
+        await assert.rejects(() => client.delete({ id: 'ctx_42', ids: [] }), /ids/);
+        await assert.rejects(() => client.delete({ id: 'ctx_42' }), /permanent/);
+        assert.equal(calls.length, 0, 'no SDK call may happen on refused deletes');
     });
 });
 
