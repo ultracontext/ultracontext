@@ -12,8 +12,11 @@ import {
     syncStop,
     syncStatus,
     syncList,
+    syncReset,
     sourceAdd,
     sourceList,
+    sourceRemove,
+    sourceSetEnabled,
     parseRemoteSpec,
     saveConfig,
     defaultHostId,
@@ -22,7 +25,7 @@ import {
 } from '@ultracontext/sync';
 import { hostname } from 'node:os';
 
-import { emit, status, outputError } from '../../../lib/output';
+import { emit, status, outputError, shouldJson } from '../../../lib/output';
 
 // -- injectable runtime -------------------------------------------------------
 
@@ -49,7 +52,7 @@ export async function syncStatusAction(opts: JsonOpt, deps: ActionDeps = {}): Pr
         emit({ data: sessions }, { json: opts.json, human: () => humanStatus(sessions) }, deps.io);
         return 0;
     } catch (error) {
-        return outputError(error, { ...deps.io, json: opts.json });
+        return outputError(error, { ...deps.io, json: shouldJson({ json: opts.json }, deps.io) });
     }
 }
 
@@ -72,7 +75,7 @@ export async function syncListAction(opts: JsonOpt, deps: ActionDeps = {}): Prom
         );
         return 0;
     } catch (error) {
-        return outputError(error, { ...deps.io, json: opts.json });
+        return outputError(error, { ...deps.io, json: shouldJson({ json: opts.json }, deps.io) });
     }
 }
 
@@ -86,7 +89,7 @@ export async function syncStartAction(opts: JsonOpt, deps: ActionDeps = {}): Pro
         emit({ ok: true }, { json: opts.json, human: () => 'sync started' }, deps.io);
         return 0;
     } catch (error) {
-        return outputError(error, { ...deps.io, json: opts.json });
+        return outputError(error, { ...deps.io, json: shouldJson({ json: opts.json }, deps.io) });
     }
 }
 
@@ -100,7 +103,21 @@ export async function syncStopAction(opts: JsonOpt, deps: ActionDeps = {}): Prom
         emit({ ok: true }, { json: opts.json, human: () => 'sync paused' }, deps.io);
         return 0;
     } catch (error) {
-        return outputError(error, { ...deps.io, json: opts.json });
+        return outputError(error, { ...deps.io, json: shouldJson({ json: opts.json }, deps.io) });
+    }
+}
+
+// -- reset --------------------------------------------------------------------
+
+// `uc sync reset` → terminate every owned session, then restart enabled sources
+export async function syncResetAction(opts: JsonOpt, deps: ActionDeps = {}): Promise<number> {
+    try {
+        if (!opts.json) status('resetting sync…', deps.io);
+        await syncReset(deps.sync);
+        emit({ ok: true }, { json: opts.json, human: () => 'sync reset' }, deps.io);
+        return 0;
+    } catch (error) {
+        return outputError(error, { ...deps.io, json: shouldJson({ json: opts.json }, deps.io) });
     }
 }
 
@@ -128,7 +145,7 @@ export async function syncInitAction(
         emit({ data: config }, { json: opts.json, human: () => `initialized sync → ${config.remote}` }, deps.io);
         return 0;
     } catch (error) {
-        return outputError(error, { ...deps.io, json: opts.json });
+        return outputError(error, { ...deps.io, json: shouldJson({ json: opts.json }, deps.io) });
     }
 }
 
@@ -145,7 +162,7 @@ export async function syncSourceListAction(opts: JsonOpt, deps: ActionDeps = {})
         );
         return 0;
     } catch (error) {
-        return outputError(error, { ...deps.io, json: opts.json });
+        return outputError(error, { ...deps.io, json: shouldJson({ json: opts.json }, deps.io) });
     }
 }
 
@@ -162,7 +179,47 @@ export async function syncSourceAddAction(
         emit({ ok: true, existed }, { json: opts.json, human: () => `source ${name}: ${existed ? 'updated' : 'added'}` }, deps.io);
         return 0;
     } catch (error) {
-        return outputError(error, { ...deps.io, json: opts.json });
+        return outputError(error, { ...deps.io, json: shouldJson({ json: opts.json }, deps.io) });
+    }
+}
+
+// `uc sync source remove <name> [--purge-remote]` → terminate session + drop source
+export async function syncSourceRemoveAction(
+    name: string,
+    opts: JsonOpt & { purgeRemote?: boolean },
+    deps: ActionDeps = {},
+): Promise<number> {
+    try {
+        const purgedRemote = Boolean(opts.purgeRemote);
+        await sourceRemove(name, { purgeRemote: purgedRemote }, deps.sync);
+        emit(
+            { removed: true, name, purgedRemote },
+            { json: opts.json, human: () => `removed ${name}` },
+            deps.io,
+        );
+        return 0;
+    } catch (error) {
+        return outputError(error, { ...deps.io, json: shouldJson({ json: opts.json }, deps.io) });
+    }
+}
+
+// `uc sync source enable|disable <name>` → flip the enabled flag + apply session
+export async function syncSourceSetEnabledAction(
+    name: string,
+    enabled: boolean,
+    opts: JsonOpt,
+    deps: ActionDeps = {},
+): Promise<number> {
+    try {
+        await sourceSetEnabled(name, enabled, deps.sync);
+        emit(
+            { name, enabled },
+            { json: opts.json, human: () => `source ${name}: ${enabled ? 'enabled' : 'disabled'}` },
+            deps.io,
+        );
+        return 0;
+    } catch (error) {
+        return outputError(error, { ...deps.io, json: shouldJson({ json: opts.json }, deps.io) });
     }
 }
 
@@ -208,7 +265,10 @@ export function buildSyncCommand(): Command {
     sync.command('status').description('show live sync session status').action((_opts, cmd) => bridge((json) => syncStatusAction({ json }))(cmd));
     sync.command('list').description('list configured sources with sync state').action((_opts, cmd) => bridge((json) => syncListAction({ json }))(cmd));
 
-    // source — nested list/add group
+    // reset — terminate owned sessions, then restart enabled sources fresh
+    sync.command('reset').description('terminate owned sessions and restart enabled sources').action((_opts, cmd) => bridge((json) => syncResetAction({ json }))(cmd));
+
+    // source — nested list/add/remove/enable/disable group
     const source = sync.command('source').description('manage synced sources');
     source.command('list').description('list configured sources').action((_opts, cmd) => bridge((json) => syncSourceListAction({ json }))(cmd));
     source
@@ -218,6 +278,26 @@ export function buildSyncCommand(): Command {
         .argument('<path>', 'local path to sync')
         .option('--disabled', 'add the source without starting sync')
         .action((name, path, opts, cmd) => bridge((json) => syncSourceAddAction(name, path, { json, disabled: opts.disabled }))(cmd));
+
+    // remove — drop a source; --purge-remote also deletes its remote copy (destructive)
+    source
+        .command('remove')
+        .description('remove a synced source')
+        .argument('<name>', 'source name')
+        .option('--purge-remote', 'DESTRUCTIVE: also delete the source\'s remote workspace dir')
+        .action((name, opts, cmd) => bridge((json) => syncSourceRemoveAction(name, { json, purgeRemote: opts.purgeRemote }))(cmd));
+
+    // enable / disable — flip a source's enabled flag + apply the session change
+    source
+        .command('enable')
+        .description('enable a synced source')
+        .argument('<name>', 'source name')
+        .action((name, _opts, cmd) => bridge((json) => syncSourceSetEnabledAction(name, true, { json }))(cmd));
+    source
+        .command('disable')
+        .description('disable a synced source')
+        .argument('<name>', 'source name')
+        .action((name, _opts, cmd) => bridge((json) => syncSourceSetEnabledAction(name, false, { json }))(cmd));
 
     return sync as unknown as Command;
 }

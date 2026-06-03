@@ -191,12 +191,20 @@ uc sync stop                                        # pause enabled sources
 
 | Subcommand | Description |
 |-----------|-------------|
-| `init <target>` | Initialize sync for a workspace target (`local` \| `user@host[:root]`) |
+| `init <target>` | Initialize sync for a workspace target (`local` \| `user@host[:root]`; `--host-id <id>`) |
 | `source add <name> <path>` | Add or update a synced source (`--disabled` to add without starting) |
 | `source list` | List configured sources |
+| `source remove <name>` | Remove a source (`--purge-remote` also deletes its hub workspace dir — destructive) |
+| `source enable <name>` / `source disable <name>` | Enable / disable a source and start / pause its session |
 | `start` / `stop` | Start / pause sync for enabled sources |
 | `status` | Show live sync session status |
 | `list` | List configured sources with sync state |
+| `reset` | Terminate owned sessions and restart enabled sources |
+
+Sync respects `.ultracontextignore` files under `~/.ultracontext/ignores/` (a
+global file plus per-source `<source>/` files); their patterns become Mutagen
+`--ignore` flags. The global file is seeded with sensible defaults on first use.
+See [Sync → Ignore files](/concepts/sync) for the full list.
 
 ## Utility commands
 

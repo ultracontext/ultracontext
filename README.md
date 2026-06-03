@@ -109,10 +109,13 @@ uc update <id> --content <c>            # update messages (--id <m> | --index <i
 uc delete <id...>                       # delete a context (--permanent) or messages (--ids); many ids → batch (--permanent)
 uc list                                 # list ALL contexts (--source / --project_path / --limit)
 
-uc sync init <target> # set up fs-first sync to local | user@host
-uc sync source add    # add a synced source
+uc sync init <target> # set up fs-first sync to local | user@host (--host-id)
+uc sync source add    # add a synced source (--disabled)
+uc sync source remove # remove a source (--purge-remote deletes the hub dir — destructive)
+uc sync source enable|disable # toggle a source + start / pause its session
 uc sync start|stop    # start / pause sync for enabled sources
 uc sync status|list   # show live sessions / configured sources
+uc sync reset         # terminate owned sessions and restart enabled sources
 
 uc event emit         # commit a uc.event.v1 event (--kind / --source / --subject)
 uc event tail         # read the committed log — one JSON object per line (--limit, --local)
