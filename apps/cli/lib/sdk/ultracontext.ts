@@ -16,7 +16,7 @@ import type {
     ListContextsInput, ListContextsResponse,
     UpdateInput, UpdateResponse, MutationOptions,
     DeleteInput, DeleteResponse, DeletePermanentInput, PermanentDeleteResponse,
-    DeleteManyResponse, DeleteManyResult,
+    DeleteManyResponse,
 } from '@ultracontext/js';
 
 // the swappable local-backend seam — `#local-backend` resolves to the node
@@ -230,25 +230,14 @@ export class UltraContext {
 
     // -- deleteMany -----------------------------------------------------------
 
-    // batch-delete whole contexts. Remote hits the batch endpoint; local loops
-    // permanent deletes, capturing per-id errors into the row (never aborting).
+    // batch-delete whole contexts. Both kinds DELEGATE to their backend's own
+    // deleteMany — remote hits the batch endpoint in ONE HTTP call, local fans
+    // out permanent deletes (the loop lives ONCE, in LocalContextClient). The
+    // {results, deleted_count} envelope is surfaced verbatim either way.
     async deleteMany(ids: string[], options?: MutationOptions): Promise<DeleteManyResponse> {
         const backend = await this.resolve();
         if (backend.kind === 'remote') return backend.sdk.deleteMany(ids, options);
 
-        // local fan-out — one permanent delete per id, errors captured not thrown
-        const results: DeleteManyResult[] = [];
-        for (const id of ids) {
-            try {
-                await backend.client.delete({ id, permanent: true, metadata: options?.metadata });
-                results.push({ id, deleted: true });
-            } catch (error) {
-                results.push({ id, deleted: false, error: error instanceof Error ? error.message : String(error) });
-            }
-        }
-
-        // a deleted_count summary alongside the per-id rows
-        const deleted_count = results.filter((r) => r.deleted).length;
-        return { results, deleted_count };
+        return backend.client.deleteMany({ ids, metadata: options?.metadata });
     }
 }

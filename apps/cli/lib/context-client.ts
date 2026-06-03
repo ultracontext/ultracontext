@@ -44,6 +44,10 @@ export type UpdateInput = { id: string; updates: Array<Record<string, unknown>>;
 // = audit metadata on a permanent delete, version metadata on a message delete.
 export type DeleteInput = { id: string; permanent?: boolean; ids?: (string | number)[]; metadata?: Record<string, unknown> };
 
+// deleteMany: batch-delete WHOLE contexts (always permanent). metadata is audit
+// metadata applied to every delete in the batch.
+export type DeleteManyInput = { ids: string[]; metadata?: Record<string, unknown> };
+
 // list: filter the project's contexts. Mirrors core ContextFilters — every
 // field maps to a column/json_extract the sqlite adapter genuinely filters on
 // (source/user_id/host/project_path/session_id via metadata, after/before via
@@ -95,6 +99,15 @@ export type DeleteResult = {
     version?: number;
 };
 
+// deleteMany → one row per requested id (deleted true/false + an error reason on
+// failure) plus a deleted_count summary. Mirrors the SDK's DeleteManyResponse so
+// the unified facade can surface it verbatim. Partial failures never abort: every
+// id gets a row regardless of whether its delete succeeded.
+export type DeleteManyResult = {
+    results: Array<{ id: string; deleted: boolean; error?: string }>;
+    deleted_count: number;
+};
+
 // list → the project's contexts (newest first)
 export type ListResult = { data: Array<{ id: string; metadata: Record<string, unknown>; created_at: string }> };
 
@@ -107,5 +120,6 @@ export interface ContextClient {
     get(input: GetInput): Promise<GetResult>;
     update(input: UpdateInput): Promise<UpdateResult>;
     delete(input: DeleteInput): Promise<DeleteResult>;
+    deleteMany(input: DeleteManyInput): Promise<DeleteManyResult>;
     list(input: ListInput): Promise<ListResult>;
 }

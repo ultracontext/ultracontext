@@ -20,6 +20,7 @@ describe('ContextClient contract', () => {
             get: async () => ({ data: [], version: 0 }),
             update: async () => ({ data: [], version: 1 }),
             delete: async (input) => ({ deleted: true, id: input.id }),
+            deleteMany: async (input) => ({ results: input.ids.map((id) => ({ id, deleted: true })), deleted_count: input.ids.length }),
             list: async () => ({ data: [] }),
         };
 
@@ -38,5 +39,11 @@ describe('ContextClient contract', () => {
         const deleted = await client.delete({ id: 'ctx_x' });
         assert.equal(deleted.deleted, true);
         assert.equal(deleted.id, 'ctx_x');
+
+        // deleteMany reports one row per id + a deleted_count summary
+        const batch = await client.deleteMany({ ids: ['ctx_a', 'ctx_b'] });
+        assert.equal(batch.results.length, 2);
+        assert.equal(batch.deleted_count, 2);
+        assert.equal(batch.results[0].id, 'ctx_a');
     });
 });

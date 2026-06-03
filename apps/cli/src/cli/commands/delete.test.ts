@@ -282,6 +282,157 @@ describe('uc delete --ids (registered command)', () => {
     });
 });
 
+// -- batch delete (multiple ids) ----------------------------------------------
+
+describe('uc delete <id...> (batch)', () => {
+    // happy path: multiple ids + --permanent → all deleted, exit 0, JSON envelope
+    it('permanently deletes many contexts and emits the {results, deleted_count} envelope', async () => {
+        const db = { dbUrl: tempDbUrl(), cwd: '/work/del-batch-ok' };
+        const a = await seedContext(db, [{ content: 'a' }]);
+        const b = await seedContext(db, [{ content: 'b' }]);
+
+        const { stdout, stderr, code } = await runWithDb([a, b, '--permanent'], db, { json: true });
+        assert.equal(code, 0, 'all deleted → exit 0');
+
+        // the envelope reports both rows + a deleted_count of 2
+        const parsed = JSON.parse(stdout.trim()) as { results: Array<{ id: string; deleted: boolean }>; deleted_count: number };
+        assert.equal(parsed.deleted_count, 2);
+        assert.equal(parsed.results.length, 2);
+        assert.ok(parsed.results.every((r) => r.deleted));
+        assert.equal(stderr, '');
+
+        // both contexts are actually gone
+        const client = await createLocalClient(db);
+        await assert.rejects(() => client.get({ id: a }));
+        await assert.rejects(() => client.get({ id: b }));
+    });
+
+    // multiple ids WITHOUT --permanent must error (batch is always permanent)
+    it('refuses a multi-id delete without --permanent and deletes nothing', async () => {
+        const db = { dbUrl: tempDbUrl(), cwd: '/work/del-batch-noperm' };
+        const a = await seedContext(db, [{ content: 'a' }]);
+        const b = await seedContext(db, [{ content: 'b' }]);
+
+        const { code, stderr } = await runWithDb([a, b], db, { json: true });
+        assert.equal(code, 1);
+        assert.match(stderr, /permanent/);
+
+        // both contexts are untouched — the guard aborted before any delete
+        const client = await createLocalClient(db);
+        assert.equal((await client.get({ id: a })).data.length, 1);
+        assert.equal((await client.get({ id: b })).data.length, 1);
+    });
+
+    // multiple ids combined with --ids is ambiguous (whole-context vs message) → error
+    it('refuses combining multiple ids with --ids as ambiguous', async () => {
+        const db = { dbUrl: tempDbUrl(), cwd: '/work/del-batch-ids' };
+        const a = await seedContext(db, [{ content: 'a' }]);
+        const b = await seedContext(db, [{ content: 'b' }]);
+
+        const { code, stderr } = await runWithDb([a, b, '--permanent', '--ids', '0'], db, { json: true });
+        assert.equal(code, 1);
+        assert.match(stderr, /ids|message/);
+
+        // nothing was deleted — the ambiguity aborted up front
+        const client = await createLocalClient(db);
+        assert.equal((await client.get({ id: a })).data.length, 1);
+        assert.equal((await client.get({ id: b })).data.length, 1);
+    });
+
+    // partial failure: one real id + one missing id → exit 1, rows still surfaced
+    it('exits 1 on a partial failure but still surfaces every row', async () => {
+        const db = { dbUrl: tempDbUrl(), cwd: '/work/del-batch-partial' };
+        const a = await seedContext(db, [{ content: 'a' }]);
+
+        const { stdout, code } = await runWithDb([a, 'ctx_missing', '--permanent'], db, { json: true });
+        assert.equal(code, 1, 'any failed row → exit 1');
+
+        // the envelope is STILL on stdout, with per-id rows + the error reason
+        const parsed = JSON.parse(stdout.trim()) as { results: Array<{ id: string; deleted: boolean; error?: string }>; deleted_count: number };
+        assert.equal(parsed.deleted_count, 1);
+        const bad = parsed.results.find((r) => r.id === 'ctx_missing');
+        assert.equal(bad?.deleted, false);
+        assert.ok(bad?.error);
+
+        // the real context was deleted despite the sibling failure (no abort)
+        const client = await createLocalClient(db);
+        await assert.rejects(() => client.get({ id: a }));
+    });
+
+    // human (non-JSON) output: one line per id + a count summary on a TTY
+    it('prints one line per id plus a count summary in human mode', async () => {
+        const db = { dbUrl: tempDbUrl(), cwd: '/work/del-batch-human' };
+        const a = await seedContext(db, [{ content: 'a' }]);
+        const b = await seedContext(db, [{ content: 'b' }]);
+
+        const { stdout, code } = await runWithDb([a, b, '--permanent'], db, { isTTY: true });
+        assert.equal(code, 0);
+
+        // every id appears on its own line, plus a summary mentioning the count
+        assert.match(stdout, new RegExp(a));
+        assert.match(stdout, new RegExp(b));
+        assert.match(stdout, /2/);
+    });
+});
+
+// -- $UC_CONTEXT fallback (single-target only) --------------------------------
+
+describe('uc delete $UC_CONTEXT fallback', () => {
+    // with ZERO positionals, the env var supplies the single target (unchanged)
+    it('uses $UC_CONTEXT when no id positional is given', async () => {
+        const db = { dbUrl: tempDbUrl(), cwd: '/work/del-envctx' };
+        const id = await seedContext(db, [{ content: 'bye' }]);
+
+        const savedCtx = process.env.UC_CONTEXT;
+        process.env.UC_CONTEXT = id;
+        try {
+            const { code } = await runWithDb(['--permanent'], db);
+            assert.equal(code, 0);
+        } finally {
+            if (savedCtx === undefined) delete process.env.UC_CONTEXT;
+            else process.env.UC_CONTEXT = savedCtx;
+        }
+
+        // the env-targeted context is gone
+        const client = await createLocalClient(db);
+        await assert.rejects(() => client.get({ id }));
+    });
+});
+
+// -- batch via the registered action (argv path) ------------------------------
+
+describe('uc delete <id...> (registered command, argv)', () => {
+    // drive the REAL action through parseAsync: multi-id + --permanent batch
+    it('batch-deletes via the registered action, exit 0 when all deleted', async () => {
+        const db = { dbUrl: tempDbUrl(), cwd: '/work/del-batch-argv' };
+        const a = await seedContext(db, [{ content: 'a' }]);
+        const b = await seedContext(db, [{ content: 'b' }]);
+
+        const savedDb = process.env.UC_DB_URL;
+        const savedCode = process.exitCode;
+        process.env.UC_DB_URL = db.dbUrl;
+        process.exitCode = 0;
+
+        try {
+            const program = new Command('uc');
+            program.option('--json');
+            program.addCommand(buildDeleteCommand());
+            program.exitOverride();
+            await program.parseAsync(['node', 'uc', '--json', 'delete', a, b, '--permanent']);
+            assert.equal(process.exitCode, 0);
+        } finally {
+            process.exitCode = savedCode;
+            if (savedDb === undefined) delete process.env.UC_DB_URL;
+            else process.env.UC_DB_URL = savedDb;
+        }
+
+        // both contexts gone
+        const client = await createLocalClient(db);
+        await assert.rejects(() => client.get({ id: a }));
+        await assert.rejects(() => client.get({ id: b }));
+    });
+});
+
 // -- typo-safe parsing --------------------------------------------------------
 
 describe('uc delete is typo-safe', () => {

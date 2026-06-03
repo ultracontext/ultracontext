@@ -133,21 +133,28 @@ uc update ctx_abc123 --index 0 --content "New system prompt"
 uc update ctx_abc123 --id msg_xyz --content "Fixed!" --meta reason=typo
 ```
 
-### `uc delete <id>`
+### `uc delete <id...>`
 
 Delete the whole context `<id>` (`--permanent`) or specific messages (`--ids`). The
 `--meta` flag attaches an **audit** record on a permanent delete, or **version**
 metadata on a message delete.
 
+Pass **multiple ids** to **batch-delete** whole contexts. A batch is always
+permanent, so it requires `--permanent` (a bare multi-id delete errors), and
+`--ids` is rejected as ambiguous. The batch emits a `{ results, deleted_count }`
+envelope (one row per id, with an error reason on failures) and exits `0` only
+when every id deleted — any failed row exits `1` while still printing the rows.
+
 | Flag | Description |
 |------|-------------|
-| `--permanent` | Permanently delete the whole context (irreversible) |
-| `--ids <ids...>` | Delete only these message indices/ids |
+| `--permanent` | Permanently delete the whole context (irreversible; required for a batch) |
+| `--ids <ids...>` | Delete only these message indices/ids (single target only) |
 | `--meta <key=val...>` | Metadata pairs — audit (permanent) or version (messages) |
 
 ```bash bash
 uc delete ctx_abc123 --permanent --meta reason="GDPR request"
 uc delete ctx_abc123 --ids 0 2 -1 --meta reason=cleanup
+uc delete ctx_abc123 ctx_def456 ctx_ghi789 --permanent   # batch permanent delete
 ```
 
 ### `uc list`

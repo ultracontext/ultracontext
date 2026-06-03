@@ -1,8 +1,14 @@
 // =============================================================================
-// delete — `uc delete <id>`. Drops a whole context (--permanent) or specific
-// messages (--ids). Client-agnostic: it talks to a ContextClient (local|remote)
-// resolved via lib/resolve-client. Pipe-aware output: data → stdout, errors →
-// stderr; one JSON line in machine mode. Typo-safe: unknown flags abort.
+// delete — `uc delete <id...>`. ONE id keeps the original single-target rules
+// (drop the whole context with --permanent, or specific messages with --ids).
+// MULTIPLE ids switch to a BATCH permanent delete of whole contexts, which is
+// always permanent → it REQUIRES an explicit --permanent (a bare multi-id delete
+// errors), and --ids is refused as ambiguous. Client-agnostic: it talks to a
+// ContextClient (local|remote) via lib/resolve-client. Pipe-aware output: data →
+// stdout, errors → stderr; one JSON line in machine mode. Typo-safe: unknown
+// flags abort. EXIT CODE: the batch exits 0 only when EVERY row deleted; ANY
+// failed row exits 1 (rows + envelope still emitted) so a script can branch on
+// the code while a human still sees which ids failed.
 // =============================================================================
 
 import { Command } from '@commander-js/extra-typings';
@@ -48,14 +54,15 @@ function parseMeta(pairs?: string[]): Record<string, unknown> | undefined {
     return meta;
 }
 
-// build the `delete` Command — positional <id>, --permanent, --ids, --meta
-function buildCommand(): Command<[string | undefined]> {
+// build the `delete` Command — variadic <id...>, --permanent, --ids, --meta.
+// One id keeps the single-target rules; many ids → a batch permanent delete.
+function buildCommand(): Command<[string[]]> {
     return new Command('delete')
         .alias('rm')
-        .description('delete a context or messages')
-        .argument('[id]', 'context id (or set UC_CONTEXT)')
-        .option('--permanent', 'permanently delete the whole context')
-        .option('--ids <ids...>', 'delete only these message indices/ids')
+        .description('delete a context (or many), or messages')
+        .argument('[ids...]', 'context id(s) (or set UC_CONTEXT for one)')
+        .option('--permanent', 'permanently delete the whole context (required for batch)')
+        .option('--ids <ids...>', 'delete only these message indices/ids (single target only)')
         .option('--meta <pair...>', 'metadata key=val (audit / version)');
 }
 
@@ -81,14 +88,46 @@ export async function runDelete(args: string[], deps: DeleteDeps = {}): Promise<
         command.parse(args, { from: 'user' });
         const opts = command.opts() as { permanent?: boolean; ids?: string[]; meta?: string[] };
 
-        // resolve the target context — explicit id arg, else $UC_CONTEXT, else throw
-        const id = requireContextId(command.args[0]);
+        // the positional context id(s) — variadic, so 0, 1, or many
+        const positionals = command.args as string[];
 
         // resolve the backing client (local sqlite by default)
         const client = await resolve();
 
         // --meta = version metadata on a message delete, audit metadata on a permanent one
         const metadata = parseMeta(opts.meta);
+
+        // BATCH path — two+ positional ids → permanent delete of whole contexts.
+        // It is always permanent, so it REQUIRES an explicit --permanent (a bare
+        // multi-id delete errors) and --ids is refused as ambiguous (whole-context
+        // vs message). Exit 0 only when EVERY row deleted; any failure → exit 1.
+        if (positionals.length > 1) {
+            if (opts.ids && opts.ids.length > 0) {
+                throw new Error('cannot combine multiple context ids with --ids — --ids deletes messages from ONE context');
+            }
+            if (!opts.permanent) {
+                throw new Error('batch delete is permanent — pass --permanent');
+            }
+
+            const result = await client.deleteMany({ ids: positionals, metadata });
+
+            // human: one line per id (deleted / failed: reason) + a count summary
+            emit(result, {
+                json,
+                human: (d) => {
+                    const r = d as typeof result;
+                    const rows = r.results.map((row) => (row.deleted ? `deleted ${row.id}` : `failed ${row.id}: ${row.error}`));
+                    return [...rows, `deleted ${r.deleted_count}/${r.results.length}`].join('\n');
+                },
+            }, io);
+
+            // exit 1 if ANY row failed (rows + envelope already emitted), else 0
+            return result.deleted_count === result.results.length ? 0 : 1;
+        }
+
+        // SINGLE-target path — explicit id arg, else $UC_CONTEXT, else throw.
+        // The env fallback only applies when ZERO positionals were given.
+        const id = requireContextId(positionals[0]);
 
         // message-level delete — drop only the targeted indices/ids (versioned)
         if (opts.ids && opts.ids.length > 0) {

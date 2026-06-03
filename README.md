@@ -106,7 +106,7 @@ uc create [--from <id>]                 # create a context, or fork/clone from <
 uc append <id> [text]                   # append a message (text | --message | stdin)
 uc get <id>                             # read a context (--version / --at / --before / --history)
 uc update <id> --content <c>            # update messages (--id <m> | --index <i>)
-uc delete <id>                          # delete a context (--permanent) or messages (--ids)
+uc delete <id...>                       # delete a context (--permanent) or messages (--ids); many ids → batch (--permanent)
 uc list                                 # list ALL contexts (--source / --project_path / --limit)
 
 uc sync init <target> # set up fs-first sync to local | user@host

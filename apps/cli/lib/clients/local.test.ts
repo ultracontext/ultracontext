@@ -166,6 +166,32 @@ describe('LocalContextClient.delete', () => {
     });
 });
 
+// -- deleteMany ---------------------------------------------------------------
+
+describe('LocalContextClient.deleteMany', () => {
+    // batch delete fans out permanent deletes, capturing per-id errors as rows
+    it('deletes many contexts and captures per-id errors without aborting', async () => {
+        const client = await freshClient();
+
+        // two real contexts + one bogus id (the bogus one must NOT abort the batch)
+        const a = await client.create({});
+        const b = await client.create({});
+
+        const res = await client.deleteMany({ ids: [a.id, b.id, 'ctx_missing'] });
+
+        // every requested id gets a row; the two real ones deleted, the bogus failed
+        assert.equal(res.results.length, 3);
+        assert.equal(res.deleted_count, 2);
+        const bad = res.results.find((r) => r.id === 'ctx_missing');
+        assert.equal(bad?.deleted, false);
+        assert.ok(bad?.error, 'the missing id carries an error reason');
+
+        // the two real contexts are actually gone
+        await assert.rejects(() => client.get({ id: a.id }));
+        await assert.rejects(() => client.get({ id: b.id }));
+    });
+});
+
 // -- errors / fresh home ------------------------------------------------------
 
 describe('LocalContextClient edge cases', () => {

@@ -25,6 +25,7 @@ import type {
     GetInput, GetResult,
     UpdateInput, UpdateResult,
     DeleteInput, DeleteResult,
+    DeleteManyInput, DeleteManyResult,
     ListInput, ListResult,
     MessageView, VersionEntry,
 } from '../context-client';
@@ -112,6 +113,27 @@ export class LocalContextClient implements ContextClient {
         // surface it on the result so --meta is observable.
         const res = unwrap(await deleteContextPermanent(this.storage, this.projectId, input.id, { auditMetadata: input.metadata }));
         return { deleted: true, id: res.id, ...(res.metadata ? { metadata: res.metadata } : {}) };
+    }
+
+    // batch-delete WHOLE contexts. Fan out the existing permanent-delete path
+    // (so the guard semantics are REUSED, not duplicated), one id at a time,
+    // capturing each id's outcome into a row. A failing id is recorded as a
+    // failed row and NEVER aborts the batch — partial success is first-class.
+    async deleteMany(input: DeleteManyInput): Promise<DeleteManyResult> {
+        const results: DeleteManyResult['results'] = [];
+
+        // one permanent delete per id; errors captured on the row, not thrown
+        for (const id of input.ids) {
+            try {
+                await this.delete({ id, permanent: true, metadata: input.metadata });
+                results.push({ id, deleted: true });
+            } catch (error) {
+                results.push({ id, deleted: false, error: error instanceof Error ? error.message : String(error) });
+            }
+        }
+
+        // a deleted_count summary alongside the per-id rows
+        return { results, deleted_count: results.filter((r) => r.deleted).length };
     }
 
     // list the project's contexts (newest first). Forward the FULL filter set —

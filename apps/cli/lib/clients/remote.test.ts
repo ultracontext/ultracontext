@@ -28,6 +28,7 @@ function fakeSdk() {
         get: { data: [{ id: 'm1', index: 0, metadata: {}, role: 'user', content: 'hi' }], version: 1 },
         update: { data: [{ id: 'm1', index: 0, metadata: {}, role: 'user', content: 'new' }], version: 2 },
         delete: { deleted: true, id: 'ctx_42' },
+        deleteMany: { results: [{ id: 'ctx_42', deleted: true }], deleted_count: 1 },
     };
 
     // the fake exposes only the methods the client uses + the call log
@@ -37,6 +38,7 @@ function fakeSdk() {
         get: record('get'),
         update: record('update'),
         delete: record('delete'),
+        deleteMany: record('deleteMany'),
     } as unknown as UltraContext;
 
     return { sdk, calls, responses };
@@ -171,6 +173,41 @@ describe('RemoteContextClient.delete', () => {
         await assert.rejects(() => client.delete({ id: 'ctx_42', ids: [] }), /ids/);
         await assert.rejects(() => client.delete({ id: 'ctx_42' }), /permanent/);
         assert.equal(calls.length, 0, 'no SDK call may happen on refused deletes');
+    });
+});
+
+// -- deleteMany ---------------------------------------------------------------
+
+describe('RemoteContextClient.deleteMany', () => {
+    // batch delete → ONE SDK.deleteMany(ids, {metadata}) call; results surfaced verbatim
+    it('delegates the batch to a single SDK call, surfacing the envelope', async () => {
+        const { sdk, calls, responses } = fakeSdk();
+        responses.deleteMany = { results: [{ id: 'a', deleted: true }, { id: 'b', deleted: false, error: 'not_found' }], deleted_count: 1 };
+        const client = createRemoteClient(sdk);
+
+        const res = await client.deleteMany({ ids: ['a', 'b'], metadata: { reason: 'gdpr' } });
+
+        // exactly ONE HTTP call — the SDK owns the batch endpoint, not a fan-out loop
+        assert.equal(calls.length, 1);
+        assert.equal(calls[0].method, 'deleteMany');
+        assert.deepEqual(calls[0].args[0], ['a', 'b']);
+        assert.deepEqual(calls[0].args[1], { metadata: { reason: 'gdpr' } });
+
+        // the {results, deleted_count} envelope passes through unchanged
+        assert.equal(res.deleted_count, 1);
+        assert.equal(res.results.length, 2);
+        assert.equal(res.results[1].error, 'not_found');
+    });
+
+    // no metadata → no options arg forwarded (the SDK omits the key itself)
+    it('omits options when no metadata is given', async () => {
+        const { sdk, calls } = fakeSdk();
+        const client = createRemoteClient(sdk);
+
+        await client.deleteMany({ ids: ['a'] });
+
+        assert.deepEqual(calls[0].args[0], ['a']);
+        assert.equal(calls[0].args[1], undefined);
     });
 });
 

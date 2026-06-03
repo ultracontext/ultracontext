@@ -14,6 +14,7 @@ import type {
     GetInput, GetResult,
     UpdateInput, UpdateResult,
     DeleteInput, DeleteResult,
+    DeleteManyInput, DeleteManyResult,
     ListInput, ListResult,
     MessageView, VersionEntry,
 } from '../context-client';
@@ -85,6 +86,14 @@ class RemoteContextClient implements ContextClient {
         // permanent removal on the hosted side, with audit metadata
         const res = await this.sdk.delete(input.id, input.metadata ? { permanent: true, metadata: input.metadata } : { permanent: true });
         return { deleted: true, id: res.id };
+    }
+
+    // batch-delete WHOLE contexts via the SDK's real batch endpoint — ONE HTTP
+    // call (POST /contexts/delete-many), no client-side fan-out. The SDK's
+    // {results, deleted_count} envelope (which already carries per-id errors for
+    // 207/500 partials) is surfaced VERBATIM.
+    async deleteMany(input: DeleteManyInput): Promise<DeleteManyResult> {
+        return this.sdk.deleteMany(input.ids, input.metadata ? { metadata: input.metadata } : undefined);
     }
 
     // list the project's contexts (newest first), filtered — SDK's list overload
