@@ -2,7 +2,8 @@ import { and, asc, desc, eq, gt, inArray, isNull, lt, ne, sql } from 'drizzle-or
 import type { BaseSQLiteDatabase } from 'drizzle-orm/sqlite-core';
 
 import type { StorageAdapter, NodeRow, NodeInsertRow, ApiKeyRow, ProjectRow, ContextFilters, TransactionOptions } from '@ultracontext/core';
-import { schema, nodes, api_keys, projects } from './schema';
+import type { EventStore, EventRow, EventListFilters, DeliveryCounts } from '@ultracontext/core';
+import { schema, nodes, api_keys, projects, events } from './schema';
 
 // =============================================================================
 // SQLITE ADAPTER (driver-agnostic) — the StorageAdapter over ANY drizzle SQLite
@@ -18,7 +19,7 @@ export type SqliteDb = BaseSQLiteDatabase<'sync' | 'async', unknown, typeof sche
 
 // -- adapter ------------------------------------------------------------------
 
-export class SqliteAdapter implements StorageAdapter {
+export class SqliteAdapter implements StorageAdapter, EventStore {
     constructor(private db: SqliteDb) {}
 
     // -- nodes: queries -------------------------------------------------------
@@ -167,6 +168,69 @@ export class SqliteAdapter implements StorageAdapter {
 
     async deleteProject(id: number) {
         await this.db.delete(projects).where(eq(projects.id, id));
+    }
+
+    // -- events (EventStore port) ---------------------------------------------
+
+    // insert one event row. ON CONFLICT(event_id) DO NOTHING maps the UNIQUE
+    // violation to inserted:false across ALL drivers (libsql/bun/sql.js) without
+    // a try/catch or message-sniffing — an empty .returning() means a dupe.
+    async insertEvent(row: EventRow): Promise<{ inserted: boolean }> {
+        const inserted = await this.db
+            .insert(events)
+            .values(row)
+            .onConflictDoNothing({ target: events.event_id })
+            .returning({ event_id: events.event_id });
+        return { inserted: inserted.length > 0 };
+    }
+
+    // newest-LAST tail slice: filter, order oldest→newest, cap to the newest
+    // `limit` rows (so callers reverse for chronological output).
+    async listEvents(filters: EventListFilters): Promise<EventRow[]> {
+        const conditions = [];
+        if (filters.committed) conditions.push(eq(events.delivery_state, 'committed'));
+        if (filters.kind) conditions.push(eq(events.kind, filters.kind));
+        if (filters.source) conditions.push(eq(events.source, filters.source));
+        if (filters.subject) conditions.push(eq(events.subject, filters.subject));
+
+        // grab the newest `limit` rows (occurred_at DESC, id DESC tiebreak)…
+        const rows = await this.db
+            .select()
+            .from(events)
+            .where(conditions.length ? and(...conditions) : undefined)
+            .orderBy(desc(events.occurred_at), desc(events.id))
+            .limit(filters.limit);
+
+        // …then reverse so the result is newest-LAST (oldest-of-tail first)
+        return rows.reverse() as EventRow[];
+    }
+
+    // pending rows, oldest first (occurred_at ASC, id ASC), optionally capped
+    async pendingEvents(limit?: number): Promise<EventRow[]> {
+        const query = this.db
+            .select()
+            .from(events)
+            .where(eq(events.delivery_state, 'pending'))
+            .orderBy(asc(events.occurred_at), asc(events.id));
+        const rows = await (limit === undefined ? query : query.limit(limit));
+        return rows as EventRow[];
+    }
+
+    // flip a pending row to 'sent' (delivered to the hub)
+    async markDelivered(eventId: string): Promise<void> {
+        await this.db.update(events).set({ delivery_state: 'sent' }).where(eq(events.event_id, eventId));
+    }
+
+    // counts grouped by delivery_state (one grouped scan, zero-filled)
+    async countByDeliveryState(): Promise<DeliveryCounts> {
+        const rows = await this.db
+            .select({ state: events.delivery_state, n: sql<number>`count(*)` })
+            .from(events)
+            .groupBy(events.delivery_state);
+
+        const counts: DeliveryCounts = { committed: 0, pending: 0, sent: 0 };
+        for (const { state, n } of rows) counts[state as keyof DeliveryCounts] = Number(n);
+        return counts;
     }
 
     // -- transactions ---------------------------------------------------------

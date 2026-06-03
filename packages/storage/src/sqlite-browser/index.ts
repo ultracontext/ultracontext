@@ -1,6 +1,6 @@
 /// <reference lib="dom" />
 
-import type { StorageAdapter } from '@ultracontext/core';
+import type { StorageAdapter, EventStore } from '@ultracontext/core';
 import { SqliteAdapter } from '../sqlite/adapter';
 import { schema, SCHEMA_SQL } from '../sqlite/schema';
 
@@ -88,7 +88,9 @@ function resolveWasmUrl(override?: string): string | undefined {
 
 // flag the methods that change data — a debounced snapshot save fires after any
 // of these resolve. everything else (find*/list*) reads and never schedules.
-const MUTATING_METHODS = new Set<keyof StorageAdapter>([
+// includes the EventStore writes (insertEvent/markDelivered) so emitted events
+// persist to IndexedDB the same way contexts do.
+const MUTATING_METHODS = new Set<keyof StorageAdapter | keyof EventStore>([
     'insertNodes',
     'deleteNodesByContextId',
     'deleteNodeByPublicId',
@@ -99,6 +101,8 @@ const MUTATING_METHODS = new Set<keyof StorageAdapter>([
     'insertProject',
     'deleteProject',
     'transaction',
+    'insertEvent',
+    'markDelivered',
 ]);
 
 // wrap the adapter so mutations schedule a debounced db.export() → IndexedDB
@@ -149,7 +153,7 @@ function wrapWithPersistence(adapter: SqliteAdapter, db: SqlJsDatabase, idb: IDB
 
             // bind so private `this.db` access inside the adapter keeps working
             const fn = value.bind(target);
-            if (!MUTATING_METHODS.has(prop as keyof StorageAdapter)) return fn;
+            if (!MUTATING_METHODS.has(prop as keyof StorageAdapter | keyof EventStore)) return fn;
 
             // mutating call — await the result, then schedule a debounced save
             return async (...args: unknown[]) => {

@@ -37,7 +37,25 @@ export const nodes = sqliteTable('nodes', {
     context_id: text('context_id'),
 });
 
-export const schema = { projects, api_keys, nodes };
+// the events table — the EventStore port's storage. event_id is UNIQUE (the
+// atomic dedupe), delivery_state is the outbox, envelope is the exact JSON for
+// round-trip fidelity. project_id nullable (no project scoping in v1).
+export const events = sqliteTable('events', {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    event_id: text('event_id').notNull().unique(),
+    kind: text('kind').notNull(),
+    source: text('source').notNull(),
+    subject: text('subject').notNull(),
+    occurred_at: text('occurred_at').notNull(),
+    host: text('host').notNull(),
+    privacy: text('privacy').notNull(),
+    received_at: text('received_at'),
+    delivery_state: text('delivery_state').notNull().default('pending'),
+    project_id: integer('project_id'),
+    envelope: text('envelope').notNull(),
+});
+
+export const schema = { projects, api_keys, nodes, events };
 
 // DDL applied on first open (no migration tooling yet — local file or :memory:)
 export const SCHEMA_SQL = `
@@ -70,4 +88,21 @@ CREATE TABLE IF NOT EXISTS nodes (
 );
 CREATE INDEX IF NOT EXISTS idx_nodes_context_id ON nodes(context_id);
 CREATE INDEX IF NOT EXISTS idx_nodes_project_type ON nodes(project_id, type);
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id TEXT NOT NULL UNIQUE,
+    kind TEXT NOT NULL,
+    source TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    occurred_at TEXT NOT NULL,
+    host TEXT NOT NULL,
+    privacy TEXT NOT NULL,
+    received_at TEXT,
+    delivery_state TEXT NOT NULL DEFAULT 'pending',
+    project_id INTEGER,
+    envelope TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_events_kind ON events(kind);
+CREATE INDEX IF NOT EXISTS idx_events_subject ON events(subject);
+CREATE INDEX IF NOT EXISTS idx_events_occurred_at ON events(occurred_at);
 `;
