@@ -16,6 +16,7 @@ import { join } from 'node:path';
 
 import { saveConfig, type Config, type CommandResult } from '@ultracontext/sync';
 
+import { SSH_HARDENING } from '../../../lib/events/transport';
 import {
     emitAction,
     tailAction,
@@ -75,6 +76,17 @@ function fakeRunner(code: number) {
         return { code, stdout: '', stderr: '' };
     };
     return { run, stdins };
+}
+
+// a fake ssh runner for the REMOTE TAIL path: records the exact argv, replies
+// canned stdout + exit code (so a test asserts the hub invocation + verbatim out)
+function fakeTailRunner(code: number, stdout: string, stderr = '') {
+    const calls: { program: string; args: string[] }[] = [];
+    const run = async (program: string, args: string[]): Promise<CommandResult> => {
+        calls.push({ program, args });
+        return { code, stdout, stderr };
+    };
+    return { run, calls };
 }
 
 // the base emit flags (kind/source/subject are required by the contract)
@@ -297,6 +309,112 @@ describe('uc event flush (remote mode)', () => {
         const out = sink();
         await tailAction({ json: false }, { dbUrl, configDir, runner: down.run, io: { stdout: out, stderr: sink(), isTTY: true } });
         assert.equal(out.text().trim(), '');
+    });
+});
+
+// -- remote tail (reads the HUB log over ssh) ---------------------------------
+
+describe('uc event tail (remote mode)', () => {
+    // a remote config → tail reads the HUB's canonical log over ssh, NOT the local
+    // db; the hub stdout (already line-JSON) is emitted verbatim, with the filters
+    // passed through to the fixed remote `uc event tail --json …` invocation.
+    it('tails the hub over ssh, emitting its lines verbatim with filters', async () => {
+        const dbUrl = await tempDbUrl();
+        const configDir = await remoteConfigDir();
+        const hubLine = '{"schema_version":"uc.event.v1","event_id":"evt_hub_1","kind":"a.b.c"}';
+        const runner = fakeTailRunner(0, hubLine + '\n');
+
+        const out = sink();
+        const code = await tailAction(
+            { limit: 5, kind: 'a.b.c', source: 'drv', subject: 'claude:s:1', json: false },
+            { dbUrl, configDir, runner: runner.run, io: { stdout: out, stderr: sink(), isTTY: true } },
+        );
+
+        assert.equal(code, 0);
+        // the hub line is emitted exactly as received (verbatim consumer contract)
+        assert.equal(out.text().trim(), hubLine);
+        // the ssh invocation carries every filter on the fixed remote command
+        assert.equal(runner.calls.length, 1);
+        assert.equal(runner.calls[0].program, 'ssh');
+        assert.deepEqual(runner.calls[0].args, [...SSH_HARDENING, 'fabio@mini', 'uc event tail --json --limit 5 --kind a.b.c --source drv --subject claude:s:1']);
+    });
+
+    // a local emit on the SAME machine must NOT surface in remote tail — remote
+    // tail reads the hub, never the local db (closes the consumer gap honestly).
+    it('does not read the local db in remote mode', async () => {
+        const dbUrl = await tempDbUrl();
+        const configDir = await remoteConfigDir();
+
+        // a local row exists in the db (an undelivered/local artifact)
+        await emitAction(emitFlags({ subject: 'local:only', json: true }), { dbUrl, configDir, runner: fakeRunner(0).run, io: { stdout: sink(), stderr: sink(), isTTY: false } });
+
+        // the hub returns its OWN (different) log
+        const hubLine = '{"event_id":"evt_hub_only","kind":"x.y.z"}';
+        const runner = fakeTailRunner(0, hubLine + '\n');
+
+        const out = sink();
+        await tailAction({ json: false }, { dbUrl, configDir, runner: runner.run, io: { stdout: out, stderr: sink(), isTTY: true } });
+
+        // only the hub line — the local 'local:only' row never appears
+        assert.equal(out.text().trim(), hubLine);
+    });
+
+    // ssh failure (hub down / `uc` missing there) → exit 1 + a clear stderr error
+    // naming the hub. NO silent fallback to the local db (honesty over magic).
+    it('exits 1 with a hub-named error when ssh fails (no fallback)', async () => {
+        const dbUrl = await tempDbUrl();
+        const configDir = await remoteConfigDir();
+        const runner = fakeTailRunner(255, '', 'ssh: connect to host mini: Connection refused');
+
+        const out = sink();
+        const errs = sink();
+        const code = await tailAction({ json: true }, { dbUrl, configDir, runner: runner.run, io: { stdout: out, stderr: errs, isTTY: false } });
+
+        assert.equal(code, 1);
+        assert.equal(out.text().trim(), ''); // no fallback output
+        const err = JSON.parse(errs.text()).error;
+        assert.match(err, /fabio@mini/); // names the hub target
+    });
+
+    // --local forces reading the LOCAL db even when a remote hub is configured
+    // (the emitter's own debug view, e.g. on the hub itself); ssh is never invoked.
+    it('--local forces the local db and never invokes ssh', async () => {
+        const dbUrl = await tempDbUrl();
+        const configDir = await remoteConfigDir();
+
+        // seed a COMMITTED local row directly via commit (the hub-side committed log)
+        const envelope = JSON.stringify({
+            schema_version: 'uc.event.v1', event_id: 'evt_local_view', kind: 'a.b.c', source: 's',
+            subject: 'local:view', occurred_at: '2026-06-03T00:00:00.000Z', host: 'mini', privacy: 'metadata_only',
+        });
+        await commitAction({ fromStdin: true, json: false }, { dbUrl, configDir, stdin: async () => envelope, runner: fakeRunner(0).run, io: { stdout: sink(), stderr: sink(), isTTY: true } });
+
+        const runner = fakeTailRunner(0, 'SHOULD-NOT-BE-USED\n');
+        const out = sink();
+        const code = await tailAction({ local: true, json: false }, { dbUrl, configDir, runner: runner.run, io: { stdout: out, stderr: sink(), isTTY: true } });
+
+        assert.equal(code, 0);
+        assert.equal(runner.calls.length, 0); // ssh never invoked
+        const env = JSON.parse(out.text().trim());
+        assert.equal(env.subject, 'local:view'); // the local row, read from the db
+    });
+
+    // a filter value carrying a shell-injection attempt is rejected (exit 1),
+    // never interpolated into the remote command.
+    it('rejects a subject with an injection attempt before any ssh call', async () => {
+        const dbUrl = await tempDbUrl();
+        const configDir = await remoteConfigDir();
+        const runner = fakeTailRunner(0, '');
+
+        const errs = sink();
+        const code = await tailAction(
+            { subject: 'x; rm -rf /', json: true },
+            { dbUrl, configDir, runner: runner.run, io: { stdout: sink(), stderr: errs, isTTY: false } },
+        );
+
+        assert.equal(code, 1);
+        assert.equal(runner.calls.length, 0); // rejected before any ssh
+        assert.match(JSON.parse(errs.text()).error, /subject/);
     });
 });
 

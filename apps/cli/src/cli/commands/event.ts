@@ -24,7 +24,7 @@ import {
 import { dbUrl as defaultDbUrl } from '../../../lib/config';
 import { configDir as defaultConfigDir } from '@ultracontext/sync';
 import { openEventStore } from '../../../lib/events/store';
-import { resolveTransport, type StdinRunner } from '../../../lib/events/transport';
+import { resolveTransport, remoteTail, spawnStdinRunner, type StdinRunner } from '../../../lib/events/transport';
 import { parseCounts, parseLabels } from '../../../lib/events/kv';
 import { emit, status, outputError } from '../../../lib/output';
 
@@ -72,8 +72,10 @@ export type EmitOpts = JsonOpt & {
     label?: string[];
 };
 
-// `uc event tail` flags — limit + the documented kind/source/subject filters
-export type TailOpts = JsonOpt & { limit?: number; kind?: string; source?: string; subject?: string };
+// `uc event tail` flags — limit + the documented kind/source/subject filters.
+// `--local` forces reading the local db even when a remote hub is configured
+// (the emitter's own debug view, bypassing the hub read over ssh).
+export type TailOpts = JsonOpt & { limit?: number; kind?: string; source?: string; subject?: string; local?: boolean };
 
 // -- shared store + transport resolution --------------------------------------
 
@@ -145,17 +147,22 @@ async function tryDeliver(store: EventStore, deliver: Deliver, eventId: string, 
 // `uc event tail` → the last N committed events in chronological order. ALWAYS
 // one compact JSON envelope per line on stdout (the consumer contract), in BOTH
 // human and --json modes — so the Hermes plugin parses identical output either way.
+// With a REMOTE hub configured, tail reads the HUB's canonical log over ssh (the
+// hub is the source of truth for the committed log); --local forces the local db.
 export async function tailAction(opts: TailOpts, deps: EventDeps = {}): Promise<number> {
     const io = deps.io;
+    const filters = { kind: opts.kind, source: opts.source, subject: opts.subject };
 
     try {
-        const { store } = await resolve(deps);
+        // resolve the hub: a remote hub (and no --local override) → tail it over ssh
+        const transport = await resolveTransport({ configDir: deps.configDir ?? defaultConfigDir(), runner: deps.runner });
+        if (!transport.localMode && !opts.local) {
+            return await tailRemote(transport.target, { limit: opts.limit, ...filters }, deps.runner ?? spawnStdinRunner, io);
+        }
 
-        // read the chronological tail with the documented filters
-        const result = await tailEvents(store, {
-            limit: opts.limit,
-            filters: { kind: opts.kind, source: opts.source, subject: opts.subject },
-        });
+        // local hub OR --local override → read the local committed log from the db
+        const store = deps.store ?? (await openEventStore(deps.dbUrl ?? defaultDbUrl()));
+        const result = await tailEvents(store, { limit: opts.limit, filters });
         if (!result.ok) throw new Error(result.message);
 
         // one compact JSON object per line, always — never a JSON array
@@ -164,6 +171,24 @@ export async function tailAction(opts: TailOpts, deps: EventDeps = {}): Promise<
     } catch (error) {
         return outputError(error, { ...io, json: opts.json });
     }
+}
+
+// tail the hub over ssh: filter values are charset-validated by remoteTail's
+// builder (an injection attempt throws → exit 1). A nonzero ssh exit (hub down /
+// `uc` missing there) is reported honestly — NO silent fallback to the local db.
+async function tailRemote(target: string, filters: Parameters<typeof remoteTail>[1], runner: StdinRunner, io?: Io): Promise<number> {
+    const result = await remoteTail(target, filters, runner);
+
+    // ssh failed → a clear error naming the hub + its stderr; exit 1 (no fallback)
+    if (!result.ok) {
+        const hint = result.stderr.trim() || `ssh exited ${result.code}`;
+        throw new Error(`cannot read the event hub ${target} over ssh (${hint}) — run \`uc event tail --local\` for this machine's own view`);
+    }
+
+    // the hub stdout is already the line-JSON contract — pass it through verbatim
+    const stdout = io?.stdout ?? process.stdout;
+    for (const line of result.lines) stdout.write(line + '\n');
+    return 0;
 }
 
 // write one compact JSON object per line straight to stdout (data stream)
@@ -309,7 +334,8 @@ export function buildEventCommand(): Command {
         .option('--label <k=v...>', 'string label pair (repeatable)', collect, [])
         .action((opts, cmd) => bridge((json) => emitAction({ ...opts, json }))(cmd));
 
-    // tail — read the chronological committed log as one JSON object per line
+    // tail — read the chronological committed log as one JSON object per line.
+    // reads the hub over ssh when one is configured; --local forces the local db.
     event
         .command('tail')
         .description('read the committed event log (one JSON object per line)')
@@ -317,6 +343,7 @@ export function buildEventCommand(): Command {
         .option('--kind <kind>', 'filter by kind')
         .option('--source <source>', 'filter by source')
         .option('--subject <subject>', 'filter by subject')
+        .option('--local', "read this machine's own local db, even with a remote hub configured")
         .action((opts, cmd) => bridge((json) => tailAction({ ...opts, json }))(cmd));
 
     // status — pending vs sent counts + the resolved target/host
