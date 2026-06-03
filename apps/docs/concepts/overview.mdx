@@ -1,0 +1,119 @@
+---
+title: 'Concepts overview'
+description: 'The mental model: three primitives, two mechanisms, four surfaces'
+---
+
+UltraContext is version control for AI agent context — a local-first layer that
+keeps **contexts**, **files**, and **events** in sync across every machine, agent,
+and session you run.
+
+Picture your own setup: Claude Code on your laptop, Codex on a VPS, the Claude app
+on your phone. Each one produces work the others can't see. UltraContext gives them
+one shared substrate — so an agent on your laptop can know about the conversation
+you just had on your phone.
+
+## The three primitives
+
+Everything in UltraContext reduces to three small ideas. Learn these and the rest
+follows.
+
+<CardGroup cols={3}>
+    <Card title='Contexts' icon='layer-group' href='/concepts/contexts'>
+        **Versioned conversational state.** The store an agent reads and writes —
+        every edit auto-versioned, copy-on-write.
+    </Card>
+    <Card title='Files' icon='folder-tree' href='/concepts/sync'>
+        **The archive.** Mirrored session artifacts — transcripts and exports you
+        grep or search semantically. Moved between machines by Sync.
+    </Card>
+    <Card title='Events' icon='radio' href='/concepts/events'>
+        **The status board.** Small immutable facts — what just changed, now.
+        Appended to a log; each can point at a file.
+    </Card>
+</CardGroup>
+
+The one-liners worth memorizing:
+
+- **files = the archive** — grep / semantic-search everything that ever happened.
+- **events = the status board** — what changed, just now.
+- **contexts = versioned conversational state** — what an agent is reading and
+  writing right now.
+
+## How the pieces fit
+
+```text
+        CONSUMERS                  agents (via MCP / skill / plugin)
+                                            │ read
+        ─────────────────────────────────────────────────────────
+        PRIMITIVES   Contexts        Files            Events
+                     (the store)     (the archive)    (status board)
+        ─────────────────────────────────────────────────────────
+        MECHANISMS                   Sync ──┐         Drivers
+                                  (moves files)   (produce files + events
+                                   machines↔hub    from external systems)
+        ─────────────────────────────────────────────────────────
+        SURFACES     SDK      ·     CLI (uc)     ·     Context API     ·     MCP
+```
+
+- **Primitives** are *what you store*: contexts, files, events.
+- **Mechanisms** are *how data moves*. **Sync** mirrors files between machines and a
+  hub (Mutagen under the hood). **Drivers** produce files and events from systems
+  *outside* UltraContext — web apps, phones, SaaS.
+- **Surfaces** are *how you reach it*: the [SDK](/sdk), the [`uc` CLI](/fundamentals/cli),
+  the hosted [Context API](/api-reference/introduction), and [MCP](/fundamentals/mcp-server).
+- **Consumers** are the agents themselves — they read primitives through MCP, a
+  skill, or a plugin (a Hermes plugin, say, tails the event log before each LLM turn).
+
+<Note>Events and Drivers are **general** primitives and mechanisms — not sub-parts
+of Sync. Their command surface is top-level: `uc event ...` and `uc driver ...`,
+never under `uc sync`.</Note>
+
+## What goes where
+
+When you have something to store, this table tells you which primitive owns it.
+
+| You have… | It goes in a… | Why |
+|---|---|---|
+| A small fact that *something happened* | **Event** | Stays small; lands on the status board immediately. |
+| Heavy content — transcripts, exports, dumps | **File** | Lives in the archive; an event points at it via `payload_ref` + `payload_hash`. |
+| Conversational state an agent reads/writes | **Context** | Versioned, copy-on-write, time-travelable. |
+
+The rule of thumb: **events stay small, files carry the weight.** An event never
+inlines a transcript — it references the file that holds it.
+
+## The story, end to end
+
+This runs today on real infrastructure. It ties all three primitives and both
+mechanisms together:
+
+1. You open the **Claude app on your phone**.
+2. An iOS Shortcut pings your server; the server SSHes to your Mac and runs
+   `uc driver run claude-web opened`.
+3. The **driver** does a bounded sync of your recent web sessions, mirrors them to
+   markdown **files**, and emits one `claude.app.opened` **event** plus one
+   `claude.session.updated` event per changed session — each pointing at its file
+   via `payload_ref`.
+4. The events land in the hub's **append-only log**.
+5. Next time you talk to **any agent on your laptop**, its pre-turn hook tails the
+   log, sees the new session, and reads a bounded gist from the file.
+6. Your agent now knows about the conversation you just had on your phone.
+
+A **driver** produced **files** and **events**; **sync** moved the files to the hub;
+a **consumer** read the event and the file. That is the whole system in one loop.
+
+## Read next
+
+<CardGroup cols={2}>
+    <Card title='Contexts' icon='layer-group' href='/concepts/contexts'>
+        Versioned context windows — fork, time-travel, local-first everywhere.
+    </Card>
+    <Card title='Sync' icon='folder-tree' href='/concepts/sync'>
+        Mirror session files across machines to a hub.
+    </Card>
+    <Card title='Events' icon='radio' href='/concepts/events'>
+        The envelope, the lifecycle, and when to emit one.
+    </Card>
+    <Card title='Drivers' icon='plug' href='/concepts/drivers'>
+        Bring-your-own ingestion from external systems.
+    </Card>
+</CardGroup>

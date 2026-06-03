@@ -1,0 +1,168 @@
+---
+title: 'Events'
+description: 'The status board — small immutable facts about what just changed'
+---
+
+An **event** is a small, immutable fact that something happened — appended to a log
+your agents can tail to know what changed, now.
+
+Say a driver finishes mirroring a phone session into a file. It emits one
+`claude.session.updated` event pointing at that file. The next agent you talk to on
+any machine tails the log, sees the event, and reads the file — without you telling
+it anything.
+
+<Note>**Contract v1** — the envelope (`uc.event.v1`) is final and runs on real
+infrastructure today. The `uc event` CLI surface ships in an upcoming release.</Note>
+
+## events = the status board
+
+[Files](/concepts/sync) are the archive (everything that ever happened).
+[Contexts](/concepts/contexts) are versioned conversational state. **Events are the
+status board** — what changed *just now*. An event is *not* a transcript, a state
+dump, a raw webhook, or a secret container. It stays **small**; big payloads are
+files an event *points at*.
+
+## The envelope: `uc.event.v1`
+
+Every event is one JSON object with this shape.
+
+### Required fields
+
+| Field | Meaning |
+|---|---|
+| `schema_version` | Always `uc.event.v1`. |
+| `event_id` | Globally unique id — the dedupe key. |
+| `kind` | Dotted, stable kind, e.g. `agent.run.completed`, `claude.session.updated`, `sync.failed`. |
+| `source` | Component that emitted or observed it, e.g. `claude-web-driver`, `github-webhook`. |
+| `subject` | Stable thing it's about, e.g. `claude:session:abc123`. |
+| `occurred_at` | ISO timestamp — when it happened in the source system. |
+| `host` | Machine that emitted or committed it. |
+| `privacy` | One of `public` · `internal` · `metadata_only` · `sensitive_ref`. |
+
+### Server-set on commit
+
+| Field | Meaning |
+|---|---|
+| `received_at` | ISO timestamp the hub sets/overwrites when it commits the event. Absent in the outbox. |
+
+### Optional fields
+
+| Field | Meaning |
+|---|---|
+| `actor` | Who caused it, e.g. `user:fabio`, `agent:hermes`. |
+| `run_id` | One agent/tool run. |
+| `trace_id` | A larger causal chain across events. |
+| `parent_event_id` | The direct causal parent event. |
+| `priority` | Integer `0`–`100` (default `50`). |
+| `ok` | Boolean success marker (default `true`). |
+| `payload_ref` | Pointer to the file/context with the heavy details. |
+| `payload_hash` | Hash of that payload — must start with `sha256:`. |
+| `counts` | Small numeric counters (`str → int`). |
+| `labels` | Small string metadata for filtering (`str → str`). |
+| `error` | Structured `{ class, message, retryable }` or `null`. |
+
+```json
+{
+  "schema_version": "uc.event.v1",
+  "event_id": "evt_02...",
+  "kind": "claude.session.updated",
+  "source": "claude-web-driver",
+  "subject": "claude:session:abc123",
+  "occurred_at": "2026-05-08T12:10:04Z",
+  "received_at": "2026-05-08T12:10:06Z",
+  "host": "fabios-mac-mini",
+  "parent_event_id": "evt_01...",
+  "trace_id": "evt_01...",
+  "payload_ref": "file:///Users/fabio/.claude-web/sessions/abc123.md",
+  "payload_hash": "sha256:<markdown-sha256>",
+  "privacy": "metadata_only",
+  "counts": { "message_count": 10 },
+  "labels": { "provider": "claude", "title": "Session title" }
+}
+```
+
+### Token rules
+
+The four token fields — `event_id`, `kind`, `source`, `subject` — are **≤128 chars**
+and use the charset `[A-Za-z0-9_\-.:/]`. `kind` should be dotted and stable.
+
+## The lifecycle
+
+An event is server-authoritative: the hub's log is the source of truth, the local
+outbox is just a durable retry buffer.
+
+```text
+emit ──► outbox ──► commit ──► dedupe ──► (tail reads the log)
+         (client)   (hub log)  (by event_id)
+```
+
+1. **emit** — `uc event emit` builds the envelope and writes it to the client outbox
+   at `~/.ultracontext/events/outbox/<event_id>.json`.
+2. **commit** — the configured hub appends it to `<remote_root>/events/events.jsonl`
+   (append-only) and sets `received_at`.
+3. **dedupe** — the hub drops duplicates by `event_id` (via `events/seen/` markers),
+   so retries never double-append. The outbox file then moves to `sent/`.
+4. **tail / flush / status** — `tail` reads the log, `flush` retries the outbox,
+   `status` shows pending vs sent counts.
+
+## Privacy levels
+
+`privacy` declares how sensitive the event is — drivers default to `metadata_only`.
+
+| Level | Use for |
+|---|---|
+| `public` | Facts safe to share broadly. |
+| `internal` | Internal-only facts. |
+| `metadata_only` | Only metadata is in the event; details live in a referenced file. |
+| `sensitive_ref` | Sensitive — refer to it, never inline it. |
+
+<Note>Never inline raw prompts, transcripts, tokens, cookies, API keys, auth
+headers, signed URLs, or message bodies. Use `payload_ref` + `payload_hash`,
+small `counts`, and small `labels` instead.</Note>
+
+## When to emit vs when to write a file
+
+This is the core decision (the full table lives in the [overview](/concepts/overview)):
+
+- **Small fact that something happened** → emit an **event**.
+- **Heavy content** (transcript, export, dump) → write a **file**, and have the event
+  point at it with `payload_ref` + `payload_hash`.
+
+## The command surface
+
+Top-level — `uc event`, never under `uc sync`.
+
+```bash bash
+uc event emit \
+  --kind claude.session.updated \
+  --source claude-web-driver \
+  --subject claude:session:abc123 \
+  --privacy metadata_only \
+  --payload-ref file:///Users/fabio/.claude-web/sessions/abc123.md \
+  --payload-hash sha256:... \
+  --label provider=claude
+
+uc event tail        # read the hub log
+uc event flush       # retry the outbox
+uc event status      # pending vs sent counts
+uc event commit      # commit a piped envelope on the hub (--from-stdin)
+```
+
+| Command | What it does |
+|---|---|
+| `emit` | Build an envelope, write it to the outbox, ask the hub to commit. |
+| `commit` | Append a piped envelope to the hub log (sets `received_at`, dedupes). |
+| `tail` | Read the committed event log. |
+| `flush` | Retry the outbox. |
+| `status` | Show pending / sent counts. |
+
+## Read next
+
+<CardGroup cols={2}>
+    <Card title='Drivers' icon='plug' href='/concepts/drivers'>
+        The things that emit these events from external systems.
+    </Card>
+    <Card title='Sync' icon='folder-tree' href='/concepts/sync'>
+        The archive — the files events point at.
+    </Card>
+</CardGroup>

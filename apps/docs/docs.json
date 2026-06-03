@@ -27,6 +27,16 @@
                         ]
                     },
                     {
+                        "group": "Concepts",
+                        "pages": [
+                            "concepts/overview",
+                            "concepts/contexts",
+                            "concepts/sync",
+                            "concepts/events",
+                            "concepts/drivers"
+                        ]
+                    },
+                    {
                         "group": "Fundamentals",
                         "pages": [
                             "fundamentals/cli",

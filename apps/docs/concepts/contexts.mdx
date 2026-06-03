@@ -1,0 +1,81 @@
+---
+title: 'Contexts'
+description: 'Versioned context windows — the store an agent reads and writes'
+---
+
+A **context** is a versioned context window: an ordered list of messages that an
+agent reads and writes, where every edit auto-creates a new version.
+
+Say your agent builds up a conversation, then you edit the system prompt and delete
+a hallucinated reply. With a context you don't lose the old state — each change
+forks a new version you can read back at any time, like commits on a branch.
+
+## The shape
+
+A context is a list of messages plus a version history. Messages are **schema-free**
+— `role` and `content` plus any fields you want. Metadata attaches at three levels:
+the context, the message, and the version an edit produces.
+
+```text
+context  ─┬─ v0  create        [ ]
+          ├─ v0  append        [ system, user ]      ← first append fills v0
+          ├─ v1  update msg 0  [ system', user ]
+          └─ v2  delete -1     [ system' ]
+```
+
+## The verbs
+
+The verbs are identical across the [SDK](/sdk) and the [CLI](/fundamentals/cli) —
+same names, same inputs.
+
+| Verb | What it does |
+|---|---|
+| `create` | New context, or **fork/clone** from an existing one (`--from`) |
+| `append` | Add a message |
+| `get` | Read the current state, or any past version |
+| `update` | Edit a message (by id or index) → new version |
+| `delete` | Remove messages, or the whole context (`--permanent`) |
+| `list` | List contexts, filterable by source / project path / limit |
+
+## Versions are copy-on-write
+
+Every `update` and `delete` auto-creates a new version. Nothing is mutated in place
+— the old state stays addressable. A **fork** (`create --from`) copies a context (or
+a slice of one) into a brand-new context, so you can branch a conversation without
+touching the original.
+
+## Time travel
+
+Read any past state with three selectors, on both `get` and `create --from`:
+
+- `--version <n>` — a specific version number.
+- `--at <index>` — the state up to a message index.
+- `--before <timestamp>` — the version just before a moment in time.
+
+```bash bash
+uc get ctx_abc123 --history          # the full version log
+uc get ctx_abc123 --version 2        # state at version 2
+uc create --from ctx_abc123 --at 5   # fork the first 6 messages
+```
+
+## Local-first everywhere
+
+Contexts run **local-by-default** on Node, Bun, and the browser — no server, no API
+key. Pass an `apiKey` (or `--remote`) to point the exact same verbs at the hosted
+[Context API](/api-reference/introduction) and sync across machines.
+
+| Runtime | Local storage |
+|---|---|
+| Node / Bun | SQLite (`./ultracontext.db`, or `~/.ultracontext/uc.db` for the CLI) |
+| Browser | SQLite-wasm (sql.js), snapshotted to IndexedDB |
+| Anywhere | Hosted Context API via `--remote` / `apiKey` |
+
+<Tip>This page is the *concept*. For the how-to, see the [SDK](/sdk), the
+[CLI reference](/fundamentals/cli), and the [Guides](/guides/store-retrieve-contexts).</Tip>
+
+## Not to be confused with
+
+- **Files** are the *archive* of raw session artifacts — see [Sync](/concepts/sync).
+  Contexts are live, structured, versioned state.
+- **Events** are the *status board* of small facts — see [Events](/concepts/events).
+  A context is the thing an agent reads; an event is the signal that it changed.

@@ -1,0 +1,89 @@
+---
+title: 'Sync'
+description: 'Mirror agent session files across machines to a hub — the archive'
+---
+
+**Sync** mirrors your agents' session files across machines into one hub, so the
+archive of everything that ever happened follows you wherever you work.
+
+Say Claude Code writes session logs to `~/.claude/projects` on your laptop and Codex
+writes its own on a VPS. `uc sync` keeps both mirrored to a central hub, so an agent
+on any machine can grep or semantically search every session — not just the ones
+written locally.
+
+## Files are the archive
+
+Sync moves **files** — the first of the three [primitives](/concepts/overview) it is
+responsible for. Files are raw session artifacts: transcripts, exports, markdown
+dumps. They are the **archive** you search over, distinct from live
+[contexts](/concepts/contexts) and from the [events](/concepts/events) status board.
+
+Under the hood, sync is fs-first orchestration over [Mutagen](https://mutagen.io).
+You declare which local directories to mirror; Mutagen keeps them in step with the
+hub. The `mutagen` binary must be on your `PATH` — `uc doctor` checks for it.
+
+## Sources
+
+A **source** is a named local directory you want mirrored. You add one per agent's
+session directory.
+
+```bash bash
+uc sync init user@vps:/home/alice/.ultracontext   # set the hub target
+uc sync source add claude ~/.claude/projects        # mirror Claude Code sessions
+uc sync source add codex ~/.codex/sessions          # mirror Codex sessions
+uc sync start                                        # bring enabled sources online
+```
+
+| Subcommand | What it does |
+|---|---|
+| `init <target>` | Set the hub target (`local` \| `user@host[:root]`) |
+| `source add <name> <path>` | Add or update a source (`--disabled` to add without starting) |
+| `source list` | List configured sources |
+| `start` / `stop` | Start / pause sync for enabled sources |
+| `status` | Show live sync session status |
+| `list` | List configured sources with their sync state |
+
+## Hub workspace layout
+
+On the hub, mirrored files land under a per-host, per-source tree. Every machine
+gets its own namespace, so nothing collides:
+
+```text
+<hub-root>/
+  workspace/
+    <host>/                 # one dir per machine (host id)
+      <leaf>/               # one dir per source (the leaf of its local path)
+        ...mirrored files
+```
+
+The per-source dir is the **leaf of the source's local path**, not the source name.
+So the `claude` source (`~/.claude/projects`) lands under `projects/`: sessions from
+your laptop and from your mini live side by side as `workspace/laptop/projects/` and
+`workspace/mini/projects/` — an agent on the hub sees the union of every machine's
+archive.
+
+## What Sync is not
+
+Sync moves **files**. That's all. It is deliberately dumb.
+
+- It is **not events.** Sync doesn't tell you *what changed, now* — that's the
+  [status board](/concepts/events). A [driver](/concepts/drivers) emits an event
+  when it mirrors a file; sync itself just moves bytes.
+- It is **not contexts.** Sync mirrors raw artifacts, not versioned conversational
+  state. Live state an agent reads and writes is a [context](/concepts/contexts).
+
+<Tip>Pairing matters: a [driver](/concepts/drivers) does a bounded sync of an
+external app's sessions into files, then emits one `*.session.updated`
+[event](/concepts/events) per changed file. Sync is the muscle; events are the
+signal.</Tip>
+
+## Read next
+
+<CardGroup cols={2}>
+    <Card title='Events' icon='radio' href='/concepts/events'>
+        The status board — small facts that point at your files.
+    </Card>
+    <Card title='Drivers' icon='plug' href='/concepts/drivers'>
+        Produce files + events from external systems.
+    </Card>
+</CardGroup>

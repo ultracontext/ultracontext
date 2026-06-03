@@ -1,0 +1,131 @@
+---
+title: 'Drivers'
+description: 'Bring-your-own ingestion — produce files and events from external systems'
+---
+
+A **driver** is a directory with a `driver.toml` manifest that teaches UltraContext
+how to pull data out of a system it doesn't own — a web app, a phone, a SaaS — and
+turn it into [files](/concepts/sync) and [events](/concepts/events).
+
+Say you want your laptop agents to know about Claude app conversations from your
+phone. A `claude-web` driver does a bounded sync of recent web sessions, mirrors
+them to markdown files, and emits one event per changed session. UltraContext core
+never learns how to talk to the Claude web app — the driver does, at the edge.
+
+<Note>**Contract v1** — the manifest format (`driver.toml`) is final and runs on
+real infrastructure today. The `uc driver` CLI surface ships in an upcoming
+release.</Note>
+
+## A driver is a side-effect boundary
+
+UltraContext core only ever sees versioned primitives — files and events. Everything
+about *how* to reach an external system lives in the driver. Drivers are **not**
+trusted core code, **not** bundled, and can be written in **any language**.
+
+```text
+external system ──► driver ──► files + uc.event.v1 events ──► UltraContext core
+```
+
+## `driver.toml` anatomy
+
+A driver lives at `~/.ultracontext/drivers/<name>/driver.toml`. The directory name
+matches `name`.
+
+```toml
+name = "claude-web"          # stable, lowercase kebab-case (required)
+version = "0.1.0"
+type = "external-app-sync"
+runtime = "python"           # runtime hint
+
+[capabilities]               # booleans: what primitives it produces
+events = true
+artifacts = true
+bounded_sync = true
+requires_logged_in_browser = true
+
+[commands]                   # named shell commands run by `uc driver run`
+opened = "claude-web-sync opened --limit 10"
+closed = "claude-web-sync closed --limit 10 --settle-seconds 5"
+poll = "claude-web-sync poll --limit 10"
+```
+
+| Field | Required | Meaning |
+|---|---|---|
+| `name` | yes | Stable kebab-case id; matches the directory name. |
+| `version` | — | Driver package version. |
+| `type` | — | Broad class, e.g. `external-app-sync`. |
+| `runtime` | — | Hint: `python` · `node` · `rust` · `shell`. |
+| `[capabilities]` | — | Booleans describing what primitives it produces. |
+| `[commands]` | yes | Named shell commands exposed through `uc driver run`. |
+
+## Lifecycle verbs
+
+Command names are stable verbs, so any consumer (an iOS Shortcut, a server relay) can
+call them without knowing the driver's internals:
+
+| Verb | When it runs |
+|---|---|
+| `opened` | The external app was opened — bounded sync of recent sessions. |
+| `closed` | The app was closed — settle, then bounded sync. |
+| `poll` | Periodic bounded check. |
+| `sync-recent` | Explicit bounded backfill. |
+| `status` / `doctor` | Health and diagnostics. |
+
+## Driver obligations
+
+A driver must hold up its end of the contract:
+
+- **Lifecycle commands are bounded.** No full crawl on `opened` / `closed` — sync
+  only recent, changed sessions.
+- **It emits its own events.** A driver produces its own [`uc.event.v1`](/concepts/events)
+  events: one **lifecycle** event carrying `counts`, plus one `*.session.updated`
+  event per changed session. Driver output is never required for log correctness —
+  the driver emits or it didn't happen.
+- **It references heavy payloads.** Each `*.session.updated` carries `payload_ref`
+  (the mirrored file) and `payload_hash` (`sha256:`). Big content is a file, never
+  inline in the event.
+- **`privacy` defaults to `metadata_only`.** Lifecycle events stay metadata-only.
+- **No secrets in manifests.** A `driver.toml` must never contain cookies, tokens,
+  passwords, auth headers, signed URLs, or session bodies.
+
+<Note>Manifests must not contain cookies, tokens, passwords, auth headers, signed
+URLs, or private session bodies. Anything sensitive is an external secret the
+driver's own command resolves at runtime — never the manifest.</Note>
+
+## The command surface
+
+Top-level — `uc driver`, never under `uc sync`.
+
+```bash bash
+uc driver list                          # show installed manifests
+uc driver run claude-web opened         # run a manifest command as a local process
+uc driver run claude-web poll
+```
+
+| Command | What it does |
+|---|---|
+| `list` | List installed driver manifests. |
+| `run <driver> <command>` | Execute the named manifest command as a local process. Missing driver or command fails clearly. |
+
+For a phone relay, the server SSHes to the Mac and runs `uc driver run claude-web opened`
+on the Mac — it calls the stable driver verb, never the driver's internal script
+paths.
+
+## Real example
+
+Shipped on a real mini today: `chatgpt-web` and `claude-web` drivers whose
+`[commands]` call Python sync scripts. Each `opened` does a bounded sync of recent
+web sessions, mirrors them to markdown, and emits a lifecycle event plus one
+`*.session.updated` per changed session — which is exactly the
+[phone → laptop story](/concepts/overview#the-story-end-to-end) end to end.
+
+## Read next
+
+<CardGroup cols={2}>
+    <Card title='Events' icon='radio' href='/concepts/events'>
+        The envelope every driver emits.
+    </Card>
+    <Card title='Sync' icon='folder-tree' href='/concepts/sync'>
+        The file mirroring a driver's bounded sync rides on.
+    </Card>
+</CardGroup>
