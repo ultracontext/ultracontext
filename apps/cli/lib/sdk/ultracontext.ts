@@ -10,7 +10,6 @@
 // =============================================================================
 
 import type {
-    UltraContext as RemoteUltraContext,
     CreateContextInput, CreateContextResponse,
     AppendInput, AppendResponse,
     GetContextInput, GetContextResponse,
@@ -20,41 +19,33 @@ import type {
     DeleteManyResponse, DeleteManyResult,
 } from '@ultracontext/js';
 
-import type { ContextClient } from '../context-client';
+// the swappable local-backend seam — `#local-backend` resolves to the node
+// loader by default and to the browser loader in the browser build (see
+// tsdown.config.ts alias + package.json "imports"). The shape is identical.
+import { loadLocalBackend } from '#local-backend';
+import type { Backend } from './local-backend-types';
+
+// re-export toDbUrl from the shared seam types (kept public for tests/Python parity)
+export { toDbUrl } from './local-backend-types';
 
 // -- config -------------------------------------------------------------------
 
 // every field optional — local-by-default; an apiKey infers remote. db is the
-// LOCAL sqlite target (app-specific, default ./ultracontext.db in cwd). The
-// remote fields (apiKey/baseUrl/fetch/headers/timeoutMs) mirror the remote SDK.
+// LOCAL sqlite target (app-specific, default ./ultracontext.db in cwd; in the
+// browser it names the IndexedDB record). wasmUrl is a browser-only knob: it
+// overrides the sql.js wasm location for bundlers / fully-offline apps (ignored
+// in node). The remote fields (apiKey/baseUrl/fetch/headers/timeoutMs) mirror
+// the remote SDK.
 export type UltraContextConfig = {
     mode?: 'local' | 'remote';
     db?: string;
+    wasmUrl?: string;
     apiKey?: string;
     baseUrl?: string;
     fetch?: typeof fetch;
     headers?: Record<string, string>;
     timeoutMs?: number;
 };
-
-// -- backend port -------------------------------------------------------------
-
-// the lazily-built backend: a remote SDK instance, or a local ContextClient
-// tagged so the facade can adapt its object-arg verbs to the public signatures.
-type Backend =
-    | { kind: 'remote'; sdk: RemoteUltraContext }
-    | { kind: 'local'; client: ContextClient };
-
-// -- db url normalization -----------------------------------------------------
-
-// a db string carrying a leading scheme (file:/libsql:/http — two+ chars before
-// the colon) is used as-is; anything else is a local file path, `file:`-prefixed.
-// A SINGLE-letter prefix (a Windows drive like C:) is a path, not a scheme. A
-// multi-char leading token (`data:base.db`) still reads as a scheme — prefix
-// `./` to force a path. Exported for tests; mirrored by the Python SDK.
-export function toDbUrl(db: string): string {
-    return /^[a-z][a-z0-9+.-]+:/i.test(db) ? db : `file:${db}`;
-}
 
 // -- facade -------------------------------------------------------------------
 
@@ -103,13 +94,26 @@ export class UltraContext {
         return { kind: 'remote', sdk };
     }
 
-    // local backend — opens the sqlite-backed ContextClient at the resolved db.
-    // dynamic import so remote-only consumers never load core/storage/libsql.
+    // local backend — delegates to the `#local-backend` seam: the node build
+    // opens sqlite (libsql/bun), the browser build opens sql.js + IndexedDB.
+    // Either way the seam's own dynamic import keeps the driver off the graph
+    // until a local call happens, so remote-only consumers stay lean.
     private async resolveLocal(): Promise<Backend> {
-        const dbUrl = toDbUrl(this.cfg.db ?? 'ultracontext.db');
-        const { createLocalClient } = await import('../clients/local');
-        const client = await createLocalClient({ dbUrl, cwd: process.cwd() });
-        return { kind: 'local', client };
+        return loadLocalBackend({ db: this.cfg.db, wasmUrl: this.cfg.wasmUrl });
+    }
+
+    // -- flush ------------------------------------------------------------------
+
+    // force-persist any pending local snapshot NOW. In the browser the local
+    // backend saves to IndexedDB on a debounce — call flush() before navigation
+    // to make the write durable. A no-op on node (sqlite persists eagerly), on
+    // remote backends, and when no backend has been opened yet.
+    async flush(): Promise<void> {
+        if (!this.backend) return;
+
+        const backend = await this.backend;
+        if (backend.kind !== 'local') return;
+        await (backend.client as { flush?: () => Promise<void> }).flush?.();
     }
 
     // -- create ---------------------------------------------------------------

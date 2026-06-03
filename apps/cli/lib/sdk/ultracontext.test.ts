@@ -333,6 +333,26 @@ describe('UltraContext delete safety', () => {
     });
 });
 
+// -- flush (node no-op) ---------------------------------------------------------
+
+describe('UltraContext flush', () => {
+    // flush before any call is a no-op (nothing opened, nothing pending)
+    it('resolves on an unopened facade', async () => {
+        const uc = new UltraContext({ db: tempDbUrl() });
+        await uc.flush();
+    });
+
+    // node-local backends persist eagerly — flush resolves as a no-op
+    it('resolves as a no-op on a node-local backend', async () => {
+        const uc = localClient();
+        const ctx = await uc.create();
+        await uc.flush();
+
+        const got = await uc.get(ctx.id);
+        assert.ok(Array.isArray(got.data));
+    });
+});
+
 // -- db url normalization -----------------------------------------------------
 
 describe('toDbUrl', () => {
