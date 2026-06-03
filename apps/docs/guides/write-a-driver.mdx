@@ -1,0 +1,238 @@
+---
+title: 'Write a driver'
+description: 'Teach UltraContext to ingest an external system as files + events'
+---
+
+A **driver** is a directory with a `driver.toml` manifest that teaches UltraContext
+to pull data out of a system it doesn't own — a web app, a phone, a SaaS — and turn
+it into [files](/concepts/sync) and [events](/concepts/events).
+
+This guide walks the full build of one: a `claude-web` driver that does a bounded
+sync of recent Claude web sessions on the machine where you're logged in, mirrors
+each changed session to a markdown file, and emits one event per change. By the end,
+any agent that [tails the log](/guides/agent-awareness) knows your web conversations
+without you telling it anything.
+
+<Note>**Contract v1** — the manifest format (`driver.toml`) and the envelope
+(`uc.event.v1`) are final and run on real infrastructure today. The `uc driver` and
+`uc event` CLI surfaces ship in an upcoming release; core implementation is in
+progress.</Note>
+
+## How a driver fits
+
+UltraContext core only ever sees versioned primitives — files and events. Everything
+about *how* to reach the external system lives in your driver, at the edge.
+
+```text
+external system ──► driver ──► files + uc.event.v1 events ──► UltraContext
+```
+
+A driver is the **side-effect boundary**: it is the only place that knows how to talk
+to the outside world. Core never learns it. That keeps core dumb and your driver
+swappable, in any language.
+
+## Steps
+
+<Steps>
+  <Step title="Pick the external system + the machine that can reach it">
+    A driver runs where the data actually lives. For a web app, that's the machine
+    with the **logged-in browser** — your laptop or an always-on Mac, not a phone or
+    a server. Decide the stable id you'll use for things it's about (the `subject`),
+    e.g. `claude:session:<id>`.
+  </Step>
+
+  <Step title="Create the manifest">
+    A driver is a directory at `~/.ultracontext/drivers/<name>/` containing a
+    `driver.toml`. The directory name **must** match `name`.
+
+    ```toml ~/.ultracontext/drivers/claude-web/driver.toml
+    # identity — name must equal the directory name
+    name = "claude-web"
+    version = "0.1.0"
+    type = "external-app-sync"
+    runtime = "python"                    # hint only: python | node | rust | shell
+
+    # what primitives this driver produces
+    [capabilities]
+    events = true                         # emits uc.event.v1 events
+    artifacts = true                      # writes files (mirrored sessions)
+    bounded_sync = true                   # never full-crawls
+    requires_logged_in_browser = true     # needs an authenticated browser
+
+    # stable verbs → shell commands run by `uc driver run`
+    [commands]
+    opened       = "~/.hermes/scripts/claude_sync.py opened --source ios_shortcut --limit 10"
+    closed       = "~/.hermes/scripts/claude_sync.py closed --limit 10 --settle-seconds 5"
+    poll         = "~/.hermes/scripts/claude_sync.py poll --limit 1"
+    status       = "~/.hermes/scripts/claude_sync.py status"
+    doctor       = "~/.hermes/scripts/claude_sync.py doctor"
+    ```
+
+    | Field | Required | Meaning |
+    |---|---|---|
+    | `name` | yes | Stable kebab-case id; matches the directory name. |
+    | `version` | — | Driver package version. |
+    | `type` | — | Broad class, e.g. `external-app-sync`. |
+    | `runtime` | — | Hint: `python` · `node` · `rust` · `shell`. |
+    | `[capabilities]` | — | Booleans for what primitives it produces. |
+    | `[commands]` | yes | Named shell commands exposed through `uc driver run`. |
+
+    The command **verbs** are stable so any caller — an iOS Shortcut, a server relay,
+    a cron — can invoke them without knowing your script's internals:
+
+    | Verb | When it runs |
+    |---|---|
+    | `opened` | App was opened — bounded sync of recent sessions. |
+    | `closed` | App was closed — settle, then bounded sync. |
+    | `poll` | Periodic bounded check. |
+    | `sync-recent` | Explicit bounded backfill. |
+    | `status` / `doctor` | Health and diagnostics. |
+
+    <Warning>A `driver.toml` must **never** hold secrets — no cookies, tokens, auth
+    headers, signed URLs, or session bodies. Anything sensitive is resolved at runtime
+    by your command (from the OS keychain, an env var, the logged-in browser), never
+    written into the manifest.</Warning>
+  </Step>
+
+  <Step title="Implement the sync script">
+    Your script is the whole contract. Each lifecycle command must:
+
+    1. **Fetch bounded.** Respect `--limit`; sync only recent, changed sessions. No
+       full crawls on `opened` / `closed` — lifecycle hooks fire often and must stay
+       cheap.
+    2. **Mirror heavy content to files** under a UC-controlled root (e.g.
+       `~/.claude-web/sessions/<id>.md`). The transcript is a file, never inlined in
+       an event.
+    3. **Emit one lifecycle event** with `counts` (listed / synced / changed).
+    4. **Emit one `*.session.updated` event per changed session**, each carrying
+       `payload_ref` (the mirrored file) + `payload_hash` (`sha256:`). Prefer
+       one-event-per-session over hiding ids inside a lifecycle array — consumers just
+       watch `*.session.updated`.
+
+    A driver emits its own events by shelling out to `uc event emit`. Here is a
+    language-agnostic skeleton (Python sketch — the same shape works in any runtime):
+
+    ```python claude_sync.py (sketch)
+    import hashlib, subprocess, sys
+
+    # bounded fetch — only recent sessions, capped by --limit
+    def fetch_recent(limit):
+        ...                                      # talk to the logged-in browser
+        return [{"id": "abc123", "markdown": "...", "title": "..."}]
+
+    # mirror a session to a UC-controlled file, return (path, sha256)
+    def mirror(session):
+        path = f"{HOME}/.claude-web/sessions/{session['id']}.md"
+        write(path, session["markdown"])
+        digest = hashlib.sha256(session["markdown"].encode()).hexdigest()
+        return path, digest
+
+    # shell out to `uc event emit` — the driver's only contract with core.
+    # list values become a repeated flag; --count / --label take key=value pairs.
+    def emit(**flags):
+        argv = ["uc", "event", "emit"]
+        for k, v in flags.items():
+            flag = f"--{k.replace('_', '-')}"
+            for item in (v if isinstance(v, list) else [v]):
+                argv += [flag, str(item)]
+        subprocess.run(argv, check=True)
+
+    def main(trigger, limit):
+        sessions = fetch_recent(limit)
+        changed = [s for s in sessions if is_changed(s)]
+
+        # one lifecycle event with counts (--count takes key=value, repeated)
+        emit(
+            kind=f"claude.app.{trigger}",
+            source="claude-web-ios-shortcut",
+            subject="claude:app:ios",
+            privacy="metadata_only",
+            count=[f"listed={len(sessions)}", f"changed={len(changed)}"],
+        )
+
+        # one *.session.updated per changed session, pointing at its file
+        for s in changed:
+            path, digest = mirror(s)
+            emit(
+                kind="claude.session.updated",
+                source="claude-web-driver",
+                subject=f"claude:session:{s['id']}",
+                privacy="metadata_only",
+                payload_ref=f"file://{path}",
+                payload_hash=f"sha256:{digest}",
+                label=f"title={s['title']}",
+            )
+
+    main(sys.argv[1], limit=10)
+    ```
+
+    The events your script emits look like this committed pair — a lifecycle event,
+    then one update per changed session:
+
+    ```json
+    {"schema_version":"uc.event.v1","event_id":"evt_claude_closed_1780467902971_88045","kind":"claude.app.closed","source":"claude-web-ios-shortcut","subject":"claude:app:ios","occurred_at":"2026-06-03T06:25:02.978Z","host":"fabios-mac-mini","priority":50,"ok":true,"privacy":"metadata_only","counts":{"listed":10,"candidates":0,"fetched":0,"synced":0,"changed_sessions":0},"labels":{"app":"claude","platform":"ios","trigger":"closed"},"error":null}
+    ```
+
+    <Note>Driver output (stdout) is **not** load-bearing — events are. If your script
+    runs but emits nothing, nothing happened as far as core is concerned.</Note>
+  </Step>
+
+  <Step title="Test the manifest">
+    Run your commands through `uc driver run`. It resolves the manifest and executes
+    the named command as a local process. A missing driver or command fails clearly.
+
+    ```bash bash
+    uc driver list                       # show installed manifests
+    uc driver run claude-web poll        # one cheap session, end to end
+    uc driver run claude-web status      # is the browser logged in?
+    uc driver run claude-web doctor      # diagnostics
+    ```
+
+    Then confirm the events landed:
+
+    ```bash bash
+    uc event tail --limit 5              # see your lifecycle + session.updated events
+    ```
+  </Step>
+
+  <Step title="Wire the lifecycle triggers">
+    Now connect a real-world signal to the verbs. The flagship pattern is a phone
+    app-open/close that fires `opened` / `closed` on the Mac — see the
+    [iOS relay guide](/guides/ios-relay). For periodic backfill, schedule `poll` from
+    cron. The driver never cares who calls it; it only honors the stable verb.
+  </Step>
+</Steps>
+
+## Obligations checklist
+
+A correct driver holds up every part of the contract:
+
+- [ ] **Directory name matches `name`** in `driver.toml`.
+- [ ] **Lifecycle commands are bounded** — no full crawl on `opened` / `closed`.
+- [ ] **Emits one lifecycle event** carrying `counts`.
+- [ ] **Emits one `*.session.updated` per changed session** (not an array hidden in
+      lifecycle metadata).
+- [ ] **Each update carries `payload_ref` + `payload_hash`** (`sha256:`); heavy
+      content lives in a file, never inline.
+- [ ] **`privacy` defaults to `metadata_only`.**
+- [ ] **No secrets in the manifest** — cookies/tokens/headers/signed URLs resolved at
+      runtime only.
+- [ ] **Events stay small** — `event_id` / `kind` / `source` / `subject` ≤ 128 chars,
+      charset `[A-Za-z0-9_\-.:/]`.
+
+## Read next
+
+<CardGroup cols={2}>
+    <Card title='Phone-triggered sync: the iOS relay' icon='mobile-screen-button' href='/guides/ios-relay'>
+        Fire your driver's lifecycle verbs from a phone.
+    </Card>
+    <Card title='Make your agents aware of each other' icon='radio' href='/guides/agent-awareness'>
+        Consume the events your driver emits.
+    </Card>
+    <Card title='Drivers' icon='plug' href='/concepts/drivers'>
+        The manifest contract, in concept.
+    </Card>
+    <Card title='Events' icon='bolt' href='/concepts/events'>
+        The envelope every driver emits.
+    </Card>
+</CardGroup>

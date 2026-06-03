@@ -51,7 +51,10 @@
                             "guides/edit-contexts",
                             "guides/view-context-history",
                             "guides/fork-clone-contexts",
-                            "guides/self-hosting"
+                            "guides/self-hosting",
+                            "guides/write-a-driver",
+                            "guides/ios-relay",
+                            "guides/agent-awareness"
                         ]
                     }
                 ]

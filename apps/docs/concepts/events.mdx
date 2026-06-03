@@ -3,7 +3,7 @@ title: 'Events'
 description: 'The status board — small immutable facts about what just changed'
 ---
 
-An **event** is a small, immutable fact that something happened — appended to a log
+An **event** is a small, immutable fact that something happened — committed to a log
 your agents can tail to know what changed, now.
 
 Say a driver finishes mirroring a phone session into a file. It emits one
@@ -12,109 +12,124 @@ any machine tails the log, sees the event, and reads the file — without you te
 it anything.
 
 <Note>**Contract v1** — the envelope (`uc.event.v1`) is final and runs on real
-infrastructure today. The `uc event` CLI surface ships in an upcoming release.</Note>
+infrastructure today. The `uc event` CLI surface is in progress and ships in an
+upcoming release. The [contexts](/concepts/contexts) and [sync](/concepts/sync)
+verbs shown elsewhere in these docs are shipped.</Note>
 
-## events = the status board
+## What an event is for
 
-[Files](/concepts/sync) are the archive (everything that ever happened).
-[Contexts](/concepts/contexts) are versioned conversational state. **Events are the
-status board** — what changed *just now*. An event is *not* a transcript, a state
-dump, a raw webhook, or a secret container. It stays **small**; big payloads are
-files an event *points at*.
+Events are the **status board** — what changed *just now*. [Files](/concepts/sync)
+are the archive (everything that ever happened); [contexts](/concepts/contexts) are
+versioned conversational state; events tell an agent *what to go look at*. An event
+is *not* a transcript, a state dump, a raw webhook, or a secret container. It stays
+**small** — big payloads are [files](/concepts/sync) an event *points at*.
+
+Three concrete things events buy you:
+
+- **Cross-machine awareness.** Your phone closes a Claude conversation; minutes later
+  your laptop agent already knows it happened and can read the gist — because a
+  `claude.session.updated` event landed on the shared log.
+- **Automation triggers.** A `sync.failed` or `agent.run.completed` event is a fact
+  another process can react to — retry, notify, kick off the next step.
+- **Audit trail.** The log is an append-only record of what happened where, on which
+  host, with what counts — a timeline you can replay long after the fact.
 
 ## The envelope: `uc.event.v1`
 
-Every event is one JSON object with this shape.
+Every event is one JSON object with the shape below. Fields fall in three groups:
+**required** in every valid envelope (including one still waiting to be committed),
+**server-set** on commit, and **optional**.
 
 ### Required fields
 
-| Field | Meaning |
-|---|---|
-| `schema_version` | Always `uc.event.v1`. |
-| `event_id` | Globally unique id — the dedupe key. |
-| `kind` | Dotted, stable kind, e.g. `agent.run.completed`, `claude.session.updated`, `sync.failed`. |
-| `source` | Component that emitted or observed it, e.g. `claude-web-driver`, `github-webhook`. |
-| `subject` | Stable thing it's about, e.g. `claude:session:abc123`. |
-| `occurred_at` | ISO timestamp — when it happened in the source system. |
-| `host` | Machine that emitted or committed it. |
-| `privacy` | One of `public` · `internal` · `metadata_only` · `sensitive_ref`. |
+| Field | Type | Constraints | Example |
+|---|---|---|---|
+| `schema_version` | string | Literal `"uc.event.v1"`. | `"uc.event.v1"` |
+| `event_id` | string | Globally unique — the dedupe key. Token rules below. | `"evt_claude_closed_1780467902971_88045"` |
+| `kind` | string | Dotted verb-noun, stable. Token rules below. | `"claude.app.closed"` |
+| `source` | string | Component that emitted or observed it. Token rules below. | `"claude-web-ios-shortcut"` |
+| `subject` | string | Stable thing it's about. Token rules below. | `"claude:app:ios"` |
+| `occurred_at` | string | ISO-8601 — when it happened in the source system. | `"2026-06-03T06:25:02.978Z"` |
+| `host` | string | Machine that emitted or committed it. | `"fabios-mac-mini"` |
+| `privacy` | enum | One of `public` · `internal` · `metadata_only` · `sensitive_ref`. | `"metadata_only"` |
 
 ### Server-set on commit
 
-| Field | Meaning |
-|---|---|
-| `received_at` | ISO timestamp the hub sets/overwrites when it commits the event. Absent in the outbox. |
+| Field | Type | Constraints | Example |
+|---|---|---|---|
+| `received_at` | string | ISO-8601 the hub sets/overwrites when it commits. Absent before commit (e.g. while `delivery_state` is `pending`). | `"2026-06-03T06:25:03.114Z"` |
 
 ### Optional fields
 
-| Field | Meaning |
-|---|---|
-| `actor` | Who caused it, e.g. `user:fabio`, `agent:hermes`. |
-| `run_id` | One agent/tool run. |
-| `trace_id` | A larger causal chain across events. |
-| `parent_event_id` | The direct causal parent event. |
-| `priority` | Integer `0`–`100` (default `50`). |
-| `ok` | Boolean success marker (default `true`). |
-| `payload_ref` | Pointer to the file/context with the heavy details. |
-| `payload_hash` | Hash of that payload — must start with `sha256:`. |
-| `counts` | Small numeric counters (`str → int`). |
-| `labels` | Small string metadata for filtering (`str → str`). |
-| `error` | Structured `{ class, message, retryable }` or `null`. |
-
-```json
-{
-  "schema_version": "uc.event.v1",
-  "event_id": "evt_02...",
-  "kind": "claude.session.updated",
-  "source": "claude-web-driver",
-  "subject": "claude:session:abc123",
-  "occurred_at": "2026-05-08T12:10:04Z",
-  "received_at": "2026-05-08T12:10:06Z",
-  "host": "fabios-mac-mini",
-  "parent_event_id": "evt_01...",
-  "trace_id": "evt_01...",
-  "payload_ref": "file:///Users/fabio/.claude-web/sessions/abc123.md",
-  "payload_hash": "sha256:<markdown-sha256>",
-  "privacy": "metadata_only",
-  "counts": { "message_count": 10 },
-  "labels": { "provider": "claude", "title": "Session title" }
-}
-```
+| Field | Type | Constraints / default | Example |
+|---|---|---|---|
+| `actor` | string | Who caused it. | `"user:fabio"` |
+| `run_id` | string | Id of one agent/tool run. | `"run_abc123"` |
+| `trace_id` | string | Id of a larger causal chain across events. | `"evt_app_opened_..."` |
+| `parent_event_id` | string | Direct causal parent — links a `*.session.updated` to its lifecycle parent. | `"evt_app_opened_..."` |
+| `priority` | integer | `0`–`100`. Default `50`. | `50` |
+| `ok` | boolean | Success marker. Default `true`. | `true` |
+| `payload_ref` | string | Pointer to the file/context with the heavy details. | `"file:///Users/fabio/.claude-web/sessions/abc123.md"` |
+| `payload_hash` | string | Hash of that payload — must start with `sha256:`. | `"sha256:9f86d0...."` |
+| `counts` | object | `string → int`, small numeric counters. | `{ "synced": 1, "changed_sessions": 1 }` |
+| `labels` | object | `string → string` for filtering; values `1`–`256` chars. | `{ "app": "claude", "platform": "ios" }` |
+| `error` | object \| null | `{ class, message, retryable }` or `null`. | `null` |
 
 ### Token rules
 
 The four token fields — `event_id`, `kind`, `source`, `subject` — are **≤128 chars**
-and use the charset `[A-Za-z0-9_\-.:/]`. `kind` should be dotted and stable.
+and use the charset `[A-Za-z0-9_\-.:/]`. `kind` must be dotted and stable. Events
+stay **small**; heavy content lives in [files](/concepts/sync) the event points at.
 
-## The lifecycle
+### A complete example
 
-An event is server-authoritative: the hub's log is the source of truth, the local
-outbox is just a durable retry buffer.
+The full sample below is a real line from the live event log — a phone closing the
+Claude app, which triggered a bounded sync that found nothing changed:
 
-```text
-emit ──► outbox ──► commit ──► dedupe ──► (tail reads the log)
-         (client)   (hub log)  (by event_id)
+```json
+{
+  "schema_version": "uc.event.v1",
+  "event_id": "evt_claude_closed_1780467902971_88045",
+  "kind": "claude.app.closed",
+  "source": "claude-web-ios-shortcut",
+  "subject": "claude:app:ios",
+  "occurred_at": "2026-06-03T06:25:02.978Z",
+  "host": "fabios-mac-mini",
+  "priority": 50,
+  "ok": true,
+  "privacy": "metadata_only",
+  "counts": { "listed": 10, "candidates": 0, "fetched": 0, "synced": 0, "changed_sessions": 0 },
+  "labels": { "app": "claude", "platform": "ios", "trigger": "closed" },
+  "error": null
+}
 ```
 
-1. **emit** — `uc event emit` builds the envelope and writes it to the client outbox
-   at `~/.ultracontext/events/outbox/<event_id>.json`.
-2. **commit** — the configured hub appends it to `<remote_root>/events/events.jsonl`
-   (append-only) and sets `received_at`.
-3. **dedupe** — the hub drops duplicates by `event_id` (via `events/seen/` markers),
-   so retries never double-append. The outbox file then moves to `sent/`.
-4. **tail / flush / status** — `tail` reads the log, `flush` retries the outbox,
-   `status` shows pending vs sent counts.
+## Kind naming conventions
+
+A `kind` is a **dotted verb-noun** read provider-first, narrowing left to right:
+`<domain>.<noun>.<verb>`. Keep the set small — push provider details into `source`,
+`subject`, and `labels` rather than minting many provider-specific kinds. A
+provider-specific kind is fine when consumers need to subscribe to that exact fact,
+like `claude.session.updated`.
+
+| Kind | When it fires |
+|---|---|
+| `agent.run.completed` | An agent/tool run finished. |
+| `claude.session.updated` | A driver mirrored a changed Claude web session to a file. |
+| `claude.app.closed` | A lifecycle hook reported the app was closed (carries `counts`). |
+| `sync.failed` | A sync run failed (carries an `error` object, `ok: false`). |
+| `github.pr.opened` | A webhook driver observed a PR open. |
 
 ## Privacy levels
 
-`privacy` declares how sensitive the event is — drivers default to `metadata_only`.
+`privacy` declares how sensitive the event is. Drivers default to `metadata_only`.
 
-| Level | Use for |
+| Level | Use when |
 |---|---|
-| `public` | Facts safe to share broadly. |
-| `internal` | Internal-only facts. |
-| `metadata_only` | Only metadata is in the event; details live in a referenced file. |
-| `sensitive_ref` | Sensitive — refer to it, never inline it. |
+| `public` | The fact is safe to share broadly — nothing sensitive in or behind it. |
+| `internal` | Internal-only fact; not for outside eyes, but no referenced secret. |
+| `metadata_only` | Only metadata is in the event; the details live in a referenced file. The driver default. |
+| `sensitive_ref` | The referenced payload is sensitive — refer to it, never inline it. |
 
 <Note>Never inline raw prompts, transcripts, tokens, cookies, API keys, auth
 headers, signed URLs, or message bodies. Use `payload_ref` + `payload_hash`,
@@ -122,11 +137,61 @@ small `counts`, and small `labels` instead.</Note>
 
 ## When to emit vs when to write a file
 
-This is the core decision (the full table lives in the [overview](/concepts/overview)):
+Three questions decide where a piece of information goes:
 
-- **Small fact that something happened** → emit an **event**.
-- **Heavy content** (transcript, export, dump) → write a **file**, and have the event
-  point at it with `payload_ref` + `payload_hash`.
+| You have | It goes to | Why |
+|---|---|---|
+| A small fact that something happened | an **event** (`uc event emit`) | The log is the status board — small, immutable, tailable. |
+| Heavy content (transcript, export, dump) | a **file** (synced) | Files are the archive you grep and search over. |
+| Live conversational state an agent reads and writes | a **context** | Contexts are versioned; events and files are not. |
+
+The bridge between the first two is the **`payload_ref` + `payload_hash` pattern**:
+write the heavy content to a file, then emit a small event whose `payload_ref` points
+at that file (a `file://` URL) and whose `payload_hash` (`sha256:`-prefixed) lets a
+consumer verify it hasn't changed. The event stays tiny; the bytes stay in the
+archive; the consumer reads the file only when relevance warrants it.
+
+## The lifecycle
+
+Events run on **UltraContext core** — the same capability engine and adapter family
+([libsql, bun:sqlite, sql.js+IndexedDB](/concepts/drivers); Postgres later) that backs
+[contexts](/concepts/contexts). The store is an `EventStore` port over an events
+**table**: `event_id` is `UNIQUE` (atomic dedupe), the row carries the envelope
+fields plus `received_at` (NULL until committed) and a `delivery_state`.
+
+```text
+emit ──► local events table ──► transport ──► hub commit ──► tail / status / flush
+         (pending if remote)    (pluggable)   (received_at,
+                                               UNIQUE dedupe)
+```
+
+1. **emit** — `uc event emit` builds the envelope and writes a row. When the hub is
+   the local db, the insert *is* the commit — atomic, `received_at` set, done. When
+   the hub is remote, the row lands with `delivery_state = pending`.
+2. **transport** — pluggable, and **SSH is never required**:
+   - **local** (same machine / same db): emit and commit are one atomic insert —
+     zero SSH, works **offline and in the browser**.
+   - **self-hosted hub**: `ssh <hub> 'uc event commit --from-stdin'` pipes the
+     envelope to a `uc` on the hub (requires `uc` installed there).
+   - **hosted API** (`POST /events`): a future phase.
+3. **commit** — the hub sets/overwrites `received_at` and inserts the row. The
+   `UNIQUE(event_id)` constraint **dedupes atomically** — a retried event can never
+   double-append. (This table-level uniqueness replaces the old on-disk
+   `seen/`-marker scheme; see *Lineage* below.)
+4. **tail / status / flush** — `tail` reads the committed log, `status` shows pending
+   vs committed counts, `flush` retries anything still `pending`.
+
+<Tip>The hub log is a **table**, not a JSONL file — but the consumer contract is
+unchanged: `uc event tail --json` still emits one JSON object per line, exactly what
+a consumer like the [Hermes plugin](#consumers) reads.</Tip>
+
+### Lineage
+
+Earlier 2.0 drafts stored events as on-disk directories — `events/outbox/`,
+`events/sent/`, `events/seen/`, and an `events.jsonl` hub log. That layout is
+**superseded**: outbox/sent collapse into `delivery_state`, the `seen/` markers
+collapse into `UNIQUE(event_id)`, and the JSONL log becomes a table. The
+**envelope** (`uc.event.v1`) and the line-JSON `tail` output are unchanged.
 
 ## The command surface
 
@@ -139,22 +204,41 @@ uc event emit \
   --subject claude:session:abc123 \
   --privacy metadata_only \
   --payload-ref file:///Users/fabio/.claude-web/sessions/abc123.md \
-  --payload-hash sha256:... \
+  --payload-hash sha256:9f86d0... \
   --label provider=claude
 
-uc event tail        # read the hub log
-uc event flush       # retry the outbox
-uc event status      # pending vs sent counts
-uc event commit      # commit a piped envelope on the hub (--from-stdin)
+uc event tail        # read the committed log (--json → one object per line)
+uc event status      # pending vs committed counts
+uc event flush       # retry anything still pending
 ```
 
 | Command | What it does |
 |---|---|
-| `emit` | Build an envelope, write it to the outbox, ask the hub to commit. |
-| `commit` | Append a piped envelope to the hub log (sets `received_at`, dedupes). |
-| `tail` | Read the committed event log. |
-| `flush` | Retry the outbox. |
-| `status` | Show pending / sent counts. |
+| `emit` | Build an envelope, write the local row, commit it (locally) or queue it for the hub. |
+| `tail` | Read the committed event log. `--limit <n>`; `--json` emits one JSON object per line. |
+| `status` | Show pending / committed counts. |
+| `flush` | Retry anything still `pending`. |
+| `commit --from-stdin` | Hub-side: read a piped envelope, set `received_at`, insert (dedupes by `event_id`). The SSH transport target. |
+
+## Consumers
+
+A consumer **tails** the log and reacts — it never ingests external data (that's a
+[driver](/concepts/drivers)). The reference consumer is the **Hermes plugin**, which
+runs on the `pre_llm_call` hook so each turn starts already aware of what changed:
+
+- Source command `uc event tail --limit <n>` (default `20`, max `50`).
+- **Fail-open** — if `uc` is missing, slow, or errors, it injects nothing and never
+  blocks the turn.
+- A **per-session cursor** so only the event *delta* since the last turn is injected.
+- For relevant `*.session.updated` events it reads **only local `file://`**
+  `payload_ref`s, a bounded excerpt, and injects a short provenance-labeled signal —
+  so your laptop agent *knows* about the phone conversation.
+- Env knobs: `ULTRACONTEXT_CLI` · `ULTRACONTEXT_HERMES_EVENT_LIMIT` ·
+  `ULTRACONTEXT_HERMES_TIMEOUT_SECONDS` · `ULTRACONTEXT_HERMES_ENABLED` ·
+  `ULTRACONTEXT_HERMES_INCLUDE_PAYLOAD` · `ULTRACONTEXT_HERMES_PAYLOAD_CHARS`.
+
+See [Make an agent context-aware](/guides/agent-awareness) for the full consumer
+pattern.
 
 ## Read next
 
@@ -164,5 +248,11 @@ uc event commit      # commit a piped envelope on the hub (--from-stdin)
     </Card>
     <Card title='Sync' icon='folder-tree' href='/concepts/sync'>
         The archive — the files events point at.
+    </Card>
+    <Card title='The iOS relay' icon='mobile' href='/guides/ios-relay'>
+        Phone → relay → driver → events → your laptop agent, end to end.
+    </Card>
+    <Card title='Make an agent aware' icon='radio' href='/guides/agent-awareness'>
+        Tail the log and inject the delta before each turn.
     </Card>
 </CardGroup>
