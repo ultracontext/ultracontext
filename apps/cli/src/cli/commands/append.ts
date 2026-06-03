@@ -84,16 +84,17 @@ function parseJsonObject(text: string): Record<string, unknown> | undefined {
 
 // -- message build ------------------------------------------------------------
 
-// resolve the message body from the available sources, newest precedence first:
-// a raw --message <json> object; else, when the global --json is set, a positional
+// resolve the message body into a LIST of messages, newest precedence first:
+// a raw --message <json> — an OBJECT is one message, an ARRAY spreads into many
+// (one append → one version); else, when the global --json is set, a positional
 // that IS a JSON object (the `append <id> --json '{...}'` shorthand the global
 // boolean would otherwise swallow into raw text); else positional/stdin text
-// wrapped as content. --meta MESSAGE metadata is merged in regardless of source.
-async function buildMessage(
+// wrapped as content. --meta MESSAGE metadata is merged onto EVERY message.
+async function buildMessages(
     text: string | undefined,
     opts: AppendOptions,
     stdin?: AsyncIterable<string>,
-): Promise<Message> {
+): Promise<Message[]> {
     const metadata = parseMeta(opts.meta);
 
     // merge --meta onto a message's own metadata (flag wins on key collision)
@@ -104,9 +105,14 @@ async function buildMessage(
         return message;
     };
 
-    // --message <json> carries a full message object (role/content/metadata).
+    // --message <json> carries a full message object OR an array of them. An
+    // ARRAY spreads into multiple messages (each --meta-merged) appended in ONE
+    // call — fixes the bug where the array was wrapped as one object with numeric
+    // keys "0","1". A lone object stays a single message.
     if (typeof opts.message === 'string') {
-        return withMeta(JSON.parse(opts.message) as Message);
+        const parsed = JSON.parse(opts.message) as Message | Message[];
+        const list = Array.isArray(parsed) ? parsed : [parsed];
+        return list.map((m) => withMeta(m));
     }
 
     // `append <id> --json '{...}'`: the global boolean --json can't carry a value
@@ -116,7 +122,7 @@ async function buildMessage(
     // positional (plain string) falls through to the text path unchanged.
     if (opts.json && typeof text === 'string') {
         const object = parseJsonObject(text);
-        if (object) return withMeta(object as Message);
+        if (object) return [withMeta(object as Message)];
     }
 
     // otherwise the body is positional text, falling back to piped stdin
@@ -127,7 +133,7 @@ async function buildMessage(
     const message: Message = { content };
     if (opts.role) message.role = opts.role;
 
-    return withMeta(message);
+    return [withMeta(message)];
 }
 
 // -- handler ------------------------------------------------------------------
@@ -150,14 +156,14 @@ export async function runAppend(
         // it falls back to $UC_CONTEXT, and the body MUST come from stdin/--message.
         const contextId = requireContextId(idArg, env);
 
-        // assemble the message before touching storage so bad input fails fast
-        const message = await buildMessage(textArg, opts, runtime.stdin);
+        // assemble the message(s) before touching storage so bad input fails fast
+        const messages = await buildMessages(textArg, opts, runtime.stdin);
 
         // resolve the backing client (local sqlite by default)
         const client = await resolveClient({ remote: opts.remote });
 
-        // append the message to the resolved context id
-        const result = await client.append({ id: contextId, messages: [message] });
+        // append the message(s) to the resolved context id in ONE call (one version)
+        const result = await client.append({ id: contextId, messages });
 
         // the resolved context id rides along the envelope for agents to chain on
         const view = { data: result.data, version: result.version, id: result.id };

@@ -93,27 +93,44 @@ class LocalContextClient implements ContextClient {
         // a sentinel so an absent --meta stays absent on the result
         const echo = input.metadata && Object.keys(input.metadata).length > 0 ? input.metadata : undefined;
 
-        // message-level delete — drop the targeted indices/ids, keep the context.
+        // message-level delete — ids PRESENT selects this branch; an EMPTY list is
+        // a caller bug, refused so it can never fall through to the wipe below.
         // core records --meta as version metadata (visible via get --history);
         // we also echo it on the result for symmetry with the permanent path.
-        if (input.ids && input.ids.length > 0) {
-            unwrap(await deleteMessages(this.storage, this.projectId, input.id, { ids: input.ids, userMetadata: input.metadata }));
-            return { deleted: true, id: input.id, ...(echo ? { metadata: echo } : {}) };
+        // core yields {data,version} (the survivors + new version) — surface it so
+        // the unified SDK can mirror the remote soft-delete {data,version} shape.
+        if (input.ids) {
+            if (input.ids.length === 0) throw new Error('no message ids to delete — pass at least one id/index');
+            const res = unwrap(await deleteMessages(this.storage, this.projectId, input.id, { ids: input.ids, userMetadata: input.metadata }));
+            return { deleted: true, id: input.id, data: res.data as MessageView[], version: res.version, ...(echo ? { metadata: echo } : {}) };
         }
 
-        // whole-context delete — remove the context permanently. core echoes the
-        // audit metadata back; surface it on the result so --meta is observable.
+        // whole-context delete — requires an EXPLICIT permanent:true; anything
+        // else is refused so malformed input can never silently wipe a context.
+        if (input.permanent !== true) {
+            throw new Error('nothing to delete — pass ids for a message delete, or permanent: true to delete the whole context');
+        }
+
+        // remove the context permanently. core echoes the audit metadata back;
+        // surface it on the result so --meta is observable.
         const res = unwrap(await deleteContextPermanent(this.storage, this.projectId, input.id, { auditMetadata: input.metadata }));
         return { deleted: true, id: res.id, ...(res.metadata ? { metadata: res.metadata } : {}) };
     }
 
-    // list the project's contexts (newest first), filtered
+    // list the project's contexts (newest first). Forward the FULL filter set —
+    // core listContexts passes ContextFilters straight to the adapter, which
+    // applies all of them (source/user_id/host/project_path/session_id +
+    // after/before), so none are silently dropped.
     async list(input: ListInput): Promise<ListResult> {
         return listContexts(this.storage, this.projectId, {
             limit: input.limit,
             source: input.source,
+            user_id: input.user_id,
+            host: input.host,
             project_path: input.project_path,
             session_id: input.session_id,
+            after: input.after,
+            before: input.before,
         });
     }
 }

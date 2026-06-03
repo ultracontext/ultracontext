@@ -44,8 +44,20 @@ export type UpdateInput = { id: string; updates: Array<Record<string, unknown>>;
 // = audit metadata on a permanent delete, version metadata on a message delete.
 export type DeleteInput = { id: string; permanent?: boolean; ids?: (string | number)[]; metadata?: Record<string, unknown> };
 
-// list: filter the project's contexts
-export type ListInput = { limit?: number; source?: string; project_path?: string; session_id?: string };
+// list: filter the project's contexts. Mirrors core ContextFilters — every
+// field maps to a column/json_extract the sqlite adapter genuinely filters on
+// (source/user_id/host/project_path/session_id via metadata, after/before via
+// created_at), so the SDK's full ListContextsInput forwards through with no drop.
+export type ListInput = {
+    limit?: number;
+    source?: string;
+    user_id?: string;
+    host?: string;
+    project_path?: string;
+    session_id?: string;
+    after?: string;
+    before?: string;
+};
 
 // -- command outputs ----------------------------------------------------------
 
@@ -72,7 +84,16 @@ export type UpdateResult = { data: MessageView[]; version: number };
 
 // delete → confirmation of the removed context, plus the audit/version metadata
 // that core recorded (echoed back so a permanent delete's --meta is observable).
-export type DeleteResult = { deleted: true; id: string; metadata?: Record<string, unknown> };
+// A message-level (soft) delete is versioned: data/version carry the surviving
+// messages + the new version so the unified SDK can mirror the remote soft-delete
+// {data,version} shape. They stay absent on a whole-context permanent delete.
+export type DeleteResult = {
+    deleted: true;
+    id: string;
+    metadata?: Record<string, unknown>;
+    data?: MessageView[];
+    version?: number;
+};
 
 // list → the project's contexts (newest first)
 export type ListResult = { data: Array<{ id: string; metadata: Record<string, unknown>; created_at: string }> };

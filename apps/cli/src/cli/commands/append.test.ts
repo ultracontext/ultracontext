@@ -154,6 +154,49 @@ describe('uc append', () => {
         assert.equal(got.data[0].metadata.k, 'v');
     });
 
+    // -- --message JSON array → MANY messages, one version --------------------
+
+    // a JSON ARRAY in --message spreads into MULTIPLE messages appended in ONE
+    // call (one version bump) — NOT a single object with numeric keys "0","1".
+    it('appends a --message JSON array as multiple messages in one version', async () => {
+        const id = await seedContext();
+        const body = JSON.stringify([
+            { role: 'user', content: 'first' },
+            { role: 'assistant', content: 'second' },
+        ]);
+        const { stdout, code } = await runAppend([id, '--message', body]);
+        assert.equal(code, 0);
+
+        // both messages landed as distinct entries (no "0"/"1" numeric-key wrap)
+        const got = await readContext(id);
+        assert.equal(got.data.length, 2, 'array spread into two messages');
+        assert.equal(got.data[0].content, 'first');
+        assert.equal(got.data[1].content, 'second');
+        assert.equal(got.data[0].role, 'user');
+        assert.equal(got.data[1].role, 'assistant');
+
+        // both messages share ONE version (a single append call, not two)
+        const out = JSON.parse(stdout.trim());
+        assert.equal(out.data.length, 2, 'one envelope carries both messages');
+        assert.equal(out.data[0].index, 0);
+        assert.equal(out.data[1].index, 1);
+        assert.equal(typeof out.version, 'number', 'a single version for the whole array');
+    });
+
+    // --meta applies to EVERY message of a --message array
+    it('merges --meta into each message of a --message array', async () => {
+        const id = await seedContext();
+        const body = JSON.stringify([{ content: 'a' }, { content: 'b', metadata: { kept: 'yes' } }]);
+        const { code } = await runAppend([id, '--message', body, '--meta', 'src=batch']);
+        assert.equal(code, 0);
+
+        const got = await readContext(id);
+        // every message carries the --meta pair; existing message metadata is kept
+        assert.equal(got.data[0].metadata.src, 'batch');
+        assert.equal(got.data[1].metadata.src, 'batch');
+        assert.equal(got.data[1].metadata.kept, 'yes');
+    });
+
     // --message <json> merges --meta into the parsed message's metadata
     it('merges --meta into a --message <json> message metadata', async () => {
         const id = await seedContext();
