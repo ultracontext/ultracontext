@@ -115,9 +115,12 @@ uc sync start|stop    # start / pause sync for enabled sources
 uc sync status|list   # show live sessions / configured sources
 
 uc event emit         # commit a uc.event.v1 event (--kind / --source / --subject)
-uc event tail         # read the committed log — one JSON object per line (--limit)
+uc event tail         # read the committed log — one JSON object per line (--limit, --local)
 uc event status|flush # pending vs committed counts / retry anything still pending
 uc event commit --from-stdin # hub side: commit a piped envelope (ssh transport target)
+
+uc driver list        # list installed driver manifests from ~/.ultracontext/drivers/
+uc driver run <driver> <command> # run a manifest command as a local process on this host
 
 uc init               # initialize ultracontext for this machine
 uc doctor             # diagnose the local environment

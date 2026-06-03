@@ -12,10 +12,12 @@ phone. A `claude-web` driver does a bounded sync of recent web sessions, mirrors
 them to markdown files, and emits one event per changed session. UltraContext core
 never learns how to talk to the Claude web app — the driver does, at the edge.
 
-<Note>**Contract v1** — the manifest format (`driver.toml`) is final and runs on
-real infrastructure today. The `uc driver` CLI surface is in progress and ships in
-an upcoming release. The [sync](/concepts/sync) and [contexts](/concepts/contexts)
-verbs shown elsewhere in these docs are shipped.</Note>
+<Note>**Available today** — the `uc driver` CLI ships in `ultracontext` now:
+`uc driver list` shows installed manifests and `uc driver run <driver> <command>`
+runs a manifest command as a local process. The manifest format (`driver.toml`) is
+**Contract v1** — final and running on real infrastructure. The
+[sync](/concepts/sync) and [contexts](/concepts/contexts) verbs shown elsewhere in
+these docs are shipped.</Note>
 
 ## What a driver is for
 

@@ -13,9 +13,8 @@ it anything.
 
 <Note>**Available today** — the envelope (`uc.event.v1`) and the `uc event` CLI
 surface (`emit` · `tail` · `status` · `flush` · `commit`) ship in `ultracontext`
-now, alongside the [contexts](/concepts/contexts) and [sync](/concepts/sync) verbs.
-The [`uc driver`](/concepts/drivers) surface that emits these events is still in
-progress.</Note>
+now, alongside the [contexts](/concepts/contexts) and [sync](/concepts/sync) verbs
+and the [`uc driver`](/concepts/drivers) surface that emits these events.</Note>
 
 ## What an event is for
 
@@ -179,8 +178,10 @@ emit ──► local events table ──► transport ──► hub commit ─�
    `UNIQUE(event_id)` constraint **dedupes atomically** — a retried event can never
    double-append. (This table-level uniqueness replaces the old on-disk
    `seen/`-marker scheme; see *Lineage* below.)
-4. **tail / status / flush** — `tail` reads the committed log, `status` shows pending
-   vs committed counts, `flush` retries anything still `pending`.
+4. **tail / status / flush** — `tail` reads the committed log (the **hub's** log
+   over SSH when a remote hub is configured; `--local` reads this machine's db),
+   `status` shows pending vs committed counts, `flush` retries anything still
+   `pending`.
 
 <Tip>The hub log is a **table**, not a JSONL file — but the consumer contract is
 unchanged: `uc event tail` always emits one JSON object per line (both human and
@@ -216,7 +217,7 @@ uc event flush       # retry anything still pending
 | Command | What it does |
 |---|---|
 | `emit` | Build an envelope, write the local row, commit it (locally) or queue it for the hub. |
-| `tail` | Read the committed event log, oldest-of-the-tail first. `--limit <n>` (default `20`); optional `--kind` / `--source` / `--subject` filters. Always emits one JSON object per line — in both human and `--json` modes (the stable consumer contract). |
+| `tail` | Read the committed event log, oldest-of-the-tail first. When a **remote hub** is configured, `tail` reads the **hub's** canonical log over SSH (the hub is the source of truth) — pass `--local` to read this machine's own local db instead (the emitter's debug view). If the hub is unreachable it errors (exit `1`), never silently falling back. `--limit <n>` (default `20`); optional `--kind` / `--source` / `--subject` filters. Always emits one JSON object per line — in both human and `--json` modes (the stable consumer contract). |
 | `status` | Show the resolved target + host + pending / committed counts. |
 | `flush` | Retry anything still `pending`. |
 | `commit --from-stdin` | Hub-side: read a piped envelope, set `received_at`, insert (dedupes by `event_id`). The SSH transport target. |
