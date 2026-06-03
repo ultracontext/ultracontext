@@ -182,6 +182,18 @@ for streaming persistence is on the roadmap.</Note>
 IndexedDB) can't run local mode: it throws a clear, actionable error. Go **remote**
 there — pass an `apiKey` (or `mode: 'remote'`).</Note>
 
+### Next.js
+
+UltraContext works in Next.js out of the box — no config needed. Route handlers
+and server actions use the local file database; `'use client'` components use
+SQLite-wasm persisted to IndexedDB. Next externalizes the native SQLite driver
+automatically.
+
+<Note>One dev-setup exception: a `file:`-linked install (`"ultracontext": "file:../…"`,
+a symlink outside your project root) can't be resolved by Turbopack at build time.
+Add `serverExternalPackages: ["ultracontext"]` to `next.config` — or build with
+webpack. Registry installs don't need this.</Note>
+
 ### Going remote
 
 Provide an `apiKey` to use the hosted API (or set `mode: 'remote'` explicitly). The
