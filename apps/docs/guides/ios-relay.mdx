@@ -13,9 +13,11 @@ agent you talk to tails the [event log](/concepts/events), sees a fresh
 Claude just discussed on your phone. This guide documents the real system running on
 the author's infrastructure, as a reproducible recipe.
 
-<Note>**Contract v1** — the envelope (`uc.event.v1`) and driver manifest are final
-and run on real infrastructure today. The `uc driver` / `uc event` CLI surfaces ship
-in an upcoming release; core implementation is in progress.</Note>
+<Note>**The `uc event` surface ships today** — the envelope (`uc.event.v1`) and
+the `uc event` commands (`emit` · `tail` · `status` · `flush` · `commit`) are
+available now. The driver manifest is **Contract v1** (final, on real
+infrastructure), but the `uc driver` CLI that the relay calls into is still in
+progress.</Note>
 
 ## Why this shape
 

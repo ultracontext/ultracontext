@@ -13,10 +13,11 @@ each changed session to a markdown file, and emits one event per change. By the 
 any agent that [tails the log](/guides/agent-awareness) knows your web conversations
 without you telling it anything.
 
-<Note>**Contract v1** — the manifest format (`driver.toml`) and the envelope
-(`uc.event.v1`) are final and run on real infrastructure today. The `uc driver` and
-`uc event` CLI surfaces ship in an upcoming release; core implementation is in
-progress.</Note>
+<Note>**The `uc event` surface ships today** — `uc event emit` (and `tail` /
+`status` / `flush` / `commit`) are available now, so a driver can emit
+`uc.event.v1` events as shown below. The manifest format (`driver.toml`) is
+**Contract v1**: final and running on real infrastructure, but the `uc driver`
+CLI that runs the manifest is still in progress.</Note>
 
 ## How a driver fits
 

@@ -13,9 +13,10 @@ answers, it tails the log, notices the completed run since its last turn, and fo
 that into its reply — labeled as external. Two agents, never directly connected, stay
 in sync through the log.
 
-<Note>**Contract v1** — the envelope (`uc.event.v1`) is final and runs on real
-infrastructure today. The `uc event` CLI surface ships in an upcoming release; core
-implementation is in progress.</Note>
+<Note>**Available today** — the envelope (`uc.event.v1`) and the `uc event` CLI
+surface (`emit` · `tail` · `status` · `flush` · `commit`) ship in `ultracontext`
+now, so the consumer pattern below runs end to end. The [`uc driver`](/concepts/drivers)
+surface that most events come from is still in progress.</Note>
 
 ## The two halves
 
@@ -59,9 +60,10 @@ Each agent reads a bounded window of recent events right before it responds:
 uc event tail --limit 20 --json
 ```
 
-`--json` emits **line-delimited JSON** (one envelope per line) — the stable consumer
-contract regardless of how the log is stored underneath. A pre-turn hook parses those
-lines and decides what, if anything, to inject.
+`tail` always emits **line-delimited JSON** (one envelope per line) — in both human
+and `--json` modes — the stable consumer contract regardless of how the log is stored
+underneath. A pre-turn hook parses those lines and decides what, if anything, to
+inject.
 
 ## The delta-cursor pattern
 
