@@ -15,7 +15,7 @@ UltraContext — version control for AI agent context. pnpm monorepo
 | Package | What it is |
 |---|---|
 | `@ultracontext/core` | Capability engine. IO-free context/key ops over a `StorageAdapter` port. No HTTP, no DB driver. Every op returns `Result<T>`. Exports `./testing`. |
-| `@ultracontext/storage` | `StorageAdapter` implementations: `./drizzle` (postgres.js), `./supabase`, `./sqlite` (libsql — `createSqliteAdapter(url)`). |
+| `@ultracontext/storage` | `StorageAdapter` implementations: `./drizzle` (postgres.js), `./supabase`, `./sqlite` (node/bun: libsql or bun:sqlite — `createSqliteAdapter(url)`), `./sqlite-browser` (sql.js + IndexedDB snapshot). The pure adapter class lives in `sqlite/adapter.ts` (driver-agnostic, browser-safe); node/bun driver code stays in `sqlite/index.ts`. |
 | `@ultracontext/parsers` | Agent session parsers (Claude/Codex/OpenClaw/Cursor/Gemini) + writers + compat matrix. `.mjs`, 2-space. |
 | `@ultracontext/sync` | fs-first Mutagen sync orchestration. Config IO (`~/.ultracontext`), pure mutagen parsers, injectable command runner, start/stop/status/source actions. |
 
@@ -42,6 +42,10 @@ Pass an `apiKey` (or `mode:'remote'`) to use the hosted API. Same object, one
 config switch. Selection rule (identical both langs): `mode ?? (apiKey ? 'remote'
 : 'local')` — explicit `mode` wins. JS runs `@ultracontext/core` in-process;
 Python shells out to the bundled `uc` binary. Local errors throw (remote parity).
+Runs everywhere: Node/Bun (SQLite file), browser (sql.js + IndexedDB, wasm loads
+lazily so remote-only apps pay zero bytes; `wasmUrl` config for offline bundles),
+edge (remote — local mode throws a clear error). The CLI's `.` ships conditional
+exports (`node`/`bun` → full build w/ libsql; `default` → browser build).
 
 ## Architecture decisions
 

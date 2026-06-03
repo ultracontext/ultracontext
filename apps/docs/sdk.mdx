@@ -142,6 +142,46 @@ uc = UltraContext(db="./data/agent.db")
 ```
 </CodeGroup>
 
+### In the browser
+
+The same `new UltraContext()` is local-first in a web app — no server, no key.
+Local mode runs SQLite-wasm ([sql.js](https://sql.js.org)) in the page and persists
+a snapshot to **IndexedDB**, keyed by your `db` name (default `ultracontext.db`).
+
+```typescript
+import { UltraContext } from 'ultracontext';
+
+// local in the browser — persists to IndexedDB under "ultracontext.db"
+const uc = new UltraContext();
+const ctx = await uc.create();
+await uc.append(ctx.id, { role: 'user', content: 'Hello!' });
+```
+
+The wasm loads **lazily**, only the first time you touch local mode — a remote-only
+browser app (`apiKey` present) pays zero wasm bytes. By default the SDK fetches a
+CDN-pinned sql.js build; for a **fully-offline app**, bundle the wasm yourself and
+point `wasmUrl` at it. With Vite, resolve the asset URL and pass it through:
+
+```typescript
+import wasmUrl from 'sql.js/dist/sql-wasm.wasm?url';
+import { UltraContext } from 'ultracontext';
+
+// offline-friendly — serve the wasm from your own bundle
+const uc = new UltraContext({ wasmUrl });
+```
+
+<Note>sql.js ships with `ultracontext` — no extra install. It loads lazily,
+only when local mode runs in a browser; remote-only apps pay zero wasm bytes.</Note>
+
+<Note>**Persistence is debounced.** Writes snapshot to IndexedDB on a debounce; call
+`await uc.flush()` to force a save before navigation (best-effort on page
+hide/unload). [OPFS](https://developer.mozilla.org/docs/Web/API/File_System_API/Origin_private_file_system)
+for streaming persistence is on the roadmap.</Note>
+
+<Note>**Edge runtimes** (Workers, Vercel/Netlify Edge — no filesystem, no
+IndexedDB) can't run local mode: it throws a clear, actionable error. Go **remote**
+there — pass an `apiKey` (or `mode: 'remote'`).</Note>
+
 ### Going remote
 
 Provide an `apiKey` to use the hosted API (or set `mode: 'remote'` explicitly). The

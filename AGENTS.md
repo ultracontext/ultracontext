@@ -16,7 +16,7 @@ installs the `uc` CLI **and** the JS SDK in one install.
 | Package | What it is |
 |---|---|
 | `@ultracontext/core` | Capability engine. IO-free context/key ops over a `StorageAdapter` port. No HTTP, no DB driver. Ops return `Result<T> = { ok:true, data } \| { ok:false, code, message }`. |
-| `@ultracontext/storage` | `StorageAdapter` impls: `./drizzle`, `./supabase`, `./sqlite` (libsql; `createSqliteAdapter(url)`). |
+| `@ultracontext/storage` | `StorageAdapter` impls: `./drizzle`, `./supabase`, `./sqlite` (node/bun libsql or bun:sqlite; `createSqliteAdapter(url)`), `./sqlite-browser` (sql.js + IndexedDB). Pure adapter class in `sqlite/adapter.ts` (browser-safe); node/bun drivers in `sqlite/index.ts`. |
 | `@ultracontext/parsers` | Agent session parsers + writers + compat matrix. `.mjs`. |
 | `@ultracontext/sync` | fs-first Mutagen sync orchestration: config IO under `~/.ultracontext`, pure mutagen parsers, injectable command runner. |
 
@@ -44,7 +44,10 @@ app-specific, NOT `~/.ultracontext/uc.db`). Pass an `apiKey` (or `mode:'remote'`
 to use the hosted API. Same object, one config switch. Selection rule (identical
 both langs): `mode ?? (apiKey ? 'remote' : 'local')` — explicit `mode` wins. JS
 runs `@ultracontext/core` in-process; Python shells out to the bundled `uc`
-binary. Local errors throw (remote parity).
+binary. Local errors throw (remote parity). Runs everywhere: Node/Bun (SQLite
+file), browser (sql.js + IndexedDB, wasm lazy so remote-only apps pay zero bytes;
+`wasmUrl` for offline bundles), edge (remote — local throws a clear error). The
+CLI's `.` ships conditional exports (`node`/`bun` → full build; `default` → browser).
 
 ## Architecture decisions
 

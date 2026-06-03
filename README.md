@@ -137,6 +137,7 @@ Building an agent? The SDK is how you manage its context window in code — crea
 
 - **`create` · `append` · `get` · `update` · `delete`** (+ `deleteMany`) — that's the whole surface.
 - **Local by default** — no server, no key; backed by a local SQLite file (`./ultracontext.db`). Pass an `apiKey` (or `mode: 'remote'`) for the hosted API.
+- **Runs everywhere** — Node/Bun (SQLite file), the browser (SQLite-wasm persisted to IndexedDB), edge (remote via `apiKey`). Same class, same surface.
 - **Versioned by default** — every `update`/`delete` is a new version; jump back with `version` / `at` / `before`.
 - **Fork** — `create({ from })` branches a context, optionally from a past point.
 - **Metadata** — tag the context, a message, or a version.
