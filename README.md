@@ -136,6 +136,7 @@ for the authoritative, always-current tree.
 Building an agent? The SDK is how you manage its context window in code — create, version, fork, and retrieve context windows, with any LLM framework.
 
 - **`create` · `append` · `get` · `update` · `delete`** (+ `deleteMany`) — that's the whole surface.
+- **Local by default** — no server, no key; backed by a local SQLite file (`./ultracontext.db`). Pass an `apiKey` (or `mode: 'remote'`) for the hosted API.
 - **Versioned by default** — every `update`/`delete` is a new version; jump back with `version` / `at` / `before`.
 - **Fork** — `create({ from })` branches a context, optionally from a past point.
 - **Metadata** — tag the context, a message, or a version.
@@ -157,7 +158,8 @@ npm install ultracontext
 ```typescript
 import { UltraContext } from 'ultracontext';
 
-const uc = new UltraContext({ apiKey: 'uc_live_...' });
+// local by default — no server, no key (SQLite at ./ultracontext.db)
+const uc = new UltraContext();
 
 const ctx = await uc.create();
 await uc.append(ctx.id, { role: 'user', content: 'Hello!' });
@@ -165,6 +167,9 @@ const { data } = await uc.get(ctx.id);
 
 // use with any LLM framework
 const response = await generateText({ model, messages: data });
+
+// remote — pass an apiKey for the hosted Context API
+const remote = new UltraContext({ apiKey: 'uc_live_...' });
 ```
 
 ### Python
@@ -176,13 +181,17 @@ pip install ultracontext
 ```python
 from ultracontext import UltraContext
 
-uc = UltraContext(api_key="uc_live_...")
+# local by default — no server, no key (SQLite at ./ultracontext.db)
+uc = UltraContext()
 
 ctx = uc.create()
 uc.append(ctx["id"], {"role": "user", "content": "Hello!"})
 
 # use with any LLM framework
 response = generate_text(model=model, messages=uc.get(ctx["id"])["data"])
+
+# remote — pass an api_key for the hosted Context API
+remote = UltraContext(api_key="uc_live_...")
 ```
 
 <p align="center">📚 Context API Guides</p>

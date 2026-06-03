@@ -26,13 +26,22 @@ UltraContext — version control for AI agent context. pnpm monorepo
 | `api` | Hono REST API (`createApp(options?)`; `server.ts` Node, `worker.ts` CF Workers). **DO NOT TOUCH.** |
 | `mcp-server` | Stdio MCP server (`ultracontext-mcp-server`). **DO NOT TOUCH.** |
 | `js-sdk` | The JS/TS SDK, published name `@ultracontext/js`, `private:true`. SDK source only — typed HTTP client for the hosted API. |
-| `cli` | The `uc` binary, published as **`ultracontext`**. Imports `@ultracontext/js` + the libs, bundles them (tsdown), re-exports the SDK on `.`. bins: `uc` **and** `ultracontext`. |
-| `python-sdk` | httpx client, published on PyPI (`ultracontext`). **DO NOT TOUCH.** |
+| `cli` | The `uc` binary, published as **`ultracontext`**. Imports `@ultracontext/js` + the libs, bundles them (tsdown), exports the **unified `UltraContext` SDK** on `.`. bins: `uc` **and** `ultracontext`. |
+| `python-sdk` | `UltraContext`/`AsyncUltraContext` client (PyPI `ultracontext`). **Local-by-default**: drives the bundled `uc` binary in local mode; httpx for remote. API source = DO NOT TOUCH; the local backend (`_local.py`) is editable here. |
 | `postgres` | Local Postgres compose + schema (`init.sql`) + migration scripts. |
 | `docs` | Mintlify MDX. Second-person voice, YAML frontmatter. |
 
-Dependency direction: `cli → js-sdk → api`. The CLI's `.` export is the SDK
-(`export * from '@ultracontext/js'`); the `uc` bin lives in `src/cli/`.
+Dependency direction: `cli → js-sdk → api`. The `.` export is the unified
+`UltraContext` SDK (`apps/cli/lib/sdk/ultracontext.ts`, shadowing the
+`@ultracontext/js` class); the `uc` bin lives in `src/cli/`.
+
+**Unified SDK (local-by-default).** `npm i ultracontext` / `pip install
+ultracontext` give a local-first SDK — no server, no api key — backed by a
+local SQLite file (`./ultracontext.db`, cwd app-specific, NOT `~/.ultracontext/uc.db`).
+Pass an `apiKey` (or `mode:'remote'`) to use the hosted API. Same object, one
+config switch. Selection rule (identical both langs): `mode ?? (apiKey ? 'remote'
+: 'local')` — explicit `mode` wins. JS runs `@ultracontext/core` in-process;
+Python shells out to the bundled `uc` binary. Local errors throw (remote parity).
 
 ## Architecture decisions
 
@@ -120,7 +129,8 @@ One short semantic comment atop each logical block + a blank line between blocks
 - **Branch**: work on `feat/uc-cli`. Do not push, open PRs, or touch `main`.
 - **Tests**: `*.test.ts` near the code.
 - **Env**: `.env.example` → `.env`. Never commit secrets.
-- **Do not touch**: `apps/api`, `apps/mcp-server`, `apps/python-sdk` source.
+- **Do not touch**: `apps/api`, `apps/mcp-server`. In `apps/python-sdk`, the
+  remote/API client stays DO NOT TOUCH; only its local backend (`_local.py`) is editable.
 
 ## Skill routing
 

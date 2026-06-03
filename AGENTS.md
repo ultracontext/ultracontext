@@ -27,12 +27,24 @@ installs the `uc` CLI **and** the JS SDK in one install.
 | `api` | Hono REST API. **DO NOT MODIFY.** |
 | `mcp-server` | Stdio MCP server. **DO NOT MODIFY.** |
 | `js-sdk` | The SDK, published `@ultracontext/js`, `private:true`. Typed HTTP client. |
-| `cli` | The `uc` binary, published as **`ultracontext`**. Imports `@ultracontext/js` + libs, bundles + re-exports the SDK on `.`. bins: `uc` + `ultracontext`. |
-| `python-sdk` | httpx client (PyPI `ultracontext`). **DO NOT MODIFY.** |
+| `cli` | The `uc` binary, published as **`ultracontext`**. Imports `@ultracontext/js` + libs, bundles + exports the **unified `UltraContext` SDK** on `.`. bins: `uc` + `ultracontext`. |
+| `python-sdk` | `UltraContext`/`AsyncUltraContext` (PyPI `ultracontext`). **Local-by-default**: local mode drives the bundled `uc` binary, httpx for remote. API client = DO NOT MODIFY; the local backend (`_local.py`) is editable. |
 | `postgres` | Local Postgres compose + `init.sql` + migrations. |
 | `docs` | Mintlify MDX. |
 
-Dependency direction: `cli → js-sdk → api`.
+Dependency direction: `cli → js-sdk → api`. The `.` export is the unified
+`UltraContext` SDK (`apps/cli/lib/sdk/ultracontext.ts`), shadowing the
+`@ultracontext/js` class.
+
+## Unified SDK (local-by-default)
+
+`npm i ultracontext` / `pip install ultracontext` give a local-first SDK — no
+server, no api key — backed by a local SQLite file (`./ultracontext.db`, cwd
+app-specific, NOT `~/.ultracontext/uc.db`). Pass an `apiKey` (or `mode:'remote'`)
+to use the hosted API. Same object, one config switch. Selection rule (identical
+both langs): `mode ?? (apiKey ? 'remote' : 'local')` — explicit `mode` wins. JS
+runs `@ultracontext/core` in-process; Python shells out to the bundled `uc`
+binary. Local errors throw (remote parity).
 
 ## Architecture decisions
 
@@ -107,4 +119,5 @@ One short semantic comment atop each logical block + a blank line between blocks
 - **Commits**: Conventional Commits (`feat(cli):`, `fix(api):`). NEVER add
   `Co-Authored-By` lines.
 - **Branch**: `feat/uc-cli`. Don't push, open PRs, or touch `main`.
-- **Do not modify**: `apps/api`, `apps/mcp-server`, `apps/python-sdk` source.
+- **Do not modify**: `apps/api`, `apps/mcp-server`. In `apps/python-sdk`, the
+  remote/API client stays DO NOT MODIFY; only its local backend (`_local.py`) is editable.

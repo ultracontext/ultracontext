@@ -5,7 +5,11 @@ description: 'Manage your agent context programmatically'
 
 ## Prerequisites
 
-- **An UltraContext API key** -- [Get yours](https://ultracontext.ai) or [self-host](/guides/self-hosting)
+- **Node.js >= 22** (Node SDK) or **Python >= 3.9** (Python SDK)
+
+That's it. The SDK is **local-by-default** -- no server, no API key. Reach for a
+hosted [Context API key](https://ultracontext.ai) (or a [self-hosted](/guides/self-hosting)
+API) only when you want to sync across machines.
 
 ## 1. Install
 
@@ -33,10 +37,12 @@ pip install ultracontext
 
 ## 2. Create your first context
 
+No config needed -- this runs against a local SQLite file (`./ultracontext.db`).
+
 <CodeGroup>
 ```typescript Node.js
 import { UltraContext } from 'ultracontext';
-const uc = new UltraContext({ apiKey: process.env.ULTRACONTEXT_API_KEY });
+const uc = new UltraContext(); // local by default — no key, no server
 const ctx = await uc.create();
 
 // append messages
@@ -60,9 +66,8 @@ const response = await generateText({ model, messages: data });
 ```
 
 ```python Python
-import os
 from ultracontext import UltraContext
-uc = UltraContext(api_key=os.environ["ULTRACONTEXT_API_KEY"])
+uc = UltraContext()  # local by default — no key, no server
 ctx = uc.create()
 
 # append messages
@@ -89,6 +94,100 @@ response = generate_text(model=model, messages=result["data"])
 Every update and delete auto-creates a new version. Retrieve any previous state with a single call.
 
 <Info>UltraContext is **framework-agnostic** and **schema-free**. Use it with any LLM provider and store context in any format you need.</Info>
+
+## Local by default
+
+`npm i ultracontext` / `pip install ultracontext` give you a **local-first** SDK.
+With no config, every call runs against a local SQLite file at `./ultracontext.db`
+in your working directory -- the same object you'd point at the hosted API, minus the
+network. Pass an `apiKey` (or `mode: 'remote'`) to switch to the [Context API](https://ultracontext.ai).
+One config switch, same surface.
+
+<Note>Node runs the storage engine **in-process**. Python drives the bundled `uc`
+binary under the hood -- same surface, same local SQLite file.</Note>
+
+<Note>`pip install ultracontext` ships a **bundled `uc` binary** per platform, so
+local mode works with no separate install. Set `UC_BIN` to override the path; on
+the pure-Python sdist (no bundled binary) it falls back to `uc` on your `PATH`.</Note>
+
+### How a mode is chosen
+
+The selection rule is identical across both languages: `mode ?? (apiKey ? 'remote' : 'local')`.
+
+| Config | Mode |
+|---|---|
+| nothing | **local** |
+| `apiKey` present | **remote** (inferred) |
+| `mode: 'local'` | **local** -- forced, even with a key |
+| `mode: 'remote'` | **remote** -- requires an `apiKey` |
+
+### Point at a different file
+
+Override the local target with `db`. A bare path is treated as a file; an explicit
+scheme (`file:` / `libsql:`) rides through unchanged.
+
+<CodeGroup>
+```typescript Node.js
+import { UltraContext } from 'ultracontext';
+
+// custom local file (default is ./ultracontext.db)
+const uc = new UltraContext({ db: './data/agent.db' });
+```
+
+```python Python
+from ultracontext import UltraContext
+
+# custom local file (default is ./ultracontext.db)
+uc = UltraContext(db="./data/agent.db")
+```
+</CodeGroup>
+
+### Going remote
+
+Provide an `apiKey` to use the hosted API (or set `mode: 'remote'` explicitly). The
+verbs, inputs, and responses are identical to the local examples above.
+
+<CodeGroup>
+```typescript Node.js
+import { UltraContext } from 'ultracontext';
+
+// apiKey infers remote — or set mode: 'remote' explicitly
+const uc = new UltraContext({ apiKey: process.env.ULTRACONTEXT_API_KEY });
+const ctx = await uc.create();
+await uc.append(ctx.id, { role: 'user', content: 'Hello!' });
+```
+
+```python Python
+import os
+from ultracontext import UltraContext
+
+# api_key infers remote — or set mode="remote" explicitly
+uc = UltraContext(api_key=os.environ["ULTRACONTEXT_API_KEY"])
+ctx = uc.create()
+uc.append(ctx["id"], {"role": "user", "content": "Hello!"})
+```
+</CodeGroup>
+
+<Tip>The same machinery powers the [`uc` CLI](/fundamentals/cli) -- local by default, `--remote` (or a configured key) to hit the hosted API.</Tip>
+
+### Local-mode caveats
+
+Local mode is the same surface with a few honest limits. Everything below works
+unchanged against the remote API.
+
+- **`update` is single-target.** Locally you may only edit `content`, addressed by
+  `id` or `index`. A list of updates (batch) or any other field raises
+  `NotImplementedError` (Python) / throws (Node). Remote supports batch + arbitrary fields.
+- **`deleteMany` fans out.** There is no local batch endpoint, so it loops one
+  permanent delete per id. Per-id errors are captured into the result row -- the
+  batch never aborts -- and you still get `{ results: [{ id, deleted, error? }], deleted_count }`.
+- **Soft-delete shape.** Both locals carry the new version's `data` + `version`,
+  in parity with remote. Node returns `{ data, version }`; Python rides the CLI
+  envelope superset `{ deleted, id, data, version }`. Permanent delete returns
+  `{ deleted, id, metadata? }`.
+- **Append version on a fresh context.** `create` is version 0; the *first* append
+  fills v0 (it does not bump). A list-append still shares one version across all
+  messages -- so the first append to a brand-new context reports `version: 0`.
 
 ## 3. Schema-free messages
 
