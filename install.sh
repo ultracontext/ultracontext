@@ -6,9 +6,13 @@
 #   curl -fsSL https://ultracontext.com/install.sh | bash -s v1.6.0
 #
 # Environment variables:
-#   UC_VERSION      - Version to install (default: v1.6.0)
-#   UC_INSTALL_DIR  - Custom install directory (default: ~/.ultracontext/bin)
-#   GITHUB_BASE     - Custom GitHub base URL (default: https://github.com)
+#   UC_VERSION                   - Version to install (default: v1.6.0)
+#   UC_INSTALL_DIR               - Custom install directory (default: ~/.ultracontext/bin)
+#   GITHUB_BASE                  - Custom GitHub base URL (default: https://github.com)
+#   ULTRACONTEXT_INSTALL_MUTAGEN - Set to 0 to skip the Mutagen auto-install (uc sync needs it)
+#   ULTRACONTEXT_INSTALL_SKILL   - Set to 0 to skip installing the agent skill
+#   ULTRACONTEXT_SKILL_TARGETS   - Space-separated agent skills dirs (overrides the defaults)
+#   ULTRACONTEXT_MUTAGEN_VERSION - Pin a Mutagen version (default: v0.18.1)
 
 # Wrap everything in a function to protect against partial download.
 # If the connection drops mid-transfer, bash won't execute a truncated script.
@@ -18,7 +22,11 @@ set -euo pipefail
 
 # ─── Defaults ────────────────────────────────────────────────────────────────
 
+# Bumped by the release phase — keep this the single source of truth for the tag.
 DEFAULT_VERSION="v1.6.0"
+
+# Mutagen version `uc sync` shells out to. Pinned; verified release asset names.
+DEFAULT_MUTAGEN_VERSION="v0.18.1"
 
 # ─── Colors (only when outputting to a terminal) ─────────────────────────────
 
@@ -63,6 +71,162 @@ tildify() {
   else
     echo "$1"
   fi
+}
+
+# Download a URL to a file, following redirects. Returns curl's exit status.
+fetch() {
+  curl --fail --silent --location --output "$1" "$2"
+}
+
+# ─── Mutagen auto-install ─────────────────────────────────────────────────────
+
+# `uc sync` shells out to the `mutagen` binary; a clean machine has none.
+# Install Mutagen alongside `uc` (same dir → same PATH) unless opted out or
+# already present. Non-fatal: any failure warns and leaves the core install OK.
+install_mutagen() {
+  # Honor the opt-out and skip if mutagen is already resolvable on PATH.
+  if [[ ${ULTRACONTEXT_INSTALL_MUTAGEN:-1} == "0" ]]; then
+    mutagen_state="skipped (ULTRACONTEXT_INSTALL_MUTAGEN=0)"
+    return 0
+  fi
+  if command -v mutagen >/dev/null 2>&1; then
+    mutagen_state="on PATH ($(command -v mutagen))"
+    return 0
+  fi
+
+  # Map (os, arch) → the verified v0.18.1 release asset (note: amd64, not x64).
+  local mutagen_arch
+  case "$arch_name" in
+    arm64) mutagen_arch=arm64 ;;
+    x64)   mutagen_arch=amd64 ;;
+  esac
+  local mv="${ULTRACONTEXT_MUTAGEN_VERSION:-$DEFAULT_MUTAGEN_VERSION}"
+  mv="v${mv#v}"
+  local asset="mutagen_${os_name}_${mutagen_arch}_${mv}.tar.gz"
+  local m_url="${GITHUB_BASE}/mutagen-io/mutagen/releases/download/${mv}/${asset}"
+
+  # Download + extract into the install dir. The archive holds the `mutagen`
+  # binary plus a `mutagen-agents.tar.gz` sidecar it needs for remote sync —
+  # extract both so laptop↔VPS sync works out of the box.
+  local m_tar="${tmpdir}/${asset}"
+  info "  Downloading Mutagen from ${m_url}"
+  if ! fetch "$m_tar" "$m_url"; then
+    warn "Mutagen download failed — skipping. ${Dim}uc sync needs it; install manually or rerun.${Color_Off}"
+    mutagen_state="not installed (download failed)"
+    return 0
+  fi
+
+  # Pull just the files we ship next to uc (mutagen + its agents bundle).
+  if ! tar -xzf "$m_tar" -C "$install_dir" mutagen mutagen-agents.tar.gz 2>/dev/null; then
+    # Fall back to extracting the whole archive if the member list ever changes.
+    tar -xzf "$m_tar" -C "$install_dir" 2>/dev/null || {
+      warn "Mutagen extraction failed — skipping."
+      mutagen_state="not installed (extract failed)"
+      return 0
+    }
+  fi
+
+  local m_exe="${install_dir}/mutagen"
+  chmod +x "$m_exe" 2>/dev/null || true
+  if [[ $os_name == "darwin" ]]; then
+    xattr -d com.apple.quarantine "$m_exe" 2>/dev/null || true
+  fi
+
+  if [[ -x $m_exe ]]; then
+    mutagen_state="$(tildify "$m_exe")"
+    info "  Mutagen ${mv} installed"
+  else
+    mutagen_state="not installed"
+  fi
+  return 0
+}
+
+# ─── Agent-skill install ──────────────────────────────────────────────────────
+
+# Copy the bundled UltraContext skill into each agent's skills dir so agents
+# know how to drive `uc`. The installer is curl|bash (no checkout) so the skill
+# travels with the release as the `ultracontext-skill.tar.gz` asset. Non-fatal.
+install_skill() {
+  if [[ ${ULTRACONTEXT_INSTALL_SKILL:-1} == "0" ]]; then
+    skill_state="skipped (ULTRACONTEXT_INSTALL_SKILL=0)"
+    return 0
+  fi
+
+  # Default agent skills dirs (override via ULTRACONTEXT_SKILL_TARGETS).
+  local defaults="$HOME/.claude/skills $HOME/.agents/skills $HOME/.openclaw/skills $HOME/.hermes/skills"
+  read -r -a targets <<<"${ULTRACONTEXT_SKILL_TARGETS:-$defaults}"
+
+  # Fetch the skill bundle from the release; skip gracefully if it's absent.
+  local s_url="${REPO}/releases/download/${VERSION}/ultracontext-skill.tar.gz"
+  local s_tar="${tmpdir}/ultracontext-skill.tar.gz"
+  local s_dir="${tmpdir}/skill"
+  info "  Downloading agent skill from ${s_url}"
+  if ! fetch "$s_tar" "$s_url"; then
+    warn "Skill bundle not found in release — skipping skill install."
+    skill_state="not installed (skill asset missing from release)"
+    return 0
+  fi
+
+  mkdir -p "$s_dir"
+  if ! tar -xzf "$s_tar" -C "$s_dir" 2>/dev/null; then
+    warn "Skill bundle could not be extracted — skipping."
+    skill_state="not installed (extract failed)"
+    return 0
+  fi
+
+  # The bundle may be the bare SKILL.md or a skills/ultracontext/ tree — find it.
+  local src
+  src=$(find "$s_dir" -name SKILL.md -print -quit 2>/dev/null)
+  if [[ -z $src ]]; then
+    warn "SKILL.md not found in skill bundle — skipping."
+    skill_state="not installed (SKILL.md missing)"
+    return 0
+  fi
+
+  # Install into <target>/ultracontext/ for every configured agent dir.
+  local installed=0 base dst
+  for base in "${targets[@]}"; do
+    dst="${base}/ultracontext"
+    if mkdir -p "$dst" 2>/dev/null && cp "$src" "$dst/SKILL.md" 2>/dev/null; then
+      info "  Installed UltraContext skill to $(tildify "$dst")"
+      installed=$((installed + 1))
+    fi
+  done
+
+  if [[ $installed -gt 0 ]]; then
+    skill_state="${installed} agent dir(s)"
+  else
+    skill_state="not installed (no writable target dirs)"
+  fi
+  return 0
+}
+
+# ─── PATH-conflict warning ────────────────────────────────────────────────────
+
+# If another `uc` resolves on PATH at a DIFFERENT location than the one we just
+# installed, the shell may run whichever appears first — warn the user clearly.
+warn_path_conflict() {
+  command -v uc >/dev/null 2>&1 || return 0
+  local resolved
+  resolved=$(command -v uc)
+  if [[ $resolved != "$exe" ]]; then
+    echo "" >&2
+    warn "another 'uc' is ahead on PATH: ${resolved}"
+    info "  This UltraContext install lives at $(tildify "$exe"); your shell may"
+    info "  use whichever 'uc' appears first in PATH. Check with: command -v uc"
+  fi
+}
+
+# ─── Install summary ──────────────────────────────────────────────────────────
+
+# Re-state what each step produced in one block so the result is unambiguous.
+print_summary() {
+  echo ""
+  bold "  UltraContext install summary:"
+  info  "    uc        ->  $(tildify "$exe")"
+  info  "    mutagen   ->  ${mutagen_state:-not installed}"
+  info  "    skill     ->  ${skill_state:-not installed}"
+  echo ""
 }
 
 # ─── Dependency checks ──────────────────────────────────────────────────────
@@ -201,27 +365,33 @@ success "  UltraContext CLI ${installed_version} installed successfully!"
 echo ""
 info "  Binary:  $(tildify "$exe")"
 
+# ─── Secondary installs (non-fatal) ──────────────────────────────────────────
+
+# Mutagen + agent skill are best-effort: calling them in `||` context disables
+# errexit inside the bodies, so a failure here never aborts the core uc install.
+echo ""
+install_mutagen || warn "Mutagen step failed — continuing."
+install_skill   || warn "Skill step failed — continuing."
+
 # ─── PATH setup ─────────────────────────────────────────────────────────────
 
-# Already resolvable as the just-installed binary? Nothing else to do.
-if command -v uc >/dev/null 2>&1; then
-  existing=$(command -v uc)
-  if [[ "$existing" == "$exe" ]]; then
-    echo ""
-    bold "  Run ${Blue}uc --help${Color_Off}${Bold} to get started${Color_Off}"
-    echo ""
-    exit 0
-  else
-    warn "another 'uc' was found at ${existing}"
-    info "  The new installation at $(tildify "$exe") may be shadowed."
-  fi
+# Track whether PATH already resolves so we can pick the right closing hint,
+# but always fall through to the conflict warning + summary (never early-exit).
+path_ready=0
+
+# Already on PATH (as our binary, or the dir is present)? Then no rc edit needed.
+if command -v uc >/dev/null 2>&1 && [[ "$(command -v uc)" == "$exe" ]]; then
+  path_ready=1
+elif echo "$PATH" | tr ':' '\n' | grep -qxF "${install_dir}" 2>/dev/null; then
+  path_ready=1
 fi
 
-# install dir already on PATH? then we're done after a hint.
-if echo "$PATH" | tr ':' '\n' | grep -qxF "${install_dir}" 2>/dev/null; then
+# When PATH is already good, just print the getting-started hint and finish.
+if [[ $path_ready == 1 ]]; then
   echo ""
   bold "  Run ${Blue}uc --help${Color_Off}${Bold} to get started${Color_Off}"
-  echo ""
+  warn_path_conflict
+  print_summary
   exit 0
 fi
 
@@ -305,7 +475,10 @@ info "  Next steps:"
 echo ""
 bold "    uc init"
 bold "    uc --help"
-echo ""
+
+# Flag any other uc ahead on PATH, then re-state the full result in one block.
+warn_path_conflict
+print_summary
 
 }
 

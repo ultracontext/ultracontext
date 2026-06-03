@@ -8,9 +8,13 @@
 #   $env:UC_VERSION = 'v1.6.0'; irm https://ultracontext.com/install.ps1 | iex
 #
 # Environment variables:
-#   UC_VERSION      - Version to install (default: v1.6.0)
-#   UC_INSTALL_DIR  - Custom install directory (default: $HOME\.ultracontext\bin)
-#   GITHUB_BASE     - Custom GitHub base URL (default: https://github.com)
+#   UC_VERSION                   - Version to install (default: v1.6.0)
+#   UC_INSTALL_DIR               - Custom install directory (default: $HOME\.ultracontext\bin)
+#   GITHUB_BASE                  - Custom GitHub base URL (default: https://github.com)
+#   ULTRACONTEXT_INSTALL_MUTAGEN - Set to 0 to skip the Mutagen auto-install (uc sync needs it)
+#   ULTRACONTEXT_INSTALL_SKILL   - Set to 0 to skip installing the agent skill
+#   ULTRACONTEXT_SKILL_TARGETS   - Space-separated agent skills dirs (overrides the defaults)
+#   ULTRACONTEXT_MUTAGEN_VERSION - Pin a Mutagen version (default: v0.18.1)
 
 param(
   [string]$Version = $env:UC_VERSION
@@ -21,16 +25,175 @@ $ErrorActionPreference = 'Stop'
 
 # --- Defaults ----------------------------------------------------------------
 
+# Bumped by the release phase — keep this the single source of truth for the tag.
 $defaultVersion = 'v1.6.0'
+
+# Mutagen version `uc sync` shells out to. Pinned; verified release asset name.
+$defaultMutagenVersion = 'v0.18.1'
 
 # --- Helpers -----------------------------------------------------------------
 
 function Write-Info { param($msg) Write-Host "  $msg" -ForegroundColor DarkGray }
 function Write-Ok   { param($msg) Write-Host "  $msg" -ForegroundColor Green }
+function Write-Warn { param($msg) Write-Host "  warn: $msg" -ForegroundColor Yellow }
 
 function Write-Fail {
   param($msg)
   Write-Host "  error: $msg" -ForegroundColor Red
+}
+
+# Download a URL to a file. Returns $true on success, $false on any failure.
+function Get-File {
+  param($Url, $OutFile)
+  try {
+    $ProgressPreference = 'SilentlyContinue'
+    Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing
+    return $true
+  } catch {
+    return $false
+  }
+}
+
+# State shared with the summary block (set by the install functions below).
+$script:mutagenState = 'not installed'
+$script:skillState   = 'not installed'
+
+# --- Mutagen auto-install ----------------------------------------------------
+
+# `uc sync` shells out to mutagen.exe; install it next to uc.exe (same dir =>
+# same PATH) unless opted out or already present. Non-fatal: warns + continues.
+function Install-Mutagen {
+  param($InstallDir, $GithubBase)
+
+  if ($env:ULTRACONTEXT_INSTALL_MUTAGEN -eq '0') {
+    $script:mutagenState = 'skipped (ULTRACONTEXT_INSTALL_MUTAGEN=0)'
+    return
+  }
+  if (Get-Command mutagen -ErrorAction SilentlyContinue) {
+    $script:mutagenState = 'on PATH'
+    return
+  }
+
+  # Verified v0.18.1 Windows asset (note: amd64, and a .zip not a .tar.gz).
+  $mv = if ($env:ULTRACONTEXT_MUTAGEN_VERSION) { 'v' + $env:ULTRACONTEXT_MUTAGEN_VERSION.TrimStart('v') } else { $defaultMutagenVersion }
+  $asset = "mutagen_windows_amd64_${mv}.zip"
+  $url = "$GithubBase/mutagen-io/mutagen/releases/download/$mv/$asset"
+
+  $work = Join-Path ([System.IO.Path]::GetTempPath()) "uc-mutagen-$([System.Guid]::NewGuid())"
+  New-Item -ItemType Directory -Path $work -Force | Out-Null
+  try {
+    $zip = Join-Path $work $asset
+    Write-Info "Downloading Mutagen from $url"
+    if (-not (Get-File $url $zip)) {
+      Write-Warn "Mutagen download failed -- skipping. uc sync needs it; install manually or rerun."
+      $script:mutagenState = 'not installed (download failed)'
+      return
+    }
+
+    # The zip holds mutagen.exe plus a mutagen-agents.tar.gz sidecar it needs
+    # for remote sync -- expand all, then copy both alongside uc.exe.
+    Expand-Archive -Path $zip -DestinationPath $work -Force
+    $bin = Get-ChildItem -Path $work -Filter 'mutagen.exe' -Recurse | Select-Object -First 1
+    if (-not $bin) {
+      Write-Warn "mutagen.exe not found in archive -- skipping."
+      $script:mutagenState = 'not installed (binary missing)'
+      return
+    }
+    Copy-Item -Path $bin.FullName -Destination (Join-Path $InstallDir 'mutagen.exe') -Force
+    $agents = Get-ChildItem -Path $work -Filter 'mutagen-agents.tar.gz' -Recurse | Select-Object -First 1
+    if ($agents) { Copy-Item -Path $agents.FullName -Destination (Join-Path $InstallDir 'mutagen-agents.tar.gz') -Force }
+
+    $script:mutagenState = (Join-Path $InstallDir 'mutagen.exe')
+    Write-Info "Mutagen $mv installed"
+  } catch {
+    Write-Warn "Mutagen install failed -- skipping."
+    $script:mutagenState = 'not installed (error)'
+  } finally {
+    Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
+  }
+}
+
+# --- Agent-skill install -----------------------------------------------------
+
+# Copy the bundled skill into each agent's skills dir. The installer has no
+# checkout, so the skill travels with the release as ultracontext-skill.tar.gz.
+function Install-Skill {
+  param($Repo, $VersionTag)
+
+  if ($env:ULTRACONTEXT_INSTALL_SKILL -eq '0') {
+    $script:skillState = 'skipped (ULTRACONTEXT_INSTALL_SKILL=0)'
+    return
+  }
+
+  # Default agent skills dirs (override via ULTRACONTEXT_SKILL_TARGETS).
+  $defaults = "$HOME\.claude\skills $HOME\.agents\skills $HOME\.openclaw\skills $HOME\.hermes\skills"
+  $targets = ($(if ($env:ULTRACONTEXT_SKILL_TARGETS) { $env:ULTRACONTEXT_SKILL_TARGETS } else { $defaults })) -split '\s+' | Where-Object { $_ -ne '' }
+
+  $url = "$Repo/releases/download/$VersionTag/ultracontext-skill.tar.gz"
+  $work = Join-Path ([System.IO.Path]::GetTempPath()) "uc-skill-$([System.Guid]::NewGuid())"
+  New-Item -ItemType Directory -Path $work -Force | Out-Null
+  try {
+    $tar = Join-Path $work 'ultracontext-skill.tar.gz'
+    Write-Info "Downloading agent skill from $url"
+    if (-not (Get-File $url $tar)) {
+      Write-Warn "Skill bundle not found in release -- skipping skill install."
+      $script:skillState = 'not installed (skill asset missing from release)'
+      return
+    }
+
+    # tar ships with Windows 10+; expand and locate SKILL.md in the bundle.
+    & tar -xzf $tar -C $work 2>$null
+    $src = Get-ChildItem -Path $work -Filter 'SKILL.md' -Recurse | Select-Object -First 1
+    if (-not $src) {
+      Write-Warn "SKILL.md not found in skill bundle -- skipping."
+      $script:skillState = 'not installed (SKILL.md missing)'
+      return
+    }
+
+    $installed = 0
+    foreach ($base in $targets) {
+      $dst = Join-Path $base 'ultracontext'
+      try {
+        New-Item -ItemType Directory -Path $dst -Force | Out-Null
+        Copy-Item -Path $src.FullName -Destination (Join-Path $dst 'SKILL.md') -Force
+        Write-Info "Installed UltraContext skill to $dst"
+        $installed++
+      } catch { }
+    }
+    $script:skillState = if ($installed -gt 0) { "$installed agent dir(s)" } else { 'not installed (no writable target dirs)' }
+  } catch {
+    Write-Warn "Skill install failed -- skipping."
+    $script:skillState = 'not installed (error)'
+  } finally {
+    Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
+  }
+}
+
+# --- PATH-conflict warning ---------------------------------------------------
+
+# Warn if another uc resolves on PATH at a different location than ours.
+function Warn-PathConflict {
+  param($Exe)
+  $resolved = Get-Command uc -ErrorAction SilentlyContinue
+  if ($resolved -and $resolved.Source -and ($resolved.Source -ne $Exe)) {
+    Write-Host ""
+    Write-Warn "another 'uc' is ahead on PATH: $($resolved.Source)"
+    Write-Info "This UltraContext install lives at $Exe; your shell may use"
+    Write-Info "whichever 'uc' appears first in PATH. Check with: Get-Command uc -All"
+  }
+}
+
+# --- Install summary ---------------------------------------------------------
+
+# Re-state what each step produced in one block.
+function Write-Summary {
+  param($Exe)
+  Write-Host ""
+  Write-Host "  UltraContext install summary:" -ForegroundColor White
+  Write-Info "  uc       ->  $Exe"
+  Write-Info "  mutagen  ->  $script:mutagenState"
+  Write-Info "  skill    ->  $script:skillState"
+  Write-Host ""
 }
 
 # --- Architecture detection --------------------------------------------------
@@ -121,6 +284,14 @@ Write-Ok "UltraContext CLI $installedVersion installed successfully!"
 Write-Host ""
 Write-Info "Binary:  $exe"
 
+# --- Secondary installs (non-fatal) ------------------------------------------
+
+# Mutagen + agent skill are best-effort; each function swallows its own errors
+# so a failure here never aborts the core uc install.
+Write-Host ""
+Install-Mutagen -InstallDir $installDir -GithubBase $githubBase
+Install-Skill   -Repo $repo -VersionTag $Version
+
 # --- PATH setup --------------------------------------------------------------
 
 $userPath = [Environment]::GetEnvironmentVariable('PATH', 'User')
@@ -128,12 +299,13 @@ if (-not $userPath) { $userPath = '' }
 $pathEntries = $userPath -split ';' | Where-Object { $_ -ne '' }
 
 if ($pathEntries -contains $installDir) {
-  # Already on PATH -- just print the getting-started line
+  # Already on PATH -- print the getting-started line, warn on conflicts, summarize.
   Write-Host ""
   Write-Host "  Run " -NoNewline
   Write-Host "uc --help" -ForegroundColor Cyan -NoNewline
   Write-Host " to get started"
-  Write-Host ""
+  Warn-PathConflict -Exe $exe
+  Write-Summary -Exe $exe
   return
 }
 
@@ -150,5 +322,8 @@ Write-Info "Next steps:"
 Write-Host ""
 Write-Host "    uc init" -ForegroundColor Cyan
 Write-Host "    uc --help" -ForegroundColor Cyan
-Write-Host ""
+
+# Flag any other uc ahead on PATH, then re-state the full result in one block.
+Warn-PathConflict -Exe $exe
+Write-Summary -Exe $exe
 return
