@@ -89,6 +89,9 @@ importers:
       picocolors:
         specifier: ^1.1.1
         version: 1.1.1
+      smol-toml:
+        specifier: ^1.6.1
+        version: 1.6.1
       sql.js:
         specifier: ^1.14.1
         version: 1.14.1
@@ -1788,6 +1791,10 @@ packages:
   sisteransi@1.0.5:
     resolution: {integrity: sha512-bLGGlR1QxBcynn2d5YmDX4MGjlZvy2MRBDRNHLJ8VI6l6+9FUiyTFNJ0IveOSP0bcXgVDPRcfGqA0pjaqUpfVg==}
 
+  smol-toml@1.6.1:
+    resolution: {integrity: sha512-dWUG8F5sIIARXih1DTaQAX4SsiTXhInKf1buxdY9DIg4ZYPZK5nGM1VRIYmEbDbsHt7USo99xSLFu5Q1IqTmsg==}
+    engines: {node: '>= 18'}
+
   split2@4.2.0:
     resolution: {integrity: sha512-UcjcJOWknrNkF6PLX83qcHM6KHgVKNkV62Y8a5uYDVv9ydGQVwAHMKqHdJje1VTWpljG0WYpCDhrCdAOYH4TWg==}
     engines: {node: '>= 10.x'}
@@ -3372,6 +3379,8 @@ snapshots:
     optional: true
 
   sisteransi@1.0.5: {}
+
+  smol-toml@1.6.1: {}
 
   split2@4.2.0: {}
 

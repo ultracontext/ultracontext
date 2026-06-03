@@ -14,6 +14,7 @@ import { buildUpdateCommand } from './commands/update';
 import { registerList } from './commands/list';
 import { buildDeleteCommand } from './commands/delete';
 import { buildEventCommand } from './commands/event';
+import { buildDriverCommand } from './commands/driver';
 import { buildSyncCommand } from './commands/sync';
 import { buildDoctorCommand } from './commands/doctor';
 import { buildInitCommand } from './commands/init';
@@ -41,6 +42,15 @@ function registerContextVerbs(program: Command): void {
 // event ops over the local EventStore + a pluggable (ssh) transport.
 function registerEvent(program: Command): void {
     program.addCommand(buildEventCommand());
+}
+
+// -- driver group -------------------------------------------------------------
+
+// top-level `uc driver <list|run>` → the manifest reader + the sh-c runner. A
+// driver is the side-effect boundary: `run` executes its command as a local
+// process on this host, streaming stdio through and propagating the exit code.
+function registerDriver(program: Command): void {
+    program.addCommand(buildDriverCommand());
 }
 
 // -- sync group ---------------------------------------------------------------
@@ -91,6 +101,7 @@ export function buildProgram(): Command {
     // register every command group (commands last — it walks the whole tree)
     registerContextVerbs(program);
     registerEvent(program);
+    registerDriver(program);
     registerSync(program);
     registerStandalone(program);
     registerCommands(program);

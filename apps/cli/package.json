@@ -69,6 +69,7 @@
         "drizzle-orm": "^0.44.5",
         "libsql": "^0.5.28",
         "picocolors": "^1.1.1",
+        "smol-toml": "^1.6.1",
         "sql.js": "^1.14.1"
     },
     "devDependencies": {
