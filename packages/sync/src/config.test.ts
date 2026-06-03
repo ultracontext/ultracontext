@@ -6,7 +6,7 @@
 
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, writeFile, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -101,6 +101,91 @@ describe('config round-trip', () => {
     it('throws when no config exists', async () => {
         const dir = await tempDir();
         await assert.rejects(loadConfig(dir));
+    });
+});
+
+// -- toml → json migration ----------------------------------------------------
+
+// a config.toml matching the LIVE mini shape (top-level + [query] + [sources.*])
+const LIVE_TOML = `remote = "uc"
+remote_root = "~/.ultracontext"
+host_id = "fabios-mac-mini"
+
+[query]
+command = "claude"
+args = "-p {{prompt}}"
+
+[sources.claude]
+path = "~/.claude"
+enabled = true
+
+[sources.codex]
+path = "~/.codex"
+enabled = false
+`;
+
+describe('config.toml migration', () => {
+    // when only config.toml exists, loadConfig migrates it to config.json
+    it('migrates a legacy config.toml to config.json', async () => {
+        const dir = await tempDir();
+        await writeFile(join(dir, 'config.toml'), LIVE_TOML, 'utf8');
+
+        const warnings: string[] = [];
+        const config = await loadConfig(dir, { warn: (m) => warnings.push(m) });
+
+        // the mapped Config carries the top-level fields + sources
+        assert.equal(config.remote, 'uc');
+        assert.equal(config.remoteRoot, '~/.ultracontext');
+        assert.equal(config.hostId, 'fabios-mac-mini');
+        assert.deepEqual(
+            config.sources,
+            [
+                { agent: 'claude', localPath: '~/.claude', enabled: true },
+                { agent: 'codex', localPath: '~/.codex', enabled: false },
+            ],
+        );
+
+        // the [query] table is preserved (not dropped)
+        assert.deepEqual(config.query, { command: 'claude', args: '-p {{prompt}}' });
+
+        // exactly one migration line was logged to the injected warn hook
+        assert.equal(warnings.length, 1);
+        assert.match(warnings[0], /migrat/i);
+    });
+
+    // migration writes config.json and renames config.toml → config.toml.migrated
+    it('writes config.json and renames the toml', async () => {
+        const dir = await tempDir();
+        await writeFile(join(dir, 'config.toml'), LIVE_TOML, 'utf8');
+
+        await loadConfig(dir, { warn: () => {} });
+
+        // config.json now exists and round-trips the migrated config
+        const raw = await readFile(join(dir, 'config.json'), 'utf8');
+        const onDisk = JSON.parse(raw);
+        assert.equal(onDisk.remote, 'uc');
+        assert.deepEqual(onDisk.query, { command: 'claude', args: '-p {{prompt}}' });
+
+        // the original toml is kept under a .migrated suffix (never deleted)
+        await access(join(dir, 'config.toml.migrated'));
+        await assert.rejects(access(join(dir, 'config.toml')));
+    });
+
+    // a second load reads config.json and does NOT re-run the migration
+    it('does not re-run migration once config.json exists', async () => {
+        const dir = await tempDir();
+        await writeFile(join(dir, 'config.toml'), LIVE_TOML, 'utf8');
+        await loadConfig(dir, { warn: () => {} });
+
+        // re-introduce a config.toml — config.json should win, no warn fires
+        await writeFile(join(dir, 'config.toml'), LIVE_TOML, 'utf8');
+        const warnings: string[] = [];
+        const config = await loadConfig(dir, { warn: (m) => warnings.push(m) });
+
+        assert.equal(config.remote, 'uc');
+        assert.equal(warnings.length, 0);
+        // the freshly written toml is untouched (no second rename)
+        await access(join(dir, 'config.toml'));
     });
 });
 

@@ -6,19 +6,22 @@
 
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { saveConfig, type Config } from './config';
+import { saveConfig, loadConfig, type Config } from './config';
 import {
     syncStart,
     syncStop,
     syncStatus,
     syncReset,
     syncList,
+    sourceRemove,
+    sourceSetEnabled,
     type SyncDeps,
 } from './sync';
+import { ignorePath, sourceIgnorePath } from './ignores';
 import type { CommandResult } from './mutagen';
 
 // -- temp dirs ----------------------------------------------------------------
@@ -205,5 +208,217 @@ describe('syncReset', () => {
 
         const cmds = mutagenCalls(runner.calls);
         assert.ok(cmds.some((c) => c[1] === 'terminate' && c[2] === 'uc-laptop-claude'));
+    });
+});
+
+// -- ignores threading --------------------------------------------------------
+
+describe('syncStart ignores', () => {
+    // each `sync create` carries the merged ignore patterns as `--ignore=` args
+    it('passes --ignore args from the ignore files', async () => {
+        const dir = await tempDir();
+        await seedLocalConfig(dir);
+        // seed a global + per-source ignore file before starting
+        await mkdir(join(dir, 'ignores', 'claude'), { recursive: true });
+        await writeFile(ignorePath(dir), '# global\n.git/\nnode_modules/\n', 'utf8');
+        await writeFile(sourceIgnorePath(dir, 'claude'), 'secrets/\n', 'utf8');
+        const runner = fakeRunner();
+
+        await syncStart(deps(dir, runner));
+
+        const create = mutagenCalls(runner.calls).find((c) => c[0] === 'sync' && c[1] === 'create')!;
+        assert.ok(create.includes('--ignore=.git/'));
+        assert.ok(create.includes('--ignore=node_modules/'));
+        assert.ok(create.includes('--ignore=secrets/'));
+    });
+
+    // syncStart seeds the global ignore file with defaults when it is absent
+    it('seeds the global ignore file with defaults', async () => {
+        const dir = await tempDir();
+        await seedLocalConfig(dir);
+        const runner = fakeRunner();
+
+        await syncStart(deps(dir, runner));
+
+        const { readFile } = await import('node:fs/promises');
+        const raw = await readFile(ignorePath(dir), 'utf8');
+        assert.match(raw, /node_modules\//);
+
+        // the seeded defaults now flow through as `--ignore=` args
+        const create = mutagenCalls(runner.calls).find((c) => c[0] === 'sync' && c[1] === 'create')!;
+        assert.ok(create.includes('--ignore=node_modules/'));
+    });
+});
+
+// -- source remove ------------------------------------------------------------
+
+describe('sourceRemove', () => {
+    // terminates the session (when present) and drops the source from config
+    it('terminates the session and removes the source', async () => {
+        const dir = await tempDir();
+        await seedLocalConfig(dir);
+        const runner = fakeRunner({ list: 'Name: uc-laptop-claude\nStatus: Watching for changes\n' });
+
+        await sourceRemove('claude', {}, deps(dir, runner));
+
+        // the session was terminated
+        const cmds = mutagenCalls(runner.calls);
+        assert.ok(cmds.some((c) => c[1] === 'terminate' && c[2] === 'uc-laptop-claude'));
+
+        // the source is gone from the persisted config
+        const config = await loadConfig(dir);
+        assert.equal(config.sources.find((s) => s.agent === 'claude'), undefined);
+    });
+
+    // removing an unknown source is a clear error
+    it('rejects an unknown source', async () => {
+        const dir = await tempDir();
+        await seedLocalConfig(dir);
+        const runner = fakeRunner();
+
+        await assert.rejects(sourceRemove('nope', {}, deps(dir, runner)), /not found/);
+    });
+
+    // purgeRemote deletes the remote dir for a local workspace
+    it('deletes the remote dir when purgeRemote is set', async () => {
+        const dir = await tempDir();
+        const config = await seedLocalConfig(dir);
+        const runner = fakeRunner();
+        // create the remote source dir so removal has something to delete
+        const remoteSourceDir = join(config.remoteRoot, 'workspace', 'laptop', 'claude');
+        await mkdir(remoteSourceDir, { recursive: true });
+
+        await sourceRemove('claude', { purgeRemote: true }, deps(dir, runner));
+
+        const { access } = await import('node:fs/promises');
+        await assert.rejects(access(remoteSourceDir));
+    });
+
+    // without purgeRemote the remote dir is left in place
+    it('leaves the remote dir without purgeRemote', async () => {
+        const dir = await tempDir();
+        const config = await seedLocalConfig(dir);
+        const runner = fakeRunner();
+        const remoteSourceDir = join(config.remoteRoot, 'workspace', 'laptop', 'claude');
+        await mkdir(remoteSourceDir, { recursive: true });
+
+        await sourceRemove('claude', {}, deps(dir, runner));
+
+        const { access } = await import('node:fs/promises');
+        await access(remoteSourceDir);
+    });
+});
+
+// -- source enable / disable --------------------------------------------------
+
+describe('sourceSetEnabled', () => {
+    // disabling a source persists the flag and best-effort pauses its session
+    it('disables a source and pauses its session', async () => {
+        const dir = await tempDir();
+        await seedLocalConfig(dir);
+        const runner = fakeRunner({ list: 'Name: uc-laptop-claude\nStatus: Watching for changes\n' });
+
+        await sourceSetEnabled('claude', false, deps(dir, runner));
+
+        // the flag is persisted
+        const config = await loadConfig(dir);
+        assert.equal(config.sources.find((s) => s.agent === 'claude')?.enabled, false);
+
+        // the session was paused (best-effort apply)
+        const cmds = mutagenCalls(runner.calls);
+        assert.ok(cmds.some((c) => c[1] === 'pause' && c[2] === 'uc-laptop-claude'));
+    });
+
+    // enabling a previously-disabled source starts its session
+    it('enables a source and starts its session', async () => {
+        const dir = await tempDir();
+        await seedLocalConfig(dir);
+        const runner = fakeRunner();
+
+        await sourceSetEnabled('codex', true, deps(dir, runner));
+
+        // the flag is persisted
+        const config = await loadConfig(dir);
+        assert.equal(config.sources.find((s) => s.agent === 'codex')?.enabled, true);
+
+        // a create was attempted for the now-enabled source
+        const cmds = mutagenCalls(runner.calls);
+        assert.ok(cmds.some((c) => c[0] === 'sync' && c[1] === 'create' && c.some((a) => a.includes('uc-laptop-codex'))));
+    });
+
+    // toggling an unknown source is a clear error
+    it('rejects an unknown source', async () => {
+        const dir = await tempDir();
+        await seedLocalConfig(dir);
+        const runner = fakeRunner();
+
+        await assert.rejects(sourceSetEnabled('nope', true, deps(dir, runner)), /not found/);
+    });
+});
+
+// -- remote-shell safety --------------------------------------------------------
+
+describe('remote shell quoting', () => {
+    // a hostile source leaf must stay an inert (quoted) filename on the remote —
+    // never a command injection into the ssh rm/mkdir lines
+    it('quotes hostile paths in the remote rm and mkdir commands', async () => {
+        const dir = await tempDir();
+        const config: Config = {
+            remote: 'user@hub',
+            remoteRoot: '~/.ultracontext',
+            hostId: 'laptop',
+            sources: [{ agent: 'evil', localPath: join(dir, 'x; touch pwned'), enabled: true }],
+        };
+        await saveConfig(config, dir);
+        const runner = fakeRunner();
+
+        await sourceRemove('evil', { purgeRemote: true }, deps(dir, runner));
+
+        // the rm target is single-quoted; the `;` lives INSIDE the quotes
+        const ssh = runner.calls.filter((c) => c[0] === 'ssh').map((c) => c.slice(1));
+        const rm = ssh.find((c) => c[1]?.includes('rm -rf'))!;
+        assert.ok(rm, 'an ssh rm call was made');
+        assert.match(rm[1], /rm -rf '[^']*x; touch pwned'/);
+        assert.doesNotMatch(rm[1], /rm -rf [^']/);
+    });
+
+    // the workspace mkdir line quotes every dir the same way
+    it('quotes hostile paths in the remote mkdir', async () => {
+        const dir = await tempDir();
+        const config: Config = {
+            remote: 'user@hub',
+            remoteRoot: '~/.ultracontext',
+            hostId: 'laptop',
+            sources: [{ agent: 'evil', localPath: join(dir, 'y; id'), enabled: true }],
+        };
+        await saveConfig(config, dir);
+        // local path must exist for startSource to engage
+        await mkdir(join(dir, 'y; id'), { recursive: true });
+        const runner = fakeRunner();
+
+        await syncStart(deps(dir, runner));
+
+        const ssh = runner.calls.filter((c) => c[0] === 'ssh').map((c) => c.slice(1));
+        const mk = ssh.find((c) => c[1]?.includes('mkdir -p'))!;
+        assert.ok(mk, 'an ssh mkdir call was made');
+        assert.match(mk[1], /'[^']*y; id'/);
+    });
+});
+
+// -- migration notice through the orchestration ---------------------------------
+
+describe('migration warn wiring', () => {
+    // the toml→json migration notice flows through SyncDeps.warn (never silent)
+    it('surfaces the migration notice via deps.warn', async () => {
+        const dir = await tempDir();
+        const { writeFile } = await import('node:fs/promises');
+        await writeFile(join(dir, 'config.toml'), 'remote = "local"\nremote_root = "~/.ultracontext"\nhost_id = "laptop"\n', 'utf8');
+        const runner = fakeRunner();
+        const warnings: string[] = [];
+
+        await syncList({ ...deps(dir, runner), warn: (m) => warnings.push(m) });
+
+        assert.equal(warnings.length, 1);
+        assert.match(warnings[0], /config\.toml/);
     });
 });

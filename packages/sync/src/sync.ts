@@ -9,12 +9,15 @@ import { mkdir } from 'node:fs/promises';
 import {
     loadConfig,
     saveConfig,
+    configDir as defaultConfigDir,
     enabledSources,
     isLocalConfig,
     mutagenSessionName,
     remoteEndpoint,
     expandHome,
     upsertSource,
+    removeSource,
+    setSourceEnabled,
     findSource,
     type Config,
     type Source,
@@ -28,6 +31,7 @@ import {
     type CommandRunner,
     type SessionInfo,
 } from './mutagen';
+import { ensureIgnoreFiles, collectIgnorePatterns } from './ignores';
 
 // -- injectable dependencies --------------------------------------------------
 
@@ -37,15 +41,19 @@ export type SyncDeps = {
     runCommand?: CommandRunner;
     commandExists?: (name: string) => Promise<boolean>;
     pathExists?: (path: string) => Promise<boolean>;
+    warn?: (message: string) => void;
 };
 
-// fill SyncDeps with the real implementations (spawn + fs probes)
+// fill SyncDeps with the real implementations (spawn + fs probes + real config dir).
+// warn defaults to stderr so one-time notices (e.g. the toml→json config migration)
+// are never silent on the real CLI, while tests inject a capture hook.
 function resolveDeps(deps: SyncDeps = {}): Required<SyncDeps> {
     return {
-        configDir: deps.configDir ?? undefined!,
+        configDir: deps.configDir ?? defaultConfigDir(),
         runCommand: deps.runCommand ?? spawnRunner,
         commandExists: deps.commandExists ?? realCommandExists,
         pathExists: deps.pathExists ?? realPathExists,
+        warn: deps.warn ?? ((message) => process.stderr.write(`${message}\n`)),
     };
 }
 
@@ -91,6 +99,14 @@ async function requireMutagen(deps: Required<SyncDeps>): Promise<void> {
 
 // -- remote workspace prep ----------------------------------------------------
 
+// single-quote a path for a remote POSIX shell — the only char needing escape
+// inside single quotes is the quote itself ('\''). Paths flow from user config
+// (source names / localPath leaves / hostId), so NOTHING goes into a remote
+// command unquoted: a leaf like `x; rm -rf ~` must stay an inert filename.
+function shellQuote(path: string): string {
+    return `'${path.replace(/'/g, `'\\''`)}'`;
+}
+
 // ensure the per-host workspace dirs exist (local: mkdir; ssh: remote mkdir -p)
 async function prepareRemoteWorkspace(deps: Required<SyncDeps>, config: Config): Promise<void> {
     // collect the workspace root, the host dir, and each enabled source dir
@@ -106,8 +122,8 @@ async function prepareRemoteWorkspace(deps: Required<SyncDeps>, config: Config):
         return;
     }
 
-    // remote workspace → one ssh `mkdir -p` for all dirs
-    const result = await deps.runCommand('ssh', [config.remote, `mkdir -p ${dirs.join(' ')}`]);
+    // remote workspace → one ssh `mkdir -p` with every dir shell-quoted
+    const result = await deps.runCommand('ssh', [config.remote, `mkdir -p ${dirs.map(shellQuote).join(' ')}`]);
     if (result.code !== 0) throw new Error(`ssh mkdir failed: ${result.stderr.trim()}`);
 }
 
@@ -124,9 +140,12 @@ export async function syncStart(rawDeps: SyncDeps = {}): Promise<void> {
     const deps = resolveDeps(rawDeps);
     await requireMutagen(deps);
 
-    const config = await loadConfig(deps.configDir);
+    const config = await loadConfig(deps.configDir, { warn: deps.warn });
     const existing = await listSessions(deps);
     await prepareRemoteWorkspace(deps, config);
+
+    // seed the global ignore file so its defaults flow into every create
+    await ensureIgnoreFiles({ configDir: deps.configDir });
 
     // bring each enabled source online
     for (const source of enabledSources(config)) {
@@ -153,19 +172,24 @@ async function startSource(
         return;
     }
 
+    // gather this source's merged ignore patterns (global + per-source)
+    const ignores = await collectIgnorePatterns({ configDir: deps.configDir }, source.agent);
+
     // otherwise create a one-way replica from the local path to the remote
-    const args = createArgs(name, expandHome(source.localPath), remoteEndpoint(config, source));
+    const args = createArgs(name, expandHome(source.localPath), remoteEndpoint(config, source), ignores);
     await mutagen(deps, args);
 }
 
 // the `mutagen sync create` argument vector (one-way replica, posix symlinks)
-function createArgs(name: string, localPath: string, endpoint: string): string[] {
+function createArgs(name: string, localPath: string, endpoint: string, ignores: string[]): string[] {
+    // the fixed flags, then one repeated `--ignore=` per pattern, then the endpoints
     return [
         'sync',
         'create',
         `--name=${name}`,
         '--mode=one-way-replica',
         '--symlink-mode=posix-raw',
+        ...ignores.map((pattern) => `--ignore=${pattern}`),
         localPath,
         endpoint,
     ];
@@ -178,7 +202,7 @@ export async function syncStop(rawDeps: SyncDeps = {}): Promise<void> {
     const deps = resolveDeps(rawDeps);
     await requireMutagen(deps);
 
-    const config = await loadConfig(deps.configDir);
+    const config = await loadConfig(deps.configDir, { warn: deps.warn });
     const existing = await listSessions(deps);
 
     for (const source of enabledSources(config)) {
@@ -215,7 +239,7 @@ export async function syncList(rawDeps: SyncDeps = {}): Promise<SyncListEntry[]>
     const deps = resolveDeps(rawDeps);
     await requireMutagen(deps);
 
-    const config = await loadConfig(deps.configDir);
+    const config = await loadConfig(deps.configDir, { warn: deps.warn });
     const list = await listSessions(deps);
 
     const entries: SyncListEntry[] = [];
@@ -256,7 +280,7 @@ export async function syncReset(rawDeps: SyncDeps = {}): Promise<void> {
     const deps = resolveDeps(rawDeps);
     await requireMutagen(deps);
 
-    const config = await loadConfig(deps.configDir);
+    const config = await loadConfig(deps.configDir, { warn: deps.warn });
     const existing = await listSessions(deps);
 
     // tear down anything this host owns
@@ -278,7 +302,7 @@ export async function sourceAdd(
     rawDeps: SyncDeps = {},
 ): Promise<{ existed: boolean }> {
     const deps = resolveDeps(rawDeps);
-    const config = await loadConfig(deps.configDir);
+    const config = await loadConfig(deps.configDir, { warn: deps.warn });
 
     // mutate + persist the config first
     const existed = upsertSource(config, name, path, enabled);
@@ -298,6 +322,91 @@ export async function sourceAdd(
 // the configured sources (raw config view, no mutagen calls)
 export async function sourceList(rawDeps: SyncDeps = {}): Promise<Source[]> {
     const deps = resolveDeps(rawDeps);
-    const config = await loadConfig(deps.configDir);
+    const config = await loadConfig(deps.configDir, { warn: deps.warn });
     return config.sources;
+}
+
+// -- source remove ------------------------------------------------------------
+
+// options for removing a source (remote-dir deletion is opt-in + destructive)
+export type SourceRemoveOptions = {
+    purgeRemote?: boolean;
+};
+
+// terminate a source's session, drop it from config, optionally purge the remote dir
+export async function sourceRemove(
+    name: string,
+    opts: SourceRemoveOptions = {},
+    rawDeps: SyncDeps = {},
+): Promise<void> {
+    const deps = resolveDeps(rawDeps);
+    const config = await loadConfig(deps.configDir, { warn: deps.warn });
+
+    // resolve the source first so an unknown name is a clean error
+    const source = findSource(config, name);
+    if (!source) throw new Error(`source not found: ${name}`);
+
+    // best-effort terminate the owned session when mutagen is installed
+    if (await deps.commandExists('mutagen')) {
+        const existing = await listSessions(deps);
+        const session = mutagenSessionName(config, source);
+        if (mutagenSessionExists(existing, session)) await mutagen(deps, ['sync', 'terminate', session]);
+    }
+
+    // delete the remote copy ONLY behind the explicit (destructive) opt-in
+    if (opts.purgeRemote === true) await deleteRemoteSourceDir(deps, config, source);
+
+    // drop the source from config + persist (local files are left untouched)
+    removeSource(config, name);
+    await saveConfig(config, deps.configDir);
+}
+
+// delete a source's remote dir — local: rmdir here; ssh: a guarded remote `rm -rf`
+async function deleteRemoteSourceDir(deps: Required<SyncDeps>, config: Config, source: Source): Promise<void> {
+    const dir = endpointDir(config, source);
+
+    // local workspace → remove the directory on this machine if it exists
+    if (isLocalConfig(config)) {
+        const { rm } = await import('node:fs/promises');
+        await rm(expandHome(dir), { recursive: true, force: true });
+        return;
+    }
+
+    // remote workspace → one guarded ssh `rm -rf`, path shell-quoted so a
+    // crafted source/leaf name can never break out of the rm target
+    const quoted = shellQuote(dir);
+    const command = `if [ -e ${quoted} ]; then rm -rf ${quoted}; fi`;
+    const result = await deps.runCommand('ssh', [config.remote, command]);
+    if (result.code !== 0) throw new Error(`ssh rm failed: ${result.stderr.trim()}`);
+}
+
+// -- source enable / disable --------------------------------------------------
+
+// flip a source's enabled flag, persist, then best-effort apply the session change
+export async function sourceSetEnabled(
+    name: string,
+    enabled: boolean,
+    rawDeps: SyncDeps = {},
+): Promise<void> {
+    const deps = resolveDeps(rawDeps);
+    const config = await loadConfig(deps.configDir, { warn: deps.warn });
+
+    // mutate + persist the flag first (throws on an unknown name)
+    setSourceEnabled(config, name, enabled);
+    await saveConfig(config, deps.configDir);
+
+    // best-effort apply: enable → start the session; disable → pause it
+    const source = findSource(config, name)!;
+    if (!(await deps.commandExists('mutagen'))) return;
+
+    if (enabled) {
+        const existing = await listSessions(deps);
+        await prepareRemoteWorkspace(deps, config);
+        await ensureIgnoreFiles({ configDir: deps.configDir });
+        await startSource(deps, config, source, existing);
+    } else {
+        const existing = await listSessions(deps);
+        const session = mutagenSessionName(config, source);
+        if (mutagenSessionExists(existing, session)) await mutagen(deps, ['sync', 'pause', session]);
+    }
 }

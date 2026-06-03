@@ -7,6 +7,7 @@
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { parse as parseToml } from 'smol-toml';
 
 // -- types --------------------------------------------------------------------
 
@@ -23,6 +24,13 @@ export type Config = {
     remoteRoot: string;
     hostId: string;
     sources: Source[];
+    // preserved verbatim from a migrated config.toml `[query]` table (optional)
+    query?: Record<string, unknown>;
+};
+
+// optional knobs for loading — a warn hook for one-line migration notices
+export type LoadOptions = {
+    warn?: (message: string) => void;
 };
 
 // a parsed `[target][:root]` remote argument
@@ -41,6 +49,9 @@ export const configDir = (): string => join(homedir(), '.ultracontext');
 
 // the JSON config file inside a given config dir
 export const configPath = (dir: string = configDir()): string => join(dir, 'config.json');
+
+// the legacy TOML config file (the migration source) inside a given config dir
+const tomlConfigPath = (dir: string): string => join(dir, 'config.toml');
 
 // -- home expansion -----------------------------------------------------------
 
@@ -64,19 +75,79 @@ export async function saveConfig(config: Config, dir: string = configDir()): Pro
     await rename(tmp, path);
 }
 
-// read + validate the config; throws when absent or malformed
-export async function loadConfig(dir: string = configDir()): Promise<Config> {
+// read + validate the config; migrate a legacy config.toml on first run; throws when absent
+export async function loadConfig(dir: string = configDir(), opts: LoadOptions = {}): Promise<Config> {
     const path = configPath(dir);
 
-    let raw: string;
+    // config.json wins whenever it exists (migration runs at most once)
+    let raw: string | null = null;
     try {
         raw = await readFile(path, 'utf8');
     } catch {
-        throw new Error(`no sync config at ${path} — run \`uc sync init\``);
+        raw = null;
     }
 
-    const config = JSON.parse(raw) as Config;
+    if (raw !== null) {
+        const config = JSON.parse(raw) as Config;
+        validateConfig(config);
+        return config;
+    }
+
+    // no JSON yet → try a one-time migration from a legacy config.toml
+    const migrated = await migrateTomlConfig(dir, opts);
+    if (migrated) return migrated;
+
+    throw new Error(`no sync config at ${path} — run \`uc sync init\``);
+}
+
+// migrate config.toml → config.json (atomic save + keep the toml as .migrated)
+async function migrateTomlConfig(dir: string, opts: LoadOptions): Promise<Config | null> {
+    const tomlPath = tomlConfigPath(dir);
+
+    // nothing to migrate when no legacy toml is present
+    let rawToml: string;
+    try {
+        rawToml = await readFile(tomlPath, 'utf8');
+    } catch {
+        return null;
+    }
+
+    // parse + map the toml to our Config shape, then persist as JSON atomically
+    const config = tomlToConfig(rawToml);
     validateConfig(config);
+    await saveConfig(config, dir);
+
+    // keep the original toml under a `.migrated` suffix — never delete it
+    await rename(tomlPath, tomlPath + '.migrated');
+
+    // one line to the injected warn hook (no console noise in lib code paths)
+    opts.warn?.(`migrated config.toml → config.json (kept ${tomlPath}.migrated)`);
+    return config;
+}
+
+// map a parsed config.toml (LIVE mini shape) to our JSON Config shape
+function tomlToConfig(rawToml: string): Config {
+    const parsed = parseToml(rawToml) as Record<string, unknown>;
+
+    // [sources.<name>] tables → Source[] (path → localPath, default enabled true)
+    const sourcesTable = (parsed.sources ?? {}) as Record<string, { path?: unknown; enabled?: unknown }>;
+    const sources: Source[] = Object.entries(sourcesTable).map(([agent, table]) => ({
+        agent,
+        localPath: String(table.path ?? ''),
+        enabled: table.enabled !== false,
+    }));
+
+    // top-level scalars + the preserved [query] table (when present)
+    const config: Config = {
+        remote: String(parsed.remote ?? ''),
+        remoteRoot: String(parsed.remote_root ?? DEFAULT_REMOTE_ROOT),
+        hostId: String(parsed.host_id ?? ''),
+        sources,
+    };
+    if (parsed.query && typeof parsed.query === 'object') {
+        config.query = parsed.query as Record<string, unknown>;
+    }
+
     return config;
 }
 

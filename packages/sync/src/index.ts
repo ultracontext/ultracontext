@@ -25,7 +25,17 @@ export {
     type Config,
     type Source,
     type RemoteSpec,
+    type LoadOptions,
 } from './config';
+
+// ignores: the global + per-source `.ultracontextignore` subsystem
+export {
+    ensureIgnoreFiles,
+    ignorePath,
+    sourceIgnorePath,
+    collectIgnorePatterns,
+    type IgnoreDeps,
+} from './ignores';
 
 // mutagen: pure stdout parsers + the injectable command runner
 export {
@@ -48,6 +58,9 @@ export {
     syncReset,
     sourceAdd,
     sourceList,
+    sourceRemove,
+    sourceSetEnabled,
     type SyncDeps,
     type SyncListEntry,
+    type SourceRemoveOptions,
 } from './sync';
