@@ -1,5 +1,5 @@
 // =============================================================================
-// sync — `uc sync <init|start|stop|status|source|event>`. Thin Commander shell
+// sync — `uc sync <init|start|stop|status|list|source>`. Thin Commander shell
 // over @ultracontext/sync's fs-first Mutagen orchestration. Pipe-aware: data →
 // stdout (JSON in machine mode), status/errors → stderr. Actions take injected
 // SyncDeps + io so they're testable against a fake mutagen + temp config dir.
@@ -166,14 +166,6 @@ export async function syncSourceAddAction(
     }
 }
 
-// -- event (stub) -------------------------------------------------------------
-
-// `uc sync event` → not yet ported (the 2.0 event log is out of this scope)
-export async function syncEventAction(opts: JsonOpt, deps: ActionDeps = {}): Promise<number> {
-    emit({ command: 'sync event', status: 'not_implemented' }, { json: opts.json, human: () => 'sync event: not implemented' }, deps.io);
-    return 0;
-}
-
 // -- commander bridge ---------------------------------------------------------
 
 // the minimal Command surface the bridge reads (any subcommand arg/opt shape)
@@ -226,9 +218,6 @@ export function buildSyncCommand(): Command {
         .argument('<path>', 'local path to sync')
         .option('--disabled', 'add the source without starting sync')
         .action((name, path, opts, cmd) => bridge((json) => syncSourceAddAction(name, path, { json, disabled: opts.disabled }))(cmd));
-
-    // event — minimal stub (2.0 event log not ported here)
-    sync.command('event').description('emit/commit context events (not implemented)').action((_opts, cmd) => bridge((json) => syncEventAction({ json }))(cmd));
 
     return sync as unknown as Command;
 }

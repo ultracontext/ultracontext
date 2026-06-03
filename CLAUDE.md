@@ -65,7 +65,8 @@ exports (`node`/`bun` → full build w/ libsql; `default` → browser build).
 ## `uc` command tree
 
 - **Context verbs** (client-agnostic): `uc add` · `uc get` · `uc update` · `uc delete <id...>` (many ids → batch permanent delete, needs `--permanent`) · `uc list`
-- **Sync** (`@ultracontext/sync`): `uc sync init|start|stop|status|list` · `uc sync source list|add` · `uc sync event` (stub)
+- **Sync** (`@ultracontext/sync`): `uc sync init|start|stop|status|list` · `uc sync source list|add`
+- **Events** (`@ultracontext/core` over an `EventStore` port): `uc event emit|tail|status|flush` · `uc event commit --from-stdin` (hub side, ssh transport target)
 - **Utility**: `uc upgrade` (self-update) · `uc doctor` (env health card) · `uc init` (onboarding)
 - **Introspection**: `uc commands --json` (machine-readable tree for agents)
 

@@ -13,6 +13,7 @@ import { buildGetCommand } from './commands/get';
 import { buildUpdateCommand } from './commands/update';
 import { registerList } from './commands/list';
 import { buildDeleteCommand } from './commands/delete';
+import { buildEventCommand } from './commands/event';
 import { buildSyncCommand } from './commands/sync';
 import { buildDoctorCommand } from './commands/doctor';
 import { buildInitCommand } from './commands/init';
@@ -34,9 +35,17 @@ function registerContextVerbs(program: Command): void {
     registerList(program);
 }
 
+// -- event group --------------------------------------------------------------
+
+// top-level `uc event <emit|tail|status|flush|commit>` → @ultracontext/core
+// event ops over the local EventStore + a pluggable (ssh) transport.
+function registerEvent(program: Command): void {
+    program.addCommand(buildEventCommand());
+}
+
 // -- sync group ---------------------------------------------------------------
 
-// `uc sync <init|start|stop|status|source|event>` → @ultracontext/sync
+// `uc sync <init|start|stop|status|source|list>` → @ultracontext/sync
 function registerSync(program: Command): void {
     program.addCommand(buildSyncCommand());
 }
@@ -81,6 +90,7 @@ export function buildProgram(): Command {
 
     // register every command group (commands last — it walks the whole tree)
     registerContextVerbs(program);
+    registerEvent(program);
     registerSync(program);
     registerStandalone(program);
     registerCommands(program);

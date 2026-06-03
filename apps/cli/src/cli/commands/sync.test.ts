@@ -2,7 +2,8 @@
 // sync.test — `uc sync` group. Drives the testable action functions against a
 // FAKE mutagen (injected CommandRunner) + a temp config dir, asserting the
 // pipe-aware output (data → stdout JSON, status → stderr). Also checks the
-// Commander group registers init/start/stop/status/source/event.
+// Commander group registers init/start/stop/status/list/source (NO event —
+// events are the TOP-LEVEL `uc event` family now).
 // =============================================================================
 
 import { describe, it, after } from 'node:test';
@@ -177,14 +178,15 @@ describe('uc sync source list', () => {
 // -- Commander wiring ---------------------------------------------------------
 
 describe('buildSyncCommand', () => {
-    // the group registers every subcommand
-    it('registers init/start/stop/status/source/event', () => {
+    // the group registers every subcommand — and NO event (it moved top-level)
+    it('registers init/start/stop/status/list/source, not event', () => {
         const sync = buildSyncCommand();
         const subs = sync.commands.map((c) => c.name());
 
-        for (const expected of ['init', 'start', 'stop', 'status', 'source', 'event']) {
+        for (const expected of ['init', 'start', 'stop', 'status', 'list', 'source']) {
             assert.ok(subs.includes(expected), `missing sync subcommand: ${expected}`);
         }
+        assert.ok(!subs.includes('event'), 'sync must NOT register event — it is top-level now');
     });
 
     // source carries its own list/add subcommands

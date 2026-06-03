@@ -114,6 +114,11 @@ uc sync source add    # add a synced source
 uc sync start|stop    # start / pause sync for enabled sources
 uc sync status|list   # show live sessions / configured sources
 
+uc event emit         # commit a uc.event.v1 event (--kind / --source / --subject)
+uc event tail         # read the committed log — one JSON object per line (--limit)
+uc event status|flush # pending vs committed counts / retry anything still pending
+uc event commit --from-stdin # hub side: commit a piped envelope (ssh transport target)
+
 uc init               # initialize ultracontext for this machine
 uc doctor             # diagnose the local environment
 uc upgrade            # self-update the CLI

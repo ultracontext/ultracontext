@@ -15,7 +15,7 @@ describe('buildProgram', () => {
         const program = buildProgram();
         const names = program.commands.map((c) => c.name());
 
-        for (const expected of ['create', 'append', 'get', 'update', 'delete', 'list', 'sync', 'upgrade', 'doctor', 'init', 'commands', 'version']) {
+        for (const expected of ['create', 'append', 'get', 'update', 'delete', 'list', 'event', 'sync', 'upgrade', 'doctor', 'init', 'commands', 'version']) {
             assert.ok(names.includes(expected), `missing command: ${expected}`);
         }
     });
@@ -33,8 +33,19 @@ describe('buildProgram', () => {
         const sync = program.commands.find((c) => c.name() === 'sync');
         const subs = sync?.commands.map((c) => c.name()) ?? [];
 
-        for (const expected of ['init', 'start', 'stop', 'status', 'source', 'event']) {
+        for (const expected of ['init', 'start', 'stop', 'status', 'source']) {
             assert.ok(subs.includes(expected), `missing sync subcommand: ${expected}`);
+        }
+    });
+
+    // the top-level event group exposes its subcommands
+    it('registers event subcommands', () => {
+        const program = buildProgram();
+        const event = program.commands.find((c) => c.name() === 'event');
+        const subs = event?.commands.map((c) => c.name()) ?? [];
+
+        for (const expected of ['emit', 'tail', 'status', 'flush', 'commit']) {
+            assert.ok(subs.includes(expected), `missing event subcommand: ${expected}`);
         }
     });
 });
