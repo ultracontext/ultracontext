@@ -150,6 +150,58 @@ uc.append(ctx["id"], {"role": "user", "content": "Hello!"})
 response = generate_text(model=model, messages=uc.get(ctx["id"])["data"])
 ```
 
+### Local mode
+
+`pip install ultracontext` gives you a **local-by-default** SDK that ships a **bundled `uc` binary per platform** — local mode works out of the box, no separate install. With no API key, `UltraContext()` runs entirely on your machine — no server, no account — against a local SQLite file (`./ultracontext.db`) via that binary. Pass an `api_key` (or `mode="remote"`) to switch to the hosted Context API. Same object, one config switch.
+
+```python
+from ultracontext import UltraContext
+
+# no api key → local: runs against ./ultracontext.db, no server needed
+uc = UltraContext()
+
+ctx = uc.create()
+uc.append(ctx["id"], {"role": "user", "content": "Hello!"})
+print(uc.get(ctx["id"])["data"])
+
+# api key → hosted Context API
+remote = UltraContext(api_key="uc_live_...")
+
+# force local even with a key present
+local = UltraContext(api_key="uc_live_...", mode="local")
+```
+
+Async works the same way — every method is awaitable:
+
+```python
+import asyncio
+from ultracontext import AsyncUltraContext
+
+async def main():
+    uc = AsyncUltraContext()  # local by default
+
+    ctx = await uc.create()
+    await uc.append(ctx["id"], {"role": "user", "content": "Hello!"})
+    print((await uc.get(ctx["id"]))["data"])
+
+asyncio.run(main())
+```
+
+**Selection rule** (identical to the JS SDK): `mode or ("remote" if api_key else "local")`.
+
+- no config → **local**
+- `api_key` present → **remote** (inferred)
+- explicit `mode="local"` → **local**, even with a key
+
+**Local-mode limitations.** Local mode drives the `uc` binary, so it covers single-context engineering; a few hosted features are server-only:
+
+- **`update` is single-target.** Pass `id=` or `index=` plus `content=`. A list of updates, or any field other than `content`, raises `NotImplementedError`.
+- **Soft delete shape.** Local soft delete carries the new version's `data` + `version` in parity with remote — it rides the CLI envelope superset `{"deleted": True, "id": ..., "data": ..., "version": ...}`; the hosted API returns `{"data": ..., "version": ...}`.
+- **`delete_many`** has no native local verb — it fans out as one permanent delete per id, capturing per-id errors into the result row (the batch never aborts).
+- Errors **throw**: a nonzero `uc` exit raises `ultracontext.UltraContextError` (with the binary's stderr), mirroring remote, which raises `UltraContextHttpError` on an HTTP error.
+
+The binary is resolved as `UC_BIN` env → the wheel's bundled `uc` → `uc` on `PATH` (the fallback for the pure-Python sdist).
+
 <p align="center">📚 Context API Guides</p>
 <p align="center">
   <a href="https://ultracontext.ai/docs/guides/store-retrieve-contexts">Store & Retrieve</a>
