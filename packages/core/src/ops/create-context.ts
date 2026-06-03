@@ -7,6 +7,7 @@ import type { StorageAdapter, NodeRow } from '../storage';
 import { buildNodeInsertRecords, findHead, getOrderedNodes, getVersions } from '../context-chain';
 import { generatePublicId } from '../public-ids';
 import { firstRow } from '../first-row';
+import { isoTimestamp } from '../iso-timestamp';
 import { ok, err, type Result } from '../result';
 
 // -- input --------------------------------------------------------------------
@@ -176,6 +177,6 @@ export async function createContext(
     return ok({
         id: root.public_id!,
         metadata: root.metadata!,
-        created_at: root.created_at!,
+        created_at: isoTimestamp(root.created_at!),
     });
 }

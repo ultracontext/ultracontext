@@ -3,6 +3,7 @@
 // =============================================================================
 
 import type { StorageAdapter, ContextFilters } from '../storage';
+import { isoTimestamp } from '../iso-timestamp';
 
 // list root contexts (newest first), mapped to the public response shape
 export async function listContexts(
@@ -17,7 +18,7 @@ export async function listContexts(
         data: data.map(n => ({
             id: n.public_id,
             metadata: n.metadata,
-            created_at: n.created_at,
+            created_at: isoTimestamp(n.created_at),
         })),
     };
 }

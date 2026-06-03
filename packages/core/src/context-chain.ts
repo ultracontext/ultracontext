@@ -1,5 +1,6 @@
 import type { StorageAdapter } from './storage';
 import { generatePublicId } from './public-ids';
+import { isoTimestamp } from './iso-timestamp';
 
 export type NodeInsertInput = {
     type: string;
@@ -101,7 +102,7 @@ export async function getVersions(storage: StorageAdapter, rootId: string): Prom
         return {
             version: index,
             head_id: head.public_id,
-            created_at: head.created_at,
+            created_at: isoTimestamp(head.created_at),
             operation: (operation as 'create' | 'update' | 'delete') ?? 'create',
             affected: (affected as string[]) ?? null,
             metadata: Object.keys(userMetadata).length > 0 ? userMetadata : undefined,
