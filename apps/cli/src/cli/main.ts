@@ -7,6 +7,7 @@
 import { Command } from '@commander-js/extra-typings';
 
 import { status } from '../../lib/output';
+import { VERSION } from '../../lib/version';
 import { buildCreateCommand } from './commands/create';
 import { buildAppendCommand } from './commands/append';
 import { buildGetCommand } from './commands/get';
@@ -111,8 +112,28 @@ export function buildProgram(): Command {
 
 // -- runner -------------------------------------------------------------------
 
+// a minimal stdout sink — the real process.stdout satisfies it (tests inject one)
+type Out = { write(s: string): boolean };
+
+// root `uc --version` / `-V`: handled HERE, before Commander, so it never becomes
+// a global option that shadows the `get/create --version <n>` time-travel selector.
+// Only the LEADING token (after the global --json/--remote flags) counts — so
+// `uc --version` matches but `uc get --version 0` (leading token = `get`) does not.
+// Exported for a pure unit test (no IO/backend).
+export function handleRootVersion(args: string[], out: Out): boolean {
+    const lead = args.find((a) => a !== '--json' && a !== '--remote');
+    if (lead !== '--version' && lead !== '-V') return false;
+
+    // mirror `uc version`: bare line in human mode, an envelope under --json
+    out.write(args.includes('--json') ? `${JSON.stringify({ version: VERSION })}\n` : `${VERSION}\n`);
+    return true;
+}
+
 // parse argv; exit 130 on user cancel (clack), 1 on any other error
-export async function run(argv: string[] = process.argv): Promise<void> {
+export async function run(argv: string[] = process.argv, io: { stdout?: Out } = {}): Promise<void> {
+    // short-circuit the root version flag before Commander sees argv
+    if (handleRootVersion(argv.slice(2), io.stdout ?? process.stdout)) return;
+
     const program = buildProgram();
 
     try {

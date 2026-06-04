@@ -5,7 +5,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildProgram, run } from './main';
+import { buildProgram, run, handleRootVersion } from './main';
 
 // -- program shape ------------------------------------------------------------
 
@@ -56,5 +56,41 @@ describe('run', () => {
     // parsing `commands --json` resolves without throwing
     it('parses `commands --json` without throwing', async () => {
         await assert.doesNotReject(run(['node', 'uc', 'commands', '--json']));
+    });
+
+    // a capturing stdout for the --version paths
+    function captureOut() {
+        let text = '';
+        return { write: (s: string) => ((text += s), true), get: () => text };
+    }
+
+    // `uc --version` (root flag) prints the tool version — field/health checks
+    // expect it; it must NOT shadow the `get --version <n>` time-travel selector
+    it('prints the version for a root --version flag', async () => {
+        const out = captureOut();
+        await run(['node', 'uc', '--version'], { stdout: out });
+        assert.match(out.get().trim(), /^\d+\.\d+\.\d+$/);
+    });
+
+    // -V short form too
+    it('prints the version for -V', async () => {
+        const out = captureOut();
+        await run(['node', 'uc', '-V'], { stdout: out });
+        assert.match(out.get().trim(), /^\d+\.\d+\.\d+$/);
+    });
+
+    // the leading-token rule (pure, no backend IO): a subcommand's `--version <n>`
+    // must NOT be intercepted as the tool-version flag, while a root --version is
+    it('intercepts root --version but not a subcommand --version', () => {
+        const sink = captureOut();
+        // root forms → intercepted (returns true, writes the version)
+        assert.equal(handleRootVersion(['--version'], sink), true);
+        assert.equal(handleRootVersion(['-V'], sink), true);
+        assert.equal(handleRootVersion(['--json', '--version'], sink), true);
+        // subcommand-led forms → NOT intercepted (leading token is the command)
+        const sink2 = captureOut();
+        assert.equal(handleRootVersion(['get', 'ctx_x', '--version', '0'], sink2), false);
+        assert.equal(handleRootVersion(['create', '--version', '2'], sink2), false);
+        assert.equal(sink2.get(), '', 'no version written for a subcommand --version');
     });
 });
