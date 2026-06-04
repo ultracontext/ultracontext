@@ -174,6 +174,29 @@ uc list --limit 20
 uc list --source claude --project_path /Users/alice/Code/myapp
 ```
 
+## Remote commands
+
+A **remote** is your one central machine, configured once. It carries the
+coordinates each primitive needs: an SSH target (for fs sync and the event
+transport) and, optionally, an API coordinate (a base url plus a key, for
+contexts and events over HTTP). `--remote` on any command routes it to this
+remote.
+
+```bash bash
+uc remote set user@vps:/srv/uc --host-id laptop      # set the SSH side
+uc remote set local --api https://api.example.com --key sk_x  # add the API side
+uc remote show                                        # the configured remote (key never printed)
+uc remote test                                        # reachability of each configured leg
+uc remote clear                                       # drop the remote coords (sources kept)
+```
+
+| Subcommand | Description |
+|-----------|-------------|
+| `set <target>` | Set the remote coordinates. `target` is `local` \| `user@host[:root]`. `--root <path>` overrides the workspace root, `--host-id <id>` the derived host id, `--api <url>` / `--key <token>` set the API side |
+| `show` | Show the configured remote (the API key is never printed — only whether one is set) |
+| `test` | Test reachability of each configured leg (SSH via a login-shell `uc --version`, API via an HTTP GET) |
+| `clear` | Drop the remote coordinates, leaving your synced sources intact |
+
 ## Sync commands
 
 `uc sync` is fs-first orchestration over [Mutagen](https://mutagen.io). It mirrors
@@ -181,7 +204,7 @@ agent session files between machines so your context follows you. Requires the
 `mutagen` binary on your `PATH` (`uc doctor` checks for it).
 
 ```bash bash
-uc sync init user@vps:/home/alice/.ultracontext   # set up a sync target
+uc remote set user@vps:/home/alice/.ultracontext   # configure your central remote
 uc sync source add claude ~/.claude/projects       # add a synced source
 uc sync start                                       # start enabled sources
 uc sync status                                      # show live sessions
@@ -189,9 +212,11 @@ uc sync list                                        # configured sources + state
 uc sync stop                                        # pause enabled sources
 ```
 
+The sync target is configured by [`uc remote set`](#remote-commands) — the one
+central machine `uc` routes to. `uc sync` only reads it.
+
 | Subcommand | Description |
 |-----------|-------------|
-| `init <target>` | Initialize sync for a workspace target (`local` \| `user@host[:root]`; `--host-id <id>`) |
 | `source add <name> <path>` | Add or update a synced source (`--disabled` to add without starting) |
 | `source list` | List configured sources |
 | `source remove <name>` | Remove a source (`--purge-remote` also deletes its hub workspace dir — destructive) |
@@ -205,6 +230,31 @@ Sync respects `.ultracontextignore` files under `~/.ultracontext/ignores/` (a
 global file plus per-source `<source>/` files); their patterns become Mutagen
 `--ignore` flags. The global file is seeded with sensible defaults on first use.
 See [Sync → Ignore files](/concepts/sync) for the full list.
+
+## Serve command
+
+`uc serve` self-hosts the [Context API](/api-reference/introduction) plus the
+[events](/concepts/events) endpoints over your **local SQLite store** — the same
+db the `uc` verbs use. It's a self-contained server in the CLI (no Postgres, no
+separate deploy) that runs under both Node and the standalone binary. Run it on a
+VPS, then point another machine's [remote](/concepts/remote) API leg at it.
+
+```bash bash
+uc serve                          # 127.0.0.1:8787 over ~/.ultracontext/uc.db
+uc serve --host 0.0.0.0 --port 9000   # bind all interfaces on a custom port
+```
+
+| Flag | Description |
+|------|-------------|
+| `--port <n>` | Port to listen on (default `8787`) |
+| `--host <addr>` | Address to bind (default `127.0.0.1`) |
+| `--db <url>` | SQLite db url (default the CLI's local db) |
+| `--no-auth` | Disable bearer auth — **localhost-only dev**, every request is open |
+
+On first run it mints a bearer key bound to the CLI's `local` project and prints
+it **once** to stderr — copy it into `uc remote set <target> --api <url> --key …`.
+See [Self-hosting → `uc serve`](/guides/self-hosting#uc-serve-self-host-in-one-command)
+for the full flow.
 
 ## Utility commands
 

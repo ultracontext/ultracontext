@@ -31,6 +31,7 @@
                         "pages": [
                             "concepts/overview",
                             "concepts/contexts",
+                            "concepts/remote",
                             "concepts/sync",
                             "concepts/events",
                             "concepts/drivers"

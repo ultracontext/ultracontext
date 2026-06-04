@@ -168,20 +168,24 @@ emit ──► local events table ──► transport ──► hub commit ─�
 1. **emit** — `uc event emit` builds the envelope and writes a row. When the hub is
    the local db, the insert *is* the commit — atomic, `received_at` set, done. When
    the hub is remote, the row lands with `delivery_state = pending`.
-2. **transport** — pluggable, and **SSH is never required**:
-   - **local** (same machine / same db): emit and commit are one atomic insert —
-     zero SSH, works **offline and in the browser**.
-   - **self-hosted hub**: `ssh <hub> 'uc event commit --from-stdin'` pipes the
-     envelope to a `uc` on the hub (requires `uc` installed there).
-   - **hosted API** (`POST /events`): a future phase.
+2. **transport** — pluggable, picked from your [remote](/concepts/remote), and
+   **SSH is never required**. The selection order:
+   - **HTTP** (an API leg is set): `POST /events` delivers to your remote — a
+     [`uc serve`](/guides/self-hosting) endpoint or the hosted API. This **wins
+     over SSH** when both are configured: no ssh-per-event cost, no login-PATH
+     fragility. `uc event tail` reads it back over `GET /events`.
+   - **SSH** (an SSH target but no API leg): `ssh <hub> 'uc event commit --from-stdin'`
+     pipes the envelope to a `uc` on the hub (requires `uc` installed there).
+   - **local** (no remote configured): emit and commit are one atomic insert —
+     zero network, works **offline and in the browser**.
 3. **commit** — the hub sets/overwrites `received_at` and inserts the row. The
    `UNIQUE(event_id)` constraint **dedupes atomically** — a retried event can never
    double-append. (This table-level uniqueness replaces the old on-disk
    `seen/`-marker scheme; see *Lineage* below.)
 4. **tail / status / flush** — `tail` reads the committed log (the **hub's** log
-   over SSH when a remote hub is configured; `--local` reads this machine's db),
-   `status` shows pending vs committed counts, `flush` retries anything still
-   `pending`.
+   over the configured transport — HTTP `GET /events` when an API leg is set,
+   SSH otherwise; `--local` reads this machine's db), `status` shows pending vs
+   committed counts, `flush` retries anything still `pending`.
 
 <Tip>The hub log is a **table**, not a JSONL file — but the consumer contract is
 unchanged: `uc event tail` always emits one JSON object per line (both human and
@@ -217,7 +221,7 @@ uc event flush       # retry anything still pending
 | Command | What it does |
 |---|---|
 | `emit` | Build an envelope, write the local row, commit it (locally) or queue it for the hub. |
-| `tail` | Read the committed event log, oldest-of-the-tail first. When a **remote hub** is configured, `tail` reads the **hub's** canonical log over SSH (the hub is the source of truth) — pass `--local` to read this machine's own local db instead (the emitter's debug view). If the hub is unreachable it errors (exit `1`), never silently falling back. `--limit <n>` (default `20`); optional `--kind` / `--source` / `--subject` filters. Always emits one JSON object per line — in both human and `--json` modes (the stable consumer contract). |
+| `tail` | Read the committed event log, oldest-of-the-tail first. When a **remote hub** is configured, `tail` reads the **hub's** canonical log over the configured transport — HTTP `GET /events` when an API leg is set, SSH otherwise (the hub is the source of truth) — pass `--local` to read this machine's own local db instead (the emitter's debug view). If the hub is unreachable it errors (exit `1`), never silently falling back. `--limit <n>` (default `20`); optional `--kind` / `--source` / `--subject` filters. Always emits one JSON object per line — in both human and `--json` modes (the stable consumer contract). |
 | `status` | Show the resolved target + host + pending / committed counts. |
 | `flush` | Retry anything still `pending`. |
 | `commit --from-stdin` | Hub-side: read a piped envelope, set `received_at`, insert (dedupes by `event_id`). The SSH transport target. |
@@ -250,6 +254,9 @@ pattern.
     </Card>
     <Card title='Sync' icon='folder-tree' href='/concepts/sync'>
         The archive — the files events point at.
+    </Card>
+    <Card title='Remote' icon='server' href='/concepts/remote'>
+        Where events go — HTTP to your remote when set, SSH otherwise.
     </Card>
     <Card title='The iOS relay' icon='mobile' href='/guides/ios-relay'>
         Phone → relay → driver → events → your laptop agent, end to end.

@@ -109,7 +109,9 @@ uc update <id> --content <c>            # update messages (--id <m> | --index <i
 uc delete <id...>                       # delete a context (--permanent) or messages (--ids); many ids → batch (--permanent)
 uc list                                 # list ALL contexts (--source / --project_path / --limit)
 
-uc sync init <target> # set up fs-first sync to local | user@host (--host-id)
+uc remote set <target> # configure your one central remote (--root / --host-id / --api / --key)
+uc remote show|test|clear # show (key never printed) / test reachability / clear coords (sources kept)
+
 uc sync source add    # add a synced source (--disabled)
 uc sync source remove # remove a source (--purge-remote deletes the hub dir — destructive)
 uc sync source enable|disable # toggle a source + start / pause its session
@@ -124,6 +126,8 @@ uc event commit --from-stdin # hub side: commit a piped envelope (ssh transport 
 
 uc driver list        # list installed driver manifests from ~/.ultracontext/drivers/
 uc driver run <driver> <command> # run a manifest command as a local process on this host
+
+uc serve              # self-host the Context API + events over your local sqlite (--port / --host / --db / --no-auth)
 
 uc init               # initialize ultracontext for this machine
 uc doctor             # diagnose the local environment

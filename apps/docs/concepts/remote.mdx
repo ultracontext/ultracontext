@@ -1,0 +1,105 @@
+---
+title: 'Remote'
+description: 'Your one central machine — configured once, reachable how each primitive needs'
+---
+
+A **remote** is your one central machine. You configure it once with
+[`uc remote set`](/fundamentals/cli#remote-commands), and from then on every
+primitive — [files](/concepts/sync), [contexts](/concepts/contexts),
+[events](/concepts/events) — reaches it the way it needs.
+
+There's no `uc sync init` anymore, and no separate API config step. There is one
+remote, and it carries the coordinates each primitive needs.
+
+## One remote, two legs
+
+A remote has two legs, and you set whichever you need:
+
+| Leg | What uses it | Coordinates |
+|---|---|---|
+| **SSH** | [Sync](/concepts/sync) (fs mirroring) and the [event](/concepts/events) transport | an SSH target + remote root + this host's id |
+| **API** | [Contexts](/concepts/contexts) and [events](/concepts/events) over HTTP | a base url + a bearer key |
+
+Sync needs SSH because it mirrors files with [Mutagen](https://mutagen.io).
+Contexts and events ride HTTP when an API leg is set. Each leg is independent —
+you can set SSH now and add the API leg later, and `uc remote set` merges them
+without disturbing your [synced sources](/concepts/sync#sources).
+
+```bash bash
+uc remote set user@vps:/srv/uc --host-id laptop                 # the SSH leg
+uc remote set local --api http://vps:8787 --key sk_live_...      # add the API leg
+```
+
+The SSH `target` is `user@host` (optionally `:root`), or the literal `local`
+when this machine *is* the remote. `--host-id` overrides the host id derived from
+your hostname; it namespaces this machine's files in the hub workspace.
+
+## The cloud is just another remote
+
+A managed UltraContext deployment is **just an API leg** — a base url plus a key.
+There's nothing special about it: it's the same `--api` / `--key` pair you'd point
+at a server you run yourself.
+
+```bash bash
+uc remote set local --api https://api.ultracontext.ai --key sk_live_...   # managed
+uc remote set local --api http://vps:8787            --key sk_live_...   # self-hosted
+```
+
+Same command, same wire contract — the [Context API](/api-reference/introduction)
+the [SDK](/sdk) speaks. So **self-host or managed is your call**, not the tool's.
+Point at your own VPS running [`uc serve`](/guides/self-hosting) and your
+contexts and events live on hardware you own; point at the managed service and
+someone else runs it for you. Switching is one `uc remote set` away.
+
+<Note>This is the **provider-independence** stance: your context is yours, and
+where it lives is a coordinate you control — not a lock-in. The same `uc` and the
+same SDK drive both.</Note>
+
+## How routing works
+
+Each primitive resolves the remote independently:
+
+- **Contexts** — local SQLite by default. With `--remote` (or a configured API
+  leg), they talk to the API over HTTP via the SDK. Stale credentials never
+  silently flip you to remote; it's local-first unless you ask.
+- **Events** — the API leg wins when set (HTTP `POST /events` / `GET /events`),
+  else the SSH hub (`ssh <target> 'uc event commit'`), else local (the emit *is*
+  the commit). See [Events → The lifecycle](/concepts/events#the-lifecycle).
+- **Files** — always SSH, always Mutagen. See [Sync](/concepts/sync).
+
+So a single `uc remote` can carry an SSH target for file sync *and* an API url for
+contexts and events at the same time. The transports don't compete — they each
+take the leg they need.
+
+## Inspecting your remote
+
+```bash bash
+uc remote show     # the configured remote (the API key is NEVER printed)
+uc remote test     # per-leg reachability — SSH via a login-shell `uc --version`, API via an HTTP GET
+uc remote clear    # drop the remote coordinates, keeping your synced sources
+```
+
+`uc remote show` redacts the key to a boolean (`keySet`) — it tells you whether a
+key is set, never what it is. `uc remote test` checks each configured leg and
+exits `1` if any configured leg is unreachable, so it's safe to gate a script on.
+
+<Tip>`uc remote test`'s SSH check runs a login-shell `uc --version` on the
+remote — exactly the path the event transport uses — so it catches the classic
+hub-PATH bug (your login shell can't find `uc`) before it bites a real event.</Tip>
+
+## Read next
+
+<CardGroup cols={2}>
+    <Card title='Self-hosting' icon='server' href='/guides/self-hosting'>
+        Run `uc serve` on your VPS and point your remote at it.
+    </Card>
+    <Card title='Sync' icon='folder-tree' href='/concepts/sync'>
+        The SSH leg — mirror your session files into the hub.
+    </Card>
+    <Card title='Events' icon='radio' href='/concepts/events'>
+        The status board — HTTP to your remote when set, SSH otherwise.
+    </Card>
+    <Card title='CLI → Remote commands' icon='terminal' href='/fundamentals/cli#remote-commands'>
+        The full `uc remote` flag reference.
+    </Card>
+</CardGroup>

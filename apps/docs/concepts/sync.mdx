@@ -28,15 +28,18 @@ A **source** is a named local directory you want mirrored. You add one per agent
 session directory.
 
 ```bash bash
-uc sync init user@vps:/home/alice/.ultracontext   # set the hub target
+uc remote set user@vps:/home/alice/.ultracontext   # set the hub (your central remote)
 uc sync source add claude ~/.claude/projects        # mirror Claude Code sessions
 uc sync source add codex ~/.codex/sessions          # mirror Codex sessions
 uc sync start                                        # bring enabled sources online
 ```
 
+The hub is your [remote](/concepts/remote) — the one central machine `uc` routes
+to, configured once by [`uc remote set`](/fundamentals/cli#remote-commands). Sync
+uses its SSH leg; `uc sync` only reads it, never sets it.
+
 | Subcommand | What it does |
 |---|---|
-| `init <target>` | Set the hub target (`local` \| `user@host[:root]`); `--host-id <id>` overrides the derived host id |
 | `source add <name> <path>` | Add or update a source (`--disabled` to add without starting) |
 | `source list` | List configured sources |
 | `source remove <name>` | Remove a source (terminates its session); `--purge-remote` also deletes its hub workspace dir |
@@ -115,6 +118,9 @@ signal.</Tip>
 ## Read next
 
 <CardGroup cols={2}>
+    <Card title='Remote' icon='server' href='/concepts/remote'>
+        The hub sync mirrors to — your one central machine.
+    </Card>
     <Card title='Events' icon='radio' href='/concepts/events'>
         The status board — small facts that point at your files.
     </Card>
