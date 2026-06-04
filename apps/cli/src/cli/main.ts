@@ -1,7 +1,8 @@
 // =============================================================================
 // main — the `uc` Commander program root. Registers the context verbs, the sync
-// group, the utility commands (doctor/init/upgrade/commands), and the global
-// --json/--remote flags consumed by the output helper + client resolver.
+// group, the remote group (the one central machine), the utility commands
+// (doctor/init/upgrade/commands), and the global --json/--remote flags consumed
+// by the output helper + client resolver.
 // =============================================================================
 
 import { Command } from '@commander-js/extra-typings';
@@ -17,6 +18,8 @@ import { buildDeleteCommand } from './commands/delete';
 import { buildEventCommand } from './commands/event';
 import { buildDriverCommand } from './commands/driver';
 import { buildSyncCommand } from './commands/sync';
+import { buildRemoteCommand } from './commands/remote';
+import { buildServeCommand } from './commands/serve';
 import { buildDoctorCommand } from './commands/doctor';
 import { buildInitCommand } from './commands/init';
 import { buildUpgradeCommand } from './commands/upgrade';
@@ -56,9 +59,18 @@ function registerDriver(program: Command): void {
 
 // -- sync group ---------------------------------------------------------------
 
-// `uc sync <init|start|stop|status|source|list>` → @ultracontext/sync
+// `uc sync <start|stop|status|source|list|reset>` → @ultracontext/sync
 function registerSync(program: Command): void {
     program.addCommand(buildSyncCommand());
+}
+
+// -- remote group -------------------------------------------------------------
+
+// top-level `uc remote <set|show|test|clear>` → the ONE central machine the
+// CLI routes to: the ssh side (sync + event transport) + the api side
+// (contexts/events over HTTP). The single writer of the unified config.json view.
+function registerRemote(program: Command): void {
+    program.addCommand(buildRemoteCommand());
 }
 
 // -- standalone groups --------------------------------------------------------
@@ -71,6 +83,7 @@ function registerStandalone(program: Command): void {
     program.addCommand(buildUpgradeCommand());
     program.addCommand(buildDoctorCommand());
     program.addCommand(buildInitCommand());
+    program.addCommand(buildServeCommand());
     program.addCommand(buildVersionCommand());
 }
 
@@ -104,6 +117,7 @@ export function buildProgram(): Command {
     registerEvent(program);
     registerDriver(program);
     registerSync(program);
+    registerRemote(program);
     registerStandalone(program);
     registerCommands(program);
 

@@ -15,7 +15,7 @@ describe('buildProgram', () => {
         const program = buildProgram();
         const names = program.commands.map((c) => c.name());
 
-        for (const expected of ['create', 'append', 'get', 'update', 'delete', 'list', 'event', 'sync', 'upgrade', 'doctor', 'init', 'commands', 'version']) {
+        for (const expected of ['create', 'append', 'get', 'update', 'delete', 'list', 'event', 'sync', 'remote', 'upgrade', 'doctor', 'init', 'commands', 'version']) {
             assert.ok(names.includes(expected), `missing command: ${expected}`);
         }
     });
@@ -27,14 +27,26 @@ describe('buildProgram', () => {
         assert.ok(!flags.includes('--version'), 'root must not carry a global --version');
     });
 
-    // sync exposes its subcommands
+    // sync exposes its subcommands — init is gone (it moved to `uc remote set`)
     it('registers sync subcommands', () => {
         const program = buildProgram();
         const sync = program.commands.find((c) => c.name() === 'sync');
         const subs = sync?.commands.map((c) => c.name()) ?? [];
 
-        for (const expected of ['init', 'start', 'stop', 'status', 'source']) {
+        for (const expected of ['start', 'stop', 'status', 'source']) {
             assert.ok(subs.includes(expected), `missing sync subcommand: ${expected}`);
+        }
+        assert.ok(!subs.includes('init'), 'sync init must be gone — it moved to `uc remote set`');
+    });
+
+    // the top-level remote group exposes its subcommands
+    it('registers remote subcommands', () => {
+        const program = buildProgram();
+        const remote = program.commands.find((c) => c.name() === 'remote');
+        const subs = remote?.commands.map((c) => c.name()) ?? [];
+
+        for (const expected of ['set', 'show', 'test', 'clear']) {
+            assert.ok(subs.includes(expected), `missing remote subcommand: ${expected}`);
         }
     });
 

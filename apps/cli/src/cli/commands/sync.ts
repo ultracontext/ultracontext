@@ -1,8 +1,9 @@
 // =============================================================================
-// sync — `uc sync <init|start|stop|status|list|source>`. Thin Commander shell
-// over @ultracontext/sync's fs-first Mutagen orchestration. Pipe-aware: data →
-// stdout (JSON in machine mode), status/errors → stderr. Actions take injected
-// SyncDeps + io so they're testable against a fake mutagen + temp config dir.
+// sync — `uc sync <start|stop|status|list|reset|source>`. Thin Commander shell
+// over @ultracontext/sync's fs-first Mutagen orchestration. The remote target is
+// configured by `uc remote set` (sync only READS it). Pipe-aware: data → stdout
+// (JSON in machine mode), status/errors → stderr. Actions take injected SyncDeps
+// + io so they're testable against a fake mutagen + temp config dir.
 // =============================================================================
 
 import { Command } from '@commander-js/extra-typings';
@@ -17,13 +18,8 @@ import {
     sourceList,
     sourceRemove,
     sourceSetEnabled,
-    parseRemoteSpec,
-    saveConfig,
-    defaultHostId,
     type SyncDeps,
-    type Config,
 } from '@ultracontext/sync';
-import { hostname } from 'node:os';
 
 import { emit, status, outputError, shouldJson } from '../../../lib/output';
 
@@ -115,34 +111,6 @@ export async function syncResetAction(opts: JsonOpt, deps: ActionDeps = {}): Pro
         if (!opts.json) status('resetting sync…', deps.io);
         await syncReset(deps.sync);
         emit({ ok: true }, { json: opts.json, human: () => 'sync reset' }, deps.io);
-        return 0;
-    } catch (error) {
-        return outputError(error, { ...deps.io, json: shouldJson({ json: opts.json }, deps.io) });
-    }
-}
-
-// -- init ---------------------------------------------------------------------
-
-// `uc sync init <local|user@host>` → write a fresh config (sources start empty)
-export async function syncInitAction(
-    opts: JsonOpt & { remote?: string; hostId?: string },
-    deps: ActionDeps = {},
-): Promise<number> {
-    try {
-        // the workspace target is required (interactive wizard lives in `uc init`)
-        if (!opts.remote) throw new Error('usage: uc sync init <local|user@host>');
-
-        // parse the target + derive a host id, persist the config
-        const spec = parseRemoteSpec(opts.remote);
-        const config: Config = {
-            remote: spec.target,
-            remoteRoot: spec.root,
-            hostId: opts.hostId ?? defaultHostId(hostname()),
-            sources: [],
-        };
-        await saveConfig(config, deps.sync?.configDir);
-
-        emit({ data: config }, { json: opts.json, human: () => `initialized sync → ${config.remote}` }, deps.io);
         return 0;
     } catch (error) {
         return outputError(error, { ...deps.io, json: shouldJson({ json: opts.json }, deps.io) });
@@ -246,16 +214,6 @@ function bridge(run: (json: boolean) => Promise<number>) {
 // build the `sync` Commander group with every subcommand wired to its action
 export function buildSyncCommand(): Command {
     const sync = new Command('sync').description('fs-first sync orchestration');
-
-    // init — write a fresh config from a workspace target
-    sync
-        .command('init')
-        .description('initialize sync for a workspace target')
-        .argument('[target]', 'local | user@host[:root]')
-        .option('--host-id <id>', 'override the derived host id')
-        .action((target, _opts, cmd) =>
-            bridge((json) => syncInitAction({ json, remote: target, hostId: (cmd.opts() as { hostId?: string }).hostId }))(cmd),
-        );
 
     // start / stop — bring enabled sources up / pause them
     sync.command('start').description('start sync for enabled sources').action((_opts, cmd) => bridge((json) => syncStartAction({ json }))(cmd));

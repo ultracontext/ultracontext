@@ -2,8 +2,8 @@
 // sync.test — `uc sync` group. Drives the testable action functions against a
 // FAKE mutagen (injected CommandRunner) + a temp config dir, asserting the
 // pipe-aware output (data → stdout JSON, status → stderr). Also checks the
-// Commander group registers init/start/stop/status/list/source (NO event —
-// events are the TOP-LEVEL `uc event` family now).
+// Commander group registers start/stop/status/list/source (NO init — it moved
+// to `uc remote set`; NO event — events are the TOP-LEVEL `uc event` family).
 // =============================================================================
 
 import { describe, it, after } from 'node:test';
@@ -383,15 +383,31 @@ describe('uc sync source list', () => {
 // -- Commander wiring ---------------------------------------------------------
 
 describe('buildSyncCommand', () => {
-    // the group registers every subcommand — and NO event (it moved top-level)
-    it('registers init/start/stop/status/list/reset/source, not event', () => {
+    // the group registers every subcommand — NO init (it moved to `uc remote
+    // set`) and NO event (it moved to the top-level `uc event` family)
+    it('registers start/stop/status/list/reset/source, not init or event', () => {
         const sync = buildSyncCommand();
         const subs = sync.commands.map((c) => c.name());
 
-        for (const expected of ['init', 'start', 'stop', 'status', 'list', 'reset', 'source']) {
+        for (const expected of ['start', 'stop', 'status', 'list', 'reset', 'source']) {
             assert.ok(subs.includes(expected), `missing sync subcommand: ${expected}`);
         }
+        assert.ok(!subs.includes('init'), 'sync must NOT register init — it moved to `uc remote set`');
         assert.ok(!subs.includes('event'), 'sync must NOT register event — it is top-level now');
+    });
+
+    // `uc sync init` is gone — Commander rejects it as an unknown subcommand
+    it('rejects `sync init` as an unknown command', async () => {
+        const sync = buildSyncCommand();
+
+        // exitOverride turns Commander's process.exit into a throw we can assert on
+        sync.exitOverride();
+        sync.configureOutput({ writeErr: () => {}, writeOut: () => {} });
+
+        await assert.rejects(
+            () => sync.parseAsync(['init', 'user@vps'], { from: 'user' }),
+            /unknown command/i,
+        );
     });
 
     // source carries its own list/add/remove/enable/disable subcommands

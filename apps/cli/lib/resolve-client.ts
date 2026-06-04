@@ -9,7 +9,7 @@
 import type { ContextClient } from './context-client';
 import { createLocalClient } from './clients/local';
 import { createRemoteClientFromConfig } from './clients/remote';
-import { loadClientConfig } from './client-config';
+import { readRemote } from './remote';
 import { dbUrl as defaultDbUrl, projectDir as defaultProjectDir } from './config';
 
 // -- options ------------------------------------------------------------------
@@ -20,14 +20,23 @@ import { dbUrl as defaultDbUrl, projectDir as defaultProjectDir } from './config
 export type ClientConfig = { baseUrl?: string; apiKey?: string; mode?: 'local' | 'remote' };
 
 // remote forces the hosted backend; dbUrl/cwd override the local defaults.
-// env/config are injectable so credential resolution is testable without HTTP.
+// env/config are injectable so credential resolution is testable without HTTP;
+// configDir points the persisted read at a temp ~/.ultracontext for tests.
 export type ResolveOptions = {
     remote?: boolean;
     dbUrl?: string;
     cwd?: string;
     env?: Record<string, string | undefined>;
     config?: ClientConfig;
+    configDir?: string;
 };
+
+// read the persisted api side of the unified remote as the resolver's config
+// slice — the SAME {baseUrl, apiKey} keys `uc remote set` writes to config.json.
+async function loadPersistedConfig(configDir?: string): Promise<ClientConfig> {
+    const remote = await readRemote(configDir);
+    return remote.api ? { baseUrl: remote.api.baseUrl, apiKey: remote.api.apiKey } : {};
+}
 
 // -- credential resolution ----------------------------------------------------
 
@@ -52,8 +61,9 @@ export async function resolveClient(opts: ResolveOptions = {}): Promise<ContextC
     // to remote). Keeps env-driven local runs from reading a hosted config.
     const skipPersisted = opts.dbUrl !== undefined || env.UC_DB_URL !== undefined;
 
-    // injected config wins (tests); else read the persisted ~/.ultracontext config
-    const config = opts.config ?? (skipPersisted ? {} : await loadClientConfig());
+    // injected config wins (tests); else read the persisted unified remote (the
+    // api side — {baseUrl, apiKey} — written by `uc remote set`)
+    const config = opts.config ?? (skipPersisted ? {} : await loadPersistedConfig(opts.configDir));
 
     // gather hosted creds from env (preferred) or persisted config
     const apiKey = resolveApiKey(env, config);

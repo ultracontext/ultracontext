@@ -97,7 +97,7 @@ describe('config round-trip', () => {
         assert.deepEqual(JSON.parse(raw), config);
     });
 
-    // loading from an empty dir throws (no config yet → run `uc sync init`)
+    // loading from an empty dir throws (no config yet → run `uc remote set`)
     it('throws when no config exists', async () => {
         const dir = await tempDir();
         await assert.rejects(loadConfig(dir));

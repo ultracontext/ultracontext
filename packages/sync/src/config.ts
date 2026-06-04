@@ -97,7 +97,7 @@ export async function loadConfig(dir: string = configDir(), opts: LoadOptions = 
     const migrated = await migrateTomlConfig(dir, opts);
     if (migrated) return migrated;
 
-    throw new Error(`no sync config at ${path} — run \`uc sync init\``);
+    throw new Error(`no sync config at ${path} — run \`uc remote set <target>\``);
 }
 
 // migrate config.toml → config.json (atomic save + keep the toml as .migrated)
