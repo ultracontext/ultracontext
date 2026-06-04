@@ -4,7 +4,7 @@ Guidance for Claude Code (claude.ai/code) working in this repo.
 
 ## What this is
 
-UltraContext — version control for AI agent context. pnpm monorepo
+UltraContext — the context toolkit for AI agents. pnpm monorepo
 (`pnpm-workspace.yaml`: `packages/*`, `apps/*`). The product is local-first:
 `npm i ultracontext` installs the `uc` CLI **and** the JS SDK in one shot.
 
@@ -46,6 +46,14 @@ Runs everywhere: Node/Bun (SQLite file), browser (sql.js + IndexedDB, wasm loads
 lazily so remote-only apps pay zero bytes; `wasmUrl` config for offline bundles),
 edge (remote — local mode throws a clear error). The CLI's `.` ships conditional
 exports (`node`/`bun` → full build w/ libsql; `default` → browser build).
+
+**Dev overlay (browser-only).** `new UltraContext()` in a dev browser auto-mounts
+a Next.js-style devtools bubble (`apps/cli/lib/devtools/`): contexts list +
+message drill-down, read-only, Shadow DOM. Gate (`devtools-hook.browser.ts`, a
+`#devtools-hook` seam — no-op on node) runs in the ENTRY chunk; UI is a lazy
+chunk prod never fetches. `devtools: false` disables; `true`/`{position}`
+overrides. `process.env.NODE_ENV` must stay LITERAL in dist (identity `define`
+in tsdown.config.ts) so consumer bundlers do the prod substitution.
 
 ## Architecture decisions
 

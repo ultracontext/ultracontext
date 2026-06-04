@@ -4,7 +4,7 @@
   </a>
 </p>
 
-<h3 align="center">The Context SDK for AI agents.</h3>
+<h3 align="center">The context toolkit for AI agents.</h3>
 
 <p align="center">
   <a href="https://ultracontext.ai/docs">Documentation</a> ·
@@ -28,7 +28,7 @@
 </p>
 
 <p align="center">
-  <strong>Everything you need to manage what your agents see.</strong>
+  <strong>Everything you need to create, manage, and optimize context windows.</strong>
 </p>
 
 <div align="center">

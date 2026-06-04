@@ -5,7 +5,7 @@ the canonical entry for non-Claude agents.
 
 ## What this is
 
-UltraContext — version control for AI agent context. pnpm monorepo
+UltraContext — the context toolkit for AI agents. pnpm monorepo
 (`pnpm-workspace.yaml`: `packages/*`, `apps/*`). Local-first: `npm i ultracontext`
 installs the `uc` CLI **and** the JS SDK in one install.
 

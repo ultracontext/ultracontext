@@ -114,7 +114,7 @@ export function buildProgram(): Command {
     // version lives behind `uc version` / `uc doctor` instead.
     program
         .name('uc')
-        .description('UltraContext — version control for AI agent context');
+        .description('UltraContext — the context toolkit for AI agents');
 
     // global options consumed by the output helper + client resolver
     program.option('--json', 'emit machine-readable JSON');
