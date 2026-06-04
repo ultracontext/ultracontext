@@ -71,10 +71,10 @@ CLI's `.` ships conditional exports (`node`/`bun` → full build; `default` → 
 
 ## `uc` command tree
 
-- **Context** (client-agnostic): `uc add` · `get` · `update` · `delete` · `list`
+- **Context group** (client-agnostic, alias `ctx`): `uc context create|append|get|update|delete|list`
 - **Sync**: `uc sync init|start|stop|status|list` · `uc sync source list|add`
 - **Events**: `uc event emit|tail|status|flush` · `uc event commit --from-stdin` (hub side, ssh transport target)
-- **Utility**: `uc upgrade` · `uc doctor` · `uc init`
+- **Utility**: `uc update` · `uc doctor` · `uc init`
 - **Introspection**: `uc commands --json` — machine-readable command tree
 
 Global flags: `--json`, `--remote`.

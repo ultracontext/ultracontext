@@ -33,25 +33,25 @@ The binary is available as both `uc` and `ultracontext`.
 
 ```bash bash
 uc init                                       # set up the local SQLite store
-id=$(uc create)                               # create a context → prints its id
-uc append "$id" "remember: deploy uses Fly.io"    # append a message
-uc get "$id"                                  # read the context
-uc list                                       # list all contexts
+id=$(uc context create)                               # create a context → prints its id
+uc context append "$id" "remember: deploy uses Fly.io"    # append a message
+uc context get "$id"                                  # read the context
+uc context list                                       # list all contexts
 ```
 
-`uc create` prints the new context id to stdout (a bare id in human mode, so
-`id=$(uc create)` works in a shell). Every other targeted verb takes that id — or set
+`uc context create` prints the new context id to stdout (a bare id in human mode, so
+`id=$(uc context create)` works in a shell). Every other targeted verb takes that id — or set
 `UC_CONTEXT` once and drop it:
 
 ```bash bash
 export UC_CONTEXT=$id
-echo "another note" | uc append    # body via stdin (id from UC_CONTEXT)
-uc get
+echo "another note" | uc context append    # body via stdin (id from UC_CONTEXT)
+uc context get
 ```
 
 ## Context commands
 
-### `uc create`
+### `uc context create`
 
 Create a new context, or **fork/clone** from an existing one with `--from`. Prints the
 new context id. `--meta key=val` (repeatable) tags the **context** itself.
@@ -65,16 +65,16 @@ new context id. `--meta key=val` (repeatable) tags the **context** itself.
 | `--meta <key=val>` | Attach context metadata (repeatable) |
 
 ```bash bash
-uc create                                     # new empty context
-uc create --meta user_id=u_123 --meta env=prod
-uc create --from ctx_abc123                   # full fork/clone
-uc create --from ctx_abc123 --at 5            # fork the first 6 messages
-uc create --from ctx_abc123 --version 2 --meta reason=rollback
+uc context create                                     # new empty context
+uc context create --meta user_id=u_123 --meta env=prod
+uc context create --from ctx_abc123                   # full fork/clone
+uc context create --from ctx_abc123 --at 5            # fork the first 6 messages
+uc context create --from ctx_abc123 --version 2 --meta reason=rollback
 ```
 
-<Info>Fork/clone is `uc create --from <id>`, mirroring the SDK's `create({ from })` — there is no separate `fork` verb. The `--version` / `--at` / `--before` selectors require `--from`.</Info>
+<Info>Fork/clone is `uc context create --from <id>`, mirroring the SDK's `create({ from })` — there is no separate `fork` verb. The `--version` / `--at` / `--before` selectors require `--from`.</Info>
 
-### `uc append <id> [text]`
+### `uc context append <id> [text]`
 
 Append a message to context `<id>`. Reads the body from the positional `text`, piped
 stdin, or a `--message <json>` object. `--meta key=val` (repeatable) tags the
@@ -87,18 +87,18 @@ stdin, or a `--message <json>` object. `--meta key=val` (repeatable) tags the
 | `--message <json>` | Parse a raw JSON message object (`role` / `content` / `metadata`) |
 
 ```bash bash
-uc append ctx_abc123 "the API runs on port 8787" --role user
-echo "piped note" | uc append ctx_abc123
-uc append ctx_abc123 --message '{"role":"assistant","content":"done","metadata":{"task":"deploy"}}'
-uc append ctx_abc123 "tagged note" --meta source=cli
+uc context append ctx_abc123 "the API runs on port 8787" --role user
+echo "piped note" | uc context append ctx_abc123
+uc context append ctx_abc123 --message '{"role":"assistant","content":"done","metadata":{"task":"deploy"}}'
+uc context append ctx_abc123 "tagged note" --meta source=cli
 
 # with UC_CONTEXT set, the id is implied (body must come from stdin or --message)
-UC_CONTEXT=ctx_abc123 uc append --message '{"content":"another note"}'
+UC_CONTEXT=ctx_abc123 uc context append --message '{"content":"another note"}'
 ```
 
 <Info>`--json` is the **global** machine-output toggle, not a body source. Raw message objects go through `--message`.</Info>
 
-### `uc get <id>`
+### `uc context get <id>`
 
 Read context `<id>`. Time-travel with the version selectors.
 
@@ -110,13 +110,13 @@ Read context `<id>`. Time-travel with the version selectors.
 | `--history` | Include the version history |
 
 ```bash bash
-uc get ctx_abc123
-uc get ctx_abc123 --history
-uc get ctx_abc123 --version 2
-uc get ctx_abc123 --at 5
+uc context get ctx_abc123
+uc context get ctx_abc123 --history
+uc context get ctx_abc123 --version 2
+uc context get ctx_abc123 --at 5
 ```
 
-### `uc update <id>`
+### `uc context update <id>`
 
 Update messages in context `<id>`. Target one message by id **or** index. `--meta`
 attaches **version** metadata to the resulting update.
@@ -129,11 +129,11 @@ attaches **version** metadata to the resulting update.
 | `--meta <key=val>` | Attach version metadata (repeatable) |
 
 ```bash bash
-uc update ctx_abc123 --index 0 --content "New system prompt"
-uc update ctx_abc123 --id msg_xyz --content "Fixed!" --meta reason=typo
+uc context update ctx_abc123 --index 0 --content "New system prompt"
+uc context update ctx_abc123 --id msg_xyz --content "Fixed!" --meta reason=typo
 ```
 
-### `uc delete <id...>`
+### `uc context delete <id...>`
 
 Delete the whole context `<id>` (`--permanent`) or specific messages (`--ids`). The
 `--meta` flag attaches an **audit** record on a permanent delete, or **version**
@@ -152,12 +152,12 @@ when every id deleted — any failed row exits `1` while still printing the rows
 | `--meta <key=val...>` | Metadata pairs — audit (permanent) or version (messages) |
 
 ```bash bash
-uc delete ctx_abc123 --permanent --meta reason="GDPR request"
-uc delete ctx_abc123 --ids 0 2 -1 --meta reason=cleanup
-uc delete ctx_abc123 ctx_def456 ctx_ghi789 --permanent   # batch permanent delete
+uc context delete ctx_abc123 --permanent --meta reason="GDPR request"
+uc context delete ctx_abc123 --ids 0 2 -1 --meta reason=cleanup
+uc context delete ctx_abc123 ctx_def456 ctx_ghi789 --permanent   # batch permanent delete
 ```
 
-### `uc list`
+### `uc context list`
 
 List **all** contexts by default. Filters are optional and combinable — there is no
 cwd default.
@@ -169,9 +169,9 @@ cwd default.
 | `--limit <n>` | Max contexts to return |
 
 ```bash bash
-uc list
-uc list --limit 20
-uc list --source claude --project_path /Users/alice/Code/myapp
+uc context list
+uc context list --limit 20
+uc context list --source claude --project_path /Users/alice/Code/myapp
 ```
 
 ## Remote commands
@@ -275,7 +275,7 @@ Diagnose the local environment: uc version, `~/.ultracontext` presence, local DB
 reachability, `mutagen` availability, remote reachability (only when configured),
 and the credential source.
 
-### `uc upgrade`
+### `uc update`
 
 Self-update the CLI. The install method (npm / brew / curl) is auto-detected. Use
 `--dry-run` to print the command without running it.
@@ -304,8 +304,8 @@ By default the CLI is local-only. It switches to the hosted Context API when:
 | `UC_CONTEXT` | Default context id for targeted verbs (`append` / `get` / `update` / `delete`) |
 
 ```bash bash
-uc list --remote                          # one-off against the hosted API
-UC_API_KEY=uc_live_... uc append "$id" "synced note"
+uc context list --remote                          # one-off against the hosted API
+UC_API_KEY=uc_live_... uc context append "$id" "synced note"
 ```
 
 ## Output

@@ -23,7 +23,7 @@ You are one agent in a fleet. The user may also run Claude, Codex, OpenClaw, Her
 
 - **Files** — the archive. Everything that ever happened, mirrored by sync. You grep and read these.
 - **Events** — the status board. Small immutable facts about *what changed, now* (`uc event tail`).
-- **Contexts** — versioned conversational state an agent reads and writes (`uc create`/`append`/`get`).
+- **Contexts** — versioned conversational state an agent reads and writes (`uc context create`/`append`/`get`).
 
 Files are the past, events are the present, contexts are live state. Never assume there is only one machine. That is the whole point.
 
@@ -130,14 +130,14 @@ Use this path for Codex recall. It is faster than brute-forcing every rollout fi
 A context is live, versioned conversational state — distinct from the read-only file archive. Use these when the user wants to capture, fork, or replay a conversation rather than browse synced files.
 
 ```sh
-uc create                                  # create a context; --from <id> forks; --meta <k=v> tags it (repeatable)
-uc append <id> "text" --role user          # append a message (omit text for stdin; --message <json> for a raw object)
-uc get <id>                                 # read a context; --history for version history
-uc get <id> --version <n>                   # read a specific version (or --at <index> / --before <ts>)
-uc update <id> --index <n> --content "..."  # edit a message in place (or --id <msg-id> to target by id)
-uc delete <id> --ids <n...>                 # delete messages; bare `delete <id> --permanent` drops the whole context
-uc delete <a> <b> --permanent               # batch-delete whole contexts
-uc list                                      # list contexts; --source / --project_path / --limit filters
+uc context create                                  # create a context; --from <id> forks; --meta <k=v> tags it (repeatable)
+uc context append <id> "text" --role user          # append a message (omit text for stdin; --message <json> for a raw object)
+uc context get <id>                                 # read a context; --history for version history
+uc context get <id> --version <n>                   # read a specific version (or --at <index> / --before <ts>)
+uc context update <id> --index <n> --content "..."  # edit a message in place (or --id <msg-id> to target by id)
+uc context delete <id> --ids <n...>                 # delete messages; bare `delete <id> --permanent` drops the whole context
+uc context delete <a> <b> --permanent               # batch-delete whole contexts
+uc context list                                      # list contexts; --source / --project_path / --limit filters
 ```
 
 Most context verbs accept `UC_CONTEXT` instead of an explicit id. Add `--remote` (or configure a hosted backend) to talk to the hosted API instead of local SQLite.
@@ -191,7 +191,7 @@ Rule of thumb: **drivers bring the outside world in; events + files are what cor
 ```sh
 uc init                                      # onboard ultracontext for this project (--yes to accept defaults)
 uc doctor                                    # diagnose env, config, workspace, and reachability
-uc upgrade                                   # self-update the uc CLI (--dry-run to preview)
+uc update                                   # self-update the uc CLI (--dry-run to preview)
 uc version                                   # print the installed uc version
 uc commands --json                           # machine-readable command tree (use this to discover exact flags)
 ```

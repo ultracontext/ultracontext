@@ -53,9 +53,9 @@ Read any past state with three selectors, on both `get` and `create --from`:
 - `--before <timestamp>` — the version just before a moment in time.
 
 ```bash bash
-uc get ctx_abc123 --history          # the full version log
-uc get ctx_abc123 --version 2        # state at version 2
-uc create --from ctx_abc123 --at 5   # fork the first 6 messages
+uc context get ctx_abc123 --history          # the full version log
+uc context get ctx_abc123 --version 2        # state at version 2
+uc context create --from ctx_abc123 --at 5   # fork the first 6 messages
 ```
 
 ## Local-first everywhere

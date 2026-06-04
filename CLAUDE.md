@@ -64,13 +64,13 @@ exports (`node`/`bun` → full build w/ libsql; `default` → browser build).
 
 ## `uc` command tree
 
-- **Context verbs** (client-agnostic): `uc add` · `uc get` · `uc update` · `uc delete <id...>` (many ids → batch permanent delete, needs `--permanent`) · `uc list`
+- **Context group** (client-agnostic, alias `ctx`): `uc context create|append|get|update|delete|list` — `uc context delete <id...>` (many ids → batch permanent delete, needs `--permanent`). The verbs moved OFF the root so the primitive is explicit (`uc context append` answers "append WHERE").
 - **Remote** (unified coords over `config.json` via `apps/cli/lib/remote.ts`): `uc remote set <target>` (`local | user@host[:root]`; `--root`/`--host-id` the ssh leg, `--api`/`--key` the api leg) · `uc remote show` (key never printed) · `uc remote test` (per-leg reachability) · `uc remote clear` (drops coords, keeps sources). One central machine carrying both the ssh side (fs sync + event transport) and the api side (contexts/events over HTTP — `uc serve` or hosted).
 - **Sync** (`@ultracontext/sync`): `uc sync start|stop|status|list|reset` · `uc sync source list|add|remove|enable|disable` (`--ignore` flags from `~/.ultracontext/ignores/.ultracontextignore` + per-source files; `config.toml`→`config.json` auto-migration on first run). The hub is set by `uc remote set` (NOT a `sync init` — that verb is gone); `uc sync` only reads it.
 - **Events** (`@ultracontext/core` over an `EventStore` port): `uc event emit|tail|status|flush` · `uc event commit --from-stdin` (hub side, ssh transport target). Transport picks the api coord (HTTP `POST/GET /events`) when configured, else the ssh hub, else local. `tail` reads the hub's log when a remote hub is configured; `--local` reads this machine's own db.
 - **Drivers** (manifest reader + sh-c runner): `uc driver list` (installed `~/.ultracontext/drivers/<name>/driver.toml` manifests) · `uc driver run <driver> <command>` (run a manifest command as a local process, stream stdio through, propagate exit code)
 - **Serve** (self-host, NEW, self-contained in `apps/cli` over `@ultracontext/core` + `@ultracontext/storage` — does NOT import `apps/api`): `uc serve [--port] [--host] [--db] [--no-auth]` — the Context API + events over the LOCAL sqlite (node:http + a hand-router; runs under node AND the bun-compiled binary). Mints a bearer key bound to the CLI's `local` project on first run, printed once to stderr.
-- **Utility**: `uc upgrade` (self-update) · `uc doctor` (env health card) · `uc init` (onboarding)
+- **Utility**: `uc update` (self-update) · `uc doctor` (env health card) · `uc init` (onboarding)
 - **Introspection**: `uc commands --json` (machine-readable tree for agents)
 
 Global flags: `--json`, `--remote`.

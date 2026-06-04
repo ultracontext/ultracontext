@@ -79,10 +79,10 @@ npm install ultracontext      # the SDK + CLI, in a project
 
 ```bash
 uc init                                  # set up the local SQLite store
-id=$(uc create)                          # create a context → prints its id
-uc append "$id" "remember: deploy uses Fly.io"   # append a message
-uc get "$id"                             # read the context
-uc list                                  # list all contexts
+id=$(uc context create)                          # create a context → prints its id
+uc context append "$id" "remember: deploy uses Fly.io"   # append a message
+uc context get "$id"                             # read the context
+uc context list                                  # list all contexts
 ```
 
 The CLI manages **many contexts explicitly** — there is no default context. Every
@@ -91,8 +91,8 @@ exactly what you're touching:
 
 ```bash
 export UC_CONTEXT=$id              # set once, then drop the id from each verb
-echo "another note" | uc append    # body via stdin ($UC_CONTEXT is the target)
-uc get
+echo "another note" | uc context append    # body via stdin ($UC_CONTEXT is the target)
+uc context get
 ```
 
 The CLI is **local-first**: every command talks to a local SQLite database at
@@ -102,12 +102,12 @@ The CLI is **local-first**: every command talks to a local SQLite database at
 ### Command tree
 
 ```bash
-uc create [--from <id>]                 # create a context, or fork/clone from <id>
-uc append <id> [text]                   # append a message (text | --message | stdin)
-uc get <id>                             # read a context (--version / --at / --before / --history)
-uc update <id> --content <c>            # update messages (--id <m> | --index <i>)
-uc delete <id...>                       # delete a context (--permanent) or messages (--ids); many ids → batch (--permanent)
-uc list                                 # list ALL contexts (--source / --project_path / --limit)
+uc context create [--from <id>]                 # create a context, or fork/clone from <id>
+uc context append <id> [text]                   # append a message (text | --message | stdin)
+uc context get <id>                             # read a context (--version / --at / --before / --history)
+uc context update <id> --content <c>            # update messages (--id <m> | --index <i>)
+uc context delete <id...>                       # delete a context (--permanent) or messages (--ids); many ids → batch (--permanent)
+uc context list                                 # list ALL contexts (--source / --project_path / --limit)
 
 uc remote set <target> # configure your one central remote (--root / --host-id / --api / --key)
 uc remote show|test|clear # show (key never printed) / test reachability / clear coords (sources kept)
@@ -131,12 +131,12 @@ uc serve              # self-host the Context API + events over your local sqlit
 
 uc init               # initialize ultracontext for this machine
 uc doctor             # diagnose the local environment
-uc upgrade            # self-update the CLI
+uc update            # self-update the CLI
 uc commands --json    # the full command tree, machine-readable (for agents)
 ```
 
 Every targeted verb resolves its context from the explicit `<id>` arg, else
-`$UC_CONTEXT`, else a clear error. **Fork/clone** is `uc create --from <id>`
+`$UC_CONTEXT`, else a clear error. **Fork/clone** is `uc context create --from <id>`
 (optionally `--version` / `--at` / `--before`) — it mirrors the SDK's `create({ from })`.
 `--meta key=val` (repeatable) attaches metadata: the **context** on `create`, the
 **message** on `append`, the **version** on `update`/`delete`, an **audit** record on
@@ -158,7 +158,7 @@ Building an agent? The SDK is how you manage its context window in code — crea
 - **Metadata** — tag the context, a message, or a version.
 - **Framework-agnostic** — hand the messages to any model. No lock-in.
 
-The CLI mirrors the SDK one-to-one (`uc create` / `uc append` / `uc get` / …).
+The CLI mirrors the SDK one-to-one (`uc context create` / `uc context append` / `uc context get` / …).
 
 | SDK                   | Install                    | Source                               |
 | --------------------- | -------------------------- | ------------------------------------ |

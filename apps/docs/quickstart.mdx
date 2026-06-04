@@ -31,11 +31,11 @@ connect a hosted backend, or `uc init --yes` to accept local-only defaults.
 ## 3. Capture and read context
 
 ```bash bash
-id=$(uc create)                              # create a context → prints its id
-uc append "$id" "remember: deploy uses Fly.io"   # append a message
-uc get "$id"                                 # read the context
-uc get "$id" --history                       # time-travel through versions
-uc list                                      # list all contexts
+id=$(uc context create)                              # create a context → prints its id
+uc context append "$id" "remember: deploy uses Fly.io"   # append a message
+uc context get "$id"                                 # read the context
+uc context get "$id" --history                       # time-travel through versions
+uc context list                                      # list all contexts
 ```
 
 UltraContext manages **many contexts explicitly** — there is no default context. Every
@@ -44,13 +44,13 @@ writing. Set `UC_CONTEXT` to drop the id from each command:
 
 ```bash bash
 export UC_CONTEXT=$id                 # set once
-echo "another note" | uc append      # body via stdin (id from UC_CONTEXT)
-uc get
+echo "another note" | uc context append      # body via stdin (id from UC_CONTEXT)
+uc context get
 ```
 
-<Note>With `UC_CONTEXT` set, the lone positional on `uc append` is still read as the context id — so pipe the body via stdin or pass `--message '{...}'`.</Note>
+<Note>With `UC_CONTEXT` set, the lone positional on `uc context append` is still read as the context id — so pipe the body via stdin or pass `--message '{...}'`.</Note>
 
-Fork or clone with `uc create --from <id>`. Attach `--meta key=val` (repeatable) on any
+Fork or clone with `uc context create --from <id>`. Attach `--meta key=val` (repeatable) on any
 verb. See the [CLI reference](/fundamentals/cli) for the full command tree.
 
 <Tip>Every command is pipe-aware: add <code>--json</code> (or pipe stdout) for machine-readable output. Run <code>uc commands --json</code> for the authoritative command tree.</Tip>

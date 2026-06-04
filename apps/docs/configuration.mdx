@@ -42,14 +42,14 @@ Environment variables override the config file.
 
 ```bash bash
 # one-off command against the hosted API
-UC_API_KEY=uc_live_... uc append "$id" "synced note"
+UC_API_KEY=uc_live_... uc context append "$id" "synced note"
 
 # set a default context, then drop the id from each verb
 export UC_CONTEXT=ctx_abc123
-echo "another note" | uc append    # body via stdin (id from UC_CONTEXT)
+echo "another note" | uc context append    # body via stdin (id from UC_CONTEXT)
 
 # point at a different local database (e.g. for tests)
-UC_DB_URL=file:/tmp/scratch.db uc list
+UC_DB_URL=file:/tmp/scratch.db uc context list
 ```
 
 ## Local vs remote
@@ -61,8 +61,8 @@ The CLI picks a backend per command:
 3. Otherwise, it uses the local SQLite store.
 
 ```bash bash
-uc list                 # local-first (default)
-uc list --remote        # hosted API for this command
+uc context list                 # local-first (default)
+uc context list --remote        # hosted API for this command
 ```
 
 ## Precedence
