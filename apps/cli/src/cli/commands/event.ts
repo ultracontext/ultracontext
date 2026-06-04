@@ -17,6 +17,7 @@ import {
     eventStatus,
     flushPending,
     type EventInput,
+    type EventError,
     type EventStore,
     type Deliver,
 } from '@ultracontext/core';
@@ -53,8 +54,11 @@ export type EventDeps = {
 // the global --json flag flows in from the program root
 type JsonOpt = { json?: boolean };
 
-// `uc event emit` flags — the documented envelope surface
+// `uc event emit` flags — the canonical 2.0 envelope surface (lib.rs
+// print_event_help). --event-id carries the relay's idempotency id; the three
+// --error-* flags assemble into the envelope error object (relay error events).
 export type EmitOpts = JsonOpt & {
+    eventId?: string;
     kind: string;
     source: string;
     subject: string;
@@ -70,6 +74,9 @@ export type EmitOpts = JsonOpt & {
     payloadHash?: string;
     count?: string[];
     label?: string[];
+    errorClass?: string;
+    errorMessage?: string;
+    errorRetryable?: boolean;
 };
 
 // `uc event tail` flags — limit + the documented kind/source/subject filters.
@@ -95,8 +102,11 @@ export async function emitAction(opts: EmitOpts, deps: EventDeps = {}): Promise<
     const io = deps.io;
 
     try {
-        // assemble the EventInput from flags (k=v maps parsed + validated here)
+        // assemble the EventInput from flags (k=v maps parsed + validated here).
+        // event_id (when given) is passed through so the relay's idempotency id is
+        // preserved; the three --error-* flags assemble into the error object.
         const input: EventInput = {
+            event_id: opts.eventId,
             kind: opts.kind,
             source: opts.source,
             subject: opts.subject,
@@ -112,6 +122,7 @@ export async function emitAction(opts: EmitOpts, deps: EventDeps = {}): Promise<
             payload_hash: opts.payloadHash,
             counts: parseCounts(opts.count),
             labels: parseLabels(opts.label),
+            error: buildError(opts),
         };
 
         // resolve the hub, then emit through the core op (localMode shapes state)
@@ -129,6 +140,14 @@ export async function emitAction(opts: EmitOpts, deps: EventDeps = {}): Promise<
     } catch (error) {
         return outputError(error, { ...io, json: opts.json });
     }
+}
+
+// assemble the envelope error object from the three relay --error-* flags. Built
+// only when ANY is present (matching 2.0's render_event_error); class/message
+// default to '' and retryable to false so the partial relay form still validates.
+function buildError(opts: EmitOpts): EventError | undefined {
+    if (opts.errorClass === undefined && opts.errorMessage === undefined && opts.errorRetryable === undefined) return undefined;
+    return { class: opts.errorClass ?? '', message: opts.errorMessage ?? '', retryable: opts.errorRetryable ?? false };
 }
 
 // attempt one immediate delivery of a freshly-emitted remote event; on failure
@@ -320,6 +339,7 @@ export function buildEventCommand(): Command {
         .requiredOption('--kind <kind>', 'dotted verb-noun kind (e.g. claude.session.updated)')
         .requiredOption('--source <source>', 'component that emitted or observed it')
         .requiredOption('--subject <subject>', 'stable thing it is about')
+        .option('--event-id <id>', "caller-provided id (relay idempotency); generated when omitted")
         .option('--privacy <level>', 'public | internal | metadata_only | sensitive_ref (default metadata_only)')
         .option('--occurred-at <iso>', 'ISO-8601 time it happened (default now)')
         .option('--actor <actor>', 'who caused it')
@@ -332,6 +352,9 @@ export function buildEventCommand(): Command {
         .option('--payload-hash <hash>', "hash of that payload (must start sha256:)")
         .option('--count <k=v...>', 'numeric counter pair (repeatable)', collect, [])
         .option('--label <k=v...>', 'string label pair (repeatable)', collect, [])
+        .option('--error-class <class>', 'error class (assembles the envelope error object)')
+        .option('--error-message <message>', 'error message (assembles the envelope error object)')
+        .option('--error-retryable <bool>', 'whether the error is retryable', (v) => v === 'true')
         .action((opts, cmd) => bridge((json) => emitAction({ ...opts, json }))(cmd));
 
     // tail — read the chronological committed log as one JSON object per line.

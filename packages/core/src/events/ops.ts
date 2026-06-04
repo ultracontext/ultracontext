@@ -68,7 +68,7 @@ export async function emitEvent(store: EventStore, input: EventInput, opts: Emit
 
 // hub side: parse a piped envelope, re-validate, set received_at=now, insert.
 // a duplicate event_id is idempotent — committed:false, NOT an error.
-export async function commitEvent(store: EventStore, envelopeJson: string): Promise<Result<{ committed: boolean } & Partial<EventEnvelope>>> {
+export async function commitEvent(store: EventStore, envelopeJson: string): Promise<Result<{ committed: boolean; received_at: string | null; event_id: string }>> {
     // parse the JSON (malformed → invalid_input)
     let parsed: unknown;
     try {
@@ -81,14 +81,17 @@ export async function commitEvent(store: EventStore, envelopeJson: string): Prom
     const envCheck = validateEnvelope(parsed);
     if (!envCheck.ok) return envCheck;
 
-    // server sets/overwrites received_at at commit time
+    // server sets/overwrites received_at at commit time (only meaningful on insert)
     const received_at = new Date().toISOString();
     const env: EventEnvelope = { ...envCheck.data, received_at };
 
     // insert committed — the unique(event_id) maps a dupe to inserted:false
     const { inserted } = await store.insertEvent(toRow(env, 'committed'));
 
-    return ok({ committed: inserted, received_at, event_id: env.event_id });
+    // NIT: on a dedup the row was NOT (re-)received now — report received_at null
+    // (never a fresh 'now', which would mislead the caller into thinking it
+    // re-stamped the existing row). A fresh insert reports the stamped time.
+    return ok({ committed: inserted, received_at: inserted ? received_at : null, event_id: env.event_id });
 }
 
 // -- tailEvents ---------------------------------------------------------------

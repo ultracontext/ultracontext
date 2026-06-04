@@ -16,7 +16,7 @@ import { join } from 'node:path';
 
 import { saveConfig, type Config, type CommandResult } from '@ultracontext/sync';
 
-import { SSH_HARDENING } from '../../../lib/events/transport';
+import { SSH_HARDENING, loginShellWrap } from '../../../lib/events/transport';
 import {
     emitAction,
     tailAction,
@@ -239,6 +239,77 @@ describe('uc event emit validation', () => {
     });
 });
 
+// -- relay compat: --event-id + --error-* (BUG 4) -----------------------------
+
+describe('uc event emit — relay compat flags (BUG 4)', () => {
+    // the live iOS relay passes its OWN idempotency id via --event-id; the emitted
+    // (and tailed) envelope must carry that exact id, NOT a freshly generated one.
+    it('honors a caller-provided --event-id end to end', async () => {
+        const dbUrl = await tempDbUrl();
+        const configDir = await localConfigDir();
+        const deps = { dbUrl, configDir };
+
+        const emitOut = sink();
+        const code = await emitAction(emitFlags({ eventId: 'evt_fixed_1', json: false }), { ...deps, io: { stdout: emitOut, stderr: sink(), isTTY: true } });
+        assert.equal(code, 0);
+        // emit echoes the provided id (human mode prints the bare id)
+        assert.equal(emitOut.text().trim(), 'evt_fixed_1');
+
+        // the tailed envelope carries that exact event_id
+        const tailOut = sink();
+        await tailAction({ json: true }, { ...deps, io: { stdout: tailOut, stderr: sink(), isTTY: false } });
+        assert.equal(JSON.parse(tailOut.text().trim()).event_id, 'evt_fixed_1');
+    });
+
+    // a second emit with the SAME --event-id dedupes (relay idempotency holds):
+    // committed:0, and the committed log still has exactly one row.
+    it('dedupes a second emit with the same --event-id (committed:0)', async () => {
+        const dbUrl = await tempDbUrl();
+        const configDir = await localConfigDir();
+        const deps = { dbUrl, configDir };
+
+        // first emit lands
+        await emitAction(emitFlags({ eventId: 'evt_idem_1', json: true }), { ...deps, io: { stdout: sink(), stderr: sink(), isTTY: false } });
+
+        // a re-emit of the same id → status still reports ONE committed row
+        await emitAction(emitFlags({ eventId: 'evt_idem_1', json: true }), { ...deps, io: { stdout: sink(), stderr: sink(), isTTY: false } });
+
+        const out = sink();
+        await statusAction({ json: true }, { ...deps, io: { stdout: out, stderr: sink(), isTTY: false } });
+        assert.equal(JSON.parse(out.text()).committed, 1);
+    });
+
+    // the relay's historical error events: --error-class/-message/-retryable
+    // assemble into the envelope's error object {class,message,retryable}.
+    it('assembles --error-class/-message/-retryable into the error object', async () => {
+        const dbUrl = await tempDbUrl();
+        const configDir = await localConfigDir();
+        const deps = { dbUrl, configDir };
+
+        await emitAction(
+            emitFlags({ ok: false, errorClass: 'SyncError', errorMessage: 'boom', errorRetryable: true, json: true }),
+            { ...deps, io: { stdout: sink(), stderr: sink(), isTTY: false } },
+        );
+
+        const out = sink();
+        await tailAction({ json: true }, { ...deps, io: { stdout: out, stderr: sink(), isTTY: false } });
+        const env = JSON.parse(out.text().trim());
+        assert.deepEqual(env.error, { class: 'SyncError', message: 'boom', retryable: true });
+        assert.equal(env.ok, false);
+    });
+
+    // --event-id is charset/length validated like any token (no injection / junk id)
+    it('rejects an illegal --event-id', async () => {
+        const dbUrl = await tempDbUrl();
+        const configDir = await localConfigDir();
+        const errs = sink();
+
+        const code = await emitAction(emitFlags({ eventId: 'bad id!', json: true }), { dbUrl, configDir, io: { stdout: sink(), stderr: errs, isTTY: false } });
+        assert.equal(code, 1);
+        assert.match(JSON.parse(errs.text()).error, /event_id/);
+    });
+});
+
 // -- remote pending → flush ---------------------------------------------------
 
 describe('uc event flush (remote mode)', () => {
@@ -333,10 +404,11 @@ describe('uc event tail (remote mode)', () => {
         assert.equal(code, 0);
         // the hub line is emitted exactly as received (verbatim consumer contract)
         assert.equal(out.text().trim(), hubLine);
-        // the ssh invocation carries every filter on the fixed remote command
+        // the ssh invocation carries every filter on the fixed remote command,
+        // login-shell wrapped (BUG 2: ~/.local/bin on the remote PATH)
         assert.equal(runner.calls.length, 1);
         assert.equal(runner.calls[0].program, 'ssh');
-        assert.deepEqual(runner.calls[0].args, [...SSH_HARDENING, 'fabio@mini', 'uc event tail --json --limit 5 --kind a.b.c --source drv --subject claude:s:1']);
+        assert.deepEqual(runner.calls[0].args, [...SSH_HARDENING, 'fabio@mini', loginShellWrap('uc event tail --json --limit 5 --kind a.b.c --source drv --subject claude:s:1')]);
     });
 
     // a local emit on the SAME machine must NOT surface in remote tail — remote
@@ -520,6 +592,54 @@ describe('buildEventCommand (real argv)', () => {
         const emit = buildEventCommand().commands.find((c) => c.name() === 'emit');
         const mandatory = emit?.options.filter((o) => o.mandatory).map((o) => o.long) ?? [];
         assert.deepEqual(mandatory.sort(), ['--kind', '--source', '--subject']);
+    });
+
+    // BUG 4: emit registers the full 2.0 relay flag surface (the relay calls these)
+    it('emit registers the full 2.0 relay flag surface', () => {
+        const emit = buildEventCommand().commands.find((c) => c.name() === 'emit');
+        const longs = emit?.options.map((o) => o.long) ?? [];
+        for (const flag of [
+            '--kind', '--source', '--subject', '--event-id', '--privacy', '--occurred-at',
+            '--actor', '--run-id', '--trace-id', '--parent-event-id', '--priority', '--ok',
+            '--payload-ref', '--payload-hash', '--count', '--label',
+            '--error-class', '--error-message', '--error-retryable',
+        ]) {
+            assert.ok(longs.includes(flag), `missing emit flag: ${flag}`);
+        }
+    });
+
+    // a full argv parse with --event-id + --error-* drives the relay path end to end
+    it('parses `event emit … --event-id … --error-* …` argv end to end', async () => {
+        const dbUrl = await tempDbUrl();
+        const configDir = await localConfigDir();
+
+        const prevDb = process.env.UC_DB_URL;
+        const prevHome = process.env.HOME;
+        process.env.UC_DB_URL = dbUrl;
+        process.env.HOME = await tempDir('uc-cli-event-home-');
+        try {
+            const event = buildEventCommand();
+            await event.parseAsync(
+                [
+                    'emit', '--kind', 'a.b.c', '--source', 's', '--subject', 'sub',
+                    '--event-id', 'evt_argv_1', '--ok', 'false',
+                    '--error-class', 'E', '--error-message', 'boom', '--error-retryable', 'true',
+                ],
+                { from: 'user' },
+            );
+
+            // verify the row carries the provided id + the assembled error object
+            const out = sink();
+            await tailAction({ json: true }, { dbUrl, configDir, io: { stdout: out, stderr: sink(), isTTY: false } });
+            const env = JSON.parse(out.text().trim());
+            assert.equal(env.event_id, 'evt_argv_1');
+            assert.deepEqual(env.error, { class: 'E', message: 'boom', retryable: true });
+        } finally {
+            if (prevDb === undefined) delete process.env.UC_DB_URL;
+            else process.env.UC_DB_URL = prevDb;
+            if (prevHome === undefined) delete process.env.HOME;
+            else process.env.HOME = prevHome;
+        }
     });
 
     // a full argv parse of emit drives the handler end-to-end on a temp db

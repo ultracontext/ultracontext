@@ -2,7 +2,8 @@
 // transport — resolve the event hub from the EXISTING sync config and build the
 // pluggable Deliver. SSH is never mandatory: a 'local' (or missing) config →
 // localMode (emit IS the commit, in-db). A ssh remote → a Deliver that runs
-// `ssh <host> 'uc event commit --from-stdin'` piping the envelope JSON to stdin.
+// `ssh <host> 'bash -lc "uc event commit --from-stdin"'` piping the envelope JSON
+// to stdin (the login shell loads the user PATH so the hub's `uc` resolves).
 // The runner is INJECTABLE (a stdin-capable spawn) so tests never hit real SSH.
 // =============================================================================
 
@@ -58,6 +59,18 @@ export type Transport = {
 // connect so an unroutable host errors in seconds, not the OS's ~75s+ default.
 export const SSH_HARDENING = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10'] as const;
 
+// -- remote PATH via a login shell --------------------------------------------
+
+// ssh runs a NON-LOGIN, non-interactive shell whose PATH excludes ~/.local/bin —
+// where `uc` installs — so a bare `ssh <host> 'uc …'` fails `command not found`
+// (exit 127). Wrapping the remote uc invocation in a LOGIN shell sources the
+// user's profile (~/.profile etc.), restoring ~/.local/bin on PATH (BUG 2). The
+// inner command is composed ONLY from a fixed string + already charset-validated
+// tokens (no quotes/spaces/metachars), so double-quoting it is injection-safe.
+export function loginShellWrap(command: string): string {
+    return `bash -lc "${command}"`;
+}
+
 // -- remote tail --------------------------------------------------------------
 
 // the documented `uc event tail` filters that flow through to the hub command.
@@ -94,8 +107,9 @@ export function buildTailArgs(target: string, filters: RemoteTailFilters): strin
     if (filters.source !== undefined) parts.push(`--source ${safeFilter('source', filters.source)}`);
     if (filters.subject !== undefined) parts.push(`--subject ${safeFilter('subject', filters.subject)}`);
 
-    // ssh argv: hardening flags first (fail-fast, no prompt), then target + command
-    return [...SSH_HARDENING, target, parts.join(' ')];
+    // ssh argv: hardening flags first (fail-fast, no prompt), then target + the
+    // LOGIN-shell wrapped command (so ~/.local/bin is on the remote PATH — BUG 2)
+    return [...SSH_HARDENING, target, loginShellWrap(parts.join(' '))];
 }
 
 // the result of a remote tail: ok + the hub's stdout as trimmed line-JSON strings,
@@ -118,8 +132,9 @@ export async function remoteTail(target: string, filters: RemoteTailFilters, run
 // build the SSH Deliver for a remote target — pipe the envelope to a hub `uc`.
 function sshDeliver(target: string, runner: StdinRunner): Deliver {
     return async (envelopeJson) => {
-        // lead with the hardening flags so a down/auth-failing hub fails fast (no prompt)
-        const { code } = await runner('ssh', [...SSH_HARDENING, target, 'uc event commit --from-stdin'], envelopeJson);
+        // hardening flags lead (fail fast, no prompt); the remote uc runs inside a
+        // LOGIN shell so ~/.local/bin is on PATH (else exit 127 → row stays pending).
+        const { code } = await runner('ssh', [...SSH_HARDENING, target, loginShellWrap('uc event commit --from-stdin')], envelopeJson);
         return code === 0;
     };
 }

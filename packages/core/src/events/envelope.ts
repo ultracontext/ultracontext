@@ -87,36 +87,43 @@ function checkToken(value: unknown, field: string): string | null {
     return null;
 }
 
+// an optional field is "not provided" when it is undefined OR an explicit JSON
+// null — the legacy events.jsonl (and our own emit) carry null for unset fields,
+// so every optional-field validator below short-circuits on absent() (BUG 3).
+function absent(value: unknown): boolean {
+    return value === undefined || value === null;
+}
+
 // privacy must be one of the four enum values
 function checkPrivacy(value: unknown): string | null {
     return PRIVACY_LEVELS.includes(value as Privacy) ? null : `privacy must be one of ${PRIVACY_LEVELS.join(', ')}`;
 }
 
-// priority (when present) is an integer 0–100
+// priority (when present) is an integer 0–100; an explicit null is "not provided"
 function checkPriority(value: unknown): string | null {
-    if (value === undefined) return null;
+    if (absent(value)) return null;
     if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 100) {
         return 'priority must be an integer 0–100';
     }
     return null;
 }
 
-// ok (when present) is a boolean
+// ok (when present) is a boolean; an explicit null is "not provided"
 function checkOk(value: unknown): string | null {
-    if (value === undefined) return null;
+    if (absent(value)) return null;
     return typeof value === 'boolean' ? null : 'ok must be a boolean';
 }
 
-// payload_hash (when present) must start with 'sha256:'
+// payload_hash (when present) must start with 'sha256:'; null is "not provided"
 function checkPayloadHash(value: unknown): string | null {
-    if (value === undefined) return null;
+    if (absent(value)) return null;
     if (typeof value !== 'string' || !value.startsWith('sha256:')) return "payload_hash must start with 'sha256:'";
     return null;
 }
 
-// counts (when present) is a string→int map
+// counts (when present) is a string→int map; an explicit null is "not provided"
 function checkCounts(value: unknown): string | null {
-    if (value === undefined) return null;
+    if (absent(value)) return null;
     if (!isObject(value)) return 'counts must be an object';
     for (const v of Object.values(value)) {
         if (typeof v !== 'number' || !Number.isInteger(v)) return 'counts values must be integers';
@@ -124,9 +131,9 @@ function checkCounts(value: unknown): string | null {
     return null;
 }
 
-// labels (when present) is a string→string map with values 1–256 chars
+// labels (when present) is a string→string map, values 1–256 chars; null is unset
 function checkLabels(value: unknown): string | null {
-    if (value === undefined) return null;
+    if (absent(value)) return null;
     if (!isObject(value)) return 'labels must be an object';
     for (const v of Object.values(value)) {
         if (typeof v !== 'string' || v.length < 1 || v.length > 256) return 'labels values must be strings 1–256 chars';
@@ -134,9 +141,9 @@ function checkLabels(value: unknown): string | null {
     return null;
 }
 
-// error (when present) is null or { class, message, retryable:boolean }
+// error (when present) is { class, message, retryable:boolean }; null/undefined unset
 function checkError(value: unknown): string | null {
-    if (value === undefined || value === null) return null;
+    if (absent(value)) return null;
     if (!isObject(value)) return 'error must be an object or null';
     if (typeof value.class !== 'string') return 'error.class is required';
     if (typeof value.message !== 'string') return 'error.message is required';
@@ -144,11 +151,32 @@ function checkError(value: unknown): string | null {
     return null;
 }
 
-// every optional-field rule, applied to whatever shape is on hand
+// one optional TOKEN field (actor/run_id/trace_id/parent_event_id): present →
+// the token rules; an explicit null or undefined is "not provided" (BUG 3).
+function checkOptionalToken(value: unknown, field: string): string | null {
+    if (absent(value)) return null;
+    return checkToken(value, field);
+}
+
+// payload_ref (when present) is a non-empty string; an explicit null is unset
+function checkPayloadRef(value: unknown): string | null {
+    if (absent(value)) return null;
+    if (typeof value !== 'string' || value.length === 0) return 'payload_ref must be a non-empty string';
+    return null;
+}
+
+// every optional-field rule, applied to whatever shape is on hand. Each validator
+// treats an explicit null identically to undefined ("not provided") so the legacy
+// events.jsonl (and our own emit) — which carry null for unset fields — round-trip.
 function checkOptionalFields(env: Record<string, unknown>): string | null {
     return (
+        checkOptionalToken(env.actor, 'actor') ??
+        checkOptionalToken(env.run_id, 'run_id') ??
+        checkOptionalToken(env.trace_id, 'trace_id') ??
+        checkOptionalToken(env.parent_event_id, 'parent_event_id') ??
         checkPriority(env.priority) ??
         checkOk(env.ok) ??
+        checkPayloadRef(env.payload_ref) ??
         checkPayloadHash(env.payload_hash) ??
         checkCounts(env.counts) ??
         checkLabels(env.labels) ??

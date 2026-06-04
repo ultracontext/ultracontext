@@ -208,6 +208,55 @@ describe('validateEnvelope — error object', () => {
     });
 });
 
+// =============================================================================
+// BUG 3 — explicit JSON null on an optional field is "absent", not invalid. The
+// legacy events.jsonl (and our own emitted events) carry payload_hash:null,
+// payload_ref:null, error:null, actor:null, etc. A `typeof !== 'string'` check
+// that only exempts `undefined` rejected 67 of 82 legacy events on import.
+// =============================================================================
+
+describe('validateEnvelope — explicit null on optional fields (legacy compat)', () => {
+    // every optional field carrying an explicit null is treated as not-provided
+    it('accepts an envelope with payload_hash:null + error:null + every optional null', () => {
+        const env = {
+            ...validEnvelope(),
+            payload_hash: null,
+            payload_ref: null,
+            actor: null,
+            run_id: null,
+            trace_id: null,
+            parent_event_id: null,
+            priority: null,
+            ok: null,
+            counts: null,
+            labels: null,
+            error: null,
+        };
+        const r = validateEnvelope(env);
+        assert.equal(r.ok, true);
+    });
+
+    // a NON-null bad value on the same field is still rejected (null ≠ any value)
+    it('still rejects a non-null bad payload_hash', () => {
+        const r = validateEnvelope({ ...validEnvelope(), payload_hash: 'nope' });
+        assert.equal(r.ok, false);
+        if (!r.ok) assert.match(r.message, /payload_hash/);
+    });
+
+    // the REAL legacy sample line (nulls everywhere optional) round-trips
+    it('validates the real legacy events.jsonl sample line', () => {
+        const legacy = JSON.parse(
+            '{"schema_version":"uc.event.v1","event_id":"evt_5f3a9c2b1d7e4f80","kind":"claude.session.updated",' +
+            '"source":"claude-web-driver","subject":"claude:session:abc123","occurred_at":"2026-05-08T14:42:09.000Z",' +
+            '"host":"fabios-mac-mini","privacy":"metadata_only","received_at":"2026-05-08T14:42:10.000Z",' +
+            '"actor":null,"run_id":null,"trace_id":null,"parent_event_id":null,"priority":50,"ok":true,' +
+            '"payload_ref":null,"payload_hash":null,"counts":null,"labels":null,"error":null}'
+        );
+        const r = validateEnvelope(legacy);
+        assert.equal(r.ok, true);
+    });
+});
+
 describe('validateEmitInput', () => {
     it('accepts a minimal emit input (privacy optional → defaulted later)', () => {
         const r = validateEmitInput({ kind: 'agent.run.completed', source: 'build-agent', subject: 'run:1' });

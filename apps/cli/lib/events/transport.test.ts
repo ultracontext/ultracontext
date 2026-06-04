@@ -14,7 +14,7 @@ import { join } from 'node:path';
 
 import { saveConfig, type Config, type CommandResult } from '@ultracontext/sync';
 
-import { resolveTransport, buildTailArgs, remoteTail, SSH_HARDENING } from './transport';
+import { resolveTransport, buildTailArgs, remoteTail, SSH_HARDENING, loginShellWrap } from './transport';
 
 // -- temp dirs ----------------------------------------------------------------
 
@@ -111,8 +111,12 @@ describe('resolveTransport (remote config)', () => {
         assert.equal(delivered, true);
         assert.equal(rec.calls.length, 1);
         assert.equal(rec.calls[0].program, 'ssh');
-        // the hardening flags lead, so an unreachable hub fails fast (no prompt/hang)
-        assert.deepEqual(rec.calls[0].args, [...SSH_HARDENING, 'fabio@mini', 'uc event commit --from-stdin']);
+        // BUG 2: the remote uc runs inside a LOGIN shell so ~/.local/bin is on PATH
+        // (a non-login ssh shell excludes it → `uc: command not found`, exit 127).
+        // The hardening flags still lead, so an unreachable hub fails fast.
+        assert.deepEqual(rec.calls[0].args, [...SSH_HARDENING, 'fabio@mini', loginShellWrap('uc event commit --from-stdin')]);
+        // the wrapping is exactly `bash -lc "uc event commit --from-stdin"`
+        assert.equal(rec.calls[0].args.at(-1), 'bash -lc "uc event commit --from-stdin"');
         assert.equal(rec.calls[0].stdin, envelope);
     });
 
@@ -132,10 +136,12 @@ describe('resolveTransport (remote config)', () => {
 // -- buildTailArgs (remote tail argv) -----------------------------------------
 
 describe('buildTailArgs', () => {
-    // the ssh argv leads with the hardening flags, then target + the fixed invocation
-    it('builds `ssh <hardening> <target> "uc event tail --json"` with no filters', () => {
+    // the ssh argv leads with the hardening flags, then target + the LOGIN-shell
+    // wrapped fixed invocation (BUG 2: ~/.local/bin must be on the remote PATH).
+    it('builds `ssh <hardening> <target> "bash -lc \\"uc event tail --json\\""` with no filters', () => {
         const args = buildTailArgs('fabio@mini', {});
-        assert.deepEqual(args, [...SSH_HARDENING, 'fabio@mini', 'uc event tail --json']);
+        assert.deepEqual(args, [...SSH_HARDENING, 'fabio@mini', loginShellWrap('uc event tail --json')]);
+        assert.equal(args.at(-1), 'bash -lc "uc event tail --json"');
     });
 
     // the hardening flags pin BatchMode (no password prompt) + a bounded ConnectTimeout
@@ -145,10 +151,12 @@ describe('buildTailArgs', () => {
         assert.match(joined, /ConnectTimeout=\d+/);
     });
 
-    // limit + every filter land on the remote command in a fixed order
+    // limit + every filter land on the remote command in a fixed order, inside
+    // the login-shell wrapping (the validated tokens are composed safely within it)
     it('appends --limit and the kind/source/subject filters', () => {
         const args = buildTailArgs('fabio@mini', { limit: 5, kind: 'a.b.c', source: 'drv', subject: 'claude:s:1' });
-        assert.deepEqual(args, [...SSH_HARDENING, 'fabio@mini', 'uc event tail --json --limit 5 --kind a.b.c --source drv --subject claude:s:1']);
+        assert.deepEqual(args, [...SSH_HARDENING, 'fabio@mini', loginShellWrap('uc event tail --json --limit 5 --kind a.b.c --source drv --subject claude:s:1')]);
+        assert.equal(args.at(-1), 'bash -lc "uc event tail --json --limit 5 --kind a.b.c --source drv --subject claude:s:1"');
     });
 
     // a non-integer limit is rejected (no NaN leaking into the remote command)
@@ -170,6 +178,29 @@ describe('buildTailArgs', () => {
     it('rejects a source with whitespace', () => {
         assert.throws(() => buildTailArgs('fabio@mini', { source: 'a b' }), /source/);
     });
+
+    // BUG 2: an injection attempt in a filter is rejected by the charset guard
+    // BEFORE it could ever reach the (now login-shell wrapped) remote command.
+    it('rejects an injection-attempt filter before wrapping it into the login shell', () => {
+        assert.throws(() => buildTailArgs('fabio@mini', { subject: 'x"; rm -rf /; echo "' }), /subject/);
+    });
+});
+
+// -- loginShellWrap (BUG 2: remote PATH via a login shell) --------------------
+
+describe('loginShellWrap', () => {
+    // wrap the remote uc invocation in a LOGIN shell so the user's PATH
+    // (~/.local/bin via ~/.profile) is loaded — a non-login ssh shell omits it.
+    it('wraps a command as `bash -lc "<command>"`', () => {
+        assert.equal(loginShellWrap('uc event commit --from-stdin'), 'bash -lc "uc event commit --from-stdin"');
+    });
+
+    // the wrapped command is one safe double-quoted string (the inner uc + its
+    // already-charset-validated flags compose inside it without breaking out).
+    it('double-quotes the inner invocation', () => {
+        const wrapped = loginShellWrap('uc event tail --json --kind a.b.c');
+        assert.match(wrapped, /^bash -lc "uc event tail --json --kind a\.b\.c"$/);
+    });
 });
 
 // -- remoteTail (run over ssh) ------------------------------------------------
@@ -188,7 +219,7 @@ describe('remoteTail', () => {
         assert.equal(result.ok, true);
         assert.deepEqual(result.lines, ['{"event_id":"evt_a"}', '{"event_id":"evt_b"}']);
         assert.equal(calls[0].program, 'ssh');
-        assert.deepEqual(calls[0].args, [...SSH_HARDENING, 'fabio@mini', 'uc event tail --json --limit 2']);
+        assert.deepEqual(calls[0].args, [...SSH_HARDENING, 'fabio@mini', loginShellWrap('uc event tail --json --limit 2')]);
     });
 
     // empty hub log → ok with zero lines (not an error)

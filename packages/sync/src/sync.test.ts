@@ -38,8 +38,9 @@ after(async () => {
 
 // -- fake mutagen + deps ------------------------------------------------------
 
-// records every command and replies from a name→stdout map (default: empty list)
-function fakeRunner(responses: Record<string, string> = {}) {
+// records every command and replies from a name→stdout map (default: empty list).
+// `failCreate` makes any `mutagen sync create` return a non-zero exit + stderr.
+function fakeRunner(responses: Record<string, string> = {}, opts: { failCreate?: string } = {}) {
     const calls: string[][] = [];
 
     const run = async (program: string, args: string[]): Promise<CommandResult> => {
@@ -48,6 +49,11 @@ function fakeRunner(responses: Record<string, string> = {}) {
         // a `sync list` reply is keyed by 'list' (long or short share the key)
         if (program === 'mutagen' && args[0] === 'sync' && args[1] === 'list') {
             return { code: 0, stdout: responses.list ?? '', stderr: '' };
+        }
+
+        // a `sync create` can be made to fail to exercise the visible-warning path
+        if (opts.failCreate && program === 'mutagen' && args[0] === 'sync' && args[1] === 'create') {
+            return { code: 1, stdout: '', stderr: opts.failCreate };
         }
         return { code: 0, stdout: '', stderr: '' };
     };
@@ -374,12 +380,13 @@ describe('remote shell quoting', () => {
 
         await sourceRemove('evil', { purgeRemote: true }, deps(dir, runner));
 
-        // the rm target is single-quoted; the `;` lives INSIDE the quotes
+        // the rm target single-quotes the leaf; the `;` lives INSIDE the quotes
+        // (only the expanded `$HOME/` prefix is unquoted — never the user input)
         const ssh = runner.calls.filter((c) => c[0] === 'ssh').map((c) => c.slice(1));
         const rm = ssh.find((c) => c[1]?.includes('rm -rf'))!;
         assert.ok(rm, 'an ssh rm call was made');
-        assert.match(rm[1], /rm -rf '[^']*x; touch pwned'/);
-        assert.doesNotMatch(rm[1], /rm -rf [^']/);
+        assert.match(rm[1], /rm -rf \$HOME\/'[^']*x; touch pwned'/);
+        assert.doesNotMatch(rm[1], /rm -rf [^$']/);
     });
 
     // the workspace mkdir line quotes every dir the same way
@@ -402,6 +409,156 @@ describe('remote shell quoting', () => {
         const mk = ssh.find((c) => c[1]?.includes('mkdir -p'))!;
         assert.ok(mk, 'an ssh mkdir call was made');
         assert.match(mk[1], /'[^']*y; id'/);
+    });
+});
+
+// -- remote `~` expansion (BUG 1) -----------------------------------------------
+
+// a `~/`-rooted remoteRoot must reach the remote shell as an EXPANDABLE `$HOME/`
+// — never a single-quoted literal `'~/...'` (which mutagen's own endpoint string
+// DOES expand, so a quoted `~` silently desyncs the sync-root parent).
+describe('remote ~ expansion', () => {
+    // the mkdir line emits `$HOME/` (unquoted) while the user-controlled leaf stays quoted
+    it('expands ~ to $HOME in the remote mkdir, keeping the leaf quoted + inert', async () => {
+        const dir = await tempDir();
+        const config: Config = {
+            remote: 'user@hub',
+            remoteRoot: '~/.ultracontext',
+            hostId: 'laptop',
+            sources: [{ agent: 'evil', localPath: join(dir, 'z; id'), enabled: true }],
+        };
+        await saveConfig(config, dir);
+        await mkdir(join(dir, 'z; id'), { recursive: true });
+        const runner = fakeRunner();
+
+        await syncStart(deps(dir, runner));
+
+        const ssh = runner.calls.filter((c) => c[0] === 'ssh').map((c) => c.slice(1));
+        const mk = ssh.find((c) => c[1]?.includes('mkdir -p'))!;
+        assert.ok(mk, 'an ssh mkdir call was made');
+
+        // `~/` became an expandable `$HOME/...` — never a quoted literal `'~/'`
+        assert.match(mk[1], /mkdir -p \$HOME\/'[^']*'/);
+        assert.doesNotMatch(mk[1], /'~\//);
+
+        // the hostile leaf is still single-quoted (injection guard holds)
+        assert.match(mk[1], /'[^']*z; id'/);
+    });
+
+    // the rm line likewise expands `~` while quoting the hostile leaf
+    it('expands ~ to $HOME in the remote rm, keeping the leaf quoted + inert', async () => {
+        const dir = await tempDir();
+        const config: Config = {
+            remote: 'user@hub',
+            remoteRoot: '~/.ultracontext',
+            hostId: 'laptop',
+            sources: [{ agent: 'evil', localPath: join(dir, 'x; rm -rf ~'), enabled: true }],
+        };
+        await saveConfig(config, dir);
+        const runner = fakeRunner();
+
+        await sourceRemove('evil', { purgeRemote: true }, deps(dir, runner));
+
+        const ssh = runner.calls.filter((c) => c[0] === 'ssh').map((c) => c.slice(1));
+        const rm = ssh.find((c) => c[1]?.includes('rm -rf'))!;
+        assert.ok(rm, 'an ssh rm call was made');
+
+        // the rm target expands `~` to `$HOME/` (so it hits the real data dir)
+        assert.match(rm[1], /\$HOME\/'[^']*'/);
+        assert.doesNotMatch(rm[1], /'~\//);
+
+        // the hostile leaf stays single-quoted — `; rm -rf ~` cannot break out
+        assert.match(rm[1], /'[^']*x; rm -rf ~'/);
+    });
+
+    // BUG 1 (adversarial): a leaf carrying a LITERAL single-quote must close +
+    // re-open the quote via the `'\''` escape — never leave a bare `'` that would
+    // break out of the rm target. The leaf also carries a `;` (must stay inert).
+    it('escapes a single-quote in the leaf as `\'\\\'\'` (no quote breakout)', async () => {
+        const dir = await tempDir();
+        const config: Config = {
+            remote: 'user@hub',
+            remoteRoot: '~/.ultracontext',
+            hostId: 'laptop',
+            // leaf = `o'brien'; rm -rf ~` — the last path segment carries the quote
+            sources: [{ agent: 'evil', localPath: join(dir, "o'brien'; rm -rf ~"), enabled: true }],
+        };
+        await saveConfig(config, dir);
+        const runner = fakeRunner();
+
+        await sourceRemove('evil', { purgeRemote: true }, deps(dir, runner));
+
+        const ssh = runner.calls.filter((c) => c[0] === 'ssh').map((c) => c.slice(1));
+        const rm = ssh.find((c) => c[1]?.includes('rm -rf '))!;
+        assert.ok(rm, 'an ssh rm call was made');
+
+        // the `~` prefix still expands to $HOME (never a quoted literal `'~/'`)
+        assert.match(rm[1], /\$HOME\//);
+        assert.doesNotMatch(rm[1], /'~\//);
+
+        // each `'` in the leaf became the literal `'\''` escape — the EXACT inert
+        // shape is `'o'\''brien'\''; rm -rf ~'` (close-quote, escaped-quote, reopen)
+        assert.ok(rm[1].includes(`'.ultracontext/workspace/laptop/o'\\''brien'\\''; rm -rf ~'`), 'leaf quotes are `\'\\\'\'`-escaped');
+
+        // breakout proof: stripping every `'\''` escape triple from the WHOLE
+        // command must leave an EVEN number of bare quotes (balanced open/close) —
+        // an odd count would mean a leaf quote escaped the surrounding quoting.
+        const bareQuotes = rm[1].replace(/'\\''/g, '').match(/'/g)?.length ?? 0;
+        assert.equal(bareQuotes % 2, 0, 'bare quotes stay balanced — no breakout');
+        assert.equal(bareQuotes, 4, 'exactly the two surrounding quote-pairs (test + rm)');
+    });
+});
+
+// -- ssh session terminate on remove (BUG 5) ------------------------------------
+
+// removing a source over ssh must TERMINATE its live mutagen session — and must
+// compute the session name BEFORE dropping the source from config.
+describe('sourceRemove ssh terminate', () => {
+    // a `sync list` carrying the session name → sourceRemove issues a terminate
+    it('terminates the live session for an ssh source before removing it', async () => {
+        const dir = await tempDir();
+        const config: Config = {
+            remote: 'user@hub',
+            remoteRoot: '~/.ultracontext',
+            hostId: 'laptop',
+            sources: [{ agent: 'claude', localPath: join(dir, 'claude'), enabled: true }],
+        };
+        await saveConfig(config, dir);
+        const runner = fakeRunner({ list: 'Name: uc-laptop-claude\nStatus: Watching for changes\n' });
+
+        await sourceRemove('claude', { purgeRemote: true }, deps(dir, runner));
+
+        // the session was terminated by name
+        const cmds = mutagenCalls(runner.calls);
+        assert.ok(cmds.some((c) => c[1] === 'terminate' && c[2] === 'uc-laptop-claude'));
+
+        // and the source is gone from the persisted config
+        const reloaded = await loadConfig(dir);
+        assert.equal(reloaded.sources.find((s) => s.agent === 'claude'), undefined);
+    });
+});
+
+// -- visible create failures (BUG 6) --------------------------------------------
+
+// a failed `mutagen sync create` must surface via deps.warn (it used to be
+// silently swallowed, returning ok:true while creating NO session).
+describe('startSource visible failures', () => {
+    // a create that fails → deps.warn names the source + carries the stderr,
+    // and syncStart still resolves (other sources proceed)
+    it('warns on a failed create without aborting the start', async () => {
+        const dir = await tempDir();
+        await seedLocalConfig(dir);
+        const runner = fakeRunner({}, { failCreate: 'unable to open synchronization root parent directory' });
+        const warnings: string[] = [];
+
+        await syncStart({ ...deps(dir, runner), warn: (m) => warnings.push(m) });
+
+        // a warning was raised naming the source and echoing the mutagen stderr
+        assert.ok(warnings.some((w) => w.includes('claude')), 'warning names the failing source');
+        assert.ok(
+            warnings.some((w) => w.includes('unable to open synchronization root parent directory')),
+            'warning echoes the mutagen stderr',
+        );
     });
 });
 

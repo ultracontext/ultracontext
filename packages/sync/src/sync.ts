@@ -107,6 +107,21 @@ function shellQuote(path: string): string {
     return `'${path.replace(/'/g, `'\\''`)}'`;
 }
 
+// quote a remote path so it BOTH expands `~` remotely AND stays injection-safe:
+// a leading `~/` (or bare `~`) becomes an unquoted `$HOME/` (the remote shell
+// expands it) while the user-controlled remainder is single-quoted (inert).
+// mutagen's own endpoint string expands `~` itself, so the two must NOT diverge.
+function remotePath(dir: string): string {
+    // bare `~` → just the expanded home directory
+    if (dir === '~') return '$HOME';
+
+    // `~/<rest>` → `$HOME/` + the quoted remainder (so a hostile leaf stays inert)
+    if (dir.startsWith('~/')) return `$HOME/${shellQuote(dir.slice(2))}`;
+
+    // any other path (absolute or relative) is quoted whole, as before
+    return shellQuote(dir);
+}
+
 // ensure the per-host workspace dirs exist (local: mkdir; ssh: remote mkdir -p)
 async function prepareRemoteWorkspace(deps: Required<SyncDeps>, config: Config): Promise<void> {
     // collect the workspace root, the host dir, and each enabled source dir
@@ -122,8 +137,9 @@ async function prepareRemoteWorkspace(deps: Required<SyncDeps>, config: Config):
         return;
     }
 
-    // remote workspace → one ssh `mkdir -p` with every dir shell-quoted
-    const result = await deps.runCommand('ssh', [config.remote, `mkdir -p ${dirs.map(shellQuote).join(' ')}`]);
+    // remote workspace → one ssh `mkdir -p`; each dir expands `~`→`$HOME` remotely
+    // while its user-controlled remainder stays single-quoted (injection-safe)
+    const result = await deps.runCommand('ssh', [config.remote, `mkdir -p ${dirs.map(remotePath).join(' ')}`]);
     if (result.code !== 0) throw new Error(`ssh mkdir failed: ${result.stderr.trim()}`);
 }
 
@@ -175,9 +191,16 @@ async function startSource(
     // gather this source's merged ignore patterns (global + per-source)
     const ignores = await collectIgnorePatterns({ configDir: deps.configDir }, source.agent);
 
-    // otherwise create a one-way replica from the local path to the remote
+    // otherwise create a one-way replica from the local path to the remote.
+    // a create failure is per-source best-effort — surface it via deps.warn (so
+    // the CLI never returns ok while silently creating no session) but don't
+    // abort the whole start, so the remaining sources still get a chance.
     const args = createArgs(name, expandHome(source.localPath), remoteEndpoint(config, source), ignores);
-    await mutagen(deps, args);
+    try {
+        await mutagen(deps, args);
+    } catch (error) {
+        deps.warn(`sync: failed to start source "${source.agent}": ${(error as Error).message}`);
+    }
 }
 
 // the `mutagen sync create` argument vector (one-way replica, posix symlinks)
@@ -372,10 +395,11 @@ async function deleteRemoteSourceDir(deps: Required<SyncDeps>, config: Config, s
         return;
     }
 
-    // remote workspace → one guarded ssh `rm -rf`, path shell-quoted so a
-    // crafted source/leaf name can never break out of the rm target
-    const quoted = shellQuote(dir);
-    const command = `if [ -e ${quoted} ]; then rm -rf ${quoted}; fi`;
+    // remote workspace → one guarded ssh `rm -rf`; the path expands `~`→`$HOME`
+    // remotely (so it hits the real data dir) while its remainder stays quoted so
+    // a crafted source/leaf name can never break out of the rm target
+    const target = remotePath(dir);
+    const command = `if [ -e ${target} ]; then rm -rf ${target}; fi`;
     const result = await deps.runCommand('ssh', [config.remote, command]);
     if (result.code !== 0) throw new Error(`ssh rm failed: ${result.stderr.trim()}`);
 }

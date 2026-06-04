@@ -134,6 +134,21 @@ describe('commitEvent — hub side', () => {
         assert.equal(r.ok, false);
     });
 
+    // NIT — a dedup must NOT echo a FRESH received_at (it misleads the caller into
+    // thinking a re-commit re-stamped the row). On a duplicate it reports null —
+    // the row was not (re-)received now. A fresh-now (current bug) is rejected.
+    it('reports received_at null (never a fresh now) on a dedup', async () => {
+        const store = new MemoryEventStore();
+        await commitEvent(store, envelopeJson());
+        const second = await commitEvent(store, envelopeJson());
+        assert.equal(second.ok, true);
+        if (!second.ok) return;
+
+        // committed:0 AND received_at is null — not a freshly-stamped 'now'
+        assert.equal(second.data.committed, false);
+        assert.equal(second.data.received_at, null);
+    });
+
     it('overwrites a stale received_at to commit time', async () => {
         const store = new MemoryEventStore();
         const r = await commitEvent(store, envelopeJson({ received_at: '2000-01-01T00:00:00.000Z' }));
