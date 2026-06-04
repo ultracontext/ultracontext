@@ -26,18 +26,26 @@ import { buildUpgradeCommand } from './commands/upgrade';
 import { buildCommandsCommand } from './commands/commands';
 import { buildVersionCommand } from './commands/version';
 
-// -- context verbs ------------------------------------------------------------
+// -- context group ------------------------------------------------------------
 
-// top-level create/append/get/update/delete/list talk to a ContextClient
-// (local | remote). The verb names mirror the SDK; every targeted verb takes an
-// EXPLICIT context id — there is no default context.
+// `uc context <create|append|get|update|delete|list>` (alias `ctx`) talk to a
+// ContextClient (local | remote). The PRIMITIVE is explicit — `uc context append`
+// answers "append WHERE" — matching the grouped event/driver/sync/remote domains.
+// The verb names mirror the SDK methods; every targeted verb takes an EXPLICIT
+// context id — there is no default context.
 function registerContextVerbs(program: Command): void {
-    program.addCommand(buildCreateCommand());
-    program.addCommand(buildAppendCommand());
-    program.addCommand(buildGetCommand());
-    program.addCommand(buildUpdateCommand());
-    program.addCommand(buildDeleteCommand());
-    registerList(program);
+    const context = new Command('context')
+        .alias('ctx')
+        .description('manage versioned contexts (the store)');
+
+    context.addCommand(buildCreateCommand());
+    context.addCommand(buildAppendCommand());
+    context.addCommand(buildGetCommand());
+    context.addCommand(buildUpdateCommand());
+    context.addCommand(buildDeleteCommand());
+    registerList(context);
+
+    program.addCommand(context);
 }
 
 // -- event group --------------------------------------------------------------

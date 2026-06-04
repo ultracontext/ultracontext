@@ -177,7 +177,7 @@ class _LocalBackend:
         before: Optional[str],
         metadata: Optional[Dict[str, Any]],
     ) -> List[str]:
-        args = ["create"]
+        args = ["context", "create"]
         if from_ is not None:
             args += ["--from", from_]
         if version is not None:
@@ -199,7 +199,7 @@ class _LocalBackend:
     # uc append <id> --message <json> -> {data, version, id}. a dict OR list is
     # JSON-encoded; the CLI appends a list as multiple messages (one version bump).
     def _append_args(self, context_id: str, data: Union[Dict[str, Any], List[Dict[str, Any]]]) -> List[str]:
-        return ["append", context_id, "--message", json.dumps(data)]
+        return ["context", "append", context_id, "--message", json.dumps(data)]
 
     def append(self, context_id: str, data: Any) -> AppendResponse:
         return cast(AppendResponse, self._run(self._append_args(context_id, data)))
@@ -218,7 +218,7 @@ class _LocalBackend:
         before: Optional[str],
         history: Optional[bool],
     ) -> List[str]:
-        args = ["get", context_id]
+        args = ["context", "get", context_id]
         if version is not None:
             args += ["--version", str(version)]
         if at is not None:
@@ -231,7 +231,7 @@ class _LocalBackend:
 
     # listing: uc list [--limit][--source][--project_path] -> {data: [{id, metadata, created_at}]}
     def _list_args(self, limit: Optional[int]) -> List[str]:
-        args = ["list"]
+        args = ["context", "list"]
         if limit is not None:
             args += ["--limit", str(limit)]
         return args
@@ -279,7 +279,7 @@ class _LocalBackend:
         if "content" not in fields:
             raise NotImplementedError("local update requires content= (the only locally-editable field)")
 
-        args = ["update", context_id]
+        args = ["context", "update", context_id]
         if id is not None:
             args += ["--id", id]
         if index is not None:
@@ -327,14 +327,14 @@ class _LocalBackend:
         if permanent:
             if ids is not None:
                 raise ValueError("Cannot pass both `ids` and `permanent=True`")
-            return ["delete", context_id, "--permanent", *_meta_args(metadata)]
+            return ["context", "delete", context_id, "--permanent", *_meta_args(metadata)]
 
         if ids is None:
             raise ValueError("Either `ids` (soft delete) or `permanent=True` (hard delete) is required")
 
         # each id/index becomes a SEPARATE argv item (no injection, no shell)
         items = ids if isinstance(ids, list) else [ids]
-        return ["delete", context_id, "--ids", *[str(i) for i in items], *_meta_args(metadata)]
+        return ["context", "delete", context_id, "--ids", *[str(i) for i in items], *_meta_args(metadata)]
 
     def delete(
         self,
@@ -370,7 +370,7 @@ class _LocalBackend:
         results: List[DeleteManyResult] = []
         for cid in ids:
             try:
-                self._run(["delete", cid, "--permanent"])
+                self._run(["context", "delete", cid, "--permanent"])
                 results.append({"id": cid, "deleted": True})
             except UltraContextError as exc:
                 results.append({"id": cid, "deleted": False, "error": str(exc)})
@@ -381,7 +381,7 @@ class _LocalBackend:
         results: List[DeleteManyResult] = []
         for cid in ids:
             try:
-                await self._arun(["delete", cid, "--permanent"])
+                await self._arun(["context", "delete", cid, "--permanent"])
                 results.append({"id": cid, "deleted": True})
             except UltraContextError as exc:
                 results.append({"id": cid, "deleted": False, "error": str(exc)})

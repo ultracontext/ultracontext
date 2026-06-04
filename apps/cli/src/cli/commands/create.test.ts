@@ -237,7 +237,7 @@ describe('uc create --from --version (argv)', () => {
         let stdout = '';
         const restore = patchStdout((s) => ((stdout += s), true));
         try {
-            await buildProgram().parseAsync(['node', 'uc', '--json', 'create', '--from', source.id, '--version', '0']);
+            await buildProgram().parseAsync(['node', 'uc', '--json', 'context', 'create', '--from', source.id, '--version', '0']);
         } finally {
             restore();
         }

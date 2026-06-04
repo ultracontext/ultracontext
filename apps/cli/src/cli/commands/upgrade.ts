@@ -1,5 +1,6 @@
 // =============================================================================
-// upgrade — `uc upgrade`. Self-update the CLI. Detect the install method from
+// update — `uc update`. Self-update the CLI (the context-edit verb lives at
+// `uc context update`). Detect the install method from
 // the resolved binary path (npm / brew / curl) and run the matching upgrade
 // command. The proactive update *notice* is suppressed in CI / pipes / --json
 // so it never pollutes machine output; the explicit invocation always runs.
@@ -124,7 +125,7 @@ function resolveBinPath(): string {
 
 // build the `upgrade` verb, wiring the real path + exec behind the seam
 export function buildUpgradeCommand(): Command {
-    const command = new Command('upgrade');
+    const command = new Command('update');
 
     // self-update the uc CLI
     command

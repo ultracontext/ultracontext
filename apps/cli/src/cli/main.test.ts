@@ -15,7 +15,7 @@ describe('buildProgram', () => {
         const program = buildProgram();
         const names = program.commands.map((c) => c.name());
 
-        for (const expected of ['create', 'append', 'get', 'update', 'delete', 'list', 'event', 'sync', 'remote', 'upgrade', 'doctor', 'init', 'commands', 'version']) {
+        for (const expected of ['context', 'event', 'sync', 'remote', 'update', 'doctor', 'init', 'commands', 'version']) {
             assert.ok(names.includes(expected), `missing command: ${expected}`);
         }
     });
@@ -47,6 +47,25 @@ describe('buildProgram', () => {
 
         for (const expected of ['set', 'show', 'test', 'clear']) {
             assert.ok(subs.includes(expected), `missing remote subcommand: ${expected}`);
+        }
+    });
+
+    // the context group exposes the SDK-mirroring verbs (alias: ctx) — the verbs
+    // moved OFF the root so the primitive is explicit (`uc context append`)
+    it('registers context subcommands under the group', () => {
+        const program = buildProgram();
+        const context = program.commands.find((c) => c.name() === 'context');
+        const subs = context?.commands.map((c) => c.name()) ?? [];
+
+        for (const expected of ['create', 'append', 'get', 'update', 'delete', 'list']) {
+            assert.ok(subs.includes(expected), `missing context subcommand: ${expected}`);
+        }
+        assert.ok(context?.aliases().includes('ctx'), 'context group carries the ctx alias');
+
+        // the verbs are GONE from the root (no more bare `uc append`)
+        const rootNames = program.commands.map((c) => c.name());
+        for (const verb of ['create', 'append', 'get', 'delete']) {
+            assert.ok(!rootNames.includes(verb), `verb ${verb} must not be top-level`);
         }
     });
 

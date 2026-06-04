@@ -171,7 +171,7 @@ describe('uc get --version (argv)', () => {
         let stdout = '';
         const restore = patchStdout((s) => ((stdout += s), true));
         try {
-            await buildProgram().parseAsync(['node', 'uc', '--json', 'get', ctx.id, '--version', '0']);
+            await buildProgram().parseAsync(['node', 'uc', '--json', 'context', 'get', ctx.id, '--version', '0']);
         } finally {
             restore();
         }
