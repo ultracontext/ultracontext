@@ -25,7 +25,7 @@ import {
 import { dbUrl as defaultDbUrl } from '../../../lib/config';
 import { configDir as defaultConfigDir } from '@ultracontext/sync';
 import { openEventStore } from '../../../lib/events/store';
-import { resolveTransport, remoteTail, spawnStdinRunner, type StdinRunner } from '../../../lib/events/transport';
+import { resolveTransport, type StdinRunner, type Transport, type RemoteTailFilters } from '../../../lib/events/transport';
 import { parseCounts, parseLabels } from '../../../lib/events/kv';
 import { emit, status, outputError } from '../../../lib/output';
 
@@ -45,6 +45,7 @@ export type EventDeps = {
     dbUrl?: string;
     configDir?: string;
     runner?: StdinRunner;
+    fetch?: typeof fetch;
     stdin?: () => Promise<string>;
     io?: Io;
 };
@@ -87,9 +88,10 @@ export type TailOpts = JsonOpt & { limit?: number; kind?: string; source?: strin
 // -- shared store + transport resolution --------------------------------------
 
 // open the store (injected for tests, else the local db) — returned alongside
-// the resolved transport so each action shares one resolution.
+// the resolved transport so each action shares one resolution. The transport
+// SELECTS its own deliver/tail (api coord → HTTP, else ssh, else local).
 async function resolve(deps: EventDeps) {
-    const transport = await resolveTransport({ configDir: deps.configDir ?? defaultConfigDir(), runner: deps.runner });
+    const transport = await resolveTransport({ configDir: deps.configDir ?? defaultConfigDir(), runner: deps.runner, fetch: deps.fetch });
     const store = deps.store ?? (await openEventStore(deps.dbUrl ?? defaultDbUrl()));
     return { transport, store };
 }
@@ -166,17 +168,20 @@ async function tryDeliver(store: EventStore, deliver: Deliver, eventId: string, 
 // `uc event tail` → the last N committed events in chronological order. ALWAYS
 // one compact JSON envelope per line on stdout (the consumer contract), in BOTH
 // human and --json modes — so the Hermes plugin parses identical output either way.
-// With a REMOTE hub configured, tail reads the HUB's canonical log over ssh (the
-// hub is the source of truth for the committed log); --local forces the local db.
+// With a REMOTE hub configured, tail reads the HUB's canonical log through the
+// transport's own tail (HTTP GET /events for an api coord, else ssh over the login
+// shell); --local forces the local db. The transport SELECTS which — tail itself
+// never branches on http-vs-ssh.
 export async function tailAction(opts: TailOpts, deps: EventDeps = {}): Promise<number> {
     const io = deps.io;
     const filters = { kind: opts.kind, source: opts.source, subject: opts.subject };
 
     try {
-        // resolve the hub: a remote hub (and no --local override) → tail it over ssh
-        const transport = await resolveTransport({ configDir: deps.configDir ?? defaultConfigDir(), runner: deps.runner });
-        if (!transport.localMode && !opts.local) {
-            return await tailRemote(transport.target, { limit: opts.limit, ...filters }, deps.runner ?? spawnStdinRunner, io);
+        // resolve the hub: a remote hub (and no --local override) → tail it through
+        // the transport's native tail (HTTP or ssh, the transport already chose).
+        const transport = await resolveTransport({ configDir: deps.configDir ?? defaultConfigDir(), runner: deps.runner, fetch: deps.fetch });
+        if (!transport.localMode && !opts.local && transport.tail) {
+            return await tailRemote(transport.target, transport.tail, { limit: opts.limit, ...filters }, io);
         }
 
         // local hub OR --local override → read the local committed log from the db
@@ -192,19 +197,20 @@ export async function tailAction(opts: TailOpts, deps: EventDeps = {}): Promise<
     }
 }
 
-// tail the hub over ssh: filter values are charset-validated by remoteTail's
-// builder (an injection attempt throws → exit 1). A nonzero ssh exit (hub down /
-// `uc` missing there) is reported honestly — NO silent fallback to the local db.
-async function tailRemote(target: string, filters: Parameters<typeof remoteTail>[1], runner: StdinRunner, io?: Io): Promise<number> {
-    const result = await remoteTail(target, filters, runner);
+// tail the hub through the transport's tail: filter values are charset-validated
+// by the ssh builder (an injection attempt throws → exit 1); the HTTP tail passes
+// them as query params. A failure (hub down / `uc` missing / non-2xx) is reported
+// honestly naming the target — NO silent fallback to the local db.
+async function tailRemote(target: string, tail: NonNullable<Transport['tail']>, filters: RemoteTailFilters, io?: Io): Promise<number> {
+    const result = await tail(filters);
 
-    // ssh failed → a clear error naming the hub + its stderr; exit 1 (no fallback)
+    // the hub was unreachable → a clear error naming the target; exit 1 (no fallback)
     if (!result.ok) {
-        const hint = result.stderr.trim() || `ssh exited ${result.code}`;
-        throw new Error(`cannot read the event hub ${target} over ssh (${hint}) — run \`uc event tail --local\` for this machine's own view`);
+        const hint = result.stderr.trim() || `exited ${result.code}`;
+        throw new Error(`cannot read the event hub ${target} (${hint}) — run \`uc event tail --local\` for this machine's own view`);
     }
 
-    // the hub stdout is already the line-JSON contract — pass it through verbatim
+    // the hub lines are already the line-JSON contract — pass them through verbatim
     const stdout = io?.stdout ?? process.stdout;
     for (const line of result.lines) stdout.write(line + '\n');
     return 0;

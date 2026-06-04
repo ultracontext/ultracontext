@@ -8,7 +8,7 @@
 // and that tail ALWAYS emits one compact JSON envelope per line.
 // =============================================================================
 
-import { describe, it, after } from 'node:test';
+import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -17,6 +17,8 @@ import { join } from 'node:path';
 import { saveConfig, type Config, type CommandResult } from '@ultracontext/sync';
 
 import { SSH_HARDENING, loginShellWrap } from '../../../lib/events/transport';
+import { writeRemote } from '../../../lib/remote';
+import { startServer, type ServeHandle } from '../../../lib/serve/server';
 import {
     emitAction,
     tailAction,
@@ -487,6 +489,69 @@ describe('uc event tail (remote mode)', () => {
         assert.equal(code, 1);
         assert.equal(runner.calls.length, 0); // rejected before any ssh
         assert.match(JSON.parse(errs.text()).error, /subject/);
+    });
+});
+
+// -- remote events over HTTP (api coord → POST/GET /events) -------------------
+
+describe('uc event emit/tail (api coord → HTTP)', () => {
+    // an in-process `uc serve` the emit POSTs to + the tail GETs from
+    let server: ServeHandle;
+
+    before(async () => {
+        server = await startServer({ port: 0, host: '127.0.0.1', dbUrl: await tempDbUrl(), configDir: await tempDir('uc-cli-event-serve-') });
+    });
+    after(async () => { await server.close(); });
+
+    // a config dir carrying an api coord pointing at the serve endpoint (no ssh)
+    async function apiConfigDir(): Promise<string> {
+        const dir = await tempDir('uc-cli-event-cfg-');
+        await saveConfig({ remote: 'local', remoteRoot: join(dir, 'remote'), hostId: 'laptop', sources: [] }, dir);
+        await writeRemote({ api: { baseUrl: server.url, apiKey: server.key! } }, dir);
+        return dir;
+    }
+
+    // emit (remote, api coord) → committed over HTTP → tail reads it back over HTTP
+    it('emits over HTTP and tails it back over HTTP', async () => {
+        const dbUrl = await tempDbUrl();
+        const configDir = await apiConfigDir();
+
+        // emit a remote event — the row queues pending, then delivers via POST /events
+        const emitOut = sink();
+        const emitCode = await emitAction(
+            emitFlags({ subject: 'http:flow:1', json: true }),
+            { dbUrl, configDir, io: { stdout: emitOut, stderr: sink(), isTTY: false } },
+        );
+        assert.equal(emitCode, 0);
+        const emitted = JSON.parse(emitOut.text().trim());
+
+        // tail reads the HUB's committed log over HTTP GET /events (NOT the local db)
+        const tailOut = sink();
+        const tailCode = await tailAction(
+            { source: 'build-agent', json: false },
+            { dbUrl, configDir, io: { stdout: tailOut, stderr: sink(), isTTY: true } },
+        );
+        assert.equal(tailCode, 0);
+
+        // the tail line is the same envelope the emit delivered (one JSON per line)
+        const lines = tailOut.text().trim().split('\n').filter(Boolean);
+        assert.ok(lines.some((l) => JSON.parse(l).event_id === emitted.event_id));
+    });
+
+    // a remote tail when the api is unreachable → exit 1 naming the target (no fallback)
+    it('exits 1 when the api hub is unreachable (no local fallback)', async () => {
+        const dir = await tempDir('uc-cli-event-cfg-');
+        await saveConfig({ remote: 'local', remoteRoot: join(dir, 'remote'), hostId: 'laptop', sources: [] }, dir);
+        // point at a dead endpoint so GET /events fails at the network layer
+        await writeRemote({ api: { baseUrl: 'http://127.0.0.1:1', apiKey: 'uc_x' } }, dir);
+
+        const out = sink();
+        const errs = sink();
+        const code = await tailAction({ json: true }, { dbUrl: await tempDbUrl(), configDir: dir, io: { stdout: out, stderr: errs, isTTY: false } });
+
+        assert.equal(code, 1);
+        assert.equal(out.text().trim(), ''); // no fallback output
+        assert.match(JSON.parse(errs.text()).error, /127\.0\.0\.1:1/); // names the api target
     });
 });
 

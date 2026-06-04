@@ -1,10 +1,13 @@
 // =============================================================================
-// transport — resolve the event hub from the EXISTING sync config and build the
-// pluggable Deliver. SSH is never mandatory: a 'local' (or missing) config →
-// localMode (emit IS the commit, in-db). A ssh remote → a Deliver that runs
-// `ssh <host> 'bash -lc "uc event commit --from-stdin"'` piping the envelope JSON
-// to stdin (the login shell loads the user PATH so the hub's `uc` resolves).
-// The runner is INJECTABLE (a stdin-capable spawn) so tests never hit real SSH.
+// transport — resolve the event hub from the unified remote and build the
+// pluggable Deliver + tail. The SELECTION (per primitive): an `api` coord present
+// → HTTP (POST /events to deliver, GET /events to tail — works identically against
+// `uc serve` and the hosted cloud, no ssh-per-event + no login-PATH fragility);
+// ELSE a ssh remote → `ssh <host> 'bash -lc "uc event commit --from-stdin"'`
+// piping the envelope JSON to stdin (the login shell loads the user PATH so the
+// hub's `uc` resolves); ELSE a 'local' (or missing) config → localMode (emit IS
+// the commit, in-db). The ssh runner is INJECTABLE (a stdin-capable spawn) and the
+// HTTP transport takes an injectable fetch, so tests never hit real SSH/network.
 // =============================================================================
 
 import { spawn } from 'node:child_process';
@@ -13,6 +16,8 @@ import { hostname } from 'node:os';
 import { loadConfig, isLocalConfig, defaultHostId, type CommandResult } from '@ultracontext/sync';
 
 import type { Deliver } from '@ultracontext/core';
+
+import { readRemote, type RemoteApi, type RemoteConfig } from '../remote';
 
 // -- injectable runner --------------------------------------------------------
 
@@ -43,12 +48,17 @@ export const spawnStdinRunner: StdinRunner = (program, args, stdin) =>
 // -- resolved transport -------------------------------------------------------
 
 // the resolved hub context the event ops + CLI read: emit mode, the status
-// target + host id, and a Deliver the flusher retries pending rows through.
+// target + host id, a Deliver the flusher retries pending rows through, and an
+// optional tail (the transport-native way to read the hub's committed log — ssh
+// over the login shell, or HTTP GET /events; absent in local mode where the CLI
+// reads its own db directly). Keeping tail ON the transport makes the CLI's
+// tail action transport-agnostic — it never branches on ssh-vs-http itself.
 export type Transport = {
     localMode: boolean;
     target: string;
     host: string;
     deliver: Deliver;
+    tail?: (filters: RemoteTailFilters) => Promise<RemoteTailResult>;
 };
 
 // -- ssh hardening ------------------------------------------------------------
@@ -127,7 +137,7 @@ export async function remoteTail(target: string, filters: RemoteTailFilters, run
     return { ok: code === 0, lines, code, stderr };
 }
 
-// -- resolution ---------------------------------------------------------------
+// -- ssh transport ------------------------------------------------------------
 
 // build the SSH Deliver for a remote target — pipe the envelope to a hub `uc`.
 function sshDeliver(target: string, runner: StdinRunner): Deliver {
@@ -139,10 +149,79 @@ function sshDeliver(target: string, runner: StdinRunner): Deliver {
     };
 }
 
-// resolve the transport from the sync config dir. local/absent config → local
-// mode; a ssh remote → remote mode with the ssh Deliver. localMode never sends.
-export async function resolveTransport(opts: { configDir?: string; runner?: StdinRunner } = {}): Promise<Transport> {
+// -- http transport -----------------------------------------------------------
+
+// the events endpoints on the unified api coord (works for `uc serve` AND cloud)
+const eventsUrl = (baseUrl: string): string => `${baseUrl.replace(/\/$/, '')}/events`;
+
+// build the HTTP Deliver for an api coord — POST /events with the bearer key. A
+// 2xx commits the envelope (returns true); any other status / network error keeps
+// the row pending (false), exactly like the ssh path's nonzero-exit semantics.
+function httpDeliver(api: RemoteApi, fetchImpl: typeof fetch): Deliver {
+    return async (envelopeJson) => {
+        try {
+            const res = await fetchImpl(eventsUrl(api.baseUrl), {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${api.apiKey}`, 'content-type': 'application/json' },
+                body: envelopeJson,
+            });
+            return res.ok;
+        } catch {
+            return false;
+        }
+    };
+}
+
+// build the HTTP tail for an api coord — GET /events?limit/kind/source/subject.
+// The serve endpoint answers a JSON ARRAY of envelopes (chronological); each is
+// re-stringified into the SAME line-JSON contract the ssh tail + the consumer use.
+function httpTail(api: RemoteApi, fetchImpl: typeof fetch): NonNullable<Transport['tail']> {
+    return async (filters) => {
+        // assemble the documented query params (limit + kind/source/subject)
+        const params = new URLSearchParams();
+        if (filters.limit !== undefined) params.set('limit', String(filters.limit));
+        if (filters.kind !== undefined) params.set('kind', filters.kind);
+        if (filters.source !== undefined) params.set('source', filters.source);
+        if (filters.subject !== undefined) params.set('subject', filters.subject);
+
+        // GET the tail array, surfacing a non-2xx / network error as ok false
+        const qs = params.toString();
+        const url = qs ? `${eventsUrl(api.baseUrl)}?${qs}` : eventsUrl(api.baseUrl);
+        try {
+            const res = await fetchImpl(url, { headers: { Authorization: `Bearer ${api.apiKey}` } });
+            if (!res.ok) return { ok: false, lines: [], code: res.status, stderr: `HTTP ${res.status}` };
+
+            // the array of envelopes → one compact JSON object per line (the contract)
+            const envelopes = (await res.json()) as unknown[];
+            return { ok: true, lines: envelopes.map((e) => JSON.stringify(e)), code: 0, stderr: '' };
+        } catch (error) {
+            return { ok: false, lines: [], code: -1, stderr: (error as Error).message };
+        }
+    };
+}
+
+// -- resolution ---------------------------------------------------------------
+
+// resolve the transport for the configured remote. SELECTION: an `api` coord →
+// HTTP (the events endpoint, identical for `uc serve` + cloud); else a ssh remote
+// → the ssh Deliver/tail; else local/absent config → local mode (never sends).
+export async function resolveTransport(opts: { configDir?: string; runner?: StdinRunner; fetch?: typeof fetch } = {}): Promise<Transport> {
     const runner = opts.runner ?? spawnStdinRunner;
+    const fetchImpl = opts.fetch ?? fetch;
+
+    // the unified remote's api side wins for events — a serve/cloud endpoint over
+    // HTTP removes the ssh-per-event + the login-PATH fragility entirely.
+    const remote: RemoteConfig = await readRemote(opts.configDir).catch(() => ({}));
+    if (remote.api) {
+        const host = await syncHostId(opts.configDir);
+        return {
+            localMode: false,
+            target: remote.api.baseUrl,
+            host,
+            deliver: httpDeliver(remote.api, fetchImpl),
+            tail: httpTail(remote.api, fetchImpl),
+        };
+    }
 
     // a missing config means no hub is configured yet → default to local mode
     const config = await loadConfig(opts.configDir).catch(() => null);
@@ -155,11 +234,20 @@ export async function resolveTransport(opts: { configDir?: string; runner?: Stdi
         };
     }
 
-    // a ssh remote → events queue pending; the ssh Deliver retries them
+    // a ssh remote → events queue pending; the ssh Deliver retries them, the ssh
+    // tail reads the hub's committed log over the login shell.
     return {
         localMode: false,
         target: config.remote,
         host: config.hostId,
         deliver: sshDeliver(config.remote, runner),
+        tail: (filters) => remoteTail(config.remote, filters, runner),
     };
+}
+
+// the host id for the HTTP transport's status card: the sync config's hostId when
+// present, else one derived from the machine hostname (no ssh hub to read it from).
+async function syncHostId(configDir?: string): Promise<string> {
+    const config = await loadConfig(configDir).catch(() => null);
+    return config?.hostId ?? defaultHostId(hostname());
 }
