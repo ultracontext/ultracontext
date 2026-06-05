@@ -68,9 +68,6 @@ importers:
       drizzle-orm:
         specifier: ^0.44.5
         version: 0.44.7(@cloudflare/workers-types@4.20260307.1)(@libsql/client@0.17.3)(@types/sql.js@1.4.11)(better-sqlite3@11.10.0)(postgres@3.4.8)(sql.js@1.14.1)
-      libsql:
-        specifier: ^0.5.28
-        version: 0.5.29
       picocolors:
         specifier: ^1.1.1
         version: 1.1.1

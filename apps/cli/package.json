@@ -66,7 +66,6 @@
         "@libsql/client": "^0.17.3",
         "commander": "^14.0.0",
         "drizzle-orm": "^0.44.5",
-        "libsql": "^0.5.28",
         "picocolors": "^1.1.1",
         "smol-toml": "^1.6.1",
         "sql.js": "^1.14.1"
