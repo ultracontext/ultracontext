@@ -5,8 +5,10 @@ on:
     types: [published]
 
 jobs:
-  # publish JS SDK + CLI to npm
-  publish-js:
+  # publish the `ultracontext` npm package (apps/cli — bundles the SDK on `.`).
+  # NOTE: @ultracontext/js (apps/js-sdk) is private:true and inlined by tsdown —
+  # it is NOT published; the published npm package IS apps/cli.
+  publish-npm:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,26 +22,36 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # set version from release tag (v1.2.0 → 1.2.0)
+      # stamp the published version from the release tag (v1.7.0 → 1.7.0)
       - name: Set version
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-          cd apps/js-sdk
-          npm version $VERSION --no-git-tag-version --allow-same-version
+          cd apps/cli
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
 
+      # build the bundled dist (uc bin + the unified SDK on `.`)
       - name: Build
         run: pnpm --filter ultracontext run build
 
       - name: Publish
-        run: cd apps/js-sdk && npm publish --access public
+        run: cd apps/cli && npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-  # publish Python SDK to PyPI
-  publish-python:
+  # publish the Python SDK to PyPI — FIVE platform wheels (each embedding the
+  # matching bun-compiled `uc` binary) plus a pure-Python sdist fallback.
+  publish-pypi:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: oven-sh/setup-bun@v2
 
       - uses: actions/setup-python@v5
         with:
@@ -48,18 +60,81 @@ jobs:
       - name: Install build tools
         run: pip install hatchling build twine
 
-      # set version from release tag
+      - run: pnpm install --frozen-lockfile
+
+      # stamp the version on pyproject + the __version__ fallback from the tag
       - name: Set version
         run: |
           VERSION=${GITHUB_REF_NAME#v}
           cd apps/python-sdk
           sed -i "s/^version = .*/version = \"$VERSION\"/" pyproject.toml
+          sed -i "s/__version__ = \"[^\"]*\"/__version__ = \"$VERSION\"/" ultracontext/__init__.py
 
-      - name: Build
-        run: cd apps/python-sdk && python -m build
+      # cross-compile the 5 uc binaries + build the 5 platform wheels + sdist
+      - name: Build platform wheels
+        run: cd apps/python-sdk && bash scripts/build-wheels.sh
 
       - name: Publish
         run: cd apps/python-sdk && twine upload dist/*
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+
+  # build the standalone binaries + the agent-skill bundle and attach them to the
+  # GitHub release — these are what install.sh / install.ps1 download.
+  release-assets:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: oven-sh/setup-bun@v2
+
+      - run: pnpm install --frozen-lockfile
+
+      # the binaries bake their version from apps/cli/package.json (--define)
+      - name: Set version
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          cd apps/cli
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+
+      # cross-compile all five standalone `uc` binaries
+      - name: Build binaries
+        run: pnpm --filter ultracontext run build:binaries
+
+      # bundle the agent skill (install.sh / install.ps1 fetch this tarball and
+      # install SKILL.md into ~/.claude|.agents|.openclaw|.hermes/skills)
+      - name: Build skill bundle
+        run: tar -czf ultracontext-skill.tar.gz -C skills/ultracontext SKILL.md
+
+      # point the uploaded installers at THIS release tag (the repo defaults are a
+      # belt; this is the suspenders so the release asset is always self-consistent)
+      - name: Stamp installer versions
+        run: |
+          TAG=${GITHUB_REF_NAME}
+          sed -i "s/^DEFAULT_VERSION=.*/DEFAULT_VERSION=\"$TAG\"/" install.sh
+          sed -i "s/\$defaultVersion = '[^']*'/\$defaultVersion = '$TAG'/" install.ps1
+
+      # attach binaries + skill bundle + installers to the release
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$GITHUB_REF_NAME" \
+            apps/cli/dist/bin/uc-darwin-arm64 \
+            apps/cli/dist/bin/uc-darwin-x64 \
+            apps/cli/dist/bin/uc-linux-x64 \
+            apps/cli/dist/bin/uc-linux-arm64 \
+            apps/cli/dist/bin/uc-windows-x64.exe \
+            ultracontext-skill.tar.gz \
+            install.sh \
+            install.ps1 \
+            --clobber
