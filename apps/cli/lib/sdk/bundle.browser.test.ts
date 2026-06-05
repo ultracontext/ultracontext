@@ -26,7 +26,8 @@ const BROWSER_ENTRY = fileURLToPath(new URL('../../src/index.browser.ts', import
 
 // bundle the browser entry exactly as a web app would, returning all output text
 // keyed by file name (in-memory; write:false) plus the esbuild metafile.
-async function bundleBrowser(): Promise<{ files: Record<string, string>; metafile: import('esbuild').Metafile }> {
+// `define` lets a test pin replacements (e.g. keep NODE_ENV literal).
+async function bundleBrowser(define?: Record<string, string>): Promise<{ files: Record<string, string>; metafile: import('esbuild').Metafile }> {
     const result = await build({
         entryPoints: [BROWSER_ENTRY],
         bundle: true,
@@ -42,6 +43,7 @@ async function bundleBrowser(): Promise<{ files: Record<string, string>; metafil
         write: false,
         metafile: true,
         logLevel: 'silent',
+        define,
     });
 
     // map every emitted chunk to its text for scanning
@@ -108,5 +110,38 @@ describe('browser bundle — works in a web app', () => {
         const all = Object.values(files).join('\n');
         assert.match(all, /sql\.js/, 'sql.js is referenced (lazily) by some chunk');
         assert.match(entryText, /import\(/, 'entry uses a dynamic import for the lazy local backend');
+    });
+
+    // the dev overlay: its GATE lives in the entry chunk (so prod never fetches
+    // the UI) and the DOM layer lives in a LAZY chunk.
+    it('keeps the devtools UI out of the entry chunk (lazy)', async () => {
+        const { files, metafile } = await bundleBrowser();
+
+        // resolve the entry chunk text (same lookup as the lazy-chunk test)
+        const entryPath = Object.keys(metafile.outputs).find((p) => metafile.outputs[p].entryPoint);
+        const entryText = files[Object.keys(files).find((p) => p.endsWith(entryPath!.replace(/^out\//, '')))!];
+        assert.ok(entryText, 'entry chunk text resolved');
+
+        // the DOM layer must NOT be in the entry chunk — it is lazy-loaded
+        assert.doesNotMatch(entryText, /data-ultracontext-devtools/, 'devtools UI leaked into the entry chunk');
+        assert.doesNotMatch(entryText, /attachShadow/, 'devtools shadow-DOM code leaked into the entry chunk');
+
+        // but it must exist SOMEWHERE (a lazy chunk) for dev browsers to fetch
+        const all = Object.values(files).join('\n');
+        assert.match(all, /data-ultracontext-devtools/, 'devtools UI is emitted as a lazy chunk');
+    });
+
+    // the gate's NODE_ENV check must reach the consumer's bundler as a LITERAL
+    // `process.env.NODE_ENV` (Next/Vite/webpack substitute it; prod kills the
+    // overlay statically). The identity define mimics a bundler that does NOT
+    // substitute — the literal must then survive into the entry chunk.
+    it('ships a literal process.env.NODE_ENV in the entry chunk', async () => {
+        const { files, metafile } = await bundleBrowser({ 'process.env.NODE_ENV': 'process.env.NODE_ENV' });
+
+        const entryPath = Object.keys(metafile.outputs).find((p) => metafile.outputs[p].entryPoint);
+        const entryText = files[Object.keys(files).find((p) => p.endsWith(entryPath!.replace(/^out\//, '')))!];
+        assert.ok(entryText, 'entry chunk text resolved');
+
+        assert.match(entryText, /process\.env\.NODE_ENV/, 'NODE_ENV literal survives for bundler substitution');
     });
 });

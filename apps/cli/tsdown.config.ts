@@ -23,6 +23,11 @@ const externalBrowser = ['sql.js', /^drizzle-orm/];
 const nodeBackend = fileURLToPath(new URL('./lib/sdk/local-backend.ts', import.meta.url));
 const browserBackend = fileURLToPath(new URL('./lib/sdk/local-backend.browser.ts', import.meta.url));
 
+// resolve the `#devtools-hook` seam per build: node + bin get the NO-OP hook;
+// the browser build gets the real overlay hook (gate + lazy mount).
+const nodeDevtools = fileURLToPath(new URL('./lib/sdk/devtools-hook.ts', import.meta.url));
+const browserDevtools = fileURLToPath(new URL('./lib/sdk/devtools-hook.browser.ts', import.meta.url));
+
 export default defineConfig([
     // uc binary — CLI entry with workspace libs inlined + a node shebang
     {
@@ -34,7 +39,7 @@ export default defineConfig([
         noExternal: inlineWorkspace,
         external: externalRuntime,
         // resolve the local-backend seam to the node loader
-        alias: { '#local-backend': nodeBackend },
+        alias: { '#local-backend': nodeBackend, '#devtools-hook': nodeDevtools },
         // emit dist/uc.mjs (the bin target) instead of dist/bin.mjs
         outputOptions: { entryFileNames: 'uc.mjs' },
     },
@@ -49,7 +54,7 @@ export default defineConfig([
         noExternal: inlineWorkspace,
         external: externalRuntime,
         // resolve the local-backend seam to the node loader
-        alias: { '#local-backend': nodeBackend },
+        alias: { '#local-backend': nodeBackend, '#devtools-hook': nodeDevtools },
     },
     // SDK re-export (BROWSER) — `import 'ultracontext'` (default condition) resolves
     // here. Workspace libs inlined; sql.js external; the seam aliased to the sql.js
@@ -59,13 +64,17 @@ export default defineConfig([
         outDir: 'dist',
         format: 'esm',
         platform: 'browser',
+        // keep `process.env.NODE_ENV` LITERAL in the emitted bundle (identity
+        // define beats rolldown's browser-platform auto-substitution) — the
+        // CONSUMER's bundler must do the swap so the devtools gate dies in prod
+        define: { 'process.env.NODE_ENV': 'process.env.NODE_ENV' },
         // NO dts here — the exports map's `types` points at dist/index.d.mts (the
         // single unified surface); a browser dts pass emits a malformed orphan.
         dts: false,
         noExternal: inlineWorkspace,
         external: externalBrowser,
         // resolve the local-backend seam to the BROWSER (sql.js + IndexedDB) loader
-        alias: { '#local-backend': browserBackend },
+        alias: { '#local-backend': browserBackend, '#devtools-hook': browserDevtools },
         // emit dist/index.browser.mjs (match the exports map target)
         outputOptions: { entryFileNames: 'index.browser.mjs' },
     },

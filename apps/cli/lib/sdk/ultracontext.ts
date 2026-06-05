@@ -25,8 +25,16 @@ import type {
 import { loadLocalBackend } from '#local-backend';
 import type { Backend } from './local-backend-types';
 
+// the swappable devtools seam — a NO-OP on node; the browser build aliases it
+// to the hook that mounts the dev overlay (default ON in dev, off in prod)
+import { maybeAttachDevtools } from '#devtools-hook';
+import type { DevtoolsOptions } from '../devtools/gate';
+
 // re-export toDbUrl from the shared seam types (kept public for tests/Python parity)
 export { toDbUrl } from './local-backend-types';
+
+// re-export the devtools config types (public via the package entries)
+export type { DevtoolsOptions, DevtoolsPosition } from '../devtools/gate';
 
 // -- config -------------------------------------------------------------------
 
@@ -34,12 +42,14 @@ export { toDbUrl } from './local-backend-types';
 // LOCAL sqlite target (app-specific, default ./ultracontext.db in cwd; in the
 // browser it names the IndexedDB record). wasmUrl is a browser-only knob: it
 // overrides the sql.js wasm location for bundlers / fully-offline apps (ignored
-// in node). The remote fields (apiKey/baseUrl/fetch/headers/timeoutMs) mirror
-// the remote SDK.
+// in node). devtools controls the browser dev overlay: default ON in dev builds,
+// `false` disables, an options object tunes it ({position}); ignored on node.
+// The remote fields (apiKey/baseUrl/fetch/headers/timeoutMs) mirror the remote SDK.
 export type UltraContextConfig = {
     mode?: 'local' | 'remote';
     db?: string;
     wasmUrl?: string;
+    devtools?: boolean | DevtoolsOptions;
     apiKey?: string;
     baseUrl?: string;
     fetch?: typeof fetch;
@@ -61,6 +71,9 @@ export class UltraContext {
     constructor(cfg: UltraContextConfig = {}) {
         this.cfg = cfg;
         this.mode = cfg.mode ?? (cfg.apiKey ? 'remote' : 'local');
+
+        // dev overlay — the browser seam mounts the bubble (no-op node/prod/SSR)
+        maybeAttachDevtools(this, this.mode, cfg);
     }
 
     // -- backend resolution ---------------------------------------------------

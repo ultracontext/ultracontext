@@ -24,6 +24,10 @@
         "#local-backend": {
             "browser": "./lib/sdk/local-backend.browser.ts",
             "default": "./lib/sdk/local-backend.ts"
+        },
+        "#devtools-hook": {
+            "browser": "./lib/sdk/devtools-hook.browser.ts",
+            "default": "./lib/sdk/devtools-hook.ts"
         }
     },
     "files": [

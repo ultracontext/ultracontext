@@ -11,4 +11,4 @@ export * from '@ultracontext/js';
 
 // the unified facade replaces the remote-only UltraContext (explicit > star)
 export { UltraContext } from '../lib/sdk/ultracontext';
-export type { UltraContextConfig } from '../lib/sdk/ultracontext';
+export type { UltraContextConfig, DevtoolsOptions, DevtoolsPosition } from '../lib/sdk/ultracontext';
