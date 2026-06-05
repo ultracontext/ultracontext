@@ -1,6 +1,6 @@
 """UltraContext API client."""
 
-from typing import Any, Dict, List, Optional, Union, overload
+from typing import Any, Dict, List, Optional, Union, cast, overload
 from urllib.parse import quote
 
 import httpx
@@ -150,7 +150,7 @@ class UltraContext(_BaseClient):
         if metadata is not None:
             body["metadata"] = metadata
 
-        return self._request("POST", "/contexts", json=body or None)
+        return cast(CreateContextResponse, self._request("POST", "/contexts", json=body or None))
 
     @overload
     def get(self, *, limit: Optional[int] = None) -> ListContextsResponse: ...
@@ -197,8 +197,8 @@ class UltraContext(_BaseClient):
 
         # list all contexts
         if context_id is None:
-            params = {"limit": limit} if limit else None
-            return self._request("GET", "/contexts", params=params)
+            list_params: Optional[Dict[str, Any]] = {"limit": limit} if limit else None
+            return cast(ListContextsResponse, self._request("GET", "/contexts", params=list_params))
 
         # get single context
         params: Dict[str, Any] = {}
@@ -211,7 +211,7 @@ class UltraContext(_BaseClient):
         if history is not None:
             params["history"] = history
 
-        return self._request("GET", f"/contexts/{quote(context_id, safe='')}", params=params or None)
+        return cast(GetContextResponse, self._request("GET", f"/contexts/{quote(context_id, safe='')}", params=params or None))
 
     def append(
         self,
@@ -230,7 +230,7 @@ class UltraContext(_BaseClient):
             return self._backend().append(context_id, data)
 
         items = data if isinstance(data, list) else [data]
-        return self._request("POST", f"/contexts/{quote(context_id, safe='')}", json=items)
+        return cast(AppendResponse, self._request("POST", f"/contexts/{quote(context_id, safe='')}", json=items))
 
     def update(
         self,
@@ -265,7 +265,7 @@ class UltraContext(_BaseClient):
             body: Dict[str, Any] = {"updates": updates}
             if metadata:
                 body["metadata"] = metadata
-            return self._request("PATCH", f"/contexts/{quote(context_id, safe='')}", json=body)
+            return cast(UpdateResponse, self._request("PATCH", f"/contexts/{quote(context_id, safe='')}", json=body))
 
         # single mode
         body = {**fields}
@@ -278,7 +278,7 @@ class UltraContext(_BaseClient):
         if metadata:
             body = {"updates": [body], "metadata": metadata}
 
-        return self._request("PATCH", f"/contexts/{quote(context_id, safe='')}", json=body)
+        return cast(UpdateResponse, self._request("PATCH", f"/contexts/{quote(context_id, safe='')}", json=body))
 
     def delete(
         self,
@@ -314,17 +314,17 @@ class UltraContext(_BaseClient):
             return self._backend().delete(context_id, ids, permanent=permanent, metadata=metadata)
 
         if permanent:
-            body: Optional[Dict[str, Any]] = {"permanent": True}
+            body: Dict[str, Any] = {"permanent": True}
             if metadata:
                 body["metadata"] = metadata
-            return self._request("DELETE", f"/contexts/{quote(context_id, safe='')}", json=body)
+            return cast(Union[DeleteResponse, PermanentDeleteResponse], self._request("DELETE", f"/contexts/{quote(context_id, safe='')}", json=body))
 
         items = ids if isinstance(ids, list) else [ids]
         body = {"ids": items}
         if metadata:
             body["metadata"] = metadata
 
-        return self._request("DELETE", f"/contexts/{quote(context_id, safe='')}", json=body)
+        return cast(Union[DeleteResponse, PermanentDeleteResponse], self._request("DELETE", f"/contexts/{quote(context_id, safe='')}", json=body))
 
     def delete_many(self, ids: List[str]) -> DeleteManyResponse:
         """
@@ -340,7 +340,7 @@ class UltraContext(_BaseClient):
         if self._mode == "local":
             return self._backend().delete_many(ids)
 
-        return self._request("POST", "/contexts/delete-many", json={"ids": ids}, accept_statuses=[200, 207, 500])
+        return cast(DeleteManyResponse, self._request("POST", "/contexts/delete-many", json={"ids": ids}, accept_statuses=[200, 207, 500]))
 
 
 class AsyncUltraContext(_BaseClient):
@@ -420,7 +420,7 @@ class AsyncUltraContext(_BaseClient):
         if metadata is not None:
             body["metadata"] = metadata
 
-        return await self._request("POST", "/contexts", json=body or None)
+        return cast(CreateContextResponse, await self._request("POST", "/contexts", json=body or None))
 
     @overload
     async def get(self, *, limit: Optional[int] = None) -> ListContextsResponse: ...
@@ -458,8 +458,8 @@ class AsyncUltraContext(_BaseClient):
 
         # list all contexts
         if context_id is None:
-            params = {"limit": limit} if limit else None
-            return await self._request("GET", "/contexts", params=params)
+            list_params: Optional[Dict[str, Any]] = {"limit": limit} if limit else None
+            return cast(ListContextsResponse, await self._request("GET", "/contexts", params=list_params))
 
         # get single context
         params: Dict[str, Any] = {}
@@ -472,7 +472,7 @@ class AsyncUltraContext(_BaseClient):
         if history is not None:
             params["history"] = history
 
-        return await self._request("GET", f"/contexts/{quote(context_id, safe='')}", params=params or None)
+        return cast(GetContextResponse, await self._request("GET", f"/contexts/{quote(context_id, safe='')}", params=params or None))
 
     async def append(
         self,
@@ -485,7 +485,7 @@ class AsyncUltraContext(_BaseClient):
             return await self._backend().aappend(context_id, data)
 
         items = data if isinstance(data, list) else [data]
-        return await self._request("POST", f"/contexts/{quote(context_id, safe='')}", json=items)
+        return cast(AppendResponse, await self._request("POST", f"/contexts/{quote(context_id, safe='')}", json=items))
 
     async def update(
         self,
@@ -509,7 +509,7 @@ class AsyncUltraContext(_BaseClient):
             body: Dict[str, Any] = {"updates": updates}
             if metadata:
                 body["metadata"] = metadata
-            return await self._request("PATCH", f"/contexts/{quote(context_id, safe='')}", json=body)
+            return cast(UpdateResponse, await self._request("PATCH", f"/contexts/{quote(context_id, safe='')}", json=body))
 
         # single mode
         body = {**fields}
@@ -521,7 +521,7 @@ class AsyncUltraContext(_BaseClient):
         if metadata:
             body = {"updates": [body], "metadata": metadata}
 
-        return await self._request("PATCH", f"/contexts/{quote(context_id, safe='')}", json=body)
+        return cast(UpdateResponse, await self._request("PATCH", f"/contexts/{quote(context_id, safe='')}", json=body))
 
     async def delete(
         self,
@@ -547,17 +547,17 @@ class AsyncUltraContext(_BaseClient):
             return await self._backend().adelete(context_id, ids, permanent=permanent, metadata=metadata)
 
         if permanent:
-            body: Optional[Dict[str, Any]] = {"permanent": True}
+            body: Dict[str, Any] = {"permanent": True}
             if metadata:
                 body["metadata"] = metadata
-            return await self._request("DELETE", f"/contexts/{quote(context_id, safe='')}", json=body)
+            return cast(Union[DeleteResponse, PermanentDeleteResponse], await self._request("DELETE", f"/contexts/{quote(context_id, safe='')}", json=body))
 
         items = ids if isinstance(ids, list) else [ids]
         body = {"ids": items}
         if metadata:
             body["metadata"] = metadata
 
-        return await self._request("DELETE", f"/contexts/{quote(context_id, safe='')}", json=body)
+        return cast(Union[DeleteResponse, PermanentDeleteResponse], await self._request("DELETE", f"/contexts/{quote(context_id, safe='')}", json=body))
 
     async def delete_many(self, ids: List[str]) -> DeleteManyResponse:
         """Delete multiple contexts permanently (max 100). 200/207/500 all carry a results body."""
@@ -565,4 +565,4 @@ class AsyncUltraContext(_BaseClient):
         if self._mode == "local":
             return await self._backend().adelete_many(ids)
 
-        return await self._request("POST", "/contexts/delete-many", json={"ids": ids}, accept_statuses=[200, 207, 500])
+        return cast(DeleteManyResponse, await self._request("POST", "/contexts/delete-many", json={"ids": ids}, accept_statuses=[200, 207, 500]))
