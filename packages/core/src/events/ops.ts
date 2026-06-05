@@ -135,9 +135,11 @@ export async function eventStatus(store: EventStore, ctx: StatusContext): Promis
 export type Deliver = (envelopeJson: string) => Promise<boolean>;
 
 // retry every pending event via the transport; markDelivered on success.
-// returns flushed/failed counts (callers exit 1 when failed > 0).
-export async function flushPending(store: EventStore, deliver: Deliver): Promise<Result<{ flushed: number; failed: number }>> {
-    const pending = await store.pendingEvents();
+// returns flushed/failed counts (callers exit 1 when failed > 0). With { all },
+// also backfills locally-committed rows (a context that started LOCAL) to a
+// now-configured hub — the hub dedupes by event_id, so re-shipping is safe.
+export async function flushPending(store: EventStore, deliver: Deliver, opts: { all?: boolean } = {}): Promise<Result<{ flushed: number; failed: number }>> {
+    const pending = opts.all ? await store.undeliveredEvents() : await store.pendingEvents();
 
     // attempt each in turn; a failure leaves the row pending for the next flush
     let flushed = 0;

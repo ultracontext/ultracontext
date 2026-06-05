@@ -306,3 +306,42 @@ describe('flushPending', () => {
         assert.equal(r.data.failed, 0);
     });
 });
+
+// -- backfill (flush --all): ship locally-committed events to a newly-set hub --
+
+describe('flushPending — { all } backfill', () => {
+    // a context that started LOCAL (committed, never queued) then a hub appears
+    it('ships locally-committed events when all:true, leaving plain flush untouched', async () => {
+        const store = new MemoryEventStore();
+
+        // two events emitted while LOCAL-only → delivery_state 'committed'
+        await emitEvent(store, emitInput({ event_id: 'evt_local_a' }), { hostDefault: 'h1', localMode: true });
+        await emitEvent(store, emitInput({ event_id: 'evt_local_b' }), { hostDefault: 'h1', localMode: true });
+        // one emitted after a hub was set → 'pending'
+        await emitEvent(store, emitInput({ event_id: 'evt_pending_c' }), { hostDefault: 'h1', localMode: false });
+
+        // plain flush ships only the pending one (committed-local is NOT touched)
+        const plain = await flushPending(store, async () => true);
+        assert.equal(plain.ok && plain.data.flushed, 1);
+        let counts = await store.countByDeliveryState();
+        assert.equal(counts.committed, 2, 'the two local events stay committed under a plain flush');
+
+        // flush --all backfills the locally-committed events to the hub
+        const all = await flushPending(store, async () => true, { all: true });
+        assert.equal(all.ok && all.data.flushed, 2);
+        counts = await store.countByDeliveryState();
+        assert.equal(counts.committed, 0, 'backfill moved the local events to sent');
+        assert.equal(counts.sent, 3);
+    });
+
+    // a failed deliver leaves the row backfillable for the next attempt
+    it('leaves a row backfillable when delivery fails', async () => {
+        const store = new MemoryEventStore();
+        await emitEvent(store, emitInput({ event_id: 'evt_x' }), { hostDefault: 'h1', localMode: true });
+
+        const r = await flushPending(store, async () => false, { all: true });
+        assert.equal(r.ok && r.data.failed, 1);
+        const counts = await store.countByDeliveryState();
+        assert.equal(counts.committed, 1, 'undelivered local event stays committed for the next backfill');
+    });
+});

@@ -216,6 +216,18 @@ export class SqliteAdapter implements StorageAdapter, EventStore {
         return rows as EventRow[];
     }
 
+    // undelivered = every state except 'sent' (pending + locally-committed),
+    // oldest first — backfill (flush --all) ships these to a newly-set hub
+    async undeliveredEvents(limit?: number): Promise<EventRow[]> {
+        const query = this.db
+            .select()
+            .from(events)
+            .where(ne(events.delivery_state, 'sent'))
+            .orderBy(asc(events.occurred_at), asc(events.id));
+        const rows = await (limit === undefined ? query : query.limit(limit));
+        return rows as EventRow[];
+    }
+
     // flip a pending row to 'sent' (delivered to the hub)
     async markDelivered(eventId: string): Promise<void> {
         await this.db.update(events).set({ delivery_state: 'sent' }).where(eq(events.event_id, eventId));

@@ -58,6 +58,12 @@ export interface EventStore {
     // rows still awaiting delivery, oldest first, optionally capped.
     pendingEvents(limit?: number): Promise<EventRow[]>;
 
+    // rows not yet delivered to a hub — pending PLUS locally-committed (every
+    // state except 'sent'), oldest first. Powers `flush --all` (backfill): a
+    // context that started LOCAL has 'committed' rows a plain flush skips; once a
+    // hub is configured, backfill ships them (the hub dedupes by event_id).
+    undeliveredEvents(limit?: number): Promise<EventRow[]>;
+
     // mark a pending row delivered (delivery_state → 'sent').
     markDelivered(eventId: string): Promise<void>;
 

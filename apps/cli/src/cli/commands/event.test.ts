@@ -385,6 +385,49 @@ describe('uc event flush (remote mode)', () => {
     });
 });
 
+describe('uc event flush --all (local→remote backfill)', () => {
+    // events emitted while LOCAL are 'committed'; configuring a remote later +
+    // flush --all backfills them to the hub. The db (events) is shared; only the
+    // config dir flips from local to remote (= "a remote got configured").
+    it('backfills locally-committed events to a newly-configured hub', async () => {
+        const dbUrl = await tempDbUrl();
+
+        // 1) emit two events while LOCAL-only → committed in the shared db
+        const localCfg = await localConfigDir();
+        for (const n of [1, 2]) {
+            await emitAction(emitFlags({ subject: `s:${n}`, json: true }), { dbUrl, configDir: localCfg, io: { stdout: sink(), stderr: sink(), isTTY: false } });
+        }
+
+        // 2) a hub is now configured (same db, remote config dir)
+        const remoteCfg = await remoteConfigDir();
+        const up = fakeRunner(0);
+
+        // a PLAIN flush ships nothing — the local events are committed, not pending
+        const plainOut = sink();
+        await flushAction({ json: true }, { dbUrl, configDir: remoteCfg, runner: up.run, io: { stdout: plainOut, stderr: sink(), isTTY: false } });
+        assert.equal(JSON.parse(plainOut.text()).flushed, 0);
+        assert.equal(up.stdins.length, 0);
+
+        // flush --all backfills both committed-local events to the hub
+        const allOut = sink();
+        const code = await flushAction({ json: true, all: true }, { dbUrl, configDir: remoteCfg, runner: up.run, io: { stdout: allOut, stderr: sink(), isTTY: false } });
+        assert.equal(code, 0);
+        assert.equal(JSON.parse(allOut.text()).flushed, 2);
+        assert.equal(up.stdins.length, 2, 'both envelopes were piped to the hub');
+    });
+
+    // --all with NO remote configured is a clear error (nothing to backfill to)
+    it('refuses --all when no remote is configured', async () => {
+        const dbUrl = await tempDbUrl();
+        const localCfg = await localConfigDir();
+        const errs = sink();
+
+        const code = await flushAction({ json: true, all: true }, { dbUrl, configDir: localCfg, io: { stdout: sink(), stderr: errs, isTTY: false } });
+        assert.equal(code, 1);
+        assert.match(JSON.parse(errs.text()).error, /no remote configured/);
+    });
+});
+
 // -- remote tail (reads the HUB log over ssh) ---------------------------------
 
 describe('uc event tail (remote mode)', () => {

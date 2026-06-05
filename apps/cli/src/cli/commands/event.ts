@@ -256,14 +256,22 @@ function humanStatus(s: { target: string; host: string; pending: number; committ
 
 // -- flush --------------------------------------------------------------------
 
-// `uc event flush` → retry every pending event via the transport. prints
+// `uc event flush [--all]` → retry every pending event via the transport. prints
 // `flushed: N`; exits 1 when any event failed (it stays pending for next flush).
-export async function flushAction(opts: JsonOpt, deps: EventDeps = {}): Promise<number> {
+// --all also BACKFILLS locally-committed events (a context that started LOCAL)
+// to the configured hub — the hub dedupes by event_id, so it is safe to re-run.
+export async function flushAction(opts: JsonOpt & { all?: boolean }, deps: EventDeps = {}): Promise<number> {
     const io = deps.io;
 
     try {
         const { transport, store } = await resolve(deps);
-        const result = await flushPending(store, transport.deliver);
+
+        // backfill needs a hub to ship to — refuse --all when none is configured
+        if (opts.all && transport.localMode) {
+            throw new Error('no remote configured — `flush --all` backfills local events to a hub; set one with `uc remote set <target>`');
+        }
+
+        const result = await flushPending(store, transport.deliver, { all: opts.all });
         if (!result.ok) throw new Error(result.message);
 
         // data → stdout (envelope under --json, `flushed: N` line in human mode)
@@ -378,8 +386,12 @@ export function buildEventCommand(): Command {
     // status — pending vs sent counts + the resolved target/host
     event.command('status').description('show pending / sent counts').action((_opts, cmd) => bridge((json) => statusAction({ json }))(cmd));
 
-    // flush — retry anything still pending via the transport
-    event.command('flush').description('retry anything still pending').action((_opts, cmd) => bridge((json) => flushAction({ json }))(cmd));
+    // flush — retry pending; --all also backfills locally-committed events to the hub
+    event
+        .command('flush')
+        .description('retry anything still pending (--all also backfills local events to the hub)')
+        .option('--all', 'also ship locally-committed events (backfill after configuring a remote)')
+        .action((opts, cmd) => bridge((json) => flushAction({ json, all: Boolean(opts.all) }))(cmd));
 
     // commit — hub side: read a piped envelope, set received_at, insert (dedupes)
     event

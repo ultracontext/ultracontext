@@ -36,6 +36,13 @@ export class MemoryEventStore implements EventStore {
         return limit === undefined ? pending : pending.slice(0, limit);
     }
 
+    // undelivered = every state except 'sent' (pending + committed), oldest
+    // first — backfill ships these to a newly-configured hub
+    async undeliveredEvents(limit?: number): Promise<EventRow[]> {
+        const undelivered = this.rows.filter((r) => r.delivery_state !== 'sent');
+        return limit === undefined ? undelivered : undelivered.slice(0, limit);
+    }
+
     // flip a pending row to 'sent'
     async markDelivered(eventId: string): Promise<void> {
         const row = this.rows.find((r) => r.event_id === eventId);
