@@ -505,7 +505,13 @@ describe('remote ~ expansion', () => {
         // an odd count would mean a leaf quote escaped the surrounding quoting.
         const bareQuotes = rm[1].replace(/'\\''/g, '').match(/'/g)?.length ?? 0;
         assert.equal(bareQuotes % 2, 0, 'bare quotes stay balanced — no breakout');
-        assert.equal(bareQuotes, 4, 'exactly the two surrounding quote-pairs (test + rm)');
+        // three quoted targets now: the `[ -e … ]` test, the `rm -rf …`, and the
+        // `rmdir …` that prunes the parent host dir only when it is empty
+        assert.equal(bareQuotes, 6, 'three surrounding quote-pairs (test + rm + rmdir)');
+
+        // the parent rmdir is $HOME-expanded + quoted (the injection guard applies)
+        assert.match(rm[1], /rmdir \$HOME\/'[^']*'/);
+        assert.doesNotMatch(rm[1], /rmdir '~\//);
     });
 });
 

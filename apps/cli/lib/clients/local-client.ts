@@ -14,6 +14,7 @@ import {
     getContext,
     updateMessages,
     deleteContextPermanent,
+    deleteManyContexts,
     deleteMessages,
     listContexts,
 } from '@ultracontext/core';
@@ -115,25 +116,12 @@ export class LocalContextClient implements ContextClient {
         return { deleted: true, id: res.id, ...(res.metadata ? { metadata: res.metadata } : {}) };
     }
 
-    // batch-delete WHOLE contexts. Fan out the existing permanent-delete path
-    // (so the guard semantics are REUSED, not duplicated), one id at a time,
-    // capturing each id's outcome into a row. A failing id is recorded as a
-    // failed row and NEVER aborts the batch — partial success is first-class.
+    // batch-delete WHOLE contexts via the SAME core op the hosted API uses, so a
+    // missing id reads identically local vs remote ('Not found', not the single
+    // delete's 'Context not found') and the metadata-ignored behavior matches too.
+    // Partial success is first-class — a missing id is a failed row, never aborts.
     async deleteMany(input: DeleteManyInput): Promise<DeleteManyResult> {
-        const results: DeleteManyResult['results'] = [];
-
-        // one permanent delete per id; errors captured on the row, not thrown
-        for (const id of input.ids) {
-            try {
-                await this.delete({ id, permanent: true, metadata: input.metadata });
-                results.push({ id, deleted: true });
-            } catch (error) {
-                results.push({ id, deleted: false, error: error instanceof Error ? error.message : String(error) });
-            }
-        }
-
-        // a deleted_count summary alongside the per-id rows
-        return { results, deleted_count: results.filter((r) => r.deleted).length };
+        return unwrap(await deleteManyContexts(this.storage, this.projectId, input.ids));
     }
 
     // list the project's contexts (newest first). Forward the FULL filter set —

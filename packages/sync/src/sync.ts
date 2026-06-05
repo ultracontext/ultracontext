@@ -388,18 +388,27 @@ export async function sourceRemove(
 async function deleteRemoteSourceDir(deps: Required<SyncDeps>, config: Config, source: Source): Promise<void> {
     const dir = endpointDir(config, source);
 
-    // local workspace → remove the directory on this machine if it exists
+    // the now-orphaned per-host parent (workspace/<host>) — pruned only WHEN EMPTY
+    // so removing one source's data doesn't strand an empty host dir, while a host
+    // with other sources is left untouched (rmdir refuses a non-empty dir)
+    const parent = dir.split('/').slice(0, -1).join('/');
+
+    // local workspace → remove the directory on this machine, then rmdir the
+    // empty parent (best-effort; fails silently when other sources remain)
     if (isLocalConfig(config)) {
-        const { rm } = await import('node:fs/promises');
+        const { rm, rmdir } = await import('node:fs/promises');
         await rm(expandHome(dir), { recursive: true, force: true });
+        await rmdir(expandHome(parent)).catch(() => {});
         return;
     }
 
-    // remote workspace → one guarded ssh `rm -rf`; the path expands `~`→`$HOME`
-    // remotely (so it hits the real data dir) while its remainder stays quoted so
-    // a crafted source/leaf name can never break out of the rm target
+    // remote workspace → one guarded ssh `rm -rf` + an `rmdir` of the parent; the
+    // paths expand `~`→`$HOME` remotely (so they hit the real data dir) while the
+    // remainder stays quoted so a crafted source/leaf can never break out. rmdir
+    // only removes the parent if it is EMPTY, so a shared host dir is preserved.
     const target = remotePath(dir);
-    const command = `if [ -e ${target} ]; then rm -rf ${target}; fi`;
+    const parentTarget = remotePath(parent);
+    const command = `if [ -e ${target} ]; then rm -rf ${target}; fi; rmdir ${parentTarget} 2>/dev/null || true`;
     const result = await deps.runCommand('ssh', [config.remote, command]);
     if (result.code !== 0) throw new Error(`ssh rm failed: ${result.stderr.trim()}`);
 }
