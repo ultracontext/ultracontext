@@ -11,7 +11,7 @@
 import { Command } from '@commander-js/extra-typings';
 import { hostname } from 'node:os';
 
-import { parseRemoteSpec, defaultHostId } from '@ultracontext/sync';
+import { parseRemoteSpec, defaultHostId } from '@ultracontext/mirror';
 
 import { readRemote, writeRemote, clearRemote, type RemoteConfig } from '../../../lib/remote';
 import { SSH_HARDENING, loginShellWrap, spawnStdinRunner, type StdinRunner } from '../../../lib/events/transport';

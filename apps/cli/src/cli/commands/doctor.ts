@@ -11,7 +11,7 @@ import { Command } from '@commander-js/extra-typings';
 import { stat } from 'node:fs/promises';
 
 import { createSqliteAdapter } from '@ultracontext/storage/sqlite';
-import { spawnRunner } from '@ultracontext/sync';
+import { spawnRunner } from '@ultracontext/mirror';
 
 import { emit } from '../../../lib/output';
 import { configDir, dbUrl as defaultDbUrl } from '../../../lib/config';

@@ -67,7 +67,7 @@ function registerDriver(program: Command): void {
 
 // -- mirror group -------------------------------------------------------------
 
-// `uc mirror <start|stop|status|source|list|reset>` (alias `sync`) → @ultracontext/sync
+// `uc mirror <start|stop|status|source|list|reset>` → @ultracontext/mirror
 function registerMirror(program: Command): void {
     program.addCommand(buildMirrorCommand());
 }
@@ -151,12 +151,33 @@ export function handleRootVersion(args: string[], out: Out): boolean {
     return true;
 }
 
+// the leading non-flag token is an unknown top-level command (not a known name
+// or alias, and not a help/version request) → Commander's help-on-unknown path
+// swallows it to exit 0; reject it ourselves so it exits non-zero. Exported pure.
+export function unknownLeadingCommand(args: string[], program: Command): string | undefined {
+    const lead = args.find((a) => !a.startsWith('-'));
+    if (!lead) return undefined;
+
+    // Commander's implicit `help` command never appears in program.commands
+    const known = new Set(program.commands.flatMap((c) => [c.name(), ...c.aliases()]));
+    known.add('help');
+
+    return known.has(lead) ? undefined : lead;
+}
+
 // parse argv; exit 130 on user cancel (clack), 1 on any other error
 export async function run(argv: string[] = process.argv, io: { stdout?: Out } = {}): Promise<void> {
     // short-circuit the root version flag before Commander sees argv
     if (handleRootVersion(argv.slice(2), io.stdout ?? process.stdout)) return;
 
     const program = buildProgram();
+
+    // reject an unknown leading command before Commander's help path exits 0
+    const unknown = unknownLeadingCommand(argv.slice(2), program);
+    if (unknown) {
+        process.stderr.write(`error: unknown command '${unknown}'\n`);
+        process.exit(1);
+    }
 
     try {
         await program.parseAsync(argv);

@@ -13,7 +13,7 @@
 import { spawn } from 'node:child_process';
 import { hostname } from 'node:os';
 
-import { loadConfig, isLocalConfig, defaultHostId, type CommandResult } from '@ultracontext/sync';
+import { loadConfig, isLocalConfig, defaultHostId, type CommandResult } from '@ultracontext/mirror';
 
 import type { Deliver } from '@ultracontext/core';
 

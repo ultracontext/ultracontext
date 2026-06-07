@@ -90,15 +90,15 @@ importers:
       '@ultracontext/js':
         specifier: workspace:*
         version: link:../js-sdk
+      '@ultracontext/mirror':
+        specifier: workspace:*
+        version: link:../../packages/mirror
       '@ultracontext/parsers':
         specifier: workspace:*
         version: link:../../packages/parsers
       '@ultracontext/storage':
         specifier: workspace:*
         version: link:../../packages/storage
-      '@ultracontext/sync':
-        specifier: workspace:*
-        version: link:../../packages/sync
       esbuild:
         specifier: ^0.28.0
         version: 0.28.0
@@ -161,6 +161,22 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
 
+  packages/mirror:
+    dependencies:
+      smol-toml:
+        specifier: ^1.6.1
+        version: 1.6.1
+    devDependencies:
+      '@types/node':
+        specifier: ^22.18.6
+        version: 22.19.11
+      tsx:
+        specifier: ^4.21.0
+        version: 4.21.0
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
   packages/parsers:
     dependencies:
       fast-glob:
@@ -197,22 +213,6 @@ importers:
       fake-indexeddb:
         specifier: ^6.2.5
         version: 6.2.5
-      tsx:
-        specifier: ^4.21.0
-        version: 4.21.0
-      typescript:
-        specifier: ^5.9.3
-        version: 5.9.3
-
-  packages/sync:
-    dependencies:
-      smol-toml:
-        specifier: ^1.6.1
-        version: 1.6.1
-    devDependencies:
-      '@types/node':
-        specifier: ^22.18.6
-        version: 22.19.11
       tsx:
         specifier: ^4.21.0
         version: 4.21.0

@@ -1,10 +1,10 @@
 // =============================================================================
-// @ultracontext/sync — fs-first Mutagen sync orchestration. Public surface:
+// @ultracontext/mirror — fs-first Mutagen mirror orchestration. Public surface:
 // config i/o + RemoteSpec, the pure mutagen parsers + command runner, and the
 // start/stop/status/reset/list orchestration with source add/list.
 // =============================================================================
 
-// config: ~/.ultracontext sync config + derived helpers
+// config: ~/.ultracontext mirror config + derived helpers
 export {
     configDir,
     configPath,
@@ -49,18 +49,18 @@ export {
     type CommandResult,
 } from './mutagen';
 
-// sync: orchestration over the mutagen binary
+// mirror: orchestration over the mutagen binary
 export {
-    syncStart,
-    syncStop,
-    syncStatus,
-    syncList,
-    syncReset,
+    mirrorStart,
+    mirrorStop,
+    mirrorStatus,
+    mirrorList,
+    mirrorReset,
     sourceAdd,
     sourceList,
     sourceRemove,
     sourceSetEnabled,
-    type SyncDeps,
-    type SyncListEntry,
+    type MirrorDeps,
+    type MirrorListEntry,
     type SourceRemoveOptions,
-} from './sync';
+} from './mirror';

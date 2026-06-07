@@ -12,7 +12,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { saveConfig, type Config, type CommandResult } from '@ultracontext/sync';
+import { saveConfig, type Config, type CommandResult } from '@ultracontext/mirror';
 
 import { resolveTransport, buildTailArgs, remoteTail, SSH_HARDENING, loginShellWrap } from './transport';
 import { writeRemote } from '../remote';

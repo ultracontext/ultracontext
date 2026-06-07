@@ -5,7 +5,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildProgram, run, handleRootVersion } from './main';
+import { buildProgram, run, handleRootVersion, unknownLeadingCommand } from './main';
 
 // -- program shape ------------------------------------------------------------
 
@@ -27,8 +27,8 @@ describe('buildProgram', () => {
         assert.ok(!flags.includes('--version'), 'root must not carry a global --version');
     });
 
-    // mirror exposes its subcommands + the legacy `sync` alias — init is gone
-    // (it moved to `uc remote set`)
+    // mirror exposes its subcommands — init is gone (it moved to `uc remote set`)
+    // and the legacy `sync` alias is gone (the group answers only to `mirror`)
     it('registers mirror subcommands', () => {
         const program = buildProgram();
         const mirror = program.commands.find((c) => c.name() === 'mirror');
@@ -38,7 +38,7 @@ describe('buildProgram', () => {
             assert.ok(subs.includes(expected), `missing mirror subcommand: ${expected}`);
         }
         assert.ok(!subs.includes('init'), 'mirror init must be gone — it moved to `uc remote set`');
-        assert.ok(mirror?.aliases().includes('sync'), 'mirror group carries the legacy sync alias');
+        assert.ok(!mirror?.aliases().includes('sync'), 'mirror group must NOT carry the legacy sync alias');
     });
 
     // the top-level remote group exposes its subcommands
@@ -110,6 +110,22 @@ describe('run', () => {
         const out = captureOut();
         await run(['node', 'uc', '-V'], { stdout: out });
         assert.match(out.get().trim(), /^\d+\.\d+\.\d+$/);
+    });
+
+    // the dead `sync` alias is an unknown leading command — flagged so it exits
+    // non-zero even with a trailing `--help` (Commander would otherwise exit 0)
+    it('flags the dead `sync` command (and other unknowns), not real ones', () => {
+        const program = buildProgram();
+        assert.equal(unknownLeadingCommand(['sync', '--help'], program), 'sync');
+        assert.equal(unknownLeadingCommand(['bogusxyz'], program), 'bogusxyz');
+        // real commands + aliases + flag-only argv are NOT flagged
+        assert.equal(unknownLeadingCommand(['mirror', '--help'], program), undefined);
+        assert.equal(unknownLeadingCommand(['ctx', 'list'], program), undefined);
+        assert.equal(unknownLeadingCommand(['--json'], program), undefined);
+
+        // Commander's implicit help command must pass the guard
+        assert.equal(unknownLeadingCommand(['help'], program), undefined);
+        assert.equal(unknownLeadingCommand(['help', 'mirror'], program), undefined);
     });
 
     // the leading-token rule (pure, no backend IO): a subcommand's `--version <n>`

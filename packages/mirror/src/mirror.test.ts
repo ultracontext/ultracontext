@@ -1,5 +1,5 @@
 // =============================================================================
-// sync.test — start/stop/status/reset/list orchestration against a FAKE
+// mirror.test — start/stop/status/reset/list orchestration against a FAKE
 // mutagen (an injected CommandRunner that records invocations + returns canned
 // stdout). No real binary, no network. Each test gets a temp config + a fake.
 // =============================================================================
@@ -12,15 +12,15 @@ import { join } from 'node:path';
 
 import { saveConfig, loadConfig, type Config } from './config';
 import {
-    syncStart,
-    syncStop,
-    syncStatus,
-    syncReset,
-    syncList,
+    mirrorStart,
+    mirrorStop,
+    mirrorStatus,
+    mirrorReset,
+    mirrorList,
     sourceRemove,
     sourceSetEnabled,
-    type SyncDeps,
-} from './sync';
+    type MirrorDeps,
+} from './mirror';
 import { ignorePath, sourceIgnorePath } from './ignores';
 import type { CommandResult } from './mutagen';
 
@@ -61,8 +61,8 @@ function fakeRunner(responses: Record<string, string> = {}, opts: { failCreate?:
     return { run, calls };
 }
 
-// build SyncDeps around a fake runner; lets local-workspace paths exist under dir
-function deps(configDir: string, runner: ReturnType<typeof fakeRunner>): SyncDeps {
+// build MirrorDeps around a fake runner; lets local-workspace paths exist under dir
+function deps(configDir: string, runner: ReturnType<typeof fakeRunner>): MirrorDeps {
     return {
         configDir,
         runCommand: runner.run,
@@ -94,14 +94,14 @@ function mutagenCalls(calls: string[][]): string[][] {
 
 // -- start --------------------------------------------------------------------
 
-describe('syncStart', () => {
+describe('mirrorStart', () => {
     // creates a session for each ENABLED source (codex is disabled → skipped)
     it('creates a session per enabled source', async () => {
         const dir = await tempDir();
         await seedLocalConfig(dir);
         const runner = fakeRunner();
 
-        await syncStart(deps(dir, runner));
+        await mirrorStart(deps(dir, runner));
 
         // exactly one `sync create` (for claude), none for the disabled codex
         const creates = mutagenCalls(runner.calls).filter((c) => c[0] === 'sync' && c[1] === 'create');
@@ -115,7 +115,7 @@ describe('syncStart', () => {
         await seedLocalConfig(dir);
         const runner = fakeRunner({ list: 'Name: uc-laptop-claude\nStatus: Paused\n' });
 
-        await syncStart(deps(dir, runner));
+        await mirrorStart(deps(dir, runner));
 
         const cmds = mutagenCalls(runner.calls);
         assert.ok(cmds.some((c) => c[1] === 'resume' && c[2] === 'uc-laptop-claude'));
@@ -128,22 +128,22 @@ describe('syncStart', () => {
         const dir = await tempDir();
         await seedLocalConfig(dir);
         const runner = fakeRunner();
-        const d: SyncDeps = { ...deps(dir, runner), commandExists: async () => false };
+        const d: MirrorDeps = { ...deps(dir, runner), commandExists: async () => false };
 
-        await assert.rejects(syncStart(d), /mutagen/);
+        await assert.rejects(mirrorStart(d), /mutagen/);
     });
 });
 
 // -- stop ---------------------------------------------------------------------
 
-describe('syncStop', () => {
+describe('mirrorStop', () => {
     // pauses every enabled session that currently exists
     it('pauses enabled sessions that exist', async () => {
         const dir = await tempDir();
         await seedLocalConfig(dir);
         const runner = fakeRunner({ list: 'Name: uc-laptop-claude\nStatus: Watching for changes\n' });
 
-        await syncStop(deps(dir, runner));
+        await mirrorStop(deps(dir, runner));
 
         const cmds = mutagenCalls(runner.calls);
         assert.ok(cmds.some((c) => c[1] === 'pause' && c[2] === 'uc-laptop-claude'));
@@ -152,7 +152,7 @@ describe('syncStop', () => {
 
 // -- status -------------------------------------------------------------------
 
-describe('syncStatus', () => {
+describe('mirrorStatus', () => {
     // returns the parsed SessionInfo[] from `sync list --long`
     it('returns parsed sessions', async () => {
         const dir = await tempDir();
@@ -168,7 +168,7 @@ Status: Watching for changes
 `;
         const runner = fakeRunner({ list: long });
 
-        const sessions = await syncStatus(deps(dir, runner));
+        const sessions = await mirrorStatus(deps(dir, runner));
 
         assert.equal(sessions.length, 1);
         assert.equal(sessions[0].name, 'uc-laptop-claude');
@@ -180,14 +180,14 @@ Status: Watching for changes
 
 // -- list ---------------------------------------------------------------------
 
-describe('syncList', () => {
+describe('mirrorList', () => {
     // one entry per configured source, carrying its sync state + endpoint
     it('lists configured sources with state', async () => {
         const dir = await tempDir();
         await seedLocalConfig(dir);
         const runner = fakeRunner({ list: 'Name: uc-laptop-claude\nStatus: Watching for changes\n' });
 
-        const entries = await syncList(deps(dir, runner));
+        const entries = await mirrorList(deps(dir, runner));
 
         const claude = entries.find((e) => e.source === 'claude');
         assert.ok(claude);
@@ -203,14 +203,14 @@ describe('syncList', () => {
 
 // -- reset --------------------------------------------------------------------
 
-describe('syncReset', () => {
+describe('mirrorReset', () => {
     // terminates owned sessions, then re-starts enabled ones
     it('terminates owned sessions then restarts', async () => {
         const dir = await tempDir();
         await seedLocalConfig(dir);
         const runner = fakeRunner({ list: 'Name: uc-laptop-claude\nStatus: Watching for changes\n' });
 
-        await syncReset(deps(dir, runner));
+        await mirrorReset(deps(dir, runner));
 
         const cmds = mutagenCalls(runner.calls);
         assert.ok(cmds.some((c) => c[1] === 'terminate' && c[2] === 'uc-laptop-claude'));
@@ -219,7 +219,7 @@ describe('syncReset', () => {
 
 // -- ignores threading --------------------------------------------------------
 
-describe('syncStart ignores', () => {
+describe('mirrorStart ignores', () => {
     // each `sync create` carries the merged ignore patterns as `--ignore=` args
     it('passes --ignore args from the ignore files', async () => {
         const dir = await tempDir();
@@ -230,7 +230,7 @@ describe('syncStart ignores', () => {
         await writeFile(sourceIgnorePath(dir, 'claude'), 'secrets/\n', 'utf8');
         const runner = fakeRunner();
 
-        await syncStart(deps(dir, runner));
+        await mirrorStart(deps(dir, runner));
 
         const create = mutagenCalls(runner.calls).find((c) => c[0] === 'sync' && c[1] === 'create')!;
         assert.ok(create.includes('--ignore=.git/'));
@@ -238,13 +238,13 @@ describe('syncStart ignores', () => {
         assert.ok(create.includes('--ignore=secrets/'));
     });
 
-    // syncStart seeds the global ignore file with defaults when it is absent
+    // mirrorStart seeds the global ignore file with defaults when it is absent
     it('seeds the global ignore file with defaults', async () => {
         const dir = await tempDir();
         await seedLocalConfig(dir);
         const runner = fakeRunner();
 
-        await syncStart(deps(dir, runner));
+        await mirrorStart(deps(dir, runner));
 
         const { readFile } = await import('node:fs/promises');
         const raw = await readFile(ignorePath(dir), 'utf8');
@@ -403,7 +403,7 @@ describe('remote shell quoting', () => {
         await mkdir(join(dir, 'y; id'), { recursive: true });
         const runner = fakeRunner();
 
-        await syncStart(deps(dir, runner));
+        await mirrorStart(deps(dir, runner));
 
         const ssh = runner.calls.filter((c) => c[0] === 'ssh').map((c) => c.slice(1));
         const mk = ssh.find((c) => c[1]?.includes('mkdir -p'))!;
@@ -431,7 +431,7 @@ describe('remote ~ expansion', () => {
         await mkdir(join(dir, 'z; id'), { recursive: true });
         const runner = fakeRunner();
 
-        await syncStart(deps(dir, runner));
+        await mirrorStart(deps(dir, runner));
 
         const ssh = runner.calls.filter((c) => c[0] === 'ssh').map((c) => c.slice(1));
         const mk = ssh.find((c) => c[1]?.includes('mkdir -p'))!;
@@ -550,14 +550,14 @@ describe('sourceRemove ssh terminate', () => {
 // silently swallowed, returning ok:true while creating NO session).
 describe('startSource visible failures', () => {
     // a create that fails → deps.warn names the source + carries the stderr,
-    // and syncStart still resolves (other sources proceed)
+    // and mirrorStart still resolves (other sources proceed)
     it('warns on a failed create without aborting the start', async () => {
         const dir = await tempDir();
         await seedLocalConfig(dir);
         const runner = fakeRunner({}, { failCreate: 'unable to open synchronization root parent directory' });
         const warnings: string[] = [];
 
-        await syncStart({ ...deps(dir, runner), warn: (m) => warnings.push(m) });
+        await mirrorStart({ ...deps(dir, runner), warn: (m) => warnings.push(m) });
 
         // a warning was raised naming the source and echoing the mutagen stderr
         assert.ok(warnings.some((w) => w.includes('claude')), 'warning names the failing source');
@@ -571,7 +571,7 @@ describe('startSource visible failures', () => {
 // -- migration notice through the orchestration ---------------------------------
 
 describe('migration warn wiring', () => {
-    // the toml→json migration notice flows through SyncDeps.warn (never silent)
+    // the toml→json migration notice flows through MirrorDeps.warn (never silent)
     it('surfaces the migration notice via deps.warn', async () => {
         const dir = await tempDir();
         const { writeFile } = await import('node:fs/promises');
@@ -579,7 +579,7 @@ describe('migration warn wiring', () => {
         const runner = fakeRunner();
         const warnings: string[] = [];
 
-        await syncList({ ...deps(dir, runner), warn: (m) => warnings.push(m) });
+        await mirrorList({ ...deps(dir, runner), warn: (m) => warnings.push(m) });
 
         assert.equal(warnings.length, 1);
         assert.match(warnings[0], /config\.toml/);

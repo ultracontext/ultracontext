@@ -5,7 +5,7 @@ description: |
   machine, AI agent, session, and indexed folder. Trigger immediately when the user references
   prior work, another agent, another machine, synced context, notes, history, or "ultracontext".
 
-  Also handles setup: `uc init`, `uc sync`, `uc sync source`, `uc event`, `uc driver`, `uc doctor`.
+  Also handles setup: `uc init`, `uc mirror`, `uc mirror source`, `uc event`, `uc driver`, `uc doctor`.
 allowed-tools:
   - Bash
   - Read
@@ -32,8 +32,8 @@ Files are the past, events are the present, contexts are live state. Never assum
 - Hub workspace root: `~/.ultracontext/workspace/`
 - Layout: `workspace/<host>/<leaf>/...mirrored files`
   - `<host>` is one dir per machine (the host id, e.g. `laptop`, `mini`).
-  - `<leaf>` is the **leaf of the source's local path**, not the source name. So the `claude` source at `~/.claude/projects` lands under `projects/`, not `.claude/`. Confirm the real leaf with `uc sync source list`.
-- Config: `~/.ultracontext/config.json` (a legacy `config.toml` is auto-migrated on first `uc sync`, kept as `config.toml.migrated`).
+  - `<leaf>` is the **leaf of the source's local path**, not the source name. So the `claude` source at `~/.claude/projects` lands under `projects/`, not `.claude/`. Confirm the real leaf with `uc mirror source list`.
+- Config: `~/.ultracontext/config.json` (a legacy `config.toml` is auto-migrated on first `uc mirror`, kept as `config.toml.migrated`).
 - Ignores: `~/.ultracontext/ignores/.ultracontextignore` (global) and `~/.ultracontext/ignores/<source>/.ultracontextignore` (per-source).
 
 ## When to use UltraContext
@@ -52,7 +52,7 @@ Do **not** use it for things clearly available in the current conversation or cu
 
 ## Core retrieval strategy
 
-1. Orient. Run `uc doctor` and `uc sync source list` to see the workspace root, this host, and the configured sources (with their real leaf dirs and enabled state). If a remote hub is configured, the canonical workspace lives on the hub, not just this machine.
+1. Orient. Run `uc doctor` and `uc mirror source list` to see the workspace root, this host, and the configured sources (with their real leaf dirs and enabled state). If a remote hub is configured, the canonical workspace lives on the hub, not just this machine.
 
 2. Check the status board first. `uc event tail --limit 20` shows what changed recently across the fleet. For "what have agents been doing?", this is the fastest answer — each `*.session.updated` event carries a `payload_ref` pointing at the file with the detail.
 
@@ -157,22 +157,21 @@ uc event emit --kind <k> --source <s> --subject <subj>   # record a small activi
 
 Event rule: events carry small facts only — never raw prompts, full transcripts, secrets, cookies, tokens, headers, signed URLs, or huge payloads. Heavy content lives in files; an event points at it with `payload_ref` (a `file://` URL) + `payload_hash` (`sha256:`). `uc event commit --from-stdin` is the hub-side SSH transport target; you rarely call it directly.
 
-## Sync (the file mirror)
+## Mirror (the file mirror)
 
-`uc sync` orchestrates Mutagen sessions that mirror sources into the hub workspace. It moves bytes; it does not emit events or version state.
+`uc mirror` orchestrates Mutagen sessions that mirror sources into the hub workspace. It moves bytes; it does not emit events or version state. Set the hub target with `uc remote set <local|user@host[:root]>` (`--host-id <id>` overrides the host id).
 
 ```sh
-uc sync init <local|user@host[:root]>       # set the hub target; --host-id <id> overrides the host id
-uc sync start                                # start syncing enabled sources
-uc sync stop                                 # pause enabled sessions
-uc sync status                               # live Mutagen session state
-uc sync list                                 # configured sources + sync state
-uc sync reset                                # terminate owned sessions and restart (after config/ignore edits)
-uc sync source list                          # list configured sources
-uc sync source add <name> <path>            # add an indexed folder; --disabled to add without starting
-uc sync source remove <name>                # remove a source; --purge-remote also deletes its hub dir (DESTRUCTIVE)
-uc sync source enable <name>                 # enable one source
-uc sync source disable <name>                # disable one source
+uc mirror start                              # start mirroring enabled sources
+uc mirror stop                               # pause enabled sessions
+uc mirror status                             # live Mutagen session state
+uc mirror list                               # configured sources + mirror state
+uc mirror reset                              # terminate owned sessions and restart (after config/ignore edits)
+uc mirror source list                        # list configured sources
+uc mirror source add <name> <path>          # add an indexed folder; --disabled to add without starting
+uc mirror source remove <name>              # remove a source; --purge-remote also deletes its hub dir (DESTRUCTIVE)
+uc mirror source enable <name>               # enable one source
+uc mirror source disable <name>              # disable one source
 ```
 
 ## Drivers (bring the outside world in)

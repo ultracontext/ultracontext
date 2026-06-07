@@ -12,7 +12,7 @@ import { join } from 'node:path';
 
 import { parse as parseToml } from 'smol-toml';
 
-import { configDir as defaultConfigDir } from '@ultracontext/sync';
+import { configDir as defaultConfigDir } from '@ultracontext/mirror';
 
 // -- types --------------------------------------------------------------------
 

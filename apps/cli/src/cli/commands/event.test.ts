@@ -14,7 +14,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { saveConfig, type Config, type CommandResult } from '@ultracontext/sync';
+import { saveConfig, type Config, type CommandResult } from '@ultracontext/mirror';
 
 import { SSH_HARDENING, loginShellWrap } from '../../../lib/events/transport';
 import { writeRemote } from '../../../lib/remote';

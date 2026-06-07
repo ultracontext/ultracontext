@@ -18,7 +18,7 @@ installs the `uc` CLI **and** the JS SDK in one install.
 | `@ultracontext/core` | Capability engine. IO-free context/key ops over a `StorageAdapter` port. No HTTP, no DB driver. Ops return `Result<T> = { ok:true, data } \| { ok:false, code, message }`. |
 | `@ultracontext/storage` | `StorageAdapter` impls: `./drizzle`, `./supabase`, `./sqlite` (node/bun libsql or bun:sqlite; `createSqliteAdapter(url)`), `./sqlite-browser` (sql.js + IndexedDB). Pure adapter class in `sqlite/adapter.ts` (browser-safe); node/bun drivers in `sqlite/index.ts`. |
 | `@ultracontext/parsers` | Agent session parsers + writers + compat matrix. `.mjs`. |
-| `@ultracontext/sync` | fs-first Mutagen sync orchestration: config IO under `~/.ultracontext`, pure mutagen parsers, injectable command runner. |
+| `@ultracontext/mirror` | fs-first Mutagen mirror orchestration: config IO under `~/.ultracontext`, pure mutagen parsers, injectable command runner. |
 
 ### `apps/` — runnable surfaces
 
@@ -57,7 +57,7 @@ CLI's `.` ships conditional exports (`node`/`bun` → full build; `default` → 
   (`add/get/update/delete/list`). Default `LocalContextClient` wraps
   `@ultracontext/core` ops over SQLite at `~/.ultracontext/uc.db`, resolving the
   default context per cwd/project. `RemoteContextClient` (`--remote`) uses the SDK.
-- **fs-first Mutagen sync** via `@ultracontext/sync`; config in `~/.ultracontext`.
+- **fs-first Mutagen mirror** via `@ultracontext/mirror`; config in `~/.ultracontext`.
 - **Config under `~/.ultracontext/`** (NOT XDG). Atomic writes (temp + rename).
   SQLite self-locks (WAL) — no file-lock library.
 
@@ -72,7 +72,7 @@ CLI's `.` ships conditional exports (`node`/`bun` → full build; `default` → 
 ## `uc` command tree
 
 - **Context group** (client-agnostic, alias `ctx`): `uc context create|append|get|update|delete|list`
-- **Sync**: `uc sync init|start|stop|status|list` · `uc sync source list|add`
+- **Mirror**: `uc mirror start|stop|status|list|reset` · `uc mirror source list|add|remove|enable|disable`
 - **Events**: `uc event emit|tail|status|flush` · `uc event commit --from-stdin` (hub side, ssh transport target)
 - **Utility**: `uc update` · `uc doctor` · `uc init`
 - **Introspection**: `uc commands --json` — machine-readable command tree
@@ -96,7 +96,7 @@ pnpm --filter ultracontext run check            # tsc --noEmit
 # regression guard — keep green
 pnpm --filter @ultracontext/core run test       # 158
 pnpm --filter @ultracontext/storage run test    # 2
-pnpm --filter @ultracontext/sync run test       # 33
+pnpm --filter @ultracontext/mirror run test     # 33
 pnpm --filter ultracontext-api run test         # 23
 
 pnpm check                                      # all package checks

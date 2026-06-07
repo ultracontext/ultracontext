@@ -10,7 +10,7 @@
 
 import { Command } from '@commander-js/extra-typings';
 
-import { configDir as defaultConfigDir } from '@ultracontext/sync';
+import { configDir as defaultConfigDir } from '@ultracontext/mirror';
 
 import { listDrivers, loadDriver, driversDir, type DriverListing } from '../../../lib/drivers/manifest';
 import { runDriver, type Spawn } from '../../../lib/drivers/run';

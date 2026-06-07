@@ -17,7 +17,7 @@ UltraContext — the context toolkit for AI agents. pnpm monorepo
 | `@ultracontext/core` | Capability engine. IO-free context/key ops over a `StorageAdapter` port. No HTTP, no DB driver. Every op returns `Result<T>`. Exports `./testing`. |
 | `@ultracontext/storage` | `StorageAdapter` implementations: `./drizzle` (postgres.js), `./supabase`, `./sqlite` (node/bun: libsql or bun:sqlite — `createSqliteAdapter(url)`), `./sqlite-browser` (sql.js + IndexedDB snapshot). The pure adapter class lives in `sqlite/adapter.ts` (driver-agnostic, browser-safe); node/bun driver code stays in `sqlite/index.ts`. |
 | `@ultracontext/parsers` | Agent session parsers (Claude/Codex/OpenClaw/Cursor/Gemini) + writers + compat matrix. `.mjs`, 2-space. |
-| `@ultracontext/sync` | fs-first Mutagen sync orchestration. Config IO (`~/.ultracontext`), pure mutagen parsers, injectable command runner, start/stop/status/source actions. |
+| `@ultracontext/mirror` | fs-first Mutagen mirror orchestration. Config IO (`~/.ultracontext`), pure mutagen parsers, injectable command runner, start/stop/status/source actions. |
 
 ### `apps/` — runnable surfaces
 
@@ -65,16 +65,16 @@ in tsdown.config.ts) so consumer bundlers do the prod substitution.
   resolving the default context per cwd/project. `RemoteContextClient`
   (`--remote`, or config/env baseUrl+key) calls the hosted API via the SDK.
   Same interface → commands are client-agnostic.
-- **fs-first Mutagen sync.** `uc sync` orchestrates Mutagen sessions over
-  `@ultracontext/sync`; config lives in `~/.ultracontext`.
+- **fs-first Mutagen mirror.** `uc mirror` orchestrates Mutagen sessions over
+  `@ultracontext/mirror`; config lives in `~/.ultracontext`.
 - **Config in `~/.ultracontext/`** (NOT XDG). Writes are atomic (temp + rename).
   SQLite self-locks via WAL — no file-lock library.
 
 ## `uc` command tree
 
 - **Context group** (client-agnostic, alias `ctx`): `uc context create|append|get|update|delete|list` — `uc context delete <id...>` (many ids → batch permanent delete, needs `--permanent`). The verbs moved OFF the root so the primitive is explicit (`uc context append` answers "append WHERE").
-- **Remote** (unified coords over `config.json` via `apps/cli/lib/remote.ts`): `uc remote set <target>` (`local | user@host[:root]`; `--root`/`--host-id` the ssh leg, `--api`/`--key` the api leg) · `uc remote show` (key never printed) · `uc remote test` (per-leg reachability) · `uc remote clear` (drops coords, keeps sources). One central machine carrying both the ssh side (fs sync + event transport) and the api side (contexts/events over HTTP — `uc serve` or hosted).
-- **Sync** (`@ultracontext/sync`): `uc sync start|stop|status|list|reset` · `uc sync source list|add|remove|enable|disable` (`--ignore` flags from `~/.ultracontext/ignores/.ultracontextignore` + per-source files; `config.toml`→`config.json` auto-migration on first run). The hub is set by `uc remote set` (NOT a `sync init` — that verb is gone); `uc sync` only reads it.
+- **Remote** (unified coords over `config.json` via `apps/cli/lib/remote.ts`): `uc remote set <target>` (`local | user@host[:root]`; `--root`/`--host-id` the ssh leg, `--api`/`--key` the api leg) · `uc remote show` (key never printed) · `uc remote test` (per-leg reachability) · `uc remote clear` (drops coords, keeps sources). One central machine carrying both the ssh side (fs mirror + event transport) and the api side (contexts/events over HTTP — `uc serve` or hosted).
+- **Mirror** (`@ultracontext/mirror`): `uc mirror start|stop|status|list|reset` · `uc mirror source list|add|remove|enable|disable` (`--ignore` flags from `~/.ultracontext/ignores/.ultracontextignore` + per-source files; `config.toml`→`config.json` auto-migration on first run). The hub is set by `uc remote set` (NOT a `sync init` — that verb is gone); `uc mirror` only reads it.
 - **Events** (`@ultracontext/core` over an `EventStore` port): `uc event emit|tail|status|flush` · `uc event commit --from-stdin` (hub side, ssh transport target). Transport picks the api coord (HTTP `POST/GET /events`) when configured, else the ssh hub, else local. `tail` reads the hub's log when a remote hub is configured; `--local` reads this machine's own db.
 - **Drivers** (manifest reader + sh-c runner): `uc driver list` (installed `~/.ultracontext/drivers/<name>/driver.toml` manifests) · `uc driver run <driver> <command>` (run a manifest command as a local process, stream stdio through, propagate exit code)
 - **Serve** (self-host, NEW, self-contained in `apps/cli` over `@ultracontext/core` + `@ultracontext/storage` — does NOT import `apps/api`): `uc serve [--port] [--host] [--db] [--no-auth]` — the Context API + events over the LOCAL sqlite (node:http + a hand-router; runs under node AND the bun-compiled binary). Mints a bearer key bound to the CLI's `local` project on first run, printed once to stderr.
@@ -102,7 +102,7 @@ pnpm --filter ultracontext run check            # tsc --noEmit
 # library tests (regression guard — keep green)
 pnpm --filter @ultracontext/core run test       # 158
 pnpm --filter @ultracontext/storage run test    # 2  (uses temp SQLite files)
-pnpm --filter @ultracontext/sync run test       # 33
+pnpm --filter @ultracontext/mirror run test     # 33
 pnpm --filter ultracontext-api run test         # 23
 
 pnpm check                                      # all package checks
@@ -133,7 +133,7 @@ regression-guard suites above must stay green at every step.
 
 | Where | Indent | Quotes | Files | Module |
 |---|---|---|---|---|
-| `packages/core`, `packages/storage`, `packages/sync`, `apps/cli`, `apps/js-sdk`, `apps/api` | 4 | single | kebab-case | TS/ESM |
+| `packages/core`, `packages/storage`, `packages/mirror`, `apps/cli`, `apps/js-sdk`, `apps/api` | 4 | single | kebab-case | TS/ESM |
 | `packages/parsers` | 2 | double | kebab-case | `.mjs` |
 
 One short semantic comment atop each logical block + a blank line between blocks.

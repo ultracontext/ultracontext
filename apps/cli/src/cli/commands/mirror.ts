@@ -1,26 +1,26 @@
 // =============================================================================
-// mirror — `uc mirror <start|stop|status|list|reset|source>` (alias `sync`).
-// Thin Commander shell over @ultracontext/sync's fs-first Mutagen orchestration:
+// mirror — `uc mirror <start|stop|status|list|reset|source>`.
+// Thin Commander shell over @ultracontext/mirror's fs-first Mutagen orchestration:
 // a one-way fs replica of local sources to the remote. The remote target is
 // configured by `uc remote set` (mirror only READS it). Pipe-aware: data → stdout
-// (JSON in machine mode), status/errors → stderr. Actions take injected SyncDeps
+// (JSON in machine mode), status/errors → stderr. Actions take injected MirrorDeps
 // + io so they're testable against a fake mutagen + temp config dir.
 // =============================================================================
 
 import { Command } from '@commander-js/extra-typings';
 
 import {
-    syncStart,
-    syncStop,
-    syncStatus,
-    syncList,
-    syncReset,
+    mirrorStart,
+    mirrorStop,
+    mirrorStatus,
+    mirrorList,
+    mirrorReset,
     sourceAdd,
     sourceList,
     sourceRemove,
     sourceSetEnabled,
-    type SyncDeps,
-} from '@ultracontext/sync';
+    type MirrorDeps,
+} from '@ultracontext/mirror';
 
 import { emit, status, outputError, shouldJson } from '../../../lib/output';
 
@@ -33,7 +33,7 @@ type Writable = { write(s: string): boolean };
 type Io = { stdout?: Writable; stderr?: Writable; isTTY?: boolean };
 
 // deps every action reads: the orchestration seam + io + the --json toggle
-type ActionDeps = { sync?: SyncDeps; io?: Io };
+type ActionDeps = { sync?: MirrorDeps; io?: Io };
 
 // -- options ------------------------------------------------------------------
 
@@ -45,7 +45,7 @@ type JsonOpt = { json?: boolean };
 // `uc mirror status` → emit the parsed live sessions
 export async function mirrorStatusAction(opts: JsonOpt, deps: ActionDeps = {}): Promise<number> {
     try {
-        const sessions = await syncStatus(deps.sync);
+        const sessions = await mirrorStatus(deps.sync);
         emit({ data: sessions }, { json: opts.json, human: () => humanStatus(sessions) }, deps.io);
         return 0;
     } catch (error) {
@@ -54,7 +54,7 @@ export async function mirrorStatusAction(opts: JsonOpt, deps: ActionDeps = {}): 
 }
 
 // render the session list as terse human lines
-function humanStatus(sessions: Awaited<ReturnType<typeof syncStatus>>): string {
+function humanStatus(sessions: Awaited<ReturnType<typeof mirrorStatus>>): string {
     if (sessions.length === 0) return 'no mirror sessions — run `uc mirror start`';
     return sessions.map((s) => `${s.name}  ${s.status}`).join('\n');
 }
@@ -64,7 +64,7 @@ function humanStatus(sessions: Awaited<ReturnType<typeof syncStatus>>): string {
 // `uc mirror list` → emit each configured source crossed with its mirror state
 export async function mirrorListAction(opts: JsonOpt, deps: ActionDeps = {}): Promise<number> {
     try {
-        const entries = await syncList(deps.sync);
+        const entries = await mirrorList(deps.sync);
         emit(
             { data: entries },
             { json: opts.json, human: () => entries.map((e) => `${e.source}  ${e.syncState}  ${e.sourceState}`).join('\n') },
@@ -82,7 +82,7 @@ export async function mirrorListAction(opts: JsonOpt, deps: ActionDeps = {}): Pr
 export async function mirrorStartAction(opts: JsonOpt, deps: ActionDeps = {}): Promise<number> {
     try {
         if (!opts.json) status('starting mirror…', deps.io);
-        await syncStart(deps.sync);
+        await mirrorStart(deps.sync);
         emit({ ok: true }, { json: opts.json, human: () => 'mirror started' }, deps.io);
         return 0;
     } catch (error) {
@@ -96,7 +96,7 @@ export async function mirrorStartAction(opts: JsonOpt, deps: ActionDeps = {}): P
 export async function mirrorStopAction(opts: JsonOpt, deps: ActionDeps = {}): Promise<number> {
     try {
         if (!opts.json) status('pausing mirror…', deps.io);
-        await syncStop(deps.sync);
+        await mirrorStop(deps.sync);
         emit({ ok: true }, { json: opts.json, human: () => 'mirror paused' }, deps.io);
         return 0;
     } catch (error) {
@@ -110,7 +110,7 @@ export async function mirrorStopAction(opts: JsonOpt, deps: ActionDeps = {}): Pr
 export async function mirrorResetAction(opts: JsonOpt, deps: ActionDeps = {}): Promise<number> {
     try {
         if (!opts.json) status('resetting mirror…', deps.io);
-        await syncReset(deps.sync);
+        await mirrorReset(deps.sync);
         emit({ ok: true }, { json: opts.json, human: () => 'mirror reset' }, deps.io);
         return 0;
     } catch (error) {
@@ -121,7 +121,7 @@ export async function mirrorResetAction(opts: JsonOpt, deps: ActionDeps = {}): P
 // -- source list / add --------------------------------------------------------
 
 // `uc mirror source list` → emit the configured sources
-export async function syncSourceListAction(opts: JsonOpt, deps: ActionDeps = {}): Promise<number> {
+export async function mirrorSourceListAction(opts: JsonOpt, deps: ActionDeps = {}): Promise<number> {
     try {
         const sources = await sourceList(deps.sync);
         emit(
@@ -136,7 +136,7 @@ export async function syncSourceListAction(opts: JsonOpt, deps: ActionDeps = {})
 }
 
 // `uc mirror source add <name> <path> [--disabled]` → add + start the source
-export async function syncSourceAddAction(
+export async function mirrorSourceAddAction(
     name: string,
     path: string,
     opts: JsonOpt & { disabled?: boolean },
@@ -153,7 +153,7 @@ export async function syncSourceAddAction(
 }
 
 // `uc mirror source remove <name> [--purge-remote]` → terminate session + drop source
-export async function syncSourceRemoveAction(
+export async function mirrorSourceRemoveAction(
     name: string,
     opts: JsonOpt & { purgeRemote?: boolean },
     deps: ActionDeps = {},
@@ -173,7 +173,7 @@ export async function syncSourceRemoveAction(
 }
 
 // `uc mirror source enable|disable <name>` → flip the enabled flag + apply session
-export async function syncSourceSetEnabledAction(
+export async function mirrorSourceSetEnabledAction(
     name: string,
     enabled: boolean,
     opts: JsonOpt,
@@ -212,10 +212,9 @@ function bridge(run: (json: boolean) => Promise<number>) {
 
 // -- command factory ----------------------------------------------------------
 
-// build the `mirror` Commander group (alias `sync`) with every subcommand wired
+// build the `mirror` Commander group with every subcommand wired
 export function buildMirrorCommand(): Command {
     const mirror = new Command('mirror')
-        .alias('sync')
         .description('one-way fs replica of local sources to the remote (Mutagen)');
 
     // start / stop — bring enabled sources up / pause them
@@ -231,14 +230,14 @@ export function buildMirrorCommand(): Command {
 
     // source — nested list/add/remove/enable/disable group
     const source = mirror.command('source').description('manage mirrored sources');
-    source.command('list').description('list configured sources').action((_opts, cmd) => bridge((json) => syncSourceListAction({ json }))(cmd));
+    source.command('list').description('list configured sources').action((_opts, cmd) => bridge((json) => mirrorSourceListAction({ json }))(cmd));
     source
         .command('add')
         .description('add or update a mirrored source')
         .argument('<name>', 'source name (letters, numbers, hyphens, underscores)')
         .argument('<path>', 'local path to mirror')
         .option('--disabled', 'add the source without starting the mirror')
-        .action((name, path, opts, cmd) => bridge((json) => syncSourceAddAction(name, path, { json, disabled: opts.disabled }))(cmd));
+        .action((name, path, opts, cmd) => bridge((json) => mirrorSourceAddAction(name, path, { json, disabled: opts.disabled }))(cmd));
 
     // remove — drop a source; --purge-remote also deletes its remote copy (destructive)
     source
@@ -246,19 +245,19 @@ export function buildMirrorCommand(): Command {
         .description('remove a mirrored source')
         .argument('<name>', 'source name')
         .option('--purge-remote', 'DESTRUCTIVE: also delete the source\'s remote workspace dir')
-        .action((name, opts, cmd) => bridge((json) => syncSourceRemoveAction(name, { json, purgeRemote: opts.purgeRemote }))(cmd));
+        .action((name, opts, cmd) => bridge((json) => mirrorSourceRemoveAction(name, { json, purgeRemote: opts.purgeRemote }))(cmd));
 
     // enable / disable — flip a source's enabled flag + apply the session change
     source
         .command('enable')
         .description('enable a mirrored source')
         .argument('<name>', 'source name')
-        .action((name, _opts, cmd) => bridge((json) => syncSourceSetEnabledAction(name, true, { json }))(cmd));
+        .action((name, _opts, cmd) => bridge((json) => mirrorSourceSetEnabledAction(name, true, { json }))(cmd));
     source
         .command('disable')
         .description('disable a mirrored source')
         .argument('<name>', 'source name')
-        .action((name, _opts, cmd) => bridge((json) => syncSourceSetEnabledAction(name, false, { json }))(cmd));
+        .action((name, _opts, cmd) => bridge((json) => mirrorSourceSetEnabledAction(name, false, { json }))(cmd));
 
     return mirror as unknown as Command;
 }

@@ -23,7 +23,7 @@ import {
 } from '@ultracontext/core';
 
 import { dbUrl as defaultDbUrl } from '../../../lib/config';
-import { configDir as defaultConfigDir } from '@ultracontext/sync';
+import { configDir as defaultConfigDir } from '@ultracontext/mirror';
 import { openEventStore } from '../../../lib/events/store';
 import { resolveTransport, type StdinRunner, type Transport, type RemoteTailFilters } from '../../../lib/events/transport';
 import { parseCounts, parseLabels } from '../../../lib/events/kv';

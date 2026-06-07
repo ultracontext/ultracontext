@@ -80,8 +80,8 @@
         "typescript": "^5.9.3",
         "@ultracontext/core": "workspace:*",
         "@ultracontext/js": "workspace:*",
+        "@ultracontext/mirror": "workspace:*",
         "@ultracontext/parsers": "workspace:*",
-        "@ultracontext/storage": "workspace:*",
-        "@ultracontext/sync": "workspace:*"
+        "@ultracontext/storage": "workspace:*"
     }
 }

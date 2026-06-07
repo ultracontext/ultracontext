@@ -1,5 +1,5 @@
 // =============================================================================
-// sync — fs-first orchestration over the `mutagen` binary. start/stop/status/
+// mirror — fs-first orchestration over the `mutagen` binary. start/stop/status/
 // reset/list call mutagen through an injectable CommandRunner (so tests use a
 // fake binary). Source add/list mutate the config + apply the matching session.
 // =============================================================================
@@ -36,7 +36,7 @@ import { ensureIgnoreFiles, collectIgnorePatterns } from './ignores';
 // -- injectable dependencies --------------------------------------------------
 
 // the seams the orchestration touches — all faked in tests
-export type SyncDeps = {
+export type MirrorDeps = {
     configDir?: string;
     runCommand?: CommandRunner;
     commandExists?: (name: string) => Promise<boolean>;
@@ -44,10 +44,10 @@ export type SyncDeps = {
     warn?: (message: string) => void;
 };
 
-// fill SyncDeps with the real implementations (spawn + fs probes + real config dir).
+// fill MirrorDeps with the real implementations (spawn + fs probes + real config dir).
 // warn defaults to stderr so one-time notices (e.g. the toml→json config migration)
 // are never silent on the real CLI, while tests inject a capture hook.
-function resolveDeps(deps: SyncDeps = {}): Required<SyncDeps> {
+function resolveDeps(deps: MirrorDeps = {}): Required<MirrorDeps> {
     return {
         configDir: deps.configDir ?? defaultConfigDir(),
         runCommand: deps.runCommand ?? spawnRunner,
@@ -77,7 +77,7 @@ const realPathExists: (path: string) => Promise<boolean> = async (path) => {
 // -- mutagen call helpers -----------------------------------------------------
 
 // run a mutagen subcommand, throwing on a non-zero exit
-async function mutagen(deps: Required<SyncDeps>, args: string[]): Promise<string> {
+async function mutagen(deps: Required<MirrorDeps>, args: string[]): Promise<string> {
     const result = await deps.runCommand('mutagen', args);
     if (result.code !== 0) {
         throw new Error(`mutagen ${args.join(' ')} exited with ${result.code}\n${result.stderr.trim()}`);
@@ -86,12 +86,12 @@ async function mutagen(deps: Required<SyncDeps>, args: string[]): Promise<string
 }
 
 // fetch the current `mutagen sync list` blob (short form)
-function listSessions(deps: Required<SyncDeps>): Promise<string> {
+function listSessions(deps: Required<MirrorDeps>): Promise<string> {
     return mutagen(deps, ['sync', 'list']);
 }
 
 // guard: the mutagen binary must be installed before any orchestration
-async function requireMutagen(deps: Required<SyncDeps>): Promise<void> {
+async function requireMutagen(deps: Required<MirrorDeps>): Promise<void> {
     if (!(await deps.commandExists('mutagen'))) {
         throw new Error('required command not found: mutagen');
     }
@@ -123,7 +123,7 @@ function remotePath(dir: string): string {
 }
 
 // ensure the per-host workspace dirs exist (local: mkdir; ssh: remote mkdir -p)
-async function prepareRemoteWorkspace(deps: Required<SyncDeps>, config: Config): Promise<void> {
+async function prepareRemoteWorkspace(deps: Required<MirrorDeps>, config: Config): Promise<void> {
     // collect the workspace root, the host dir, and each enabled source dir
     const dirs = [
         `${config.remoteRoot}/workspace`,
@@ -151,8 +151,8 @@ function endpointDir(config: Config, source: Source): string {
 
 // -- start --------------------------------------------------------------------
 
-// start (or resume) sync for every enabled source
-export async function syncStart(rawDeps: SyncDeps = {}): Promise<void> {
+// start (or resume) the mirror for every enabled source
+export async function mirrorStart(rawDeps: MirrorDeps = {}): Promise<void> {
     const deps = resolveDeps(rawDeps);
     await requireMutagen(deps);
 
@@ -171,12 +171,12 @@ export async function syncStart(rawDeps: SyncDeps = {}): Promise<void> {
 
 // create a fresh session, or resume+flush one that already exists
 async function startSource(
-    deps: Required<SyncDeps>,
+    deps: Required<MirrorDeps>,
     config: Config,
     source: Source,
     existing: string,
 ): Promise<void> {
-    // skip sources whose local path is gone (nothing to sync from)
+    // skip sources whose local path is gone (nothing to mirror from)
     if (!(await deps.pathExists(source.localPath))) return;
 
     const name = mutagenSessionName(config, source);
@@ -199,7 +199,7 @@ async function startSource(
     try {
         await mutagen(deps, args);
     } catch (error) {
-        deps.warn(`sync: failed to start source "${source.agent}": ${(error as Error).message}`);
+        deps.warn(`mirror: failed to start source "${source.agent}": ${(error as Error).message}`);
     }
 }
 
@@ -221,7 +221,7 @@ function createArgs(name: string, localPath: string, endpoint: string, ignores: 
 // -- stop ---------------------------------------------------------------------
 
 // pause every enabled session that currently exists
-export async function syncStop(rawDeps: SyncDeps = {}): Promise<void> {
+export async function mirrorStop(rawDeps: MirrorDeps = {}): Promise<void> {
     const deps = resolveDeps(rawDeps);
     await requireMutagen(deps);
 
@@ -237,7 +237,7 @@ export async function syncStop(rawDeps: SyncDeps = {}): Promise<void> {
 // -- status -------------------------------------------------------------------
 
 // the full parsed session list from `mutagen sync list --long`
-export async function syncStatus(rawDeps: SyncDeps = {}): Promise<SessionInfo[]> {
+export async function mirrorStatus(rawDeps: MirrorDeps = {}): Promise<SessionInfo[]> {
     const deps = resolveDeps(rawDeps);
     await requireMutagen(deps);
 
@@ -248,7 +248,7 @@ export async function syncStatus(rawDeps: SyncDeps = {}): Promise<SessionInfo[]>
 // -- list ---------------------------------------------------------------------
 
 // a configured-source view: its config state crossed with its live sync state
-export type SyncListEntry = {
+export type MirrorListEntry = {
     source: string;
     sourceState: 'enabled' | 'disabled' | 'orphan';
     session: string;
@@ -258,14 +258,14 @@ export type SyncListEntry = {
 };
 
 // list each configured source (+ any orphaned owned sessions) with its state
-export async function syncList(rawDeps: SyncDeps = {}): Promise<SyncListEntry[]> {
+export async function mirrorList(rawDeps: MirrorDeps = {}): Promise<MirrorListEntry[]> {
     const deps = resolveDeps(rawDeps);
     await requireMutagen(deps);
 
     const config = await loadConfig(deps.configDir, { warn: deps.warn });
     const list = await listSessions(deps);
 
-    const entries: SyncListEntry[] = [];
+    const entries: MirrorListEntry[] = [];
     const seen = new Set<string>();
 
     // one entry per configured source
@@ -299,7 +299,7 @@ export async function syncList(rawDeps: SyncDeps = {}): Promise<SyncListEntry[]>
 // -- reset --------------------------------------------------------------------
 
 // terminate every owned session, then start enabled sources fresh
-export async function syncReset(rawDeps: SyncDeps = {}): Promise<void> {
+export async function mirrorReset(rawDeps: MirrorDeps = {}): Promise<void> {
     const deps = resolveDeps(rawDeps);
     await requireMutagen(deps);
 
@@ -312,7 +312,7 @@ export async function syncReset(rawDeps: SyncDeps = {}): Promise<void> {
     }
 
     // then rebuild from the enabled sources
-    await syncStart(rawDeps);
+    await mirrorStart(rawDeps);
 }
 
 // -- source add / list --------------------------------------------------------
@@ -322,7 +322,7 @@ export async function sourceAdd(
     name: string,
     path: string,
     enabled: boolean,
-    rawDeps: SyncDeps = {},
+    rawDeps: MirrorDeps = {},
 ): Promise<{ existed: boolean }> {
     const deps = resolveDeps(rawDeps);
     const config = await loadConfig(deps.configDir, { warn: deps.warn });
@@ -343,7 +343,7 @@ export async function sourceAdd(
 }
 
 // the configured sources (raw config view, no mutagen calls)
-export async function sourceList(rawDeps: SyncDeps = {}): Promise<Source[]> {
+export async function sourceList(rawDeps: MirrorDeps = {}): Promise<Source[]> {
     const deps = resolveDeps(rawDeps);
     const config = await loadConfig(deps.configDir, { warn: deps.warn });
     return config.sources;
@@ -360,7 +360,7 @@ export type SourceRemoveOptions = {
 export async function sourceRemove(
     name: string,
     opts: SourceRemoveOptions = {},
-    rawDeps: SyncDeps = {},
+    rawDeps: MirrorDeps = {},
 ): Promise<void> {
     const deps = resolveDeps(rawDeps);
     const config = await loadConfig(deps.configDir, { warn: deps.warn });
@@ -385,7 +385,7 @@ export async function sourceRemove(
 }
 
 // delete a source's remote dir — local: rmdir here; ssh: a guarded remote `rm -rf`
-async function deleteRemoteSourceDir(deps: Required<SyncDeps>, config: Config, source: Source): Promise<void> {
+async function deleteRemoteSourceDir(deps: Required<MirrorDeps>, config: Config, source: Source): Promise<void> {
     const dir = endpointDir(config, source);
 
     // the now-orphaned per-host parent (workspace/<host>) — pruned only WHEN EMPTY
@@ -419,7 +419,7 @@ async function deleteRemoteSourceDir(deps: Required<SyncDeps>, config: Config, s
 export async function sourceSetEnabled(
     name: string,
     enabled: boolean,
-    rawDeps: SyncDeps = {},
+    rawDeps: MirrorDeps = {},
 ): Promise<void> {
     const deps = resolveDeps(rawDeps);
     const config = await loadConfig(deps.configDir, { warn: deps.warn });
