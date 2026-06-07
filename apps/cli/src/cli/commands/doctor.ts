@@ -87,7 +87,7 @@ async function runChecks(deps: DoctorDeps): Promise<Check[]> {
     const db = await deps.probeDb();
     checks.push({ name: 'local-db', ok: db.ok, hard: true, detail: db.ok ? 'reachable' : (db.error ?? 'unreachable') });
 
-    // mutagen — soft: only needed for `uc sync`
+    // mutagen — soft: only needed for `uc mirror`
     const mut = await deps.probeMutagen();
     checks.push({ name: 'mutagen', ok: mut.ok, hard: false, detail: mut.ok ? (mut.version ?? 'available') : (mut.error ?? 'not found') });
 

@@ -12,6 +12,12 @@
         "default": "dark"
     },
     "favicon": "/favicon.svg",
+    "redirects": [
+        {
+            "source": "/concepts/sync",
+            "destination": "/concepts/mirror"
+        }
+    ],
     "navigation": {
         "anchors": [
             {
@@ -32,7 +38,7 @@
                             "concepts/overview",
                             "concepts/contexts",
                             "concepts/remote",
-                            "concepts/sync",
+                            "concepts/mirror",
                             "concepts/events",
                             "concepts/drivers"
                         ]

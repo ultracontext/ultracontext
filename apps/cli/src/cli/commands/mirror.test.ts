@@ -1,9 +1,10 @@
 // =============================================================================
-// sync.test — `uc sync` group. Drives the testable action functions against a
-// FAKE mutagen (injected CommandRunner) + a temp config dir, asserting the
-// pipe-aware output (data → stdout JSON, status → stderr). Also checks the
-// Commander group registers start/stop/status/list/source (NO init — it moved
-// to `uc remote set`; NO event — events are the TOP-LEVEL `uc event` family).
+// mirror.test — `uc mirror` group (alias `sync`). Drives the testable action
+// functions against a FAKE mutagen (injected CommandRunner) + a temp config dir,
+// asserting the pipe-aware output (data → stdout JSON, status → stderr). Also
+// checks the Commander group registers start/stop/status/list/source (NO init —
+// it moved to `uc remote set`; NO event — events are the TOP-LEVEL `uc event`
+// family) and that the legacy `sync` alias still routes to the mirror group.
 // =============================================================================
 
 import { describe, it, after } from 'node:test';
@@ -12,24 +13,26 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { Command } from '@commander-js/extra-typings';
+
 import { saveConfig, loadConfig, type Config, type Source, type CommandResult } from '@ultracontext/sync';
 
 import {
-    syncStatusAction,
-    syncListAction,
-    syncStartAction,
-    syncResetAction,
+    mirrorStatusAction,
+    mirrorListAction,
+    mirrorStartAction,
+    mirrorResetAction,
     syncSourceListAction,
     syncSourceRemoveAction,
     syncSourceSetEnabledAction,
-    buildSyncCommand,
-} from './sync';
+    buildMirrorCommand,
+} from './mirror';
 
 // -- temp dirs ----------------------------------------------------------------
 
 const dirs: string[] = [];
 async function tempDir(): Promise<string> {
-    const dir = await mkdtemp(join(tmpdir(), 'uc-cli-sync-'));
+    const dir = await mkdtemp(join(tmpdir(), 'uc-cli-mirror-'));
     dirs.push(dir);
     return dir;
 }
@@ -84,7 +87,7 @@ async function sourceListFor(dir: string): Promise<Source[]> {
 
 // -- status -------------------------------------------------------------------
 
-describe('uc sync status', () => {
+describe('uc mirror status', () => {
     // emits the parsed sessions as a single JSON line in machine mode
     it('emits parsed sessions as JSON', async () => {
         const dir = await tempDir();
@@ -93,7 +96,7 @@ describe('uc sync status', () => {
         const errs = sink();
         const long = 'Name: uc-laptop-claude\nStatus: Watching for changes\n';
 
-        const code = await syncStatusAction(
+        const code = await mirrorStatusAction(
             { json: true },
             { sync: deps(dir, long), io: { stdout: out, stderr: errs, isTTY: true } },
         );
@@ -107,15 +110,15 @@ describe('uc sync status', () => {
 
 // -- list ---------------------------------------------------------------------
 
-describe('uc sync list', () => {
-    // lists configured sources with their sync state
+describe('uc mirror list', () => {
+    // lists configured sources with their mirror state
     it('emits configured sources with state', async () => {
         const dir = await tempDir();
         await seedConfig(dir);
         const out = sink();
         const long = 'Name: uc-laptop-claude\nStatus: Watching for changes\n';
 
-        const code = await syncListAction(
+        const code = await mirrorListAction(
             { json: true },
             { sync: deps(dir, long), io: { stdout: out, stderr: sink(), isTTY: false } },
         );
@@ -129,14 +132,14 @@ describe('uc sync list', () => {
 
 // -- start --------------------------------------------------------------------
 
-describe('uc sync start', () => {
+describe('uc mirror start', () => {
     // a clean start reports ok and writes nothing to stdout in human mode
     it('starts enabled sources', async () => {
         const dir = await tempDir();
         await seedConfig(dir);
         const out = sink();
 
-        const code = await syncStartAction(
+        const code = await mirrorStartAction(
             {},
             { sync: deps(dir), io: { stdout: out, stderr: sink(), isTTY: true } },
         );
@@ -150,7 +153,7 @@ describe('uc sync start', () => {
         await seedConfig(dir);
         const errs = sink();
 
-        const code = await syncStartAction(
+        const code = await mirrorStartAction(
             { json: true },
             {
                 sync: { ...deps(dir), commandExists: async () => false },
@@ -169,7 +172,7 @@ describe('uc sync start', () => {
         await seedConfig(dir);
         const errs = sink();
 
-        const code = await syncStartAction(
+        const code = await mirrorStartAction(
             {},
             {
                 sync: { ...deps(dir), commandExists: async () => false },
@@ -184,14 +187,14 @@ describe('uc sync start', () => {
 
 // -- reset --------------------------------------------------------------------
 
-describe('uc sync reset', () => {
+describe('uc mirror reset', () => {
     // a clean reset reports ok (terminate owned sessions + restart enabled)
-    it('resets sync for enabled sources', async () => {
+    it('resets the mirror for enabled sources', async () => {
         const dir = await tempDir();
         await seedConfig(dir);
         const out = sink();
 
-        const code = await syncResetAction(
+        const code = await mirrorResetAction(
             { json: true },
             { sync: deps(dir), io: { stdout: out, stderr: sink(), isTTY: false } },
         );
@@ -206,7 +209,7 @@ describe('uc sync reset', () => {
         await seedConfig(dir);
         const errs = sink();
 
-        const code = await syncResetAction(
+        const code = await mirrorResetAction(
             { json: true },
             {
                 sync: { ...deps(dir), commandExists: async () => false },
@@ -225,7 +228,7 @@ describe('uc sync reset', () => {
         await seedConfig(dir);
         const errs = sink();
 
-        const code = await syncStartAction(
+        const code = await mirrorStartAction(
             {},
             {
                 sync: { ...deps(dir), commandExists: async () => false },
@@ -240,7 +243,7 @@ describe('uc sync reset', () => {
 
 // -- source remove ------------------------------------------------------------
 
-describe('uc sync source remove', () => {
+describe('uc mirror source remove', () => {
     // removing a known source drops it from config and reports removed
     it('removes a configured source', async () => {
         const dir = await tempDir();
@@ -299,7 +302,7 @@ describe('uc sync source remove', () => {
 
 // -- source enable / disable --------------------------------------------------
 
-describe('uc sync source enable/disable', () => {
+describe('uc mirror source enable/disable', () => {
     // disabling a source flips its config flag and emits the new state
     it('disables a source', async () => {
         const dir = await tempDir();
@@ -362,7 +365,7 @@ describe('uc sync source enable/disable', () => {
 
 // -- source list --------------------------------------------------------------
 
-describe('uc sync source list', () => {
+describe('uc mirror source list', () => {
     // emits the configured sources straight from config
     it('lists configured sources', async () => {
         const dir = await tempDir();
@@ -382,42 +385,70 @@ describe('uc sync source list', () => {
 
 // -- Commander wiring ---------------------------------------------------------
 
-describe('buildSyncCommand', () => {
+describe('buildMirrorCommand', () => {
     // the group registers every subcommand — NO init (it moved to `uc remote
     // set`) and NO event (it moved to the top-level `uc event` family)
     it('registers start/stop/status/list/reset/source, not init or event', () => {
-        const sync = buildSyncCommand();
-        const subs = sync.commands.map((c) => c.name());
+        const mirror = buildMirrorCommand();
+        const subs = mirror.commands.map((c) => c.name());
 
         for (const expected of ['start', 'stop', 'status', 'list', 'reset', 'source']) {
-            assert.ok(subs.includes(expected), `missing sync subcommand: ${expected}`);
+            assert.ok(subs.includes(expected), `missing mirror subcommand: ${expected}`);
         }
-        assert.ok(!subs.includes('init'), 'sync must NOT register init — it moved to `uc remote set`');
-        assert.ok(!subs.includes('event'), 'sync must NOT register event — it is top-level now');
+        assert.ok(!subs.includes('init'), 'mirror must NOT register init — it moved to `uc remote set`');
+        assert.ok(!subs.includes('event'), 'mirror must NOT register event — it is top-level now');
     });
 
-    // `uc sync init` is gone — Commander rejects it as an unknown subcommand
-    it('rejects `sync init` as an unknown command', async () => {
-        const sync = buildSyncCommand();
+    // the legacy verb survives as an alias — `sync` carries through to mirror
+    it('keeps `sync` as an alias of the mirror group', () => {
+        const mirror = buildMirrorCommand();
+        assert.ok(mirror.aliases().includes('sync'), 'mirror group carries the sync alias');
+    });
+
+    // `uc mirror init` is gone — Commander rejects it as an unknown subcommand
+    it('rejects `mirror init` as an unknown command', async () => {
+        const mirror = buildMirrorCommand();
 
         // exitOverride turns Commander's process.exit into a throw we can assert on
-        sync.exitOverride();
-        sync.configureOutput({ writeErr: () => {}, writeOut: () => {} });
+        mirror.exitOverride();
+        mirror.configureOutput({ writeErr: () => {}, writeOut: () => {} });
 
         await assert.rejects(
-            () => sync.parseAsync(['init', 'user@vps'], { from: 'user' }),
+            () => mirror.parseAsync(['init', 'user@vps'], { from: 'user' }),
             /unknown command/i,
         );
     });
 
     // source carries its own list/add/remove/enable/disable subcommands
     it('nests source list/add/remove/enable/disable', () => {
-        const sync = buildSyncCommand();
-        const source = sync.commands.find((c) => c.name() === 'source');
+        const mirror = buildMirrorCommand();
+        const source = mirror.commands.find((c) => c.name() === 'source');
         const subs = source?.commands.map((c) => c.name()) ?? [];
 
         for (const expected of ['list', 'add', 'remove', 'enable', 'disable']) {
             assert.ok(subs.includes(expected), `missing source subcommand: ${expected}`);
         }
+    });
+});
+
+// -- alias routing ------------------------------------------------------------
+
+describe('sync alias routing', () => {
+    // parsing real argv `sync status` routes to the mirror group's status verb —
+    // proving the legacy `sync` name still resolves the group through Commander
+    it('routes `sync status` argv to the mirror group', async () => {
+        const mirror = buildMirrorCommand();
+
+        // record which subcommand fired by overriding the status action
+        let fired = '';
+        const status = mirror.commands.find((c) => c.name() === 'status')!;
+        status.action(() => { fired = 'status'; });
+
+        // mount under a root program so the leading `sync` resolves as the alias
+        const program = new Command('uc');
+        program.addCommand(mirror);
+
+        await program.parseAsync(['sync', 'status'], { from: 'user' });
+        assert.equal(fired, 'status');
     });
 });

@@ -22,9 +22,9 @@ follows.
         **Versioned conversational state.** The store an agent reads and writes —
         every edit auto-versioned, copy-on-write.
     </Card>
-    <Card title='Files' icon='folder-tree' href='/concepts/sync'>
+    <Card title='Files' icon='folder-tree' href='/concepts/mirror'>
         **The archive.** Mirrored session artifacts — transcripts and exports you
-        grep or search semantically. Moved between machines by Sync.
+        grep or search semantically. Replicated between machines by Mirror.
     </Card>
     <Card title='Events' icon='radio' href='/concepts/events'>
         **The status board.** Small immutable facts — what just changed, now.
@@ -65,8 +65,8 @@ The one-liners worth memorizing:
   skill, or a plugin (a Hermes plugin, say, tails the event log before each LLM turn).
 
 <Note>Events and Drivers are **general** primitives and mechanisms — not sub-parts
-of Sync. Their command surface is top-level: `uc event ...` and `uc driver ...`,
-never under `uc sync`.</Note>
+of Mirror. Their command surface is top-level: `uc event ...` and `uc driver ...`,
+never under `uc mirror`.</Note>
 
 ## What goes where
 
@@ -98,8 +98,8 @@ mechanisms together:
    log, sees the new session, and reads a bounded gist from the file.
 6. Your agent now knows about the conversation you just had on your phone.
 
-A **driver** produced **files** and **events**; **sync** moved the files to the hub;
-a **consumer** read the event and the file. That is the whole system in one loop.
+A **driver** produced **files** and **events**; **mirror** replicated the files to the
+hub; a **consumer** read the event and the file. That is the whole system in one loop.
 
 ## Read next
 
@@ -107,8 +107,8 @@ a **consumer** read the event and the file. That is the whole system in one loop
     <Card title='Contexts' icon='layer-group' href='/concepts/contexts'>
         Versioned context windows — fork, time-travel, local-first everywhere.
     </Card>
-    <Card title='Sync' icon='folder-tree' href='/concepts/sync'>
-        Mirror session files across machines to a hub.
+    <Card title='Mirror' icon='folder-tree' href='/concepts/mirror'>
+        Replicate session files across machines to a hub.
     </Card>
     <Card title='Events' icon='radio' href='/concepts/events'>
         The envelope, the lifecycle, and when to emit one.

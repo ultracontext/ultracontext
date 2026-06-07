@@ -50,7 +50,7 @@ Use it directly through the Context API, connect agents through MCP, or let the 
 
 | `uc` CLI | Local-first context versioning from your terminal. Create, append, get, update, delete, list — backed by SQLite, no server required. |
 | --- | --- |
-| Sync | fs-first Mutagen orchestration. Mirror agent session files across machines. |
+| Mirror | fs-first Mutagen orchestration. Replicate agent session files across machines (one-way replica). |
 | MCP Server | Share context everywhere. Built into the API, or run standalone via stdio. |
 | Context API | Git-like context engineering API. Store, version, and retrieve agent context with zero complexity. |
 
@@ -60,7 +60,7 @@ Use it directly through the Context API, connect agents through MCP, or let the 
 
 1. **Init.** `uc init` sets up a local SQLite store under `~/.ultracontext`.
 
-2. **Capture.** Create a context and append to it from your terminal, or sync agent session files across machines.
+2. **Capture.** Create a context and append to it from your terminal, or mirror agent session files across machines.
 
 3. **Add the MCP server.** Any agent gets full awareness of every other agent.
 
@@ -112,12 +112,12 @@ uc context list                                 # list ALL contexts (--source / 
 uc remote set <target> # configure your one central remote (--root / --host-id / --api / --key)
 uc remote show|test|clear # show (key never printed) / test reachability / clear coords (sources kept)
 
-uc sync source add    # add a synced source (--disabled)
-uc sync source remove # remove a source (--purge-remote deletes the hub dir — destructive)
-uc sync source enable|disable # toggle a source + start / pause its session
-uc sync start|stop    # start / pause sync for enabled sources
-uc sync status|list   # show live sessions / configured sources
-uc sync reset         # terminate owned sessions and restart enabled sources
+uc mirror source add    # add a mirrored source (--disabled)
+uc mirror source remove # remove a source (--purge-remote deletes the hub dir — destructive)
+uc mirror source enable|disable # toggle a source + start / pause its session
+uc mirror start|stop    # start / pause mirroring for enabled sources
+uc mirror status|list   # show live sessions / configured sources
+uc mirror reset         # terminate owned sessions and restart enabled sources
 
 uc event emit         # commit a uc.event.v1 event (--kind / --source / --subject)
 uc event tail         # read the committed log — one JSON object per line (--limit, --local)

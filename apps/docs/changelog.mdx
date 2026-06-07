@@ -4,6 +4,21 @@ description: 'Product updates and announcements'
 rss: true
 ---
 
+<Update label="June 6, 2026">
+## `uc sync` is now `uc mirror`
+
+We renamed the verb to say what it does. `uc mirror` runs Mutagen in
+`--mode=one-way-replica`: it **replicates** session files your agents already wrote
+on disk up to the hub. A one-way replica — a mirror, not a bidirectional sync.
+
+- `uc sync` stays as an **alias**, so your scripts keep working.
+- It never was a store you write *to* — that's [`uc context`](/concepts/contexts).
+  Mirror only replicates the files agents already produced.
+
+See [Mirror](/concepts/mirror) for the full surface.
+
+</Update>
+
 <Update label="June 2, 2026">
 ## The `uc` CLI
 

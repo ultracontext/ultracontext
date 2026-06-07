@@ -24,9 +24,9 @@ function fakeProgram(): Command {
     program.addCommand(add as unknown as Command);
 
     // a group with a single nested subcommand
-    const sync = new Command('sync').description('sync group');
-    sync.addCommand(new Command('start').description('start it') as unknown as Command);
-    program.addCommand(sync as unknown as Command);
+    const mirror = new Command('mirror').description('mirror group');
+    mirror.addCommand(new Command('start').description('start it') as unknown as Command);
+    program.addCommand(mirror as unknown as Command);
 
     return program;
 }
@@ -70,11 +70,11 @@ describe('serializeProgram', () => {
     // nested groups recurse — subcommands carry their own subcommands
     it('recurses into nested groups', () => {
         const tree = serializeProgram(fakeProgram());
-        const sync = tree.subcommands.find((c) => c.name === 'sync');
+        const mirror = tree.subcommands.find((c) => c.name === 'mirror');
 
-        assert.ok(sync, 'sync group present');
-        assert.equal(sync!.subcommands.length, 1);
-        assert.equal(sync!.subcommands[0].name, 'start');
+        assert.ok(mirror, 'mirror group present');
+        assert.equal(mirror!.subcommands.length, 1);
+        assert.equal(mirror!.subcommands[0].name, 'start');
     });
 });
 
@@ -98,6 +98,6 @@ describe('runCommands', () => {
 
         const out = JSON.parse(lines[0]);
         assert.equal(out.name, 'uc');
-        assert.ok(out.subcommands.some((c: { name: string }) => c.name === 'sync'));
+        assert.ok(out.subcommands.some((c: { name: string }) => c.name === 'mirror'));
     });
 });

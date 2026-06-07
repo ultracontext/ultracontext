@@ -27,7 +27,7 @@ const IGNORES_DIR = 'ignores';
 const DEFAULT_IGNORE_FILE = `# UltraContext ignore file
 # Global patterns use Mutagen's default ignore syntax and apply to every synced source.
 # Source-specific rules live in ~/.ultracontext/ignores/<source>/.ultracontextignore.
-# Comment, edit, or extend any rule. Run \`uc sync reset\` after ignore edits.
+# Comment, edit, or extend any rule. Run \`uc mirror reset\` after ignore edits.
 
 # Source control
 .git/

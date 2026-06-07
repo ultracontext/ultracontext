@@ -1,6 +1,6 @@
 // =============================================================================
-// main — the `uc` Commander program root. Registers the context verbs, the sync
-// group, the remote group (the one central machine), the utility commands
+// main — the `uc` Commander program root. Registers the context verbs, the
+// mirror group, the remote group (the one central machine), the utility commands
 // (doctor/init/upgrade/commands), and the global --json/--remote flags consumed
 // by the output helper + client resolver.
 // =============================================================================
@@ -17,7 +17,7 @@ import { registerList } from './commands/list';
 import { buildDeleteCommand } from './commands/delete';
 import { buildEventCommand } from './commands/event';
 import { buildDriverCommand } from './commands/driver';
-import { buildSyncCommand } from './commands/sync';
+import { buildMirrorCommand } from './commands/mirror';
 import { buildRemoteCommand } from './commands/remote';
 import { buildServeCommand } from './commands/serve';
 import { buildDoctorCommand } from './commands/doctor';
@@ -30,7 +30,7 @@ import { buildVersionCommand } from './commands/version';
 
 // `uc context <create|append|get|update|delete|list>` (alias `ctx`) talk to a
 // ContextClient (local | remote). The PRIMITIVE is explicit — `uc context append`
-// answers "append WHERE" — matching the grouped event/driver/sync/remote domains.
+// answers "append WHERE" — matching the grouped event/driver/mirror/remote domains.
 // The verb names mirror the SDK methods; every targeted verb takes an EXPLICIT
 // context id — there is no default context.
 function registerContextVerbs(program: Command): void {
@@ -65,17 +65,17 @@ function registerDriver(program: Command): void {
     program.addCommand(buildDriverCommand());
 }
 
-// -- sync group ---------------------------------------------------------------
+// -- mirror group -------------------------------------------------------------
 
-// `uc sync <start|stop|status|source|list|reset>` → @ultracontext/sync
-function registerSync(program: Command): void {
-    program.addCommand(buildSyncCommand());
+// `uc mirror <start|stop|status|source|list|reset>` (alias `sync`) → @ultracontext/sync
+function registerMirror(program: Command): void {
+    program.addCommand(buildMirrorCommand());
 }
 
 // -- remote group -------------------------------------------------------------
 
 // top-level `uc remote <set|show|test|clear>` → the ONE central machine the
-// CLI routes to: the ssh side (sync + event transport) + the api side
+// CLI routes to: the ssh side (mirror + event transport) + the api side
 // (contexts/events over HTTP). The single writer of the unified config.json view.
 function registerRemote(program: Command): void {
     program.addCommand(buildRemoteCommand());
@@ -124,7 +124,7 @@ export function buildProgram(): Command {
     registerContextVerbs(program);
     registerEvent(program);
     registerDriver(program);
-    registerSync(program);
+    registerMirror(program);
     registerRemote(program);
     registerStandalone(program);
     registerCommands(program);

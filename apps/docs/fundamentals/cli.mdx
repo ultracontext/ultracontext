@@ -197,39 +197,40 @@ uc remote clear                                       # drop the remote coords (
 | `test` | Test reachability of each configured leg (SSH via a login-shell `uc --version`, API via an HTTP GET) |
 | `clear` | Drop the remote coordinates, leaving your synced sources intact |
 
-## Sync commands
+## Mirror commands
 
-`uc sync` is fs-first orchestration over [Mutagen](https://mutagen.io). It mirrors
-agent session files between machines so your context follows you. Requires the
-`mutagen` binary on your `PATH` (`uc doctor` checks for it).
+`uc mirror` is fs-first orchestration over [Mutagen](https://mutagen.io) in
+`--mode=one-way-replica`. It replicates agent session files to the hub so your
+context follows you. Requires the `mutagen` binary on your `PATH` (`uc doctor`
+checks for it). `uc sync` stays as an alias.
 
 ```bash bash
 uc remote set user@vps:/home/alice/.ultracontext   # configure your central remote
-uc sync source add claude ~/.claude/projects       # add a synced source
-uc sync start                                       # start enabled sources
-uc sync status                                      # show live sessions
-uc sync list                                        # configured sources + state
-uc sync stop                                        # pause enabled sources
+uc mirror source add claude ~/.claude/projects     # add a mirrored source
+uc mirror start                                     # start enabled sources
+uc mirror status                                    # show live sessions
+uc mirror list                                      # configured sources + state
+uc mirror stop                                      # pause enabled sources
 ```
 
-The sync target is configured by [`uc remote set`](#remote-commands) — the one
-central machine `uc` routes to. `uc sync` only reads it.
+The mirror target is configured by [`uc remote set`](#remote-commands) — the one
+central machine `uc` routes to. `uc mirror` only reads it.
 
 | Subcommand | Description |
 |-----------|-------------|
-| `source add <name> <path>` | Add or update a synced source (`--disabled` to add without starting) |
+| `source add <name> <path>` | Add or update a mirrored source (`--disabled` to add without starting) |
 | `source list` | List configured sources |
 | `source remove <name>` | Remove a source (`--purge-remote` also deletes its hub workspace dir — destructive) |
 | `source enable <name>` / `source disable <name>` | Enable / disable a source and start / pause its session |
-| `start` / `stop` | Start / pause sync for enabled sources |
-| `status` | Show live sync session status |
-| `list` | List configured sources with sync state |
+| `start` / `stop` | Start / pause mirroring for enabled sources |
+| `status` | Show live mirror session status |
+| `list` | List configured sources with mirror state |
 | `reset` | Terminate owned sessions and restart enabled sources |
 
-Sync respects `.ultracontextignore` files under `~/.ultracontext/ignores/` (a
+Mirror respects `.ultracontextignore` files under `~/.ultracontext/ignores/` (a
 global file plus per-source `<source>/` files); their patterns become Mutagen
 `--ignore` flags. The global file is seeded with sensible defaults on first use.
-See [Sync → Ignore files](/concepts/sync) for the full list.
+See [Mirror → Ignore files](/concepts/mirror) for the full list.
 
 ## Serve command
 

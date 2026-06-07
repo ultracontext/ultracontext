@@ -5,7 +5,7 @@ description: 'Bring-your-own ingestion — produce files and events from externa
 
 A **driver** is a directory with a `driver.toml` manifest that teaches UltraContext
 how to pull data out of a system it doesn't own — a web app, a phone, a SaaS — and
-turn it into [files](/concepts/sync) and [events](/concepts/events).
+turn it into [files](/concepts/mirror) and [events](/concepts/events).
 
 Say you want your laptop agents to know about Claude app conversations from your
 phone. A `claude-web` driver does a bounded sync of recent web sessions, mirrors
@@ -16,7 +16,7 @@ never learns how to talk to the Claude web app — the driver does, at the edge.
 `uc driver list` shows installed manifests and `uc driver run <driver> <command>`
 runs a manifest command as a local process. The manifest format (`driver.toml`) is
 **Contract v1** — final and running on real infrastructure. The
-[sync](/concepts/sync) and [contexts](/concepts/contexts) verbs shown elsewhere in
+[mirror](/concepts/mirror) and [contexts](/concepts/contexts) verbs shown elsewhere in
 these docs are shipped.</Note>
 
 ## What a driver is for
@@ -137,7 +137,7 @@ parse a driver-specific array.
 
 ## The command surface
 
-Top-level — `uc driver`, never under `uc sync`.
+Top-level — `uc driver`, never under `uc mirror`.
 
 ```bash bash
 uc driver list                          # show installed manifests
@@ -162,8 +162,8 @@ calling the stable verb, never the driver's internal script paths. See
     <Card title='Events' icon='radio' href='/concepts/events'>
         The envelope every driver emits.
     </Card>
-    <Card title='Sync' icon='folder-tree' href='/concepts/sync'>
-        The file mirroring a driver's bounded sync rides on.
+    <Card title='Mirror' icon='folder-tree' href='/concepts/mirror'>
+        The file replication a driver's bounded sync rides on.
     </Card>
     <Card title='Write a driver' icon='wrench' href='/guides/write-a-driver'>
         Author a `driver.toml` and emit your first events.

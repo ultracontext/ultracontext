@@ -5,7 +5,7 @@ description: 'Your one central machine — configured once, reachable how each p
 
 A **remote** is your one central machine. You configure it once with
 [`uc remote set`](/fundamentals/cli#remote-commands), and from then on every
-primitive — [files](/concepts/sync), [contexts](/concepts/contexts),
+primitive — [files](/concepts/mirror), [contexts](/concepts/contexts),
 [events](/concepts/events) — reaches it the way it needs.
 
 There's no `uc sync init` anymore, and no separate API config step. There is one
@@ -17,13 +17,13 @@ A remote has two legs, and you set whichever you need:
 
 | Leg | What uses it | Coordinates |
 |---|---|---|
-| **SSH** | [Sync](/concepts/sync) (fs mirroring) and the [event](/concepts/events) transport | an SSH target + remote root + this host's id |
+| **SSH** | [Mirror](/concepts/mirror) (fs replication) and the [event](/concepts/events) transport | an SSH target + remote root + this host's id |
 | **API** | [Contexts](/concepts/contexts) and [events](/concepts/events) over HTTP | a base url + a bearer key |
 
-Sync needs SSH because it mirrors files with [Mutagen](https://mutagen.io).
+Mirror needs SSH because it replicates files with [Mutagen](https://mutagen.io).
 Contexts and events ride HTTP when an API leg is set. Each leg is independent —
 you can set SSH now and add the API leg later, and `uc remote set` merges them
-without disturbing your [synced sources](/concepts/sync#sources).
+without disturbing your [mirrored sources](/concepts/mirror#sources).
 
 ```bash bash
 uc remote set user@vps:/srv/uc --host-id laptop                 # the SSH leg
@@ -65,7 +65,7 @@ Each primitive resolves the remote independently:
 - **Events** — the API leg wins when set (HTTP `POST /events` / `GET /events`),
   else the SSH hub (`ssh <target> 'uc event commit'`), else local (the emit *is*
   the commit). See [Events → The lifecycle](/concepts/events#the-lifecycle).
-- **Files** — always SSH, always Mutagen. See [Sync](/concepts/sync).
+- **Files** — always SSH, always Mutagen. See [Mirror](/concepts/mirror).
 
 So a single `uc remote` can carry an SSH target for file sync *and* an API url for
 contexts and events at the same time. The transports don't compete — they each
@@ -93,8 +93,8 @@ hub-PATH bug (your login shell can't find `uc`) before it bites a real event.</T
     <Card title='Self-hosting' icon='server' href='/guides/self-hosting'>
         Run `uc serve` on your VPS and point your remote at it.
     </Card>
-    <Card title='Sync' icon='folder-tree' href='/concepts/sync'>
-        The SSH leg — mirror your session files into the hub.
+    <Card title='Mirror' icon='folder-tree' href='/concepts/mirror'>
+        The SSH leg — replicate your session files into the hub.
     </Card>
     <Card title='Events' icon='radio' href='/concepts/events'>
         The status board — HTTP to your remote when set, SSH otherwise.

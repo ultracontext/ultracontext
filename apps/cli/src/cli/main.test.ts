@@ -15,7 +15,7 @@ describe('buildProgram', () => {
         const program = buildProgram();
         const names = program.commands.map((c) => c.name());
 
-        for (const expected of ['context', 'event', 'sync', 'remote', 'update', 'doctor', 'init', 'commands', 'version']) {
+        for (const expected of ['context', 'event', 'mirror', 'remote', 'update', 'doctor', 'init', 'commands', 'version']) {
             assert.ok(names.includes(expected), `missing command: ${expected}`);
         }
     });
@@ -27,16 +27,18 @@ describe('buildProgram', () => {
         assert.ok(!flags.includes('--version'), 'root must not carry a global --version');
     });
 
-    // sync exposes its subcommands — init is gone (it moved to `uc remote set`)
-    it('registers sync subcommands', () => {
+    // mirror exposes its subcommands + the legacy `sync` alias — init is gone
+    // (it moved to `uc remote set`)
+    it('registers mirror subcommands', () => {
         const program = buildProgram();
-        const sync = program.commands.find((c) => c.name() === 'sync');
-        const subs = sync?.commands.map((c) => c.name()) ?? [];
+        const mirror = program.commands.find((c) => c.name() === 'mirror');
+        const subs = mirror?.commands.map((c) => c.name()) ?? [];
 
         for (const expected of ['start', 'stop', 'status', 'source']) {
-            assert.ok(subs.includes(expected), `missing sync subcommand: ${expected}`);
+            assert.ok(subs.includes(expected), `missing mirror subcommand: ${expected}`);
         }
-        assert.ok(!subs.includes('init'), 'sync init must be gone — it moved to `uc remote set`');
+        assert.ok(!subs.includes('init'), 'mirror init must be gone — it moved to `uc remote set`');
+        assert.ok(mirror?.aliases().includes('sync'), 'mirror group carries the legacy sync alias');
     });
 
     // the top-level remote group exposes its subcommands

@@ -1,5 +1,5 @@
 // =============================================================================
-// driver — the TOP-LEVEL `uc driver <list|run>` family (never under `uc sync`).
+// driver — the TOP-LEVEL `uc driver <list|run>` family (never under `uc mirror`).
 // Maps the documented driver surface (apps/docs/concepts/drivers.mdx) onto the
 // manifest reader + the sh-c runner. `list` shows installed manifests; `run`
 // executes a manifest command as a local process on this host, streaming its
