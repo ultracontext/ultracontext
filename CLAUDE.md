@@ -1,156 +1,88 @@
 # CLAUDE.md
 
-Guidance for Claude Code (claude.ai/code) working in this repo.
+Guidance for Claude Code working in this repo.
 
 ## What this is
 
-UltraContext — the context toolkit for AI agents. pnpm monorepo
-(`pnpm-workspace.yaml`: `packages/*`, `apps/*`). The product is local-first:
-`npm i ultracontext` installs the `uc` CLI **and** the JS SDK in one shot.
+UltraContext 2.0 — the context SDK for AI agents. One Rust core consumed
+in-process (FFI) by thin language SDKs. Local-first: plain SQLite file,
+no server, no api key, zero telemetry. v1 source: tag `v1-final`.
 
-## Monorepo map
+## Philosophy (load-bearing for every decision)
 
-### `packages/` — driver-free libraries (the engine + adapters)
+1. **Legofy it** — configurable > customizable; user composes blocks.
+2. **Just works** — factory defaults are already great; building yourself is optional.
+3. **Transparency builds trust** — show everything; plain inspectable formats.
+4. **Speed matters.**
+5. **Ownership** — the data and the stack are the user's; no vendor lock-in.
+6. **Simplicity** — simple beats complex; less beats more.
 
-| Package | What it is |
+## Layout (component-axis root)
+
+| Dir | What |
 |---|---|
-| `@ultracontext/core` | Capability engine. IO-free context/key ops over a `StorageAdapter` port. No HTTP, no DB driver. Every op returns `Result<T>`. Exports `./testing`. |
-| `@ultracontext/storage` | `StorageAdapter` implementations: `./drizzle` (postgres.js), `./supabase`, `./sqlite` (node/bun: libsql or bun:sqlite — `createSqliteAdapter(url)`), `./sqlite-browser` (sql.js + IndexedDB snapshot). The pure adapter class lives in `sqlite/adapter.ts` (driver-agnostic, browser-safe); node/bun driver code stays in `sqlite/index.ts`. |
-| `@ultracontext/parsers` | Agent session parsers (Claude/Codex/OpenClaw/Cursor/Gemini) + writers + compat matrix. `.mjs`, 2-space. |
-| `@ultracontext/mirror` | fs-first Mutagen mirror orchestration. Config IO (`~/.ultracontext`), pure mutagen parsers, injectable command runner, start/stop/status/source actions. |
+| `core/` | Rust crate `ultracontext` — node engine + SQLite (rusqlite bundled, FTS5) behind a storage trait |
+| `sdks/js` | npm `ultracontext` — napi-rs glue + thin TS wrapper, Promise API |
+| `sdks/python` | PyPI `ultracontext` — PyO3 glue + thin wrapper, sync API, maturin abi3 wheels |
 
-### `apps/` — runnable surfaces
+Future blocks land at root: `mirror/`, `cli/`, `docs/`. Languages multiply
+inside `sdks/`, components multiply at root.
 
-| App | What it is |
-|---|---|
-| `api` | Hono REST API (`createApp(options?)`; `server.ts` Node, `worker.ts` CF Workers). **DO NOT TOUCH.** |
-| `mcp-server` | Stdio MCP server (`ultracontext-mcp-server`). **DO NOT TOUCH.** |
-| `js-sdk` | The JS/TS SDK, published name `@ultracontext/js`, `private:true`. SDK source only — typed HTTP client for the hosted API. |
-| `cli` | The `uc` binary, published as **`ultracontext`**. Imports `@ultracontext/js` + the libs, bundles them (tsdown), exports the **unified `UltraContext` SDK** on `.`. bins: `uc` **and** `ultracontext`. |
-| `python-sdk` | `UltraContext`/`AsyncUltraContext` client (PyPI `ultracontext`). **Local-by-default**: drives the bundled `uc` binary in local mode; httpx for remote. API source = DO NOT TOUCH; the local backend (`_local.py`) is editable here. |
-| `postgres` | Local Postgres compose + schema (`init.sql`) + migration scripts. |
-| `docs` | Mintlify MDX. Second-person voice, YAML frontmatter. |
+## Data model — everything is a node
 
-Dependency direction: `cli → js-sdk → api`. The `.` export is the unified
-`UltraContext` SDK (`apps/cli/lib/sdk/ultracontext.ts`, shadowing the
-`@ultracontext/js` class); the `uc` bin lives in `src/cli/`.
+See `core/MODEL.md`. One `nodes` table: `prev_id` = message order (linked
+list), `parent_id` = version history (every op creates a new context head).
+Versions, fork, time-travel, and recoverable delete all derive from the two
+pointers. `delete({permanent: true})` = real scrub from all versions —
+destruction is always explicit.
 
-**Unified SDK (local-by-default).** `npm i ultracontext` / `pip install
-ultracontext` give a local-first SDK — no server, no api key — backed by a
-local SQLite file (`./ultracontext.db`, cwd app-specific, NOT `~/.ultracontext/uc.db`).
-Pass an `apiKey` (or `mode:'remote'`) to use the hosted API. Same object, one
-config switch. Selection rule (identical both langs): `mode ?? (apiKey ? 'remote'
-: 'local')` — explicit `mode` wins. JS runs `@ultracontext/core` in-process;
-Python shells out to the bundled `uc` binary. Local errors throw (remote parity).
-Runs everywhere: Node/Bun (SQLite file), browser (sql.js + IndexedDB, wasm loads
-lazily so remote-only apps pay zero bytes; `wasmUrl` config for offline bundles),
-edge (remote — local mode throws a clear error). The CLI's `.` ships conditional
-exports (`node`/`bun` → full build w/ libsql; `default` → browser build).
+## SDK surface rule
 
-**Dev overlay (browser-only).** `new UltraContext()` in a dev browser auto-mounts
-a Next.js-style devtools bubble (`apps/cli/lib/devtools/`): contexts list +
-message drill-down, read-only, Shadow DOM. Gate (`devtools-hook.browser.ts`, a
-`#devtools-hook` seam — no-op on node) runs in the ENTRY chunk; UI is a lazy
-chunk prod never fetches. `devtools: false` disables; `true`/`{position}`
-overrides. `process.env.NODE_ENV` must stay LITERAL in dist (identity `define`
-in tsdown.config.ts) so consumer bundlers do the prod substitution.
+Identical surface in JS and Python: same methods, params, return shapes,
+and error codes. Only await-ness differs (JS Promise, Python sync — each
+language's idiom). Parity is enforced mechanically by a shared JSON fixture
+suite run through both built SDKs against the same core.
 
-## Architecture decisions
+## Core rules
 
-- **Full TypeScript rebuild.** The CLI is TS/ESM end-to-end (no `.mjs` daemon/TUI).
-  Commander (`@commander-js/extra-typings`) + `@clack/prompts` + `picocolors`.
-- **Local-first context.** Context verbs talk to a `ContextClient` interface
-  (`add/get/update/delete/list`). `LocalContextClient` (default) wraps
-  `@ultracontext/core` ops over a SQLite adapter at `~/.ultracontext/uc.db`,
-  resolving the default context per cwd/project. `RemoteContextClient`
-  (`--remote`, or config/env baseUrl+key) calls the hosted API via the SDK.
-  Same interface → commands are client-agnostic.
-- **fs-first Mutagen mirror.** `uc mirror` orchestrates Mutagen sessions over
-  `@ultracontext/mirror`; config lives in `~/.ultracontext`.
-- **Config in `~/.ultracontext/`** (NOT XDG). Writes are atomic (temp + rename).
-  SQLite self-locks via WAL — no file-lock library.
-
-## `uc` command tree
-
-- **Context group** (client-agnostic, alias `ctx`): `uc context create|append|get|update|delete|list` — `uc context delete <id...>` (many ids → batch permanent delete, needs `--permanent`). The verbs moved OFF the root so the primitive is explicit (`uc context append` answers "append WHERE").
-- **Remote** (unified coords over `config.json` via `apps/cli/lib/remote.ts`): `uc remote set <target>` (`local | user@host[:root]`; `--root`/`--host-id` the ssh leg, `--api`/`--key` the api leg) · `uc remote show` (key never printed) · `uc remote test` (per-leg reachability) · `uc remote clear` (drops coords, keeps sources). One central machine carrying both the ssh side (fs mirror + event transport) and the api side (contexts/events over HTTP — `uc serve` or hosted).
-- **Mirror** (`@ultracontext/mirror`): `uc mirror start|stop|status|list|reset` · `uc mirror source list|add|remove|enable|disable` (`--ignore` flags from `~/.ultracontext/ignores/.ultracontextignore` + per-source files; `config.toml`→`config.json` auto-migration on first run). The hub is set by `uc remote set` (NOT a `sync init` — that verb is gone); `uc mirror` only reads it.
-- **Events** (`@ultracontext/core` over an `EventStore` port): `uc event emit|tail|status|flush` · `uc event commit --from-stdin` (hub side, ssh transport target). Transport picks the api coord (HTTP `POST/GET /events`) when configured, else the ssh hub, else local. `tail` reads the hub's log when a remote hub is configured; `--local` reads this machine's own db.
-- **Drivers** (manifest reader + sh-c runner): `uc driver list` (installed `~/.ultracontext/drivers/<name>/driver.toml` manifests) · `uc driver run <driver> <command>` (run a manifest command as a local process, stream stdio through, propagate exit code)
-- **Serve** (self-host, NEW, self-contained in `apps/cli` over `@ultracontext/core` + `@ultracontext/storage` — does NOT import `apps/api`): `uc serve [--port] [--host] [--db] [--no-auth]` — the Context API + events over the LOCAL sqlite (node:http + a hand-router; runs under node AND the bun-compiled binary). Mints a bearer key bound to the CLI's `local` project on first run, printed once to stderr.
-- **Utility**: `uc update` (self-update) · `uc doctor` (env health card) · `uc init` (onboarding)
-- **Introspection**: `uc commands --json` (machine-readable tree for agents)
-
-Global flags: `--json`, `--remote`.
-
-## Pipe-awareness (load-bearing)
-
-If `--json` OR stdout is not a TTY → emit machine JSON. Data → **stdout**;
-spinners/status/logs → **stderr**. Stable string error codes. Exit `1` on
-error, `130` on user cancel.
+- Glue crates (napi/pyo3) are logic-free and test-free; all logic and tests
+  live in the core rlib.
+- Every db open sets PRAGMAs: `journal_mode=WAL`, `busy_timeout=5000`,
+  `synchronous=NORMAL`, `foreign_keys=ON`. `user_version` stamped from the
+  first release; a v1 db file is detected and fails with a stable error.
+- Keep core portable for the 2.1 wasm target: no tokio / `std::fs` /
+  `SystemTime` in the portable layer; rusqlite behind a default cargo
+  feature; `cargo check --target wasm32-unknown-unknown --no-default-features`
+  stays in CI.
+- Errors: `Result` everywhere, stable string codes. Envelope
+  `UcError { code, message }` → JS `err.code` / Python exception `.code`.
 
 ## Commands
 
 ```bash
-pnpm install                                    # deps
-
-# build + test the CLI
-pnpm --filter ultracontext run build            # tsdown → dist (uc bin + SDK)
-pnpm --filter ultracontext run test             # CLI tests (112)
-pnpm --filter ultracontext run check            # tsc --noEmit
-
-# library tests (regression guard — keep green)
-pnpm --filter @ultracontext/core run test       # 158
-pnpm --filter @ultracontext/storage run test    # 2  (uses temp SQLite files)
-pnpm --filter @ultracontext/mirror run test     # 33
-pnpm --filter ultracontext-api run test         # 23
-
-pnpm check                                      # all package checks
-
-# local API + Postgres
-pnpm ultracontext:db:up                         # local Postgres (5433)
-pnpm ultracontext:db:migrate                    # apply schema
-pnpm ultracontext:api                           # run API (port 8787)
-pnpm ultracontext:key:local                     # dev API key
-
-# single test file (node:test via tsx)
-node --import tsx --test apps/cli/lib/config.test.ts
-
-# Python SDK
-cd apps/python-sdk && pytest
+cargo test -p ultracontext        # core tests (the suite that matters)
+cargo clippy --all-targets        # lint
+cargo fmt                         # format
+# SDK tests run against BUILT artifacts (napi build / maturin develop)
 ```
-
-Tests use `node:test` (`import { describe, it } from 'node:test'`;
-`import assert from 'node:assert/strict'`) run via `tsx`. libsql `:memory:`
-does NOT share tables across connections — tests use **temp SQLite files**.
 
 ## TDD (mandatory)
 
-Every new module is RED (failing test first) → GREEN (implement). The
-regression-guard suites above must stay green at every step.
+Every module is RED (failing test first) → GREEN (implement).
 
-## Style (per package)
+## Style
 
-| Where | Indent | Quotes | Files | Module |
-|---|---|---|---|---|
-| `packages/core`, `packages/storage`, `packages/mirror`, `apps/cli`, `apps/js-sdk`, `apps/api` | 4 | single | kebab-case | TS/ESM |
-| `packages/parsers` | 2 | double | kebab-case | `.mjs` |
-
-One short semantic comment atop each logical block + a blank line between blocks.
+- Rust: rustfmt defaults; one short semantic comment atop each logical block
+  + a blank line between blocks.
+- TS wrapper: 4-space indent, single quotes, kebab-case files, ESM.
 
 ## Conventions
 
-- **Commits**: Conventional Commits — `feat(cli):`, `fix(api):`. NEVER add
-  `Co-Authored-By` lines (hard rule).
-- **Branch**: work on `feat/uc-cli`. Do not push, open PRs, or touch `main`.
-- **Tests**: `*.test.ts` near the code.
-- **Env**: `.env.example` → `.env`. Never commit secrets.
-- **Do not touch**: `apps/api`, `apps/mcp-server`. In `apps/python-sdk`, the
-  remote/API client stays DO NOT TOUCH; only its local backend (`_local.py`) is editable.
-
-## Skill routing
-
-When a request matches an available skill, invoke it via the Skill tool FIRST.
-Product ideas → office-hours · bugs/500s → investigate · ship/PR → ship ·
-QA → qa · code review → review · docs → document-release · arch review →
-plan-eng-review · design → design-consultation / design-review.
+- **Commits**: Conventional Commits. NEVER add `Co-Authored-By` (hard rule).
+- **Branch**: work on `feat/v2`. Do not push, open PRs, or touch `main`.
+- **Out of 2.0** (return additively later): wasm/browser/edge (2.1),
+  remote/hosted mode, mirror/sync, events, drivers, MCP server, the `uc` CLI.
+- Publishing (Phase 6): npm `ultracontext` + `@ultracontext/<target>`
+  platform packages (platforms first, main last), PyPI `ultracontext`,
+  crates.io `ultracontext` (glue crates `publish = false`). Version
+  single-sourced from the git tag.

@@ -1,46 +1,28 @@
-# dependencies
+# rust
+target/
+
+# node
 node_modules/
-.venv/
-venv/
-
-# build
 dist/
-build/
-*.egg-info/
-*.tsbuildinfo
+*.node
 
-# cache
+# python
+.venv/
 __pycache__/
-*.py[cod]
-.mypy_cache/
+*.pyc
 .pytest_cache/
-.eslintcache
-.cache
+*.egg-info/
 
-# env
+# data — user dbs never belong in git
+*.db
+*.db-wal
+*.db-shm
+
+# env + os
 .env
 .env.*
-!.env.example
-
-# logs
-*.log
-.ultracontext/
-
-# os
 .DS_Store
 
-# ide
-.idea/
-.vscode/
-*.swp
-
-# package managers
-.pnp.*
-.pnpm-store/
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/sdks
-!.yarn/versions
-.gstack/
+# local-only dirs
+.claude/
+me/
