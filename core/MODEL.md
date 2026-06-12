@@ -120,9 +120,11 @@ No-orphans is enforced by the SCHEMA, not by op code:
 - `update`/`delete`/`checkpoint` = one new head = one version bump. `append`
   never bumps — it extends the current head's list (an array appends
   atomically, in order).
-- Message ids are stable within a version, NOT across edits: every new head
-  re-issues copies with fresh ids (`parent_id` → original). Hold ids from
-  your latest read, not from before an edit.
+- Message ids survive edits: a copy under a new head keeps the original
+  message's id (uniqueness is per-head, an engine detail). Only the message
+  actually patched gets a new id — new content, new identity, `parent_id`
+  pointing home. An id you hold only dies when someone edits THAT message —
+  exactly the moment you should re-read.
 - Head selection: the head no other head points at; ties broken by newest
   `created_at`.
 - Broken chain (can't walk all nodes from `null`): fall back to `created_at`

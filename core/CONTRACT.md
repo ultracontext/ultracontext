@@ -48,7 +48,7 @@ Built piece by piece: **a. ops inventory** · b. data model (`MODEL.md`) ·
 ### Cross-cutting primitives (detail in `contract/v1-extraction.json`)
 
 - **Result**: every op returns `Result<T>` — `ok(data)` | `err(code, message)`.
-- **Public ids**: `ctx_` / `msg_` + 24 lowercase hex chars (12 crypto-random bytes). Message ids are stable WITHIN a version, not across edits: update/delete/checkpoint re-issue copies with fresh ids (`parent_id` → original). Hold ids from your latest `get`/`append`.
+- **Public ids**: `ctx_` / `msg_` / `art_` + 24 lowercase hex chars (12 crypto-random bytes). **Message ids are STABLE across edits** (v2 decision, diverges from v1): copy-on-write copies preserve the original id for untouched messages — uniqueness is `(head, id)` internally. A patched message gets a NEW id (new content = new identity; `parent_id` → original); a deleted one's id dies with it. Same id across versions ⇒ same logical message, same content. Stale-id semantics: reads resolve via lineage (response carries `supersedes` when it happens); writes targeting a stale id error with lineage info — silent write-resolution would mask concurrent edits.
 - **Timestamps**: ISO-8601 UTC ms precision (`YYYY-MM-DDTHH:mm:ss.sssZ`), normalization never throws, unparseable values pass through verbatim. (Unix time rejected: the db file must be human-readable — Transparency — and sec-vs-ms is a cross-language footgun.)
 - **MessageView**: `{...content, id, index, metadata, created_at}` — content spread first (generated keys win); row internals (`prev_id`, `parent_id`, `context_id`, `type`, `project_id`) never exposed. `created_at` is engine-issued — the one clock all writers share (multi-agent audit needs the when). It must ship at freeze: adding a generated key LATER would shadow user content keys (breaking).
 
@@ -133,7 +133,10 @@ The new op. FTS5 finds, bm25 orders.
 in v2: it persisted nothing and taught agents a record existed.)
 
 - **Per-message metadata**: set at `append`, carried through copies verbatim,
-  returned in every MessageView. Not filterable in 2.0.
+  returned in every MessageView. **Filterable** (v2 decision): the same
+  generic equality shape as list filters — `get(id, {metadata: {type:
+  'tool_use'}})` slices the current list; `search(q, {metadata: {...}})`
+  narrows hits. AND across keys, scalar values, top-level keys.
 
 ## g. Artifacts
 
