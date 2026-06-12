@@ -21,7 +21,7 @@ Built piece by piece: **a. ops inventory** (this section) · b. data model
 | `update-messages` | **KEPT** | Copy-on-write → new version. Patch by `id` XOR `index` (negative indices ok), batch or single, version metadata via options. |
 | `delete-messages` | **KEPT** | Soft delete = new version without the messages; recoverable via time-travel. Mixed ids/indexes. Empty ids refused loudly. |
 | `delete-context` | **KEPT** | Permanent context delete. Requires explicit `{permanent: true}` — destruction never implicit. Audit metadata echoed back. |
-| `delete-many` | **KEPT** | Batch permanent, max 100, per-item results `{results, deleted_count}` — partial success first-class, never throws. Forks of deleted roots survive (parent_id cleared). |
+| `delete-many` | **DROPPED** | It was a transport optimization (HTTP round-trips on the hosted API), not a primitive — same reason `updateMany` never existed. In-process, a loop costs the same. Returns at the transport layer if/when hosted does. |
 | `list-contexts` | **KEPT (changed)** | Roots only, newest first, default limit 20. Filter model redesigned in piece e (v1's five blessed metadata keys → generic). |
 | — | **NEW: `search`** | FTS5 full-text over messages. Spec in piece d. |
 
@@ -34,7 +34,7 @@ Built piece by piece: **a. ops inventory** (this section) · b. data model
 
 ### SDK surface decisions carried into v2 (from v1 `ultracontext.ts` + `client.py`)
 
-- **Flat class, 6 verbs**: `create` · `append` · `get` · `update` · `delete` · `deleteMany`/`delete_many`. No namespaces. Sync constructor, lazy IO.
+- **Flat class**: `create` · `append` · `get` · `update` · `delete` (+ `fork`, pending). No namespaces. Sync constructor, lazy IO.
 - **Overloads kept**: `get()` = list, `get(id)` = single · `delete(id, ids)` = soft, `delete(id, {permanent: true})` = hard.
 - **Mode rule**: `mode ?? (apiKey ? 'remote' : 'local')` — explicit mode wins. (Remote itself is out of 2.0; the rule and the config shape stay so it lands additively.)
 - **Three metadata channels**: context metadata (create) · version metadata (update / soft delete) · audit metadata (permanent delete, echoed).
