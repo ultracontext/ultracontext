@@ -23,8 +23,9 @@ you understand UltraContext.
 
 The drawing is a timeline: oldest version on the left, newest on the right.
 A read picks ONE head — the newest, unless you time-travel — and returns its
-message list. A write never edits anything: it adds a new head on the right.
-Old heads keep their old message lists forever.
+message list. Writes never edit existing rows: `append` grows the CURRENT
+(rightmost) head's list without creating a head; `update`/`delete` add a new
+head on the right. Old heads keep their old message lists forever.
 
 ## The node
 
