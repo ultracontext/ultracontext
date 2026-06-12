@@ -5,7 +5,7 @@ you understand UltraContext.
 
 ```
                       ┌──────────────────────┐
-                      │   root   ctx_4f2e…   │   the permanent id — what you hold
+                      │   root   ctx_4f2e…   │  the permanent id — what you hold
                       └──────────────────────┘
                                  ▲
                 ┌────────────────┼────────────────┐  context_id (membership)
@@ -14,11 +14,21 @@ you understand UltraContext.
           │ head  v0 │◄────│ head  v1 │◄────│ head  v2 │ ◄── CURRENT
           │ {create} │ prev│ {update} │ prev│ {delete} │     (nothing points at it)
           └──────────┘     └──────────┘     └──────────┘
-                ▲                ▲                ▲          context_id (membership)
-                │                │                │
-          msg_a ← msg_b    msg_a ← msg_b'       msg_b'
-            (prev chain)         │
-                                 └─ parent_id → msg_b  ("I came from b")
+               ▲                ▲                ▲
+               │                │                │   context_id (membership)
+          ┌──────────┐     ┌──────────┐     ┌──────────┐
+          │  msg_a   │     │  msg_a   │     │  msg_b'  │
+          │   "oi"   │     │   "oi"   │     │  "blz!"  │
+          └──────────┘     └──────────┘     └──────────┘
+               ▲                ▲
+               │ prev           │ prev
+          ┌──────────┐     ┌──────────┐
+          │  msg_b   │     │  msg_b'  │──── parent_id → msg_b
+          │  "blz?"  │     │  "blz!"  │     ("I came from b")
+          └──────────┘     └──────────┘
+
+  v0: created with two messages · v1: patched b → b' (a KEEPS its id) ·
+  v2: soft-deleted a (b' carries over, same id)
 ```
 
 The drawing is a timeline: oldest version on the left, newest on the right.
