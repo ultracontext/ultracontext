@@ -6,8 +6,8 @@ contract extracted from tag `v1-final` (160 core tests, 134 op tests) into
 test-pinned behaviors per op. This document records the v2 DECISIONS on top.
 
 Built piece by piece: **a. ops inventory** · b. data model (`MODEL.md`) ·
-**c. errors** · **d. search** · **e. list/metadata** · f. fixture suite
-(pending) · **g. artifacts**.
+**c. errors** · **d. search** · **e. list/metadata** · **f. fixtures** ·
+**g. artifacts**.
 
 ## a. Ops inventory — KEPT / DROPPED / NEW
 
@@ -174,3 +174,48 @@ same two pointers — the existing pattern a third time:
   Every artifact has exactly one owner; the scrub story stays uniform.
 - **Out of 2.0** (additive later): `{ref: path}` for huge external files,
   content-hash dedupe, history pruning.
+
+## f. Fixtures — parity as data
+
+Contract tests are DATA, not code: JSON cases in `fixtures/` (repo root),
+consumed by THREE runners — `cargo test` (core), `node:test` (built JS SDK),
+`pytest` (built wheel). Same input → same shape, code, and message in every
+layer, on every commit. "Identical surface" enforced mechanically.
+
+Case shape:
+
+```json
+{
+    "name": "append to missing context",
+    "setup": [],
+    "op": "append",
+    "input": { "id": "ctx_000000000000000000000000", "messages": [{ "text": "oi" }] },
+    "expect": { "error": { "code": "not_found", "message": "Context not found" } }
+}
+```
+
+- **`setup`**: ops run in order on a fresh temp db before the case's `op`.
+- **References**: a string starting `$setup[n]` resolves into the n-th setup
+  result — `"$setup[0].id"`, `"$setup[1].data[2].created_at"`. How
+  time-travel cases capture engine-generated ids/timestamps.
+- **Matchers** (exactly three): `"$any"` (present, any value) ·
+  `"$re:<regex>"` (e.g. `"$re:^msg_[0-9a-f]{24}$"`) · `"$len:<n>"` (array
+  length). Everything else = deep equality. Error cases match `code` AND
+  `message` exactly.
+- **Runner contract**: fresh db per case · run setup · run op · assert
+  `expect` against the result. Thin by design — all intelligence lives in
+  the fixture files.
+
+## Deferred — agreed, additive, not in 2.0
+
+Decisions already made whose surface lands in any 2.x minor without breakage:
+token counting (`chars` + `tokens_estimate` on envelopes; `tokenizer` SDK
+option for exact counts — note: exact local counting is impossible for
+Claude/Gemini anyway, tokenizers are private) · stats (`message_count`,
+`updated_at`, `version` on list rows; `stat` read) · delta reads
+(`{since: msgId}`) · concurrency preconditions (`ifVersion`/`ifLast`,
+`conflict` code, idempotency key — ships with remote mode where the retry
+window is real) · compaction/splice (range-replace as one head) ·
+`forked_from` exposure + list filter · artifact `{ref}`/dedupe/pruning ·
+`checkpoint` verb (`operation` is typed as an OPEN string in every SDK so
+new values are never breaking).
