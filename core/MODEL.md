@@ -21,8 +21,10 @@ you understand UltraContext.
                                  └─ parent_id → msg_b  ("I came from b")
 ```
 
-Reads walk left to right in time; every write adds a new head on the right.
-Nothing is ever mutated — old heads keep their old message lists forever.
+The drawing is a timeline: oldest version on the left, newest on the right.
+A read picks ONE head — the newest, unless you time-travel — and returns its
+message list. A write never edits anything: it adds a new head on the right.
+Old heads keep their old message lists forever.
 
 ## The node
 
