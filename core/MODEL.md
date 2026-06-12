@@ -79,6 +79,9 @@ The CURRENT head is the one no other head points at.
 - **Fork** = a new root (`parent_id` → source root) with the chosen version's
   messages copied under its first head — each copy's `parent_id` points at
   the source message, so provenance survives.
+- **Checkpoint** = a deliberate version: a new head with nothing changed,
+  just a name. Append is the stream; checkpoint says "this moment is
+  history-worthy".
 - **Soft delete** = just another version: a new head without the deleted
   messages. Recover by reading the previous head. No tombstones, no flags.
 - **Update** = copy-on-write: a new head with the full message list re-issued
@@ -109,8 +112,12 @@ No-orphans is enforced by the SCHEMA, not by op code:
 
 - A root never changes: id and `created_at` are set at create; list/get read
   them from the root, not the head.
-- `update`/`delete` = one new head = one version bump. `append` never bumps —
-  it extends the current head's list (an array appends atomically, in order).
+- `update`/`delete`/`checkpoint` = one new head = one version bump. `append`
+  never bumps — it extends the current head's list (an array appends
+  atomically, in order).
+- Message ids are stable within a version, NOT across edits: every new head
+  re-issues copies with fresh ids (`parent_id` → original). Hold ids from
+  your latest read, not from before an edit.
 - Head selection: the head no other head points at; ties broken by newest
   `created_at`.
 - Broken chain (can't walk all nodes from `null`): fall back to `created_at`
