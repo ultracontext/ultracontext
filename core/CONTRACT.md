@@ -16,7 +16,7 @@ Built piece by piece: **a. ops inventory** · b. data model (`MODEL.md`) ·
 |---|---|---|
 | `create-context` (plain) | **KEPT → `create`** | `create({metadata?})` — just a new root + create head. The fork half moves out (below); the v1 cross-field rule `'version, at, and before require from'` dies with the split. |
 | `create-context` (fork) | **SPLIT → `fork`** | `fork(sourceId, {version?, at?, before?, metadata?})` — new root (`parent_id` → source root), chosen version's messages copied with provenance. Same core mechanics, own verb: intent is obvious, params are always valid. Validation order stays load-bearing (timestamp parse → source lookup → head selection → at-range). |
-| — | **NEW: `checkpoint`** | `checkpoint(id, {metadata?})` → `{version}`. Cuts a version NOW: new head `{operation: 'checkpoint', affected: []}` + version metadata. Names the mechanism v1 hid behind empty updates ("update with no patches creates a head"). The deliberate commit: append = stream, checkpoint = "this moment is history-worthy". |
+| — | **PROPOSED: `checkpoint`** (decision pending) | `checkpoint(id, {metadata?})` → `{version}`. Would cut a version NOW: new head `{operation: 'checkpoint'}`. Names the mechanism v1 hid behind empty updates. Not decided — see open questions. |
 | `append-messages` | **KEPT** | Appends to the CURRENT version — no version bump (versions mark edits, not the stream; a thousand appends ≠ a thousand versions). Array = one atomic extension. Free-form content + optional per-message metadata. Time-travel within the stream via get's `{at}`/`{before}`. |
 | `get-context` | **KEPT** | Single read with time-travel selectors `{version, at, before, history}` → `{data, version, versions?}`. |
 | `get-context-messages` | **ABSORBED** | v1's option-less internal read (latest head, null on missing). Becomes an internal helper in v2, not a public op — `get` covers it. |
@@ -36,7 +36,7 @@ Built piece by piece: **a. ops inventory** · b. data model (`MODEL.md`) ·
 
 ### SDK surface decisions carried into v2 (from v1 `ultracontext.ts` + `client.py`)
 
-- **Flat class, 7 verbs**: `create` · `fork` · `checkpoint` · `get` · `append` · `update` · `delete` (+ `search`). No namespaces. Sync constructor, lazy IO.
+- **Flat class**: `create` · `fork` · `get` · `append` · `update` · `delete` · `search` (+ `checkpoint`, pending). No namespaces. Sync constructor, lazy IO.
 - **Overloads kept**: `get()` = list, `get(id)` = single · `delete(id, ids)` = soft, `delete(id, {permanent: true})` = hard.
 - **Mode rule**: `mode ?? (apiKey ? 'remote' : 'local')` — explicit mode wins. (Remote itself is out of 2.0; the rule and the config shape stay so it lands additively.)
 - **Three metadata channels**: context metadata (create) · version metadata (update / soft delete) · audit metadata (permanent delete, echoed).

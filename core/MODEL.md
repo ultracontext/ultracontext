@@ -79,9 +79,6 @@ The CURRENT head is the one no other head points at.
 - **Fork** = a new root (`parent_id` → source root) with the chosen version's
   messages copied under its first head — each copy's `parent_id` points at
   the source message, so provenance survives.
-- **Checkpoint** = a deliberate version: a new head with nothing changed,
-  just a name. Append is the stream; checkpoint says "this moment is
-  history-worthy".
 - **Soft delete** = just another version: a new head without the deleted
   messages. Recover by reading the previous head. No tombstones, no flags.
 - **Update** = copy-on-write: a new head with the full message list re-issued
