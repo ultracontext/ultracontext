@@ -8,7 +8,7 @@ document records the v2 DECISIONS on top.
 
 Built piece by piece: **a. ops inventory** · b. data model (`MODEL.md`) ·
 **c. errors** · **d. search** · **e. list/metadata** · **f. fixtures** ·
-**g. artifacts**.
+**g. artifacts** · **i. remote transport**.
 
 ## a. Ops inventory — KEPT / DROPPED / NEW
 
@@ -41,7 +41,7 @@ Built piece by piece: **a. ops inventory** · b. data model (`MODEL.md`) ·
 
 - **Flat class, 9 verbs**: `create` · `fork` · `get` · `append` · `update` · `delete` · `search` · `save` · `load`. No namespaces. Sync constructor, lazy IO.
 - **Overloads kept**: `get()` = list, `get(id)` = single · `delete(id, ids)` = soft, `delete(id, {permanent: true})` = hard.
-- **Mode rule**: `mode ?? (apiKey ? 'remote' : 'local')` — explicit mode wins. (Remote itself is out of 2.0; the rule and the config shape stay so it lands additively.)
+- **Mode rule**: `mode ?? (apiKey ? 'remote' : 'local')` — explicit mode wins. **Remote mode SHIPS in 2.0** (piece i): same surface over HTTP against the `server/` component. Browser and edge consume UltraContext this way — Supabase-style: native embedded on server/desktop, thin HTTP client where there's no real filesystem. Local stays the zero-config default.
 - **Two metadata channels**: context label (mutable) · version note (immutable) — full picture in piece e. (v1's third channel, the audit echo, is deleted in v2.)
 - **Safety rails**: empty-ids delete refused with a loud message (identical in both v1 SDKs); `permanent` + ids mutually exclusive — in v1 this check was Python-ONLY (JS had no runtime guard); v2 makes it identical in both languages, validated before any IO.
 - **v2 erases the v1 Python local-mode gaps** (subprocess limitations die with in-process core): batch update, non-content field updates, structured local metadata, full list filters, true batch delete_many.
@@ -230,6 +230,33 @@ Real needs deliberately served by composition instead of surface:
   payload-dependent verb semantics violates "append never bumps"; the need
   is covered by caching the draft's id + `update`, or by artifacts.
 
+## i. Remote transport (2.0)
+
+The browser has no real filesystem — storage there is sandboxed, evictable,
+and invisible to the user, which betrays Ownership and Transparency. So the
+browser never embeds the engine: it consumes UltraContext like Supabase
+clients consume Postgres — a thin HTTP client, same surface.
+
+- **`server/`** — new root component: a Rust (axum) binary exposing the 9
+  verbs over HTTP, core as a lib underneath. Self-host first; hosted later
+  is just someone running it for you.
+- **Wire contract**: one endpoint per verb; error codes use piece c's HTTP
+  map (404/400/503/500); bodies = the same JSON shapes the SDKs return.
+  Endpoint table specced in the piece-h addendum.
+- **Auth**: optional bearer token set at server start; binds localhost by
+  default. Deliberately minimal in 2.0.
+- **SDK wiring**: JS conditional exports — node/bun → native binding,
+  browser/edge → pure fetch client (no binary, tiny bundle). Python remote =
+  same thin client over HTTP. Mode rule decides; surface identical.
+- **Fixtures gain a 4th runner**: the same JSON cases over HTTP against a
+  spawned server — transport parity proven mechanically, like everything
+  else.
+- **Retry semantics in 2.0**: at-least-once (no idempotency keys yet — they
+  stay deferred and land additively in 2.x).
+- **wasm**: demoted from milestone to optionality. The core stays portable
+  (cheap CI check), but no wasm target ships unless a real embedded-edge
+  need appears.
+
 ## Deferred — agreed, additive, not in 2.0
 
 Decisions already made whose surface lands in any 2.x minor without breakage:
@@ -238,8 +265,8 @@ option for exact counts — note: exact local counting is impossible for
 Claude/Gemini anyway, tokenizers are private) · stats (`message_count`,
 `updated_at`, `version` on list rows; `stat` read) · delta reads
 (`{since: msgId}`) · concurrency preconditions (`ifVersion`/`ifLast`,
-`conflict` code, idempotency key — ships with remote mode where the retry
-window is real) · compaction/splice (range-replace as one head) ·
+`conflict` code, idempotency key — remote 2.0 is at-least-once; retry-safety
+lands additively in 2.x) · compaction/splice (range-replace as one head) ·
 `forked_from` exposure + list filter · artifact `{ref}`/dedupe/pruning ·
 `AsyncUltraContext` (Python async twin — sync ships first; async is an
 additive class) · structural sharing for edits (membership lists —
