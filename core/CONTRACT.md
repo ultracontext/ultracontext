@@ -18,11 +18,11 @@ Built piece by piece: **a. ops inventory** · b. data model (`MODEL.md`) ·
 | `create-context` (fork) | **SPLIT → `fork`** | `fork(sourceId, {version?, at?, before?, metadata?})` — new root (`parent_id` → source root), chosen version's messages copied with provenance. Same core mechanics, own verb: intent is obvious, params are always valid. Validation order stays load-bearing (timestamp parse → source lookup → head selection → at-range). |
 | — | **PROPOSED: `checkpoint`** (decision pending) | `checkpoint(id, {metadata?})` → `{version}`. Would cut a version NOW: new head `{operation: 'checkpoint'}`. Names the mechanism v1 hid behind empty updates. Not decided — see open questions. |
 | `append-messages` | **KEPT** | Appends to the CURRENT version — no version bump (versions mark edits, not the stream; a thousand appends ≠ a thousand versions). Array = one atomic extension. Free-form content + optional per-message metadata. Time-travel within the stream via get's `{at}`/`{before}`. |
-| `get-context` | **KEPT** | Single read with time-travel selectors `{version, at, before, history}` → `{data, version, versions?}`. |
+| `get-context` | **KEPT (extended)** | Single read with time-travel selectors `{version, at, before, history}` → `{data, version, versions?}`. NEW in v2 (agent-first): **windowed reads** — `{last: n}` / `{range: [i, j]}` slice the message list, envelope always carries `total`; truncation is announced in-band (agents miss structured-only signals). `{message: msgId}` fetches ONE message's full content — the escape hatch for search snippets. Full get stays the no-options default. |
 | `get-context-messages` | **ABSORBED** | v1's option-less internal read (latest head, null on missing). Becomes an internal helper in v2, not a public op — `get` covers it. |
 | `update-messages` | **KEPT (extended)** | Copy-on-write → new version. Patch by `id` XOR `index` (negative indices ok), batch or single, version metadata via options. NEW in v2: `update(id, {metadata})` with no patches = **context metadata update** — shallow merge onto the root's mutable label, `null` deletes a key, NO version bump (content is versioned; labels are not). |
 | `delete-messages` | **KEPT** | Soft delete = new version without the messages; recoverable via time-travel. Mixed ids/indexes. Empty ids refused loudly. |
-| `delete-context` | **KEPT** | Permanent context delete. Requires explicit `{permanent: true}` — destruction never implicit. Audit metadata echoed back. |
+| `delete-context` | **KEPT (changed)** | Permanent context delete. Requires explicit `{permanent: true}` — destruction never implicit. v2 DELETES the v1 audit-metadata echo: it stored nothing and echoed once — a false affordance teaching agents an audit record exists. Real audit = the caller's own journal. |
 | `delete-many` | **DROPPED** | It was a transport optimization (HTTP round-trips on the hosted API), not a primitive — same reason `updateMany` never existed. In-process, a loop costs the same. Returns at the transport layer if/when hosted does. |
 | `list-contexts` | **KEPT (changed)** | Roots only, newest first, default limit 20. Filter model redesigned in piece e (v1's five blessed metadata keys → generic). |
 | — | **NEW: `search`** | FTS5 full-text over messages. Spec in piece d. |
@@ -48,7 +48,7 @@ Built piece by piece: **a. ops inventory** · b. data model (`MODEL.md`) ·
 - **Result**: every op returns `Result<T>` — `ok(data)` | `err(code, message)`.
 - **Public ids**: `ctx_` / `msg_` + 24 lowercase hex chars (12 crypto-random bytes). Message ids are stable WITHIN a version, not across edits: update/delete/checkpoint re-issue copies with fresh ids (`parent_id` → original). Hold ids from your latest `get`/`append`.
 - **Timestamps**: ISO-8601 UTC ms precision (`YYYY-MM-DDTHH:mm:ss.sssZ`), normalization never throws, unparseable values pass through verbatim. (Unix time rejected: the db file must be human-readable — Transparency — and sec-vs-ms is a cross-language footgun.)
-- **MessageView**: `{...content, id, index, metadata}` — content spread first (generated keys win); row internals (`prev_id`, `parent_id`, `context_id`, `type`, `project_id`) never exposed.
+- **MessageView**: `{...content, id, index, metadata, created_at}` — content spread first (generated keys win); row internals (`prev_id`, `parent_id`, `context_id`, `type`, `project_id`) never exposed. `created_at` is engine-issued — the one clock all writers share (multi-agent audit needs the when). It must ship at freeze: adding a generated key LATER would shadow user content keys (breaking).
 
 ## c. Errors
 
@@ -88,9 +88,12 @@ Key/event/deleteMany messages die with their ops. The v1 cross-field error
 The new op. FTS5 finds, bm25 orders.
 
 - **Surface**: `search(query, {limit = 20, context_id?})` →
-  `{data: [{...content, id, index, metadata, context_id}]}` — each hit has
-  the exact shape of a `get` message plus `context_id` saying where it lives.
-  Ordered by relevance (bm25). No score field in 2.0 (additive later).
+  `{data: [{snippet, id, index, metadata, created_at, context_id}]}` — hits
+  carry a **snippet** (FTS5 `snippet()`, match highlighted), NOT full content:
+  search is the agent's recall op and 20 full multi-thousand-token messages
+  is a context-window bomb. Full content is one targeted call away:
+  `get(context_id, {message: id})`. Ordered by relevance (bm25). No score
+  field in 2.0 (additive later).
 - **What is indexed**: all string values of message `content` (walked
   recursively), space-joined. Content only — metadata is for `list` filters,
   search is for what was said. CURRENT versions only: the index mirrors
@@ -122,8 +125,10 @@ The new op. FTS5 finds, bm25 orders.
 | Channel | Lives on | Mutable? | Set via | Read via |
 |---|---|---|---|---|
 | Context label | root | YES — shallow merge, `null` deletes | `create` · `update(id, {metadata})` | `list` rows, no version bump |
-| Version note | head | no — immutable commit message | options on `update`/`delete`/`checkpoint` | `get(id, {history: true})` |
-| Audit echo | nowhere (returned only) | — | `delete(id, {permanent: true, metadata})` | the response, once |
+| Version note | head | no — immutable commit message | options on `update`/`delete` | `get(id, {history: true})` |
+
+(v1 had a third channel — audit metadata echoed by permanent delete — deleted
+in v2: it persisted nothing and taught agents a record existed.)
 
 - **Per-message metadata**: set at `append`, carried through copies verbatim,
   returned in every MessageView. Not filterable in 2.0.
