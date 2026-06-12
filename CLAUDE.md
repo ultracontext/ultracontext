@@ -1,4 +1,4 @@
-# [CLAUDE.md](http://CLAUDE.md)
+# CLAUDE.md
 
 Guidance for Claude Code working in this repo.
 

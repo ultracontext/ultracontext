@@ -23,6 +23,9 @@ are INTEGER references to `nodes.id` (rowid — always unique), which is what
 makes ON DELETE CASCADE / SET NULL work. Public ids stay the ONLY thing the
 API ever shows; rowids never leak. Same model, sound FKs.
 
+Name map (MODEL.md concept → physical column): `type` → `kind` ·
+`prev_id` → `prev` · `parent_id` → `parent` · `context_id` → `owner`.
+
 ## Schema (draft DDL — finalized by the first RED tests)
 
 ```sql
@@ -70,6 +73,10 @@ Module map (`core/src/`):
 | `fts.rs` | FTS maintenance (in-tx), query sanitizer, snippet |
 | `fixtures.rs` | runner: walks `fixtures/*.json`, executes, asserts |
 
+Portability rule (keeps 2.1 wasm alive): no tokio / `std::fs` /
+`SystemTime` in the portable layer; rusqlite stays behind the default
+`sqlite` feature; the wasm32 `cargo check` in CI is the tripwire.
+
 Workflow shape (respects TDD — every module RED→GREEN):
 
 1. **foundations** — one agent, sequential: result/ids/time/db/engine + tests
@@ -88,6 +95,8 @@ summary + test counts presented for approval.
 
 - `sdks/js/`: napi-rs glue crate (logic-free) + `index.ts` thin wrapper
   (UltraContext class, Promise API, overloads get/delete, `err.code`)
+- async mechanics: `#[napi]` async fns over `spawn_blocking` +
+  `Mutex<Connection>`; tokio lives in the GLUE crate only, never core
 - workspace member; `cargo test` stays core-only (glue is test-free)
 - runner: `node:test` consuming `fixtures/*.json` against the BUILT binding
 - bun smoke test
@@ -104,7 +113,13 @@ summary + test counts presented for approval.
 
 - `release.yml`: napi-rs official template (prebuild matrix, platforms first)
   + maturin official template (abi3 wheels) + cargo publish
-- npm `@ultracontext` org platform packages · PyPI · crates.io
+- npm `@ultracontext` org platform packages · PyPI · crates.io (core only —
+  glue crates `publish = false`)
+- version single-sourced from the git tag: stamps Cargo workspace,
+  `napi version` propagates npm packages, pyproject uses `dynamic` reading
+  Cargo.toml — one source, zero drift
+- PR CI runs on ubuntu + macos + windows (platform breakage surfaces on PR,
+  not at the first release tag)
 - dry-run via workflow_dispatch BEFORE any tag
 - v1 note: `uc update` via npm would fetch a bin-less 2.0 — accepted break,
   release notes say so

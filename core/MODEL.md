@@ -28,8 +28,8 @@ Nothing is ever mutated — old heads keep their old message lists forever.
 
 ```
 node {
-    public_id   ctx_… | msg_…     // 24 lowercase hex chars after the prefix
-    type        'context' | 'message'
+    public_id   ctx_… | msg_… | art_…   // 24 lowercase hex chars after the prefix
+    type        'context' | 'message' | 'artifact'
     content     {}                 // free-form JSON — yours
     metadata    {}                 // free-form JSON — yours
     prev_id     →  the node before me in a list      (order)
@@ -89,17 +89,19 @@ The CURRENT head is the one no other head points at.
   the source message, so provenance survives.
 - **Soft delete** = just another version: a new head without the deleted
   messages. Recover by reading the previous head. No tombstones, no flags.
-- **Update** = copy-on-write: a new head with the full message list re-issued
-  under it — every copy's `parent_id` → its original (the patched ones carry
-  the new content). Storage trades space for dead-simple reads; edits are
-  rare in agent workloads, and structural sharing (git's tree trick) can
-  replace the copy later without touching the API.
+- **Update** = copy-on-write: a new head with the message list re-issued
+  under it. Untouched messages keep their ids (a copy is the same logical
+  message); only the patched one is a NEW message — new id, new content,
+  `parent_id` pointing home. Storage trades space for dead-simple reads;
+  edits are rare in agent workloads, and structural sharing (git's tree
+  trick) can replace the copy later without touching the API.
 
 ## The one destructive op — and why nothing is left behind
 
 `delete({permanent: true})` is the only thing that ever removes rows: the
-root, every head, every message — scrubbed from all versions. Forks of the
-deleted context survive, orphaned (`parent_id` cleared to `null`).
+root, every head, every message — and every artifact — scrubbed from all
+versions. Aimed at an `art_` id, it scrubs just that artifact's chain. Forks
+of the deleted context survive, orphaned (`parent_id` cleared to `null`).
 
 No-orphans is enforced by the SCHEMA, not by op code:
 
@@ -117,9 +119,8 @@ No-orphans is enforced by the SCHEMA, not by op code:
 
 - A root never changes: id and `created_at` are set at create; list/get read
   them from the root, not the head.
-- `update`/`delete`/`checkpoint` = one new head = one version bump. `append`
-  never bumps — it extends the current head's list (an array appends
-  atomically, in order).
+- `update`/`delete` = one new head = one version bump. `append` never bumps —
+  it extends the current head's list (an array appends atomically, in order).
 - Message ids survive edits: a copy under a new head keeps the original
   message's id (uniqueness is per-head, an engine detail). Only the message
   actually patched gets a new id — new content, new identity, `parent_id`

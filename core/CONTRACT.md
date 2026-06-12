@@ -17,7 +17,7 @@ Built piece by piece: **a. ops inventory** · b. data model (`MODEL.md`) ·
 |---|---|---|
 | `create-context` (plain) | **KEPT → `create`** | `create({metadata?})` — just a new root + create head. The fork half moves out (below); the v1 cross-field rule `'version, at, and before require from'` dies with the split. |
 | `create-context` (fork) | **SPLIT → `fork`** | `fork(sourceId, {version?, at?, before?, metadata?})` — new root (`parent_id` → source root), chosen version's messages copied with provenance. Same core mechanics, own verb: intent is obvious, params are always valid. Validation order stays load-bearing (timestamp parse → source lookup → head selection → at-range). |
-| — | **PROPOSED: `checkpoint`** (decision pending) | `checkpoint(id, {metadata?})` → `{version}`. Would cut a version NOW: new head `{operation: 'checkpoint'}`. Names the mechanism v1 hid behind empty updates. Not decided — see open questions. |
+| — | **`checkpoint` — NOT in 2.0** | `checkpoint(id, {metadata?})` → `{version}` would cut a version NOW (the mechanism v1 hid behind empty updates). Never explicitly approved nor rejected — parked in Deferred; `operation` is typed open, so adding it later is a free minor. |
 | `append-messages` | **KEPT** | Appends to the CURRENT version — no version bump (versions mark edits, not the stream; a thousand appends ≠ a thousand versions). Array = one atomic extension. Free-form content + optional per-message metadata. Time-travel within the stream via get's `{at}`/`{before}`. |
 | `get-context` | **KEPT (extended)** | Single read with time-travel selectors `{version, at, before, history}` → `{data, version, versions?}`. NEW in v2 (agent-first): **windowed reads** — `{last: n}` / `{range: [i, j]}` slice the message list, envelope always carries `total`; truncation is announced in-band (agents miss structured-only signals). `{message: msgId}` fetches ONE message's full content — the escape hatch for search snippets. Full get stays the no-options default. |
 | `get-context-messages` | **ABSORBED** | v1's option-less internal read (latest head, null on missing). Becomes an internal helper in v2, not a public op — `get` covers it. |
@@ -38,10 +38,10 @@ Built piece by piece: **a. ops inventory** · b. data model (`MODEL.md`) ·
 
 ### SDK surface decisions carried into v2 (from v1 `ultracontext.ts` + `client.py`)
 
-- **Flat class**: `create` · `fork` · `get` · `append` · `update` · `delete` · `search` (+ `checkpoint`, pending). No namespaces. Sync constructor, lazy IO.
+- **Flat class, 9 verbs**: `create` · `fork` · `get` · `append` · `update` · `delete` · `search` · `save` · `load`. No namespaces. Sync constructor, lazy IO.
 - **Overloads kept**: `get()` = list, `get(id)` = single · `delete(id, ids)` = soft, `delete(id, {permanent: true})` = hard.
 - **Mode rule**: `mode ?? (apiKey ? 'remote' : 'local')` — explicit mode wins. (Remote itself is out of 2.0; the rule and the config shape stay so it lands additively.)
-- **Three metadata channels**: context metadata (create) · version metadata (update / soft delete) · audit metadata (permanent delete, echoed).
+- **Two metadata channels**: context label (mutable) · version note (immutable) — full picture in piece e. (v1's third channel, the audit echo, is deleted in v2.)
 - **Safety rails**: empty-ids delete refused with a loud message; `permanent` + ids mutually exclusive; validated before any IO, identically in both languages.
 - **v2 erases the v1 Python local-mode gaps** (subprocess limitations die with in-process core): batch update, non-content field updates, structured local metadata, full list filters, true batch delete_many.
 
@@ -50,7 +50,7 @@ Built piece by piece: **a. ops inventory** · b. data model (`MODEL.md`) ·
 - **Result**: every op returns `Result<T>` — `ok(data)` | `err(code, message)`.
 - **Public ids**: `ctx_` / `msg_` / `art_` + 24 lowercase hex chars (12 crypto-random bytes). **Message ids are STABLE across edits** (v2 decision, diverges from v1): copy-on-write copies preserve the original id for untouched messages — uniqueness is `(head, id)` internally. A patched message gets a NEW id (new content = new identity; `parent_id` → original); a deleted one's id dies with it. Same id across versions ⇒ same logical message, same content. Stale-id semantics: reads resolve via lineage (response carries `supersedes` when it happens); writes targeting a stale id error with lineage info — silent write-resolution would mask concurrent edits.
 - **Timestamps**: ISO-8601 UTC ms precision (`YYYY-MM-DDTHH:mm:ss.sssZ`), normalization never throws, unparseable values pass through verbatim. (Unix time rejected: the db file must be human-readable — Transparency — and sec-vs-ms is a cross-language footgun.)
-- **MessageView**: `{...content, id, index, metadata, created_at}` — content spread first (generated keys win); row internals (`prev_id`, `parent_id`, `context_id`, `type`, `project_id`) never exposed. `created_at` is engine-issued — the one clock all writers share (multi-agent audit needs the when). It must ship at freeze: adding a generated key LATER would shadow user content keys (breaking).
+- **MessageView**: `{...content, id, index, metadata, created_at}` — content spread first (generated keys win); row internals (`prev_id`, `parent_id`, `context_id`, `type`, rowids) never exposed. `created_at` is engine-issued — the one clock all writers share (multi-agent audit needs the when). It must ship at freeze: adding a generated key LATER would shadow user content keys (breaking).
 
 ## c. Errors
 
@@ -218,4 +218,6 @@ Claude/Gemini anyway, tokenizers are private) · stats (`message_count`,
 window is real) · compaction/splice (range-replace as one head) ·
 `forked_from` exposure + list filter · artifact `{ref}`/dedupe/pruning ·
 `checkpoint` verb (`operation` is typed as an OPEN string in every SDK so
-new values are never breaking).
+new values are never breaking) · `AsyncUltraContext` (Python async twin —
+sync ships first; async is an additive class) · structural sharing for edits
+(membership lists — engine-internal swap, API-invisible).
