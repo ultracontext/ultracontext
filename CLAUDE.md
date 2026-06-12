@@ -1,4 +1,4 @@
-# CLAUDE.md
+# [CLAUDE.md](http://CLAUDE.md)
 
 Guidance for Claude Code working in this repo.
 
@@ -43,4 +43,5 @@ Every module is RED (failing test first) → GREEN (implement).
 ## Conventions
 
 - **Commits**: Conventional Commits. NEVER add `Co-Authored-By` (hard rule).
-- **Branch**: work on `feat/v2`. Do not push, open PRs, or touch `main`.
+
+ 

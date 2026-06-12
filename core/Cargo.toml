@@ -3,8 +3,8 @@ name = "ultracontext"
 version = "2.0.0-alpha.0"
 edition = "2024"
 license = "Apache-2.0"
-description = "The context SDK for AI agents — node engine over SQLite"
-repository = "https://github.com/fabioroma/ultracontext"
+description = "The context SDK for AI"
+repository = "https://github.com/ultracontext/ultracontext"
 
 # sqlite is the default storage block; core stays portable without it (wasm later)
 [features]
