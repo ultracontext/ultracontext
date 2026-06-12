@@ -9,11 +9,10 @@ this file is HOW, those are WHAT).
 
 ## Status
 
-- DONE: contract (pieces a–g + i) · skeleton (workspace, empty core crate,
+- DONE: contract (pieces a–g) · skeleton (workspace, empty core crate,
   fixtures/, sdks/ stubs, ci.yml)
 - BLOCKED: local builds need `sudo xcodebuild -license accept` (one-time)
-- Gate 0 (this plan) → Fase 3 → gate → Fase 4 → gate → Fase 5 → gate →
-  Fase 6 (server/remote) → gate → Fase 7 (release)
+- Gate 0 (this plan) → Fase 3 → gate → Fase 4 → gate → Fase 5 → gate → Fase 6
 
 ## Two new technical decisions (need your eye)
 
@@ -142,22 +141,7 @@ summary + test counts presented for approval.
 - runner: pytest consuming the same fixtures against the built wheel
 - Gate: same fixtures green on Python. Surface diff JS↔Py = zero (modulo idiom).
 
-## Fase 6 — server + remote mode (Workflow `server-remote`)
-
-The browser/edge story (CONTRACT piece i). Supabase-style: native embedded
-where there's a filesystem, thin HTTP client where there isn't.
-
-- `server/`: new root component, Rust axum binary over the core lib —
-  workspace member. One endpoint per verb, piece-c HTTP map for errors,
-  optional bearer token, localhost bind by default, CORS for browser use
-- JS: browser/edge conditional export = pure fetch client (no binary);
-  node keeps native binding; mode rule picks remote when `apiKey`/`baseUrl`
-- Python: remote mode via the same thin HTTP client
-- Fixtures: 4th runner — same JSON cases over HTTP against a spawned server
-- Gate: fixtures green over the wire + browser smoke (fetch client in a
-  headless page against the server).
-
-## Fase 7 — release (own gate, nothing publishes without explicit go)
+## Fase 6 — release (own gate, nothing publishes without explicit go)
 
 - `release.yml`: napi-rs official template (prebuild matrix, platforms first)
   + maturin official template (abi3 wheels) + cargo publish
@@ -176,11 +160,12 @@ where there's a filesystem, thin HTTP client where there isn't.
 
 Token counting, stats, since-cursor, preconditions/idempotency, compaction,
 forked_from, artifact refs/dedupe, checkpoint (undecided, parked). Whole
-surfaces out of 2.0, returning additively: managed hosting (the hosted
-product — self-host `server/` ships IN 2.0), mirror/agent-sync, events,
-drivers, MCP server, the `uc` CLI, docs site. wasm: demoted from milestone
-to optionality — browser/edge are served by remote mode (piece i); the
-portability rule + CI check keep the door open at zero cost.
+surfaces out of 2.0, returning additively: remote/hosted + managed hosting
+(until then, browser/edge consume via the USER's own server — the Next.js
+pattern; the SDK is server-side, like any database client), mirror/agent-sync,
+events, drivers, MCP server, the `uc` CLI, docs site. wasm: demoted from
+milestone to optionality — browser never embeds the engine; the portability
+rule + CI check keep the door open at zero cost.
 
 ## Recorded rationales (so they don't live only in chat)
 

@@ -6,7 +6,7 @@ Guidance for Claude Code working in this repo.
 
 UltraContext is the context SDK for AI. You get local-first SDKs backed by a single rust core to manage the context windows of your agents and AI-powered applications.
 
-Layout: `core/` (Rust engine) · `sdks/js` · `sdks/python` · `server/` (self-host HTTP, remote mode) — components at root, languages inside `sdks/`. The op contract lives in `core/CONTRACT.md`.
+Layout: `core/` (Rust engine) · `sdks/js` · `sdks/python` — components at root, languages inside `sdks/`. The op contract lives in `core/CONTRACT.md`.
 
 ## Philosophy (load-bearing for every decision)
 
