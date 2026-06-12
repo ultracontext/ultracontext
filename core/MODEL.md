@@ -3,6 +3,27 @@
 The whole engine is one table and two pointers. If you understand this page,
 you understand UltraContext.
 
+```
+                      ┌──────────────────────┐
+                      │   root   ctx_4f2e…   │   the permanent id — what you hold
+                      └──────────────────────┘
+                                 ▲
+                ┌────────────────┼────────────────┐  context_id (membership)
+                │                │                │
+          ┌──────────┐     ┌──────────┐     ┌──────────┐
+          │ head  v0 │◄────│ head  v1 │◄────│ head  v2 │ ◄── CURRENT
+          │ {create} │ prev│ {update} │ prev│ {delete} │     (nothing points at it)
+          └──────────┘     └──────────┘     └──────────┘
+                ▲                ▲                ▲          context_id (membership)
+                │                │                │
+          msg_a ← msg_b    msg_a ← msg_b'       msg_b'
+            (prev chain)         │
+                                 └─ parent_id → msg_b  ("I came from b")
+```
+
+Reads walk left to right in time; every write adds a new head on the right.
+Nothing is ever mutated — old heads keep their old message lists forever.
+
 ## The node
 
 ```
@@ -11,10 +32,10 @@ node {
     type        'context' | 'message'
     content     {}                 // free-form JSON — yours
     metadata    {}                 // free-form JSON — yours
-    prev_id     →  the node before me        (order)
-    parent_id   →  the node I came from      (history)
-    context_id  →  which chain I belong to   (membership)
-    created_at  ISO-8601 UTC
+    prev_id     →  the node before me in a list      (order)
+    parent_id   →  the node I was derived from       (provenance)
+    context_id  →  which chain I belong to           (membership)
+    created_at
 }
 ```
 
@@ -28,57 +49,63 @@ Three kinds of node, distinguished by two fields:
 
 ## The two pointers
 
-**`prev_id` is order.** Messages in a version form a singly-linked list:
+**`prev_id` is order** — for any list. Messages in a version form a
+singly-linked list, and the heads of a context form the version chain the
+same way:
 
 ```
-null ← msg_a ← msg_b ← msg_c
+null ← msg_a ← msg_b ← msg_c        (messages within a version)
+null ← head v0 ← head v1 ← head v2  (versions within a context)
 ```
 
-Reading a context = find the chain start (`prev_id = null`), follow the links.
-No position numbers stored — `index` is computed while walking.
+No position numbers stored — `index` and `version` are computed by walking.
+The CURRENT head is the one no other head points at.
 
-**`parent_id` is history.** Every write op creates a NEW head; heads chain
-through time:
+**`parent_id` is provenance** — "where I came from", across lists:
 
-```
-root (ctx_…)                          ← the id you hold, never changes
- └─ head v0 {operation: create}
-     └─ head v1 {operation: update, affected: [msg_b]}
-         └─ head v2 {operation: delete, affected: [msg_a]}   ← current
-```
-
-Each head points at its own message list. Old heads keep pointing at the old
-lists. Nothing is ever mutated — writes only append.
+- a forked root's `parent_id` → the source root
+- a copied/patched message's `parent_id` → the original message
+- a plain create / a brand-new message → `null`
 
 ## Everything falls out of the two pointers
 
 - **Version** = a head. The version log = walking the head chain
-  (`getVersions`: index 0 = create, ascending).
+  (index 0 = create, ascending).
 - **Time-travel** = read from an older head: `get(id, {version: 1})`,
   `{at: index}`, `{before: timestamp}`.
-- **Fork** = a new root whose `parent_id` points at the source root, with the
-  chosen version's messages copied under its first head (each copy's
-  `parent_id` = the source message — provenance survives).
+- **Fork** = a new root (`parent_id` → source root) with the chosen version's
+  messages copied under its first head — each copy's `parent_id` points at
+  the source message, so provenance survives.
 - **Soft delete** = just another version: a new head without the deleted
   messages. Recover by reading the previous head. No tombstones, no flags.
 - **Update** = copy-on-write: a new head where the patched message is a new
-  node (`parent_id` = the original message).
+  node (`parent_id` → the original message).
 
-## The one destructive op
+## The one destructive op — and why nothing is left behind
 
 `delete({permanent: true})` is the only thing that ever removes rows: the
 root, every head, every message — scrubbed from all versions. Forks of the
-deleted context survive, orphaned (`parent_id` cleared to `null`). That's why
-the flag is explicit and the default delete is the versioned one: destruction
-is opt-in, always.
+deleted context survive, orphaned (`parent_id` cleared to `null`).
+
+No-orphans is enforced by the SCHEMA, not by op code:
+
+- `context_id` is a self-referential foreign key with **ON DELETE CASCADE** —
+  deleting the root cascades to every head, and each head cascades to its
+  messages. The database cannot represent a member of a deleted chain.
+- `parent_id` is a foreign key with **ON DELETE SET NULL** — provenance
+  pointers to scrubbed nodes become `null` automatically. Forks orphan
+  cleanly, never dangle.
+- The whole scrub runs in one transaction (`foreign_keys=ON` always set),
+  and a cargo test pins the invariant: after any permanent delete, zero
+  nodes whose `context_id` resolves to nothing.
 
 ## Invariants (port these exactly)
 
-- A root never changes: id, metadata, and `created_at` are set at create and
-  list/get read them from the root, not the head.
+- A root never changes: id and `created_at` are set at create; list/get read
+  them from the root, not the head.
 - One write op = one new head = one version bump — appending an array of
   messages is ONE version.
-- Head selection: the head no other node points at; ties broken by newest
+- Head selection: the head no other head points at; ties broken by newest
   `created_at`.
 - Broken chain (can't walk all nodes from `null`): fall back to `created_at`
   ascending, log loudly, never drop nodes, never error.
