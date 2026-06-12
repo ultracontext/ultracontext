@@ -6,7 +6,8 @@ contract extracted from tag `v1-final` (160 core tests, 134 op tests) into
 test-pinned behaviors per op. This document records the v2 DECISIONS on top.
 
 Built piece by piece: **a. ops inventory** · b. data model (`MODEL.md`) ·
-**c. errors** · **d. search** · **e. list/metadata** · f. fixture suite (pending).
+**c. errors** · **d. search** · **e. list/metadata** · f. fixture suite
+(pending) · **g. artifacts**.
 
 ## a. Ops inventory — KEPT / DROPPED / NEW
 
@@ -26,6 +27,7 @@ Built piece by piece: **a. ops inventory** · b. data model (`MODEL.md`) ·
 | `delete-many` | **DROPPED** | It was a transport optimization (HTTP round-trips on the hosted API), not a primitive — same reason `updateMany` never existed. In-process, a loop costs the same. Returns at the transport layer if/when hosted does. |
 | `list-contexts` | **KEPT (changed)** | Roots only, newest first, default limit 20. Filter model redesigned in piece e (v1's five blessed metadata keys → generic). |
 | — | **NEW: `search`** | FTS5 full-text over messages. Spec in piece d. |
+| — | **NEW: `save` / `load`** | Artifacts — objects attached to a context (drafts, files, images, audio). Spec in piece g. |
 
 ### Dropped with their feature (out of 2.0, return additively)
 
@@ -132,3 +134,40 @@ in v2: it persisted nothing and taught agents a record existed.)
 
 - **Per-message metadata**: set at `append`, carried through copies verbatim,
   returned in every MessageView. Not filterable in 2.0.
+
+## g. Artifacts
+
+Objects attached to a context — drafts, generated files, images, audio.
+Usually LLM-generated, regenerated over time. A fourth node kind, same table,
+same two pointers — the existing pattern a third time:
+
+- **Schema**: `type='artifact'` · `context_id` → the context ROOT (ownership;
+  ON DELETE CASCADE — scrubbing a context scrubs its artifacts, no-orphans
+  for free) · `prev_id` → the previous version of the SAME artifact (its own
+  version chain; CURRENT = the unpointed node, the existing head rule) ·
+  `parent_id` → provenance (source version on fork) · content =
+  `{name, kind, size}` + text data as a plain string · binary bytes in a
+  nullable `data BLOB` column — **in the schema from day 1** (column later =
+  migration), no base64, one SQLite file = all your data.
+- **`save(ctxId, {name, kind?, data, metadata?})`** → `{id, version}` —
+  upsert by `name` (unique per context): same name = new version of that
+  artifact, new name = new artifact. Artifacts have their OWN version clock —
+  regenerating a draft 50× bumps zero context versions, and context
+  copy-on-write never touches artifact nodes (blobs are never copied).
+- **`load(ctxId)`** → list `[{id, name, kind, size, version, created_at}]` —
+  metadata only, NO bytes (context-window friendly). `load(ctxId, nameOrId)`
+  → the current version with data. `{version: n}` time-travels an artifact.
+- **Delete**: an artifact id works in the existing verb —
+  `delete(artId, {permanent: true})` scrubs the artifact's chain. Explicit,
+  like everything destructive.
+- **Fork**: copies each artifact's CURRENT version into the new context
+  (`parent_id` → source version). History stays with the source — mirrors
+  fork copying only the chosen version's messages.
+- **Search**: current TEXT artifact versions are FTS-indexed; hits carry
+  `{artifact: name, kind, context_id}` — "where did I write about X" finds
+  the draft.
+- **Standalone artifacts**: a usage pattern, not a flavor — create a library
+  context once (`create({metadata: {name: 'assets'}})`) and `save` into it.
+  Every artifact has exactly one owner; the scrub story stays uniform.
+- **Out of 2.0** (additive later): `{ref: path}` for huge external files,
+  content-hash dedupe, history pruning.

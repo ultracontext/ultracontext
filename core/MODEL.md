@@ -39,13 +39,21 @@ node {
 }
 ```
 
-Three kinds of node, distinguished by two fields:
+Four kinds of node, distinguished by two fields:
 
 | Kind | `type` | `context_id` |
 |---|---|---|
 | **Root** — the context's permanent identity | `context` | `null` |
 | **Head** — one version of that context | `context` | root's id |
 | **Message** — one entry in a version | `message` | head's id |
+| **Artifact** — an object attached to the context | `artifact` | root's id |
+
+Artifacts are the same pattern a third time: `prev_id` chains an artifact's
+own versions (current = the unpointed node, same head rule), `parent_id` is
+provenance on fork, `context_id` ownership gives cascade scrub for free.
+Binary bytes live in a `data BLOB` column — still one inspectable file.
+Their version clock is their own: regenerating a draft never bumps the
+context's versions, and context copy-on-write never copies an artifact.
 
 ## The two pointers
 
