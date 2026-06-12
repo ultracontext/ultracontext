@@ -17,6 +17,12 @@ Layout: `core/` (Rust engine) · `sdks/js` · `sdks/python` — components at ro
 5. **Ownership** — the data and the stack are the user's; no vendor lock-in.
 6. **Simplicity** — simple beats complex; less beats more.
 
+## Working style
+
+- **Think before coding** — state assumptions; if ambiguous, present options, don't pick silently; push back when simpler path exists.
+- **Nothing speculative** — no features, abstractions, or configurability beyond the ask.
+- **Surgical changes** — touch only what the task needs; never "improve" adjacent code; remove only orphans your change created.
+
 ## Data model — everything is a node
 
 See `core/MODEL.md`.

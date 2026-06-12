@@ -1,0 +1,30 @@
+# PR gate: fmt, lint, test, and the wasm-portability check (keeps 2.1 alive)
+name: ci
+
+on:
+  push:
+    branches: [feat/v2]
+  pull_request:
+
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - name: format
+        run: cargo fmt --all --check
+
+      - name: lint
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: test
+        run: cargo test -p ultracontext
+
+      - name: wasm portability (core compiles without sqlite)
+        run: cargo check -p ultracontext --no-default-features --target wasm32-unknown-unknown

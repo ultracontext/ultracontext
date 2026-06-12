@@ -1,0 +1,9 @@
+# workspace root — components at top level, languages inside sdks/
+[workspace]
+members = ["core"]
+resolver = "3"
+
+# release binaries: small and fast
+[profile.release]
+lto = true
+strip = true
