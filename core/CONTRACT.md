@@ -1,9 +1,10 @@
 # CONTRACT — the v2 core op contract
 
 The spec the Rust core is built against. Source of truth for behavior: the v1
-contract extracted from tag `v1-final` (160 core tests, 134 op tests) into
-`contract/v1-extraction.json` — exact inputs, outputs, error codes, and
-test-pinned behaviors per op. This document records the v2 DECISIONS on top.
+contract extracted from tag `v1-final` (235 core tests; 160 in `src/ops`, 134
+covering the nine extracted context ops) into `contract/v1-extraction.json` —
+exact inputs, outputs, error codes, and test-pinned behaviors per op. This
+document records the v2 DECISIONS on top.
 
 Built piece by piece: **a. ops inventory** · b. data model (`MODEL.md`) ·
 **c. errors** · **d. search** · **e. list/metadata** · **f. fixtures** ·
@@ -42,7 +43,7 @@ Built piece by piece: **a. ops inventory** · b. data model (`MODEL.md`) ·
 - **Overloads kept**: `get()` = list, `get(id)` = single · `delete(id, ids)` = soft, `delete(id, {permanent: true})` = hard.
 - **Mode rule**: `mode ?? (apiKey ? 'remote' : 'local')` — explicit mode wins. (Remote itself is out of 2.0; the rule and the config shape stay so it lands additively.)
 - **Two metadata channels**: context label (mutable) · version note (immutable) — full picture in piece e. (v1's third channel, the audit echo, is deleted in v2.)
-- **Safety rails**: empty-ids delete refused with a loud message; `permanent` + ids mutually exclusive; validated before any IO, identically in both languages.
+- **Safety rails**: empty-ids delete refused with a loud message (identical in both v1 SDKs); `permanent` + ids mutually exclusive — in v1 this check was Python-ONLY (JS had no runtime guard); v2 makes it identical in both languages, validated before any IO.
 - **v2 erases the v1 Python local-mode gaps** (subprocess limitations die with in-process core): batch update, non-content field updates, structured local metadata, full list filters, true batch delete_many.
 
 ### Cross-cutting primitives (detail in `contract/v1-extraction.json`)
@@ -89,18 +90,23 @@ Key/event/deleteMany messages die with their ops. The v1 cross-field error
 
 The new op. FTS5 finds, bm25 orders.
 
-- **Surface**: `search(query, {limit = 20, context_id?})` →
-  `{data: [{snippet, id, index, metadata, created_at, context_id}]}` — hits
-  carry a **snippet** (FTS5 `snippet()`, match highlighted), NOT full content:
-  search is the agent's recall op and 20 full multi-thousand-token messages
-  is a context-window bomb. Full content is one targeted call away:
-  `get(context_id, {message: id})`. Ordered by relevance (bm25). No score
-  field in 2.0 (additive later).
+- **Surface**: `search(query, {limit = 20, context_id?, metadata?})` →
+  `{data: [...]}`. Message hits: `{snippet, id, index, metadata, created_at,
+  context_id}`. Artifact hits: `{snippet, id, name, kind, created_at,
+  context_id}` — no `index` (meaningless for an artifact); the `art_`/`msg_`
+  id prefix tells the kinds apart. Hits carry a **snippet** (FTS5
+  `snippet()`, match highlighted), NOT full content: search is the agent's
+  recall op and 20 full multi-thousand-token messages is a context-window
+  bomb. Full content is one targeted call away: `get(context_id, {message:
+  id})` / `load(context_id, id)`. `metadata` narrows hits (same generic
+  equality as list filters). Ordered by relevance (bm25). No score field in
+  2.0 (additive later).
 - **What is indexed**: all string values of message `content` (walked
-  recursively), space-joined. Content only — metadata is for `list` filters,
-  search is for what was said. CURRENT versions only: the index mirrors
-  present state; superseded copies leave the index when a new head lands
-  (no duplicate hits across versions). History search = additive later.
+  recursively), space-joined — plus current TEXT artifact versions (piece g).
+  Content only — metadata is for filters, search is for what was said.
+  CURRENT versions only: the index mirrors present state; superseded copies
+  leave the index when a new head lands (no duplicate hits across versions).
+  History search = additive later.
 - **Index mechanics**: FTS5 external-content table over message nodes,
   maintained inside the same transaction as the write — search works with
   zero index calls, always in sync ("just works").
@@ -122,7 +128,7 @@ The new op. FTS5 finds, bm25 orders.
   strict created_at bounds. No offset pagination; the envelope has room for
   an additive cursor.
 - **Ordering**: `created_at` DESC (newest first), pinned.
-- **The three metadata channels** (complete picture):
+- **The two metadata channels** (complete picture):
 
 | Channel | Lives on | Mutable? | Set via | Read via |
 |---|---|---|---|---|
@@ -206,6 +212,24 @@ Case shape:
   `expect` against the result. Thin by design — all intelligence lives in
   the fixture files.
 
+## Patterns, not API
+
+Real needs deliberately served by composition instead of surface:
+
+- **Subagents / nested contexts**: the inner context is a REAL context
+  (`create`/`fork`); the parent holds a small ref message `{context: id,
+  summary}` — collapsed by nature, searchable by summary, expanded only by
+  an explicit `get(innerId)`. No nesting in the schema (cascade blast radius
+  + cycle risk for near-zero gain).
+- **Tool use**: NOT a node kind — provider payload shapes churn (Anthropic ≠
+  OpenAI ≠ Gemini) and carry no new mechanics. Tool calls are message
+  content; distinguish via per-message metadata convention (`{type:
+  'tool_use'}`), filterable on get/search.
+- **Standalone artifacts**: a library context you `save` into (piece g).
+- **Keyed slots** (named replaceable message): considered and KILLED — a
+  payload-dependent verb semantics violates "append never bumps"; the need
+  is covered by caching the draft's id + `update`, or by artifacts.
+
 ## Deferred — agreed, additive, not in 2.0
 
 Decisions already made whose surface lands in any 2.x minor without breakage:
@@ -217,7 +241,10 @@ Claude/Gemini anyway, tokenizers are private) · stats (`message_count`,
 `conflict` code, idempotency key — ships with remote mode where the retry
 window is real) · compaction/splice (range-replace as one head) ·
 `forked_from` exposure + list filter · artifact `{ref}`/dedupe/pruning ·
-`checkpoint` verb (`operation` is typed as an OPEN string in every SDK so
-new values are never breaking) · `AsyncUltraContext` (Python async twin —
-sync ships first; async is an additive class) · structural sharing for edits
-(membership lists — engine-internal swap, API-invisible).
+`AsyncUltraContext` (Python async twin — sync ships first; async is an
+additive class) · structural sharing for edits (membership lists —
+engine-internal swap, API-invisible).
+
+Parked, UNDECIDED (not agreed — just not blocking, because adding later is
+free): `checkpoint` verb. `operation` is typed as an OPEN string in every
+SDK, so a future decision is never breaking either way.

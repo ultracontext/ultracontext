@@ -14,9 +14,9 @@ this file is HOW, those are WHAT).
 - BLOCKED: local builds need `sudo xcodebuild -license accept` (one-time)
 - Gate 0 (this plan) → Fase 3 → gate → Fase 4 → gate → Fase 5 → gate → Fase 6
 
-## One new technical decision (needs your eye)
+## Two new technical decisions (need your eye)
 
-**Internal pointers use rowids, not public ids.** Consequence of ids-B
+**1. Internal pointers use rowids, not public ids.** Consequence of ids-B
 (copies preserve `public_id` → message public_ids are NOT globally unique →
 SQLite foreign keys can't reference them). So: `prev` / `parent` / `owner`
 are INTEGER references to `nodes.id` (rowid — always unique), which is what
@@ -25,6 +25,27 @@ API ever shows; rowids never leak. Same model, sound FKs.
 
 Name map (MODEL.md concept → physical column): `type` → `kind` ·
 `prev_id` → `prev` · `parent_id` → `parent` · `context_id` → `owner`.
+
+**2. Artifact ids are STABLE across their versions** (caught by the audit:
+the alternative breaks the schema). An artifact's versions all live under the
+same owner (the root) — if each version kept the same `art_` id, the plain
+`UNIQUE(owner, public_id)` index would reject the second `save`. Stable ids
+are the design intent (agents cache `art_` handles), so the index carves
+artifacts out: `UNIQUE(owner, public_id) WHERE kind != 'artifact'`, and
+artifact name-uniqueness (per context, per current version) is enforced by
+the `save` op. Messages keep the plain rule (copies live under different
+heads).
+
+## Open questions (answer at Gate 0)
+
+- **Fork id semantics**: v1 issued FRESH `msg_` ids on fork (`parent_id` =
+  provenance). Keep that in v2 (my rec — fork = new identity space, no
+  cross-context id ambiguity), or extend ids-B preservation across fork?
+- **Publish strategy**: `2.0.0-alpha` first or straight `2.0.0`? (crate
+  currently stamps `2.0.0-alpha.0`); npm `@ultracontext` org must be created
+  on your account before Fase 6.
+- **CLAUDE.md branch rule**: "work on feat/v2, never touch main" was removed
+  in your trim — deliberate, or restore?
 
 ## Schema (draft DDL — finalized by the first RED tests)
 
@@ -66,7 +87,7 @@ Module map (`core/src/`):
 | `result.rs` | `Result<T>` / `UcError {code, message}` — 5 codes |
 | `ids.rs` | public id gen (prefix + 24 hex, crypto rand) |
 | `time.rs` | ISO timestamp gen + normalization (never throws) |
-| `db.rs` | open: pragmas, DDL, user_version stamp/check, v1-file detect |
+| `db.rs` | open: pragmas, DDL, user_version stamp/check, v1-file detect. Storage behind a small trait (rusqlite = the factory impl) — the seam future adapters (libsql/Turso/D1) plug into |
 | `engine.rs` | chain walks: current head, ordered messages, version log |
 | `view.rs` | MessageView assembly (+created_at), windowing (last/range/message), metadata filter |
 | `ops/` | one file per op: `create` `fork` `append` `get` `update` `delete` `list` `search` `save` `load` |
@@ -87,6 +108,17 @@ Workflow shape (respects TDD — every module RED→GREEN):
    full `cargo test` + clippy + fmt green
 5. **adversarial review** — reviewer agents against CONTRACT/MODEL invariants
    (no-orphans, ids-B, version semantics, FTS-current-only), findings fixed
+
+Before any code: a **spec addendum** (piece h) answers the 10 micro-spec
+gaps the audit found — incompatible_db detection matrix + messages, get
+selector-combination matrix + envelope (`total` scope, in-band truncation
+shape), fork id semantics, list validation (bad after/before, non-scalar
+filter values), update dispatch (label-merge vs version-note vs empty
+patches), stale-id mechanics (`supersedes` placement, stale-write
+code/message, deleted-id reads, `{message}` envelope), copied `created_at`
+(carried vs re-stamped), `save` details (identical data, kind default,
+size, text-vs-blob routing, errors), and the unified search hit shapes.
+Drafted for approval BEFORE the foundations agent starts.
 
 Deliverable: core green, fixture suite passing via `cargo test`. Gate: diff
 summary + test counts presented for approval.
@@ -127,4 +159,21 @@ summary + test counts presented for approval.
 ## Out of scope (already in CONTRACT "Deferred")
 
 Token counting, stats, since-cursor, preconditions/idempotency, compaction,
-forked_from, artifact refs/dedupe, checkpoint, wasm (2.1), remote/hosted.
+forked_from, artifact refs/dedupe, checkpoint (undecided, parked). Whole
+surfaces out of 2.0, returning additively: wasm/browser/edge (2.1),
+remote/hosted + managed hosting, mirror/agent-sync, events, drivers, MCP
+server, the `uc` CLI, docs site.
+
+## Recorded rationales (so they don't live only in chat)
+
+- **Mobile + edge are IN the product scope** — the reason the core is Rust
+  (native FFI now, wasm 2.1, UniFFI for Swift/Kotlin when mobile lands).
+- **Future blocks land at repo root** (`mirror/`, `cli/`, `docs/`) —
+  component-axis root; languages multiply inside `sdks/`.
+- **redb rejected**: no FTS — search is the central feature. **System
+  sqlite rejected**: version/FTS5 roulette per OS. **libsql/Turso rejected
+  as core dep**: ecosystem churn (clients archived/deprecated, engine being
+  rewritten) violates Ownership — returns as an optional storage-trait
+  adapter. **Direct Postgres from the SDK: forbidden** — managed DBs only
+  ever behind remote mode.
+- **crates.io publish exists to hold the `ultracontext` name** (Ownership).
