@@ -69,8 +69,11 @@ The CURRENT head is the one no other head points at.
 
 ## Everything falls out of the two pointers
 
-- **Version** = a head. The version log = walking the head chain
-  (index 0 = create, ascending).
+- **Version** = a head = an edit checkpoint. `append` extends the CURRENT
+  head's list (no new head — the stream is not history-worthy); `update` and
+  `delete` create a new head. The version log = walking the head chain
+  (index 0 = create, ascending). A version freezes the moment it is
+  superseded by the next head.
 - **Time-travel** = read from an older head: `get(id, {version: 1})`,
   `{at: index}`, `{before: timestamp}`.
 - **Fork** = a new root (`parent_id` → source root) with the chosen version's
@@ -78,8 +81,11 @@ The CURRENT head is the one no other head points at.
   the source message, so provenance survives.
 - **Soft delete** = just another version: a new head without the deleted
   messages. Recover by reading the previous head. No tombstones, no flags.
-- **Update** = copy-on-write: a new head where the patched message is a new
-  node (`parent_id` → the original message).
+- **Update** = copy-on-write: a new head with the full message list re-issued
+  under it — every copy's `parent_id` → its original (the patched ones carry
+  the new content). Storage trades space for dead-simple reads; edits are
+  rare in agent workloads, and structural sharing (git's tree trick) can
+  replace the copy later without touching the API.
 
 ## The one destructive op — and why nothing is left behind
 
@@ -103,8 +109,8 @@ No-orphans is enforced by the SCHEMA, not by op code:
 
 - A root never changes: id and `created_at` are set at create; list/get read
   them from the root, not the head.
-- One write op = one new head = one version bump — appending an array of
-  messages is ONE version.
+- `update`/`delete` = one new head = one version bump. `append` never bumps —
+  it extends the current head's list (an array appends atomically, in order).
 - Head selection: the head no other head points at; ties broken by newest
   `created_at`.
 - Broken chain (can't walk all nodes from `null`): fall back to `created_at`

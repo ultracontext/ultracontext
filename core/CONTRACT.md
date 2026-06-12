@@ -15,7 +15,7 @@ Built piece by piece: **a. ops inventory** (this section) · b. data model
 | v1 op | v2 | Notes |
 |---|---|---|
 | `create-context` | **KEPT** | Create root + fork in one op: `{from, version, at, before, metadata}`. Validation order is load-bearing (timestamp parse → require-from → source lookup → head selection → at-range). |
-| `append-messages` | **KEPT** | One call with an array = ONE version bump. Free-form message content + optional per-message metadata. |
+| `append-messages` | **KEPT** | Appends to the CURRENT version — no version bump (versions mark edits, not the stream; a thousand appends ≠ a thousand versions). Array = one atomic extension. Free-form content + optional per-message metadata. Time-travel within the stream via get's `{at}`/`{before}`. |
 | `get-context` | **KEPT** | Single read with time-travel selectors `{version, at, before, history}` → `{data, version, versions?}`. |
 | `get-context-messages` | **ABSORBED** | v1's option-less internal read (latest head, null on missing). Becomes an internal helper in v2, not a public op — `get` covers it. |
 | `update-messages` | **KEPT** | Copy-on-write → new version. Patch by `id` XOR `index` (negative indices ok), batch or single, version metadata via options. |
