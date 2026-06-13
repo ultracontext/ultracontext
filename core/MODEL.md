@@ -18,7 +18,7 @@ you understand UltraContext.
                │                │                │   context_id (membership)
           ┌──────────┐     ┌──────────┐     ┌──────────┐
           │  msg_a   │     │  msg_a   │     │  msg_b'  │
-          │   "oi"   │     │   "oi"   │     │  "blz!"  │
+          │   "oi"   |     │   "oi"   │     │  "blz!"  │
           └──────────┘     └──────────┘     └──────────┘
                ▲                ▲
                │ prev           │ prev
@@ -45,6 +45,7 @@ node {
     type        'context' | 'message' | 'artifact'
     content     {}                 // free-form JSON — yours
     metadata    {}                 // free-form JSON — yours
+    data        <bytes> | null     // artifact binary only (images/audio); null everywhere else
     prev_id     →  the node before me in a list      (order)
     parent_id   →  the node I was derived from       (provenance)
     context_id  →  which chain I belong to           (membership)
@@ -54,12 +55,14 @@ node {
 
 Four kinds of node, distinguished by two fields:
 
-| Kind | `type` | `context_id` |
-|---|---|---|
-| **Root** — the context's permanent identity | `context` | `null` |
-| **Head** — one version of that context | `context` | root's id |
-| **Message** — one entry in a version | `message` | head's id |
-| **Artifact** — an object attached to the context | `artifact` | root's id |
+
+| Kind                                             | `type`     | `context_id` |
+| ------------------------------------------------ | ---------- | ------------ |
+| **Root** — the context's permanent identity      | `context`  | `null`       |
+| **Head** — one version of that context           | `context`  | root's id    |
+| **Message** — one entry in a version             | `message`  | head's id    |
+| **Artifact** — an object attached to the context | `artifact` | root's id    |
+
 
 Artifacts are the same pattern a third time: `prev_id` chains an artifact's
 own versions (current = the unpointed node, same head rule), `parent_id` is
@@ -70,7 +73,7 @@ context's versions, and context copy-on-write never copies an artifact.
 
 ## The two pointers
 
-**`prev_id` is order** — for any list. Messages in a version form a
+`**prev_id` is order** — for any list. Messages in a version form a
 singly-linked list, and the heads of a context form the version chain the
 same way:
 
@@ -82,7 +85,7 @@ null ← head v0 ← head v1 ← head v2  (versions within a context)
 No position numbers stored — `index` and `version` are computed by walking.
 The CURRENT head is the one no other head points at.
 
-**`parent_id` is provenance** — "where I came from", across lists:
+`**parent_id` is provenance** — "where I came from", across lists:
 
 - a forked root's `parent_id` → the source root
 - a copied/patched message's `parent_id` → the original message
@@ -91,23 +94,23 @@ The CURRENT head is the one no other head points at.
 ## Everything falls out of the two pointers
 
 - **Version** = a head = an edit checkpoint. `append` extends the CURRENT
-  head's list (no new head — the stream is not history-worthy); `update` and
-  `delete` create a new head. The version log = walking the head chain
-  (index 0 = create, ascending). A version freezes the moment it is
-  superseded by the next head.
+head's list (no new head — the stream is not history-worthy); `update` and
+`delete` create a new head. The version log = walking the head chain
+(index 0 = create, ascending). A version freezes the moment it is
+superseded by the next head.
 - **Time-travel** = read from an older head: `get(id, {version: 1})`,
-  `{at: index}`, `{before: timestamp}`.
+`{at: index}`, `{before: timestamp}`.
 - **Fork** = a new root (`parent_id` → source root) with the chosen version's
-  messages copied under its first head — each copy's `parent_id` points at
-  the source message, so provenance survives.
+messages copied under its first head — each copy's `parent_id` points at
+the source message, so provenance survives.
 - **Soft delete** = just another version: a new head without the deleted
-  messages. Recover by reading the previous head. No tombstones, no flags.
+messages. Recover by reading the previous head. No tombstones, no flags.
 - **Update** = copy-on-write: a new head with the message list re-issued
-  under it. Untouched messages keep their ids (a copy is the same logical
-  message); only the patched one is a NEW message — new id, new content,
-  `parent_id` pointing home. Storage trades space for dead-simple reads;
-  edits are rare in agent workloads, and structural sharing (git's tree
-  trick) can replace the copy later without touching the API.
+under it. Untouched messages keep their ids (a copy is the same logical
+message); only the patched one is a NEW message — new id, new content,
+`parent_id` pointing home. Storage trades space for dead-simple reads;
+edits are rare in agent workloads, and structural sharing (git's tree
+trick) can replace the copy later without touching the API.
 
 ## The one destructive op — and why nothing is left behind
 
@@ -119,33 +122,33 @@ of the deleted context survive, orphaned (`parent_id` cleared to `null`).
 No-orphans is enforced by the SCHEMA, not by op code:
 
 - `context_id` is a self-referential foreign key with **ON DELETE CASCADE** —
-  deleting the root cascades to every head, and each head cascades to its
-  messages. The database cannot represent a member of a deleted chain.
+deleting the root cascades to every head, and each head cascades to its
+messages. The database cannot represent a member of a deleted chain.
 - `parent_id` is a foreign key with **ON DELETE SET NULL** — provenance
-  pointers to scrubbed nodes become `null` automatically. Forks orphan
-  cleanly, never dangle.
+pointers to scrubbed nodes become `null` automatically. Forks orphan
+cleanly, never dangle.
 - The whole scrub runs in one transaction (`foreign_keys=ON` always set),
-  and a cargo test pins the invariant: after any permanent delete, zero
-  nodes whose `context_id` resolves to nothing.
+and a cargo test pins the invariant: after any permanent delete, zero
+nodes whose `context_id` resolves to nothing.
 
 ## Invariants (port these exactly)
 
 - A root never changes: id and `created_at` are set at create; list/get read
-  them from the root, not the head.
+them from the root, not the head.
 - `update`/`delete` = one new head = one version bump. `append` never bumps —
-  it extends the current head's list (an array appends atomically, in order).
+it extends the current head's list (an array appends atomically, in order).
 - Message ids survive edits: a copy under a new head keeps the original
-  message's id (uniqueness is per-head, an engine detail). Only the message
-  actually patched gets a new id — new content, new identity, `parent_id`
-  pointing home. An id you hold only dies when someone edits THAT message —
-  exactly the moment you should re-read.
+message's id (uniqueness is per-head, an engine detail). Only the message
+actually patched gets a new id — new content, new identity, `parent_id`
+pointing home. An id you hold only dies when someone edits THAT message —
+exactly the moment you should re-read.
 - Head selection: the head no other head points at; ties broken by newest
-  `created_at`.
+`created_at`.
 - Broken chain (can't walk all nodes from `null`): fall back to `created_at`
-  ascending, log loudly, never drop nodes, never error.
+ascending, log loudly, never drop nodes, never error.
 - Heads' `metadata` carries the reserved keys `operation` + `affected`; user
-  version-metadata lives alongside them and is returned without the reserved
-  keys.
+version-metadata lives alongside them and is returned without the reserved
+keys.
 
 ## Why this model
 
