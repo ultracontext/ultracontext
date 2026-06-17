@@ -22,7 +22,7 @@ mod nfsserve;
 #[cfg(feature = "fuse")]
 mod fuse_mount;
 
-use mount_utils::{infer_kind, io_error};
+use mount_utils::{MountScope, infer_kind, io_error};
 
 fn main() {
     if let Err(error) = run(
@@ -167,7 +167,7 @@ fn run(args: Vec<String>, out: &mut dyn Write, err: &mut dyn Write) -> Result<()
             print_json(out, json!({ "synced": true, "dir": dir }))
         }
         Command::Mount {
-            ctx_id,
+            scope,
             mountpoint,
             foreground,
             backend,
@@ -177,7 +177,7 @@ fn run(args: Vec<String>, out: &mut dyn Write, err: &mut dyn Write) -> Result<()
                 content_dir,
                 inline_limit,
             },
-            ctx_id,
+            scope,
             mountpoint,
             foreground,
             backend,
@@ -243,7 +243,7 @@ enum Command {
         dir: String,
     },
     Mount {
-        ctx_id: String,
+        scope: MountScope,
         mountpoint: String,
         foreground: bool,
         backend: MountBackend,
@@ -407,14 +407,17 @@ fn parse_command(args: &mut Args) -> Result<Command, UcError> {
             Ok(Command::SyncDir { ctx_id, dir })
         }
         "mount" => {
-            let ctx_id = args.required("context id")?;
-            let mountpoint = args.required("mountpoint")?;
+            let mut positionals = Vec::new();
+            let mut scope = None;
             let mut foreground = true;
             let mut backend = MountBackend::Nfs;
-            while let Some(flag) = args.optional() {
-                match flag.as_str() {
+            while let Some(arg) = args.optional() {
+                match arg.as_str() {
                     "--foreground" => foreground = true,
                     "--background" => foreground = false,
+                    "--context" | "--ctx" => {
+                        scope = Some(MountScope::Context(args.required("--context value")?));
+                    }
                     "--backend" => {
                         backend = match args.required("--backend value")?.as_str() {
                             "nfs" => MountBackend::Nfs,
@@ -428,15 +431,13 @@ fn parse_command(args: &mut Args) -> Result<Command, UcError> {
                         };
                     }
                     _ => {
-                        return Err(UcError::new(
-                            ErrorCode::InvalidInput,
-                            format!("Unexpected argument: {flag}"),
-                        ));
+                        positionals.push(arg);
                     }
                 }
             }
+            let (scope, mountpoint) = parse_mount_positionals(scope, positionals)?;
             Ok(Command::Mount {
-                ctx_id,
+                scope,
                 mountpoint,
                 foreground,
                 backend,
@@ -545,6 +546,29 @@ fn parse_file_command(args: &mut Args) -> Result<Command, UcError> {
     }
 }
 
+fn parse_mount_positionals(
+    scope: Option<MountScope>,
+    positionals: Vec<String>,
+) -> Result<(MountScope, String), UcError> {
+    match (scope, positionals.as_slice()) {
+        (Some(scope), [mountpoint]) => Ok((scope, mountpoint.clone())),
+        (Some(_), []) => Err(UcError::new(ErrorCode::InvalidInput, "Missing mountpoint")),
+        (Some(_), _) => Err(UcError::new(
+            ErrorCode::InvalidInput,
+            "Pass only one mountpoint when using --context",
+        )),
+        (None, [mountpoint]) => Ok((MountScope::Database, mountpoint.clone())),
+        (None, [ctx_id, mountpoint]) => {
+            Ok((MountScope::Context(ctx_id.clone()), mountpoint.clone()))
+        }
+        (None, []) => Err(UcError::new(ErrorCode::InvalidInput, "Missing mountpoint")),
+        (None, _) => Err(UcError::new(
+            ErrorCode::InvalidInput,
+            "Usage: uc mount [--context ctx_id] <mountpoint>",
+        )),
+    }
+}
+
 fn parse_metadata_arg(input: Option<String>) -> Result<Value, UcError> {
     match input {
         Some(value) => serde_json::from_str(&value)
@@ -623,7 +647,7 @@ fn walk_files(root: &Path) -> Result<Vec<PathBuf>, UcError> {
 
 fn mount_context(
     store: StoreConfig,
-    ctx_id: String,
+    scope: MountScope,
     mountpoint: String,
     foreground: bool,
     backend: MountBackend,
@@ -635,7 +659,7 @@ fn mount_context(
                 db: store.db,
                 content_dir: store.content_dir,
                 inline_limit: store.inline_limit,
-                ctx_id,
+                scope,
                 mountpoint: PathBuf::from(mountpoint),
                 foreground,
             };
@@ -644,6 +668,12 @@ fn mount_context(
         MountBackend::Fuse => {
             #[cfg(feature = "fuse")]
             {
+                let MountScope::Context(ctx_id) = scope else {
+                    return Err(UcError::new(
+                        ErrorCode::InvalidInput,
+                        "FUSE backend currently requires `--context ctx_...`; DB-wide mounts use the default NFS backend",
+                    ));
+                };
                 let options = fuse_mount::MountConfig {
                     db: store.db,
                     content_dir: store.content_dir,
@@ -657,7 +687,7 @@ fn mount_context(
 
             #[cfg(not(feature = "fuse"))]
             {
-                let _ = (store, ctx_id, mountpoint, foreground);
+                let _ = (store, scope, mountpoint, foreground);
                 Err(UcError::new(
                     ErrorCode::InvalidInput,
                     "FUSE backend requires building the CLI with `--features fuse` and system FUSE installed",
@@ -721,7 +751,9 @@ Commands:
   file grep <ctx> <query> [--prefix p]
   materialize <ctx> <dir>      Write context artifacts to a directory
   sync-dir <ctx> <dir>         Import directory files as artifacts
-  mount <ctx> <mountpoint>     Mount context as a local filesystem
+  mount <mountpoint>           Mount the full DB at contexts/<ctx_id>/...
+  mount --context <ctx> <mnt>  Mount one context directly
+  mount <ctx> <mountpoint>     Legacy shorthand for --context
     [--backend nfs|fuse]       Select mount backend (default: nfs)
     [--foreground|--background]
 
@@ -794,10 +826,46 @@ mod tests {
         assert_eq!(
             parsed.command,
             Command::Mount {
-                ctx_id: "ctx_1".into(),
+                scope: MountScope::Context("ctx_1".into()),
                 mountpoint: "/tmp/uc".into(),
                 foreground: true,
                 backend: MountBackend::Fuse,
+            }
+        );
+    }
+
+    #[test]
+    fn parses_database_mount_by_default() {
+        let parsed = Invocation::parse(vec!["mount".into(), "/tmp/uc".into()]).unwrap();
+
+        assert_eq!(
+            parsed.command,
+            Command::Mount {
+                scope: MountScope::Database,
+                mountpoint: "/tmp/uc".into(),
+                foreground: true,
+                backend: MountBackend::Nfs,
+            }
+        );
+    }
+
+    #[test]
+    fn parses_context_mount_flag() {
+        let parsed = Invocation::parse(vec![
+            "mount".into(),
+            "--context".into(),
+            "ctx_1".into(),
+            "/tmp/uc".into(),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            parsed.command,
+            Command::Mount {
+                scope: MountScope::Context("ctx_1".into()),
+                mountpoint: "/tmp/uc".into(),
+                foreground: true,
+                backend: MountBackend::Nfs,
             }
         );
     }

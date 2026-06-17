@@ -1,6 +1,12 @@
 use std::path::Path;
 use ultracontext::{ErrorCode, UcError};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MountScope {
+    Database,
+    Context(String),
+}
+
 pub fn join_path(parent: &str, name: &str) -> String {
     if parent.is_empty() {
         name.to_string()

@@ -4,12 +4,32 @@ Mount adapters are the native file surface for local agents. They are exposed
 as `uc mount`. They are not the node store, not the content store, and not a
 dependency of the Rust core.
 
-The adapter mounts one context as a directory tree:
+By default, the adapter mounts the whole node database as a directory tree:
 
 ```
-ctx_.../
-  drafts/brief.md
-  uploads/screenshot.png
+contexts/
+  ctx_.../
+    drafts/brief.md
+    uploads/screenshot.png
+  ctx_.../
+    notes/meeting.md
+```
+
+That top-level namespace matters because artifact paths are scoped to a
+context. Two contexts can both contain `drafts/brief.md`, so the DB-wide mount
+uses `contexts/<ctx_id>/...` to keep paths unambiguous.
+
+For focused agent workflows, one context can also be mounted directly:
+
+```bash
+uc --db ./ultracontext.db mount --context ctx_... ./mnt
+```
+
+In context mode, the mount root is the artifact tree itself:
+
+```
+drafts/brief.md
+uploads/screenshot.png
 ```
 
 Every filesystem operation maps to the same artifact path verbs exposed by the
@@ -52,7 +72,7 @@ The NFS adapter is the default `uc mount` backend:
 
 ```bash
 cargo build -p ultracontext-cli
-./target/debug/uc --db ./ultracontext.db mount ctx_... ./mnt
+./target/debug/uc --db ./ultracontext.db mount ./mnt
 ```
 
 It runs an NFSv3 server bound to `127.0.0.1` on a high local port, then mounts
@@ -65,12 +85,13 @@ The FUSE adapter remains available as an explicit backend behind the optional
 
 ```bash
 cargo build -p ultracontext-cli --features fuse
-./target/debug/uc --db ./ultracontext.db mount ctx_... ./mnt --backend fuse
+./target/debug/uc --db ./ultracontext.db mount --context ctx_... ./mnt --backend fuse
 ```
 
 On macOS, the build host needs macFUSE/osxfuse available to `pkg-config`. On
 Linux, the host needs libfuse/fuse3 development files. Without the feature, the
-CLI still builds and `uc mount --backend fuse` returns a clear error.
+CLI still builds and `uc mount --backend fuse` returns a clear error. FUSE is
+currently context-scoped; DB-wide mounts use the default NFS backend.
 
 Both adapters link to the Rust core and call the same operations as JS/Python
 local bindings. They should never require S3-FUSE, JuiceFS, or a mounted remote

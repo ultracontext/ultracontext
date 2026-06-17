@@ -10,7 +10,9 @@ use ultracontext::{
     UltraContextOptions,
 };
 
-use crate::mount_utils::{ignored_mount_path, infer_kind, io_error, join_path, parent_path};
+use crate::mount_utils::{
+    MountScope, ignored_mount_path, infer_kind, io_error, join_path, parent_path,
+};
 use crate::nfsserve::nfs::{
     fattr3, fileid3, filename3, ftype3, nfspath3, nfsstat3, nfstime3, sattr3, set_size3, specdata3,
 };
@@ -24,7 +26,7 @@ pub struct MountConfig {
     pub db: String,
     pub content_dir: Option<PathBuf>,
     pub inline_limit: usize,
-    pub ctx_id: String,
+    pub scope: MountScope,
     pub mountpoint: PathBuf,
     pub foreground: bool,
 }
@@ -51,7 +53,7 @@ async fn mount_async(config: MountConfig) -> Result<(), UcError> {
         .map(|root| ContentStore::local_dir(root, config.inline_limit))
         .unwrap_or_else(|| ContentStore::inline_with_limit(config.inline_limit));
     let uc = UltraContext::open_with_options(&config.db, UltraContextOptions { content_store })?;
-    let fs = UcNfs::new(uc, config.ctx_id);
+    let fs = UcNfs::new(uc, config.scope);
     let port = find_available_port(DEFAULT_NFS_PORT)?;
     let bind_addr = format!("127.0.0.1:{port}");
     let listener = NFSTcpListener::bind(&bind_addr, fs)
@@ -220,7 +222,7 @@ struct UcNfs {
 
 struct NfsState {
     uc: UltraContext,
-    ctx_id: String,
+    scope: MountScope,
     next_ino: fileid3,
     uid: u32,
     gid: u32,
@@ -244,16 +246,22 @@ enum EntryKind {
     VirtualFile { size: u64 },
 }
 
+#[derive(Debug, Clone)]
+struct ArtifactTarget {
+    ctx_id: String,
+    path: String,
+}
+
 impl UcNfs {
-    fn new(uc: UltraContext, ctx_id: String) -> Self {
+    fn new(uc: UltraContext, scope: MountScope) -> Self {
         Self {
-            state: Mutex::new(NfsState::new(uc, ctx_id)),
+            state: Mutex::new(NfsState::new(uc, scope)),
         }
     }
 }
 
 impl NfsState {
-    fn new(uc: UltraContext, ctx_id: String) -> Self {
+    fn new(uc: UltraContext, scope: MountScope) -> Self {
         let mut paths = HashMap::new();
         let mut inos = HashMap::new();
         let mut path_inos = HashMap::new();
@@ -269,7 +277,7 @@ impl NfsState {
 
         Self {
             uc,
-            ctx_id,
+            scope,
             next_ino: ROOT_INO + 1,
             uid: current_uid(),
             gid: current_gid(),
@@ -282,25 +290,30 @@ impl NfsState {
     }
 
     fn refresh(&mut self) -> Result<(), UcError> {
-        let artifacts = self.uc.file_list(&self.ctx_id, None)?;
         let mut next = HashMap::new();
-        next.insert(
-            String::new(),
-            Entry {
-                ino: ROOT_INO,
-                kind: EntryKind::Directory,
-            },
-        );
+        self.insert_dir_entry(&mut next, "");
+
+        match self.scope.clone() {
+            MountScope::Context(ctx_id) => {
+                for artifact in self.uc.file_list(&ctx_id, None)? {
+                    self.insert_artifact_entry(&mut next, artifact.path.clone(), artifact);
+                }
+            }
+            MountScope::Database => {
+                self.insert_dir_entry(&mut next, "contexts");
+                for ctx in self.uc.list_contexts()? {
+                    let context_root = join_path("contexts", &ctx.id);
+                    self.insert_dir_entry(&mut next, &context_root);
+                    for artifact in self.uc.file_list(&ctx.id, None)? {
+                        let visible_path = join_path(&context_root, &artifact.path);
+                        self.insert_artifact_entry(&mut next, visible_path, artifact);
+                    }
+                }
+            }
+        }
 
         for dir in self.virtual_dirs.clone() {
-            let ino = self.ino_for_path(&dir);
-            next.insert(
-                dir,
-                Entry {
-                    ino,
-                    kind: EntryKind::Directory,
-                },
-            );
+            self.insert_dir_entry(&mut next, &dir);
         }
 
         for (path, data) in self.virtual_files.clone() {
@@ -317,21 +330,6 @@ impl NfsState {
             );
         }
 
-        for artifact in artifacts {
-            if ignored_mount_path(&artifact.path) {
-                continue;
-            }
-            self.insert_parent_dirs(&mut next, &artifact.path);
-            let ino = self.ino_for_path(&artifact.path);
-            next.insert(
-                artifact.path.clone(),
-                Entry {
-                    ino,
-                    kind: EntryKind::File(artifact),
-                },
-            );
-        }
-
         self.paths = next;
         self.inos = self
             .paths
@@ -339,6 +337,37 @@ impl NfsState {
             .map(|(path, entry)| (entry.ino, path.clone()))
             .collect();
         Ok(())
+    }
+
+    fn insert_artifact_entry(
+        &mut self,
+        entries: &mut HashMap<String, Entry>,
+        visible_path: String,
+        artifact: ArtifactMeta,
+    ) {
+        if ignored_mount_path(&visible_path) {
+            return;
+        }
+        self.insert_parent_dirs(entries, &visible_path);
+        let ino = self.ino_for_path(&visible_path);
+        entries.insert(
+            visible_path,
+            Entry {
+                ino,
+                kind: EntryKind::File(artifact),
+            },
+        );
+    }
+
+    fn insert_dir_entry(&mut self, entries: &mut HashMap<String, Entry>, path: &str) {
+        let ino = self.ino_for_path(path);
+        entries.insert(
+            path.to_string(),
+            Entry {
+                ino,
+                kind: EntryKind::Directory,
+            },
+        );
     }
 
     fn insert_parent_dirs(&mut self, entries: &mut HashMap<String, Entry>, path: &str) {
@@ -416,8 +445,59 @@ impl NfsState {
         }
     }
 
+    fn artifact_target(&self, path: &str) -> Result<ArtifactTarget, UcError> {
+        match &self.scope {
+            MountScope::Context(ctx_id) => {
+                if path.is_empty() {
+                    Err(UcError::new(
+                        ErrorCode::InvalidInput,
+                        "Path is not an artifact",
+                    ))
+                } else {
+                    Ok(ArtifactTarget {
+                        ctx_id: ctx_id.clone(),
+                        path: path.to_string(),
+                    })
+                }
+            }
+            MountScope::Database => {
+                let parts = path.splitn(3, '/').collect::<Vec<_>>();
+                if parts.len() == 3
+                    && parts[0] == "contexts"
+                    && !parts[1].is_empty()
+                    && !parts[2].is_empty()
+                {
+                    Ok(ArtifactTarget {
+                        ctx_id: parts[1].to_string(),
+                        path: parts[2].to_string(),
+                    })
+                } else {
+                    Err(UcError::new(
+                        ErrorCode::InvalidInput,
+                        "DB-wide mount artifact paths must be under contexts/<ctx_id>/",
+                    ))
+                }
+            }
+        }
+    }
+
+    fn is_managed_directory(&self, path: &str) -> bool {
+        match &self.scope {
+            MountScope::Context(_) => path.is_empty(),
+            MountScope::Database => {
+                path.is_empty()
+                    || path == "contexts"
+                    || path
+                        .strip_prefix("contexts/")
+                        .is_some_and(|rest| !rest.is_empty() && !rest.contains('/'))
+            }
+        }
+    }
+
     fn load_path(&self, path: &str) -> Result<ArtifactBytes, UcError> {
-        self.uc.load_artifact_bytes(&self.ctx_id, path, None)
+        let target = self.artifact_target(path)?;
+        self.uc
+            .load_artifact_bytes(&target.ctx_id, &target.path, None)
     }
 
     fn write_path(&mut self, path: &str, data: Vec<u8>) -> Result<ArtifactMeta, UcError> {
@@ -437,14 +517,15 @@ impl NfsState {
             return Ok(virtual_meta(path, data.len()));
         }
 
+        let target = self.artifact_target(path)?;
         let base_version = self.load_path(path).ok().map(|artifact| artifact.version);
-        let mut input = FileWrite::new(path, data)
-            .with_kind(infer_kind(path))
+        let mut input = FileWrite::new(&target.path, data)
+            .with_kind(infer_kind(&target.path))
             .with_metadata(json!({"source": "uc-nfs"}));
         if let Some(version) = base_version {
             input = input.with_if_version(version);
         }
-        self.uc.file_write(&self.ctx_id, input)
+        self.uc.file_write(&target.ctx_id, input)
     }
 
     fn remove_path(&mut self, path: &str) -> Result<(), UcError> {
@@ -453,7 +534,8 @@ impl NfsState {
             self.inos.retain(|_, candidate| candidate != path);
             return Ok(());
         }
-        self.uc.file_remove(&self.ctx_id, path, None)
+        let target = self.artifact_target(path)?;
+        self.uc.file_remove(&target.ctx_id, &target.path, None)
     }
 
     fn truncate(&mut self, path: &str, size: u64) -> Result<ArtifactMeta, UcError> {
@@ -495,7 +577,10 @@ impl NfsState {
     fn children(&self, path: &str) -> Vec<DirEntry> {
         let mut by_name = BTreeMap::new();
         for (candidate, entry) in &self.paths {
-            if candidate.is_empty() || parent_path(candidate) != path {
+            if candidate.is_empty()
+                || ignored_mount_path(candidate)
+                || parent_path(candidate) != path
+            {
                 continue;
             }
             let Some(name) = candidate.rsplit('/').next() else {
@@ -514,10 +599,13 @@ impl NfsState {
     }
 
     fn create_file(&mut self, path: &str, attr: sattr3) -> Result<(fileid3, fattr3), nfsstat3> {
-        if let Some(entry) = self.paths.get(path)
-            && matches!(attr.size, set_size3::Void)
-        {
-            return Ok((entry.ino, self.entry_attr(entry)));
+        if let Some(entry) = self.paths.get(path) {
+            if matches!(entry.kind, EntryKind::Directory) {
+                return Err(nfsstat3::NFS3ERR_ISDIR);
+            }
+            if matches!(attr.size, set_size3::Void) {
+                return Ok((entry.ino, self.entry_attr(entry)));
+            }
         }
 
         let size = match attr.size {
@@ -548,24 +636,56 @@ impl NfsState {
             return Ok(());
         }
 
+        let from_target = self.artifact_target(from)?;
         let source = self.load_path(from)?;
-        if self.load_path(to).is_ok() || ignored_mount_path(to) {
+        if ignored_mount_path(to) {
             self.write_path(to, source.data)?;
             self.remove_path(from)
+        } else if let Ok(to_target) = self.artifact_target(to) {
+            if from_target.ctx_id == to_target.ctx_id && self.load_path(to).is_err() {
+                self.uc
+                    .file_move(
+                        &from_target.ctx_id,
+                        &from_target.path,
+                        &to_target.path,
+                        None,
+                    )
+                    .map(|_| ())
+            } else {
+                self.write_path(to, source.data)?;
+                self.remove_path(from)
+            }
         } else {
-            self.uc.file_move(&self.ctx_id, from, to, None).map(|_| ())
+            Err(UcError::new(
+                ErrorCode::InvalidInput,
+                "Target path is not inside a mounted context",
+            ))
         }
     }
 
     fn rename_directory(&mut self, from: &str, to: &str) -> Result<(), UcError> {
+        if self.is_managed_directory(from) || self.is_managed_directory(to) {
+            return Err(UcError::new(
+                ErrorCode::InvalidInput,
+                "Cannot rename managed mount directories",
+            ));
+        }
+
         let prefix = format!("{from}/");
-        let artifacts = self.uc.file_list(&self.ctx_id, Some(&prefix))?;
-        for artifact in artifacts {
-            let suffix = artifact
-                .path
-                .strip_prefix(&prefix)
-                .ok_or_else(|| UcError::new(ErrorCode::Internal, "Invalid directory rename"))?;
-            self.rename_file(&artifact.path, &join_path(to, suffix))?;
+        let artifact_children = self
+            .paths
+            .iter()
+            .filter_map(|(path, entry)| {
+                matches!(entry.kind, EntryKind::File(_))
+                    .then(|| {
+                        path.strip_prefix(&prefix)
+                            .map(|suffix| (path.clone(), suffix.to_string()))
+                    })
+                    .flatten()
+            })
+            .collect::<Vec<_>>();
+        for (path, suffix) in artifact_children {
+            self.rename_file(&path, &join_path(to, &suffix))?;
         }
 
         let virtual_children = self
@@ -709,6 +829,9 @@ impl NFSFileSystem for UcNfs {
         if state.paths.contains_key(&path) {
             return Err(nfsstat3::NFS3ERR_EXIST);
         }
+        if state.is_managed_directory(&path) || state.artifact_target(&path).is_err() {
+            return Err(nfsstat3::NFS3ERR_ACCES);
+        }
         let ino = state.ino_for_path(&path);
         let entry = Entry {
             ino,
@@ -745,6 +868,9 @@ impl NFSFileSystem for UcNfs {
 
         match entry.kind {
             EntryKind::Directory => {
+                if state.is_managed_directory(&path) {
+                    return Err(nfsstat3::NFS3ERR_ACCES);
+                }
                 if state
                     .paths
                     .keys()
