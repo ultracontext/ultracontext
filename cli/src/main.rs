@@ -169,8 +169,9 @@ fn run(args: Vec<String>, out: &mut dyn Write, err: &mut dyn Write) -> Result<()
         Command::Mount {
             scope,
             mountpoint,
-            foreground,
+            mode,
             backend,
+            state_file,
         } => mount_context(
             StoreConfig {
                 db,
@@ -179,10 +180,15 @@ fn run(args: Vec<String>, out: &mut dyn Write, err: &mut dyn Write) -> Result<()
             },
             scope,
             mountpoint,
-            foreground,
+            mode,
             backend,
+            state_file,
             err,
         ),
+        Command::Unmount { mountpoint } => {
+            nfs_mount::unmount(PathBuf::from(&mountpoint))?;
+            print_json(out, json!({ "unmounted": true, "mountpoint": mountpoint }))
+        }
     }
 }
 
@@ -245,8 +251,12 @@ enum Command {
     Mount {
         scope: MountScope,
         mountpoint: String,
-        foreground: bool,
+        mode: MountMode,
         backend: MountBackend,
+        state_file: Option<PathBuf>,
+    },
+    Unmount {
+        mountpoint: String,
     },
 }
 
@@ -254,6 +264,13 @@ enum Command {
 enum MountBackend {
     Nfs,
     Fuse,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MountMode {
+    Default,
+    Foreground,
+    Background,
 }
 
 impl Invocation {
@@ -406,15 +423,21 @@ fn parse_command(args: &mut Args) -> Result<Command, UcError> {
             args.finish()?;
             Ok(Command::SyncDir { ctx_id, dir })
         }
+        "unmount" | "umount" => {
+            let mountpoint = args.required("mountpoint")?;
+            args.finish()?;
+            Ok(Command::Unmount { mountpoint })
+        }
         "mount" => {
             let mut positionals = Vec::new();
             let mut scope = None;
-            let mut foreground = true;
+            let mut mode = MountMode::Default;
             let mut backend = MountBackend::Nfs;
+            let mut state_file = None;
             while let Some(arg) = args.optional() {
                 match arg.as_str() {
-                    "--foreground" => foreground = true,
-                    "--background" => foreground = false,
+                    "--foreground" => mode = MountMode::Foreground,
+                    "--background" => mode = MountMode::Background,
                     "--context" | "--ctx" => {
                         scope = Some(MountScope::Context(args.required("--context value")?));
                     }
@@ -430,6 +453,10 @@ fn parse_command(args: &mut Args) -> Result<Command, UcError> {
                             }
                         };
                     }
+                    "--mount-state-file" => {
+                        state_file =
+                            Some(PathBuf::from(args.required("--mount-state-file value")?));
+                    }
                     _ => {
                         positionals.push(arg);
                     }
@@ -439,8 +466,9 @@ fn parse_command(args: &mut Args) -> Result<Command, UcError> {
             Ok(Command::Mount {
                 scope,
                 mountpoint,
-                foreground,
+                mode,
                 backend,
+                state_file,
             })
         }
         _ => Err(UcError::new(
@@ -649,10 +677,18 @@ fn mount_context(
     store: StoreConfig,
     scope: MountScope,
     mountpoint: String,
-    foreground: bool,
+    mode: MountMode,
     backend: MountBackend,
+    state_file: Option<PathBuf>,
     _err: &mut dyn Write,
 ) -> Result<(), UcError> {
+    let foreground = match (backend, mode) {
+        (_, MountMode::Foreground) => true,
+        (_, MountMode::Background) => false,
+        (MountBackend::Nfs, MountMode::Default) => false,
+        (MountBackend::Fuse, MountMode::Default) => true,
+    };
+
     match backend {
         MountBackend::Nfs => {
             let options = nfs_mount::MountConfig {
@@ -662,6 +698,7 @@ fn mount_context(
                 scope,
                 mountpoint: PathBuf::from(mountpoint),
                 foreground,
+                state_file,
             };
             nfs_mount::mount(options)
         }
@@ -754,12 +791,14 @@ Commands:
   mount <mountpoint>           Mount the full DB at contexts/<ctx_id>/...
   mount --context <ctx> <mnt>  Mount one context directly
   mount <ctx> <mountpoint>     Legacy shorthand for --context
+  unmount <mountpoint>         Unmount and stop the local mount server
     [--backend nfs|fuse]       Select mount backend (default: nfs)
     [--foreground|--background]
 
 Mount:
-  NFS is the default backend and does not require macFUSE.
-  FUSE is optional: build with `--features fuse` and pass `--backend fuse`.
+  NFS is the default backend, runs in background by default, and does not require macFUSE.
+  Use `uc unmount <mountpoint>` to stop it. Pass --foreground for logs/debug.
+  FUSE is optional and foreground-only.
 "#,
     )
     .map_err(io_error)
@@ -828,8 +867,9 @@ mod tests {
             Command::Mount {
                 scope: MountScope::Context("ctx_1".into()),
                 mountpoint: "/tmp/uc".into(),
-                foreground: true,
+                mode: MountMode::Default,
                 backend: MountBackend::Fuse,
+                state_file: None,
             }
         );
     }
@@ -843,8 +883,9 @@ mod tests {
             Command::Mount {
                 scope: MountScope::Database,
                 mountpoint: "/tmp/uc".into(),
-                foreground: true,
+                mode: MountMode::Default,
                 backend: MountBackend::Nfs,
+                state_file: None,
             }
         );
     }
@@ -864,8 +905,21 @@ mod tests {
             Command::Mount {
                 scope: MountScope::Context("ctx_1".into()),
                 mountpoint: "/tmp/uc".into(),
-                foreground: true,
+                mode: MountMode::Default,
                 backend: MountBackend::Nfs,
+                state_file: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parses_unmount() {
+        let parsed = Invocation::parse(vec!["unmount".into(), "/tmp/uc".into()]).unwrap();
+
+        assert_eq!(
+            parsed.command,
+            Command::Unmount {
+                mountpoint: "/tmp/uc".into(),
             }
         );
     }

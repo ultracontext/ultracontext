@@ -1,8 +1,13 @@
 use async_trait::async_trait;
+use serde_json::Value;
 use serde_json::json;
+use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::env;
+use std::fs::{self, OpenOptions};
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 use ultracontext::{
@@ -21,6 +26,7 @@ use crate::nfsserve::vfs::{DirEntry, NFSFileSystem, ReadDirResult, VFSCapabiliti
 
 const ROOT_INO: fileid3 = 1;
 const DEFAULT_NFS_PORT: u16 = 11111;
+const STATE_DIR_ENV: &str = "UC_MOUNT_STATE_DIR";
 
 pub struct MountConfig {
     pub db: String,
@@ -29,14 +35,12 @@ pub struct MountConfig {
     pub scope: MountScope,
     pub mountpoint: PathBuf,
     pub foreground: bool,
+    pub state_file: Option<PathBuf>,
 }
 
 pub fn mount(config: MountConfig) -> Result<(), UcError> {
     if !config.foreground {
-        return Err(UcError::new(
-            ErrorCode::InvalidInput,
-            "background mount is not supported yet; run `uc mount` in the foreground",
-        ));
+        return spawn_background(config);
     }
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -46,7 +50,123 @@ pub fn mount(config: MountConfig) -> Result<(), UcError> {
     runtime.block_on(mount_async(config))
 }
 
+pub fn unmount(mountpoint: PathBuf) -> Result<(), UcError> {
+    let mountpoint = canonical_mountpoint(&mountpoint);
+    let state_file = state_file_for_mountpoint(&mountpoint)?;
+    let pid = read_mount_state(&state_file).and_then(|state| state.pid);
+
+    unmount_nfs(&mountpoint)?;
+
+    if let Some(pid) = pid {
+        terminate_process(pid);
+    }
+
+    let _ = fs::remove_file(&state_file);
+    let _ = fs::remove_file(log_file_for_state(&state_file));
+    Ok(())
+}
+
+fn spawn_background(config: MountConfig) -> Result<(), UcError> {
+    let mountpoint = canonical_mountpoint(&config.mountpoint);
+    fs::create_dir_all(&mountpoint).map_err(io_error)?;
+
+    let state_file = state_file_for_mountpoint(&mountpoint)?;
+    let log_file = log_file_for_state(&state_file);
+    fs::create_dir_all(state_file.parent().unwrap_or_else(|| Path::new("."))).map_err(io_error)?;
+
+    if let Some(state) = read_mount_state(&state_file)
+        && state.pid.is_some_and(process_running)
+    {
+        return Err(UcError::new(
+            ErrorCode::Busy,
+            format!(
+                "Mount already appears to be running at {}",
+                mountpoint.display()
+            ),
+        ));
+    }
+    let _ = fs::remove_file(&state_file);
+    let _ = fs::remove_file(&log_file);
+
+    let exe = env::current_exe().map_err(io_error)?;
+    let mut command = Command::new(exe);
+    command
+        .arg("--db")
+        .arg(&config.db)
+        .arg("--inline-limit")
+        .arg(config.inline_limit.to_string());
+    if let Some(content_dir) = &config.content_dir {
+        command.arg("--content-dir").arg(content_dir);
+    }
+    command.arg("mount");
+    if let MountScope::Context(ctx_id) = &config.scope {
+        command.arg("--context").arg(ctx_id);
+    }
+    command
+        .arg(&mountpoint)
+        .arg("--backend")
+        .arg("nfs")
+        .arg("--foreground")
+        .arg("--mount-state-file")
+        .arg(&state_file);
+
+    let log = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_file)
+        .map_err(io_error)?;
+    let log_err = log.try_clone().map_err(io_error)?;
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(log))
+        .stderr(Stdio::from(log_err));
+
+    detach_command(&mut command);
+
+    let mut child = command.spawn().map_err(io_error)?;
+    let child_pid = child.id();
+    for _ in 0..50 {
+        if read_mount_state(&state_file)
+            .and_then(|state| state.pid)
+            .is_some_and(|pid| pid == child_pid)
+        {
+            std::thread::sleep(Duration::from_millis(200));
+            if process_running(child_pid) {
+                return Ok(());
+            }
+            let _ = fs::remove_file(&state_file);
+            return Err(UcError::new(
+                ErrorCode::Internal,
+                format!(
+                    "Background mount process exited after mounting. See log: {}",
+                    log_file.display()
+                ),
+            ));
+        }
+        if let Some(status) = child.try_wait().map_err(io_error)? {
+            let _ = fs::remove_file(&state_file);
+            return Err(UcError::new(
+                ErrorCode::Internal,
+                format!(
+                    "Background mount exited with status {status}. See log: {}",
+                    log_file.display()
+                ),
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    Err(UcError::new(
+        ErrorCode::Busy,
+        format!(
+            "Timed out waiting for background mount. See log: {}",
+            log_file.display()
+        ),
+    ))
+}
+
 async fn mount_async(config: MountConfig) -> Result<(), UcError> {
+    fs::create_dir_all(&config.mountpoint).map_err(io_error)?;
     let content_store = config
         .content_dir
         .as_ref()
@@ -66,33 +186,157 @@ async fn mount_async(config: MountConfig) -> Result<(), UcError> {
 
     tokio::time::sleep(Duration::from_millis(100)).await;
     mount_nfs(port, &config.mountpoint)?;
+    write_mount_state(config.state_file.as_deref(), &config.mountpoint, port)?;
 
-    wait_for_shutdown().await;
-    let _ = unmount_nfs(&config.mountpoint);
-    server.abort();
+    if config.state_file.is_some() {
+        wait_for_daemon_shutdown().await;
+    } else {
+        wait_for_foreground_shutdown().await;
+        let _ = unmount_nfs(&config.mountpoint);
+        remove_current_mount_state(config.state_file.as_deref(), &config.mountpoint);
+        server.abort();
+    }
     Ok(())
 }
 
-#[cfg(unix)]
-async fn wait_for_shutdown() {
-    let _ = tokio::signal::ctrl_c().await;
-}
-
-#[cfg(not(unix))]
-async fn wait_for_shutdown() {
-    std::future::pending::<()>().await;
-}
-
 fn find_available_port(start: u16) -> Result<u16, UcError> {
-    for port in start..start.saturating_add(100) {
-        if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
-            return Ok(port);
+    let mut last_error = None;
+    for port in start..=u16::MAX {
+        match std::net::TcpListener::bind(("127.0.0.1", port)) {
+            Ok(_) => return Ok(port),
+            Err(error) => last_error = Some(error),
         }
     }
     Err(UcError::new(
         ErrorCode::Busy,
-        format!("No available NFS port in range {start}-{}", start + 99),
+        format!(
+            "No available NFS port from {start}: {}",
+            last_error
+                .map(|error| error.to_string())
+                .unwrap_or_else(|| "unknown bind error".to_string())
+        ),
     ))
+}
+
+#[cfg(unix)]
+fn detach_command(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
+#[cfg(not(unix))]
+fn detach_command(_command: &mut Command) {}
+
+#[derive(Debug, Clone)]
+struct MountState {
+    pid: Option<u32>,
+}
+
+fn write_mount_state(
+    state_file: Option<&Path>,
+    mountpoint: &Path,
+    port: u16,
+) -> Result<(), UcError> {
+    let Some(state_file) = state_file else {
+        return Ok(());
+    };
+    fs::create_dir_all(state_file.parent().unwrap_or_else(|| Path::new("."))).map_err(io_error)?;
+    let mountpoint = canonical_mountpoint(mountpoint);
+    let state = json!({
+        "pid": std::process::id(),
+        "mountpoint": mountpoint,
+        "port": port,
+    });
+    fs::write(state_file, state.to_string()).map_err(io_error)
+}
+
+fn remove_current_mount_state(state_file: Option<&Path>, mountpoint: &Path) {
+    if let Some(state_file) = state_file {
+        let _ = fs::remove_file(state_file);
+    } else if let Ok(state_file) = state_file_for_mountpoint(&canonical_mountpoint(mountpoint)) {
+        let _ = fs::remove_file(state_file);
+    }
+}
+
+fn read_mount_state(path: &Path) -> Option<MountState> {
+    let data = fs::read_to_string(path).ok()?;
+    let value = serde_json::from_str::<Value>(&data).ok()?;
+    Some(MountState {
+        pid: value
+            .get("pid")
+            .and_then(Value::as_u64)
+            .and_then(|pid| u32::try_from(pid).ok()),
+    })
+}
+
+fn canonical_mountpoint(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| {
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(path)
+        }
+    })
+}
+
+fn state_dir() -> PathBuf {
+    env::var_os(STATE_DIR_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| env::temp_dir().join("ultracontext-mounts"))
+}
+
+fn state_file_for_mountpoint(mountpoint: &Path) -> Result<PathBuf, UcError> {
+    let mut hasher = DefaultHasher::new();
+    mountpoint.to_string_lossy().hash(&mut hasher);
+    Ok(state_dir().join(format!("{:016x}.json", hasher.finish())))
+}
+
+fn log_file_for_state(state_file: &Path) -> PathBuf {
+    state_file.with_extension("log")
+}
+
+#[cfg(unix)]
+fn process_running(pid: u32) -> bool {
+    unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+}
+
+#[cfg(not(unix))]
+fn process_running(_pid: u32) -> bool {
+    false
+}
+
+#[cfg(unix)]
+fn terminate_process(pid: u32) {
+    unsafe {
+        libc::kill(pid as libc::pid_t, libc::SIGTERM);
+    }
+}
+
+#[cfg(not(unix))]
+fn terminate_process(_pid: u32) {}
+
+#[cfg(unix)]
+async fn wait_for_foreground_shutdown() {
+    let _ = tokio::signal::ctrl_c().await;
+}
+
+#[cfg(not(unix))]
+async fn wait_for_foreground_shutdown() {
+    std::future::pending::<()>().await;
+}
+
+async fn wait_for_daemon_shutdown() {
+    std::future::pending::<()>().await;
 }
 
 #[cfg(target_os = "macos")]

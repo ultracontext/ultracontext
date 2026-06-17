@@ -80,6 +80,19 @@ that export into the requested directory. On macOS this uses `/sbin/mount_nfs`;
 on Linux it uses `mount -t nfs`. It does not require macFUSE or a kernel
 extension.
 
+NFS mounts run in the background by default. Use `uc unmount` to stop the
+server and unmount the directory:
+
+```bash
+./target/debug/uc unmount ./mnt
+```
+
+For debugging logs in the current terminal, pass `--foreground`:
+
+```bash
+./target/debug/uc --db ./ultracontext.db mount ./mnt --foreground
+```
+
 The FUSE adapter remains available as an explicit backend behind the optional
 `fuse` feature:
 
@@ -91,7 +104,8 @@ cargo build -p ultracontext-cli --features fuse
 On macOS, the build host needs macFUSE/osxfuse available to `pkg-config`. On
 Linux, the host needs libfuse/fuse3 development files. Without the feature, the
 CLI still builds and `uc mount --backend fuse` returns a clear error. FUSE is
-currently context-scoped; DB-wide mounts use the default NFS backend.
+currently context-scoped and foreground-only; DB-wide/background mounts use the
+default NFS backend.
 
 Both adapters link to the Rust core and call the same operations as JS/Python
 local bindings. They should never require S3-FUSE, JuiceFS, or a mounted remote
