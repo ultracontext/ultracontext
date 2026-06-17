@@ -7,8 +7,22 @@ use ultracontext::{
     ContentStore, ErrorCode, FileWrite, UcError, UltraContext, UltraContextOptions,
 };
 
+mod mount_utils;
+mod nfs_mount;
+#[allow(
+    dead_code,
+    non_camel_case_types,
+    non_snake_case,
+    non_upper_case_globals,
+    unused_imports,
+    unused_variables
+)]
+mod nfsserve;
+
 #[cfg(feature = "fuse")]
 mod fuse_mount;
+
+use mount_utils::{infer_kind, io_error};
 
 fn main() {
     if let Err(error) = run(
@@ -156,6 +170,7 @@ fn run(args: Vec<String>, out: &mut dyn Write, err: &mut dyn Write) -> Result<()
             ctx_id,
             mountpoint,
             foreground,
+            backend,
         } => mount_context(
             StoreConfig {
                 db,
@@ -165,6 +180,7 @@ fn run(args: Vec<String>, out: &mut dyn Write, err: &mut dyn Write) -> Result<()
             ctx_id,
             mountpoint,
             foreground,
+            backend,
             err,
         ),
     }
@@ -230,7 +246,14 @@ enum Command {
         ctx_id: String,
         mountpoint: String,
         foreground: bool,
+        backend: MountBackend,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MountBackend {
+    Nfs,
+    Fuse,
 }
 
 impl Invocation {
@@ -387,10 +410,23 @@ fn parse_command(args: &mut Args) -> Result<Command, UcError> {
             let ctx_id = args.required("context id")?;
             let mountpoint = args.required("mountpoint")?;
             let mut foreground = true;
+            let mut backend = MountBackend::Nfs;
             while let Some(flag) = args.optional() {
                 match flag.as_str() {
                     "--foreground" => foreground = true,
                     "--background" => foreground = false,
+                    "--backend" => {
+                        backend = match args.required("--backend value")?.as_str() {
+                            "nfs" => MountBackend::Nfs,
+                            "fuse" => MountBackend::Fuse,
+                            other => {
+                                return Err(UcError::new(
+                                    ErrorCode::InvalidInput,
+                                    format!("Unknown mount backend: {other}"),
+                                ));
+                            }
+                        };
+                    }
                     _ => {
                         return Err(UcError::new(
                             ErrorCode::InvalidInput,
@@ -403,6 +439,7 @@ fn parse_command(args: &mut Args) -> Result<Command, UcError> {
                 ctx_id,
                 mountpoint,
                 foreground,
+                backend,
             })
         }
         _ => Err(UcError::new(
@@ -589,46 +626,45 @@ fn mount_context(
     ctx_id: String,
     mountpoint: String,
     foreground: bool,
+    backend: MountBackend,
     _err: &mut dyn Write,
 ) -> Result<(), UcError> {
-    #[cfg(feature = "fuse")]
-    {
-        let options = fuse_mount::MountConfig {
-            db: store.db,
-            content_dir: store.content_dir,
-            inline_limit: store.inline_limit,
-            ctx_id,
-            mountpoint: PathBuf::from(mountpoint),
-            foreground,
-        };
-        fuse_mount::mount(options)
-    }
+    match backend {
+        MountBackend::Nfs => {
+            let options = nfs_mount::MountConfig {
+                db: store.db,
+                content_dir: store.content_dir,
+                inline_limit: store.inline_limit,
+                ctx_id,
+                mountpoint: PathBuf::from(mountpoint),
+                foreground,
+            };
+            nfs_mount::mount(options)
+        }
+        MountBackend::Fuse => {
+            #[cfg(feature = "fuse")]
+            {
+                let options = fuse_mount::MountConfig {
+                    db: store.db,
+                    content_dir: store.content_dir,
+                    inline_limit: store.inline_limit,
+                    ctx_id,
+                    mountpoint: PathBuf::from(mountpoint),
+                    foreground,
+                };
+                fuse_mount::mount(options)
+            }
 
-    #[cfg(not(feature = "fuse"))]
-    {
-        let _ = (store, ctx_id, mountpoint, foreground, _err);
-        Err(UcError::new(
-            ErrorCode::InvalidInput,
-            "uc mount requires building the CLI with `--features fuse` and system FUSE installed",
-        ))
+            #[cfg(not(feature = "fuse"))]
+            {
+                let _ = (store, ctx_id, mountpoint, foreground);
+                Err(UcError::new(
+                    ErrorCode::InvalidInput,
+                    "FUSE backend requires building the CLI with `--features fuse` and system FUSE installed",
+                ))
+            }
+        }
     }
-}
-
-fn infer_kind(path: &str) -> String {
-    match Path::new(path).extension().and_then(|ext| ext.to_str()) {
-        Some("md") | Some("markdown") => "text/markdown",
-        Some("json") => "application/json",
-        Some("html") => "text/html",
-        Some("css") => "text/css",
-        Some("js") | Some("mjs") | Some("ts") | Some("tsx") | Some("jsx") => "text/javascript",
-        Some("png") => "image/png",
-        Some("jpg") | Some("jpeg") => "image/jpeg",
-        Some("gif") => "image/gif",
-        Some("webp") => "image/webp",
-        Some("pdf") => "application/pdf",
-        _ => "text/plain",
-    }
-    .to_string()
 }
 
 fn artifact_meta_json(meta: ultracontext::ArtifactMeta) -> Value {
@@ -685,17 +721,16 @@ Commands:
   file grep <ctx> <query> [--prefix p]
   materialize <ctx> <dir>      Write context artifacts to a directory
   sync-dir <ctx> <dir>         Import directory files as artifacts
-  mount <ctx> <mountpoint>     Mount context as FUSE filesystem
+  mount <ctx> <mountpoint>     Mount context as a local filesystem
+    [--backend nfs|fuse]       Select mount backend (default: nfs)
+    [--foreground|--background]
 
-FUSE:
-  Build with `cargo build -p ultracontext-cli --features fuse` to enable mount.
+Mount:
+  NFS is the default backend and does not require macFUSE.
+  FUSE is optional: build with `--features fuse` and pass `--backend fuse`.
 "#,
     )
     .map_err(io_error)
-}
-
-fn io_error(error: io::Error) -> UcError {
-    UcError::new(ErrorCode::Internal, error.to_string())
 }
 
 fn exit_code(error: &UcError) -> i32 {
@@ -743,5 +778,27 @@ mod tests {
         assert_eq!(infer_kind("draft.md"), "text/markdown");
         assert_eq!(infer_kind("screenshot.png"), "image/png");
         assert_eq!(infer_kind("archive.unknown"), "text/plain");
+    }
+
+    #[test]
+    fn parses_mount_backend() {
+        let parsed = Invocation::parse(vec![
+            "mount".into(),
+            "ctx_1".into(),
+            "/tmp/uc".into(),
+            "--backend".into(),
+            "fuse".into(),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            parsed.command,
+            Command::Mount {
+                ctx_id: "ctx_1".into(),
+                mountpoint: "/tmp/uc".into(),
+                foreground: true,
+                backend: MountBackend::Fuse,
+            }
+        );
     }
 }

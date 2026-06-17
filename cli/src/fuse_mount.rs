@@ -6,12 +6,14 @@ use libc::{EEXIST, EIO, ENOENT, ENOTEMPTY};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ffi::OsStr;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 use ultracontext::{
     ArtifactBytes, ArtifactMeta, ContentStore, ErrorCode, FileWrite, UcError, UltraContext,
     UltraContextOptions,
 };
+
+use crate::mount_utils::{ignored_mount_path, infer_kind, io_error, join_path, parent_path};
 
 const ROOT_INO: u64 = 1;
 const TTL: Duration = Duration::from_secs(1);
@@ -748,43 +750,6 @@ impl UcFuse {
     }
 }
 
-fn join_path(parent: &str, name: &str) -> String {
-    if parent.is_empty() {
-        name.to_string()
-    } else {
-        format!("{parent}/{name}")
-    }
-}
-
-fn parent_path(path: &str) -> String {
-    path.rsplit_once('/')
-        .map(|(parent, _)| parent.to_string())
-        .unwrap_or_default()
-}
-
-fn ignored_mount_path(path: &str) -> bool {
-    path.rsplit('/').next().is_some_and(|name| {
-        name == ".DS_Store" || name.starts_with("._") || name == ".Spotlight-V100"
-    })
-}
-
-fn infer_kind(path: &str) -> String {
-    match Path::new(path).extension().and_then(|ext| ext.to_str()) {
-        Some("md") | Some("markdown") => "text/markdown",
-        Some("json") => "application/json",
-        Some("html") => "text/html",
-        Some("css") => "text/css",
-        Some("js") | Some("mjs") | Some("ts") | Some("tsx") | Some("jsx") => "text/javascript",
-        Some("png") => "image/png",
-        Some("jpg") | Some("jpeg") => "image/jpeg",
-        Some("gif") => "image/gif",
-        Some("webp") => "image/webp",
-        Some("pdf") => "application/pdf",
-        _ => "application/octet-stream",
-    }
-    .to_string()
-}
-
 fn errno(error: &UcError) -> i32 {
     match error.code {
         ErrorCode::NotFound => ENOENT,
@@ -792,28 +757,5 @@ fn errno(error: &UcError) -> i32 {
         ErrorCode::InvalidInput => libc::EINVAL,
         ErrorCode::Busy => libc::EBUSY,
         ErrorCode::IncompatibleDb | ErrorCode::Internal => EIO,
-    }
-}
-
-fn io_error(error: std::io::Error) -> UcError {
-    UcError::new(ErrorCode::Internal, error.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parent_paths_match_fuse_tree_rules() {
-        assert_eq!(parent_path("draft.md"), "");
-        assert_eq!(parent_path("drafts/brief.md"), "drafts");
-        assert_eq!(join_path("drafts", "brief.md"), "drafts/brief.md");
-    }
-
-    #[test]
-    fn ignores_macos_sidecar_paths() {
-        assert!(ignored_mount_path(".DS_Store"));
-        assert!(ignored_mount_path("notes/._hello.md"));
-        assert!(!ignored_mount_path("notes/hello.md"));
     }
 }
