@@ -1,0 +1,19 @@
+[build-system]
+requires = ["maturin>=1,<2"]
+build-backend = "maturin"
+
+[project]
+name = "ultracontext"
+version = "2.0.0a0"
+description = "The context SDK for AI applications"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+
+[tool.maturin]
+manifest-path = "native/Cargo.toml"
+module-name = "ultracontext._native"
+python-source = "."
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

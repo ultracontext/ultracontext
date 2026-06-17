@@ -1,0 +1,29 @@
+{
+    "name": "ultracontext",
+    "version": "2.0.0-alpha.0",
+    "type": "module",
+    "main": "src/index.js",
+    "files": [
+        "README.md",
+        "src",
+        "native/index.js",
+        "native/index.*.node",
+        "ultracontext.*.node"
+    ],
+    "exports": {
+        ".": "./src/index.js",
+        "./server": "./src/server.js",
+        "./sqlite": "./src/sqlite-engine.js",
+        "./postgres": "./src/postgres-engine.js",
+        "./content-store": "./src/content-store.js",
+        "./materialize": "./src/materialize.js"
+    },
+    "scripts": {
+        "build:native": "napi build --manifest-path native/Cargo.toml --platform",
+        "pack:check": "npm pack --dry-run",
+        "test": "node --test"
+    },
+    "devDependencies": {
+        "@napi-rs/cli": "^3.7.2"
+    }
+}

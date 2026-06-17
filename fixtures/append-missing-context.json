@@ -1,7 +1,0 @@
-{
-    "name": "append to missing context",
-    "setup": [],
-    "op": "append",
-    "input": { "id": "ctx_000000000000000000000000", "messages": [{ "text": "oi" }] },
-    "expect": { "error": { "code": "not_found", "message": "Context not found" } }
-}

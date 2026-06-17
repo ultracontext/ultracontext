@@ -1,158 +1,176 @@
-# MODEL — everything is a node
+# MODEL - everything important is a node
 
-The whole engine is one table and two pointers. If you understand this page,
-you understand UltraContext.
+UltraContext is a context and artifact store for AI applications. The core
+model is not a filesystem and not an object-store wrapper. It is a small node
+graph that can be projected into SDK calls, remote HTTP, local
+materialization, and optional FUSE/native mounts.
+
+The database is the source of truth for identity, history, metadata,
+provenance, paths, and content references. Small text can live inline in the
+database. Large bytes can live in a content store such as S3, R2, MinIO, or a
+local directory, but those stores are never authoritative by themselves.
 
 ```
-                      ┌──────────────────────┐
-                      │   root   ctx_4f2e…   │  the permanent id — what you hold
-                      └──────────────────────┘
-                                 ▲
-                ┌────────────────┼────────────────┐  context_id (membership)
-                │                │                │
-          ┌──────────┐     ┌──────────┐     ┌──────────┐
-          │ head  v0 │◄────│ head  v1 │◄────│ head  v2 │ ◄── CURRENT
-          │ {create} │ prev│ {update} │ prev│ {delete} │     (nothing points at it)
-          └──────────┘     └──────────┘     └──────────┘
-               ▲                ▲                ▲
-               │                │                │   context_id (membership)
-          ┌──────────┐     ┌──────────┐     ┌──────────┐
-          │  msg_a   │     │  msg_a   │     │  msg_b'  │
-          │   "oi"   |     │   "oi"   │     │  "blz!"  │
-          └──────────┘     └──────────┘     └──────────┘
-               ▲                ▲
-               │ prev           │ prev
-          ┌──────────┐     ┌──────────┐
-          │  msg_b   │     │  msg_b'  │──── parent_id → msg_b
-          │  "blz?"  │     │  "blz!"  │     ("I came from b")
-          └──────────┘     └──────────┘
-
-  v0: created with two messages · v1: patched b → b' (a KEEPS its id) ·
-  v2: soft-deleted a (b' carries over, same id)
+SDK / HTTP / local materialization / optional FUSE mount
+              |
+        path projection
+              |
+        node store
+              |
+   inline data or storage ref -> blob store
 ```
-
-The drawing is a timeline: oldest version on the left, newest on the right.
-A read picks ONE head — the newest, unless you time-travel — and returns its
-message list. Writes never edit existing rows: `append` grows the CURRENT
-(rightmost) head's list without creating a head; `update`/`delete` add a new
-head on the right. Old heads keep their old message lists forever.
 
 ## The node
 
 ```
 node {
-    public_id   ctx_… | msg_… | art_…   // 24 lowercase hex chars after the prefix
-    type        'context' | 'message' | 'artifact'
-    content     {}                 // free-form JSON — yours
-    metadata    {}                 // free-form JSON — yours
-    data        <bytes> | null     // artifact binary only (images/audio); null everywhere else
-    prev_id     →  the node before me in a list      (order)
-    parent_id   →  the node I was derived from       (provenance)
-    context_id  →  which chain I belong to           (membership)
-    created_at
+    public_id   ctx_... | msg_... | art_...   // stable public handle
+    kind        'context' | 'message' | 'artifact'
+    content     {}                            // domain payload
+    metadata    {}                            // caller labels
+    prev        -> node before me in a list    // order / version chain
+    parent      -> node I came from            // provenance / fork
+    owner       -> owning root or head         // membership / cascade
+    created_at  ISO-8601 UTC ms
 }
 ```
 
-Four kinds of node, distinguished by two fields:
+There are four logical node roles, using three `kind` values:
 
+| Role | `kind` | `owner` | Meaning |
+|---|---|---|---|
+| Root | `context` | `null` | Permanent context identity |
+| Head | `context` | root id | One version of that context |
+| Message | `message` | head id | One entry in one context version |
+| Artifact | `artifact` | root id | A versioned file-like object owned by the context |
 
-| Kind                                             | `type`     | `context_id` |
-| ------------------------------------------------ | ---------- | ------------ |
-| **Root** — the context's permanent identity      | `context`  | `null`       |
-| **Head** — one version of that context           | `context`  | root's id    |
-| **Message** — one entry in a version             | `message`  | head's id    |
-| **Artifact** — an object attached to the context | `artifact` | root's id    |
+The whole model is two pointers:
 
+- `prev` is order. Heads form a context version chain. Messages form the
+  ordered list inside one head. Artifact versions form their own chain.
+- `parent` is provenance. It points to the node this node was copied,
+  forked, derived, cropped, regenerated, or edited from.
 
-Artifacts are the same pattern a third time: `prev_id` chains an artifact's
-own versions (current = the unpointed node, same head rule), `parent_id` is
-provenance on fork, `context_id` ownership gives cascade scrub for free.
-Binary bytes live in a `data BLOB` column — still one inspectable file.
-Their version clock is their own: regenerating a draft never bumps the
-context's versions, and context copy-on-write never copies an artifact.
+## Contexts and messages
 
-## The two pointers
+A context root is the stable id callers hold. Reads choose a head: latest by
+default, or an older head for time travel. Writes never edit an existing head.
 
-`**prev_id` is order** — for any list. Messages in a version form a
-singly-linked list, and the heads of a context form the version chain the
-same way:
+- `append` adds messages to the current head without a version bump. Message
+  streams are not history-worthy by themselves.
+- `update` and soft `delete` create a new head. Old heads remain readable.
+- `fork` creates a new root and copies the chosen source version, preserving
+  provenance through `parent`.
 
+Message content is provider-neutral JSON. A text-only prompt can be a simple
+object. A multimodal prompt can reference artifacts:
+
+```json
+{
+  "role": "user",
+  "content": [
+    { "type": "text", "text": "What is wrong with this UI?" },
+    { "type": "image", "artifact_id": "art_0123...", "version": 1 }
+  ]
+}
 ```
-null ← msg_a ← msg_b ← msg_c        (messages within a version)
-null ← head v0 ← head v1 ← head v2  (versions within a context)
+
+Provider adapters translate this shape into OpenAI, Anthropic, Gemini, or any
+other model format. The core does not depend on provider payloads.
+
+## Artifacts
+
+Artifacts are file-like objects: markdown drafts, generated code, screenshots,
+images, audio, PDFs, zip files, or any other AI input/output.
+
+An artifact node's `content` carries the file-facing metadata:
+
+```json
+{
+  "path": "drafts/brief.md",
+  "kind": "text/markdown",
+  "size": 1234,
+  "sha256": "...",
+  "storage": {
+    "type": "inline"
+  }
+}
 ```
 
-No position numbers stored — `index` and `version` are computed by walking.
-The CURRENT head is the one no other head points at.
+For larger or binary content:
 
-`**parent_id` is provenance** — "where I came from", across lists:
+```json
+{
+  "path": "uploads/screenshot.png",
+  "kind": "image/png",
+  "size": 89123,
+  "sha256": "...",
+  "storage": {
+    "type": "ref",
+    "driver": "s3",
+    "key": "artifacts/art_.../v3"
+  }
+}
+```
 
-- a forked root's `parent_id` → the source root
-- a copied/patched message's `parent_id` → the original message
-- a plain create / a brand-new message → `null`
+`art_` is the identity. `path` is a mutable label used by SDK file verbs,
+agent tools, and filesystem projections. This matters:
 
-## Everything falls out of the two pointers
+- editing `draft.md` creates a new version of the same `art_`;
+- renaming `draft.md` to `final.md` preserves history;
+- editor save dances such as `draft.md.tmp` plus rename can be mapped back to
+  a new version of the original artifact;
+- two writers racing on the same artifact must produce a conflict or fork,
+  never silent data loss.
 
-- **Version** = a head = an edit checkpoint. `append` extends the CURRENT
-head's list (no new head — the stream is not history-worthy); `update` and
-`delete` create a new head. The version log = walking the head chain
-(index 0 = create, ascending). A version freezes the moment it is
-superseded by the next head.
-- **Time-travel** = read from an older head: `get(id, {version: 1})`,
-`{at: index}`, `{before: timestamp}`.
-- **Fork** = a new root (`parent_id` → source root) with the chosen version's
-messages copied under its first head — each copy's `parent_id` points at
-the source message, so provenance survives.
-- **Soft delete** = just another version: a new head without the deleted
-messages. Recover by reading the previous head. No tombstones, no flags.
-- **Update** = copy-on-write: a new head with the message list re-issued
-under it. Untouched messages keep their ids (a copy is the same logical
-message); only the patched one is a NEW message — new id, new content,
-`parent_id` pointing home. Storage trades space for dead-simple reads;
-edits are rare in agent workloads, and structural sharing (git's tree
-trick) can replace the copy later without touching the API.
+Text artifacts usually store data inline. Images and large binaries usually
+store bytes in a content store and keep only the `storage` ref in the node.
+Either way, versioning and ownership are node-store responsibilities.
 
-## The one destructive op — and why nothing is left behind
+## Path Projection
 
-`delete({permanent: true})` is the only thing that ever removes rows: the
-root, every head, every message — and every artifact — scrubbed from all
-versions. Aimed at an `art_` id, it scrubs just that artifact's chain. Forks
-of the deleted context survive, orphaned (`parent_id` cleared to `null`).
+The filesystem-like namespace is a projection over artifacts, not the storage
+primitive. Paths are relative POSIX paths inside a context:
 
-No-orphans is enforced by the SCHEMA, not by op code:
+- normalize `/` separators;
+- reject absolute paths and `..`;
+- treat directories as prefixes in v2;
+- keep path lookup separate from artifact identity.
 
-- `context_id` is a self-referential foreign key with **ON DELETE CASCADE** —
-deleting the root cascades to every head, and each head cascades to its
-messages. The database cannot represent a member of a deleted chain.
-- `parent_id` is a foreign key with **ON DELETE SET NULL** — provenance
-pointers to scrubbed nodes become `null` automatically. Forks orphan
-cleanly, never dangle.
-- The whole scrub runs in one transaction (`foreign_keys=ON` always set),
-and a cargo test pins the invariant: after any permanent delete, zero
-nodes whose `context_id` resolves to nothing.
+The same path grammar must be used by SDK calls, local materialization, and
+the native FUSE mount. A model can think in `read`, `write`, `grep`, and
+`glob`; the only difference is whether the environment exposes those verbs as
+API calls, a synced directory, or a mounted filesystem.
 
-## Invariants (port these exactly)
+## Storage Blocks
 
-- A root never changes: id and `created_at` are set at create; list/get read
-them from the root, not the head.
-- `update`/`delete` = one new head = one version bump. `append` never bumps —
-it extends the current head's list (an array appends atomically, in order).
-- Message ids survive edits: a copy under a new head keeps the original
-message's id (uniqueness is per-head, an engine detail). Only the message
-actually patched gets a new id — new content, new identity, `parent_id`
-pointing home. An id you hold only dies when someone edits THAT message —
-exactly the moment you should re-read.
-- Head selection: the head no other head points at; ties broken by newest
-`created_at`.
-- Broken chain (can't walk all nodes from `null`): fall back to `created_at`
-ascending, log loudly, never drop nodes, never error.
-- Heads' `metadata` carries the reserved keys `operation` + `affected`; user
-version-metadata lives alongside them and is returned without the reserved
-keys.
+The node store and content store are separate blocks.
 
-## Why this model
+Node store:
 
-One concept instead of five tables. Append-only, so history is free instead
-of being a feature. The file stays plain SQLite — open it, walk the pointers
-yourself, audit everything. It's git for context: a content log + cheap
-pointers.
+- local SQLite for local apps, CLIs, and agents;
+- remote HTTP for edge runtimes such as Vercel Edge;
+- future adapters can sit behind the same contract, but must preserve node
+  invariants.
+
+Content store:
+
+- inline database content for small text and markdown;
+- local directory for local cache or large local files;
+- S3/R2/MinIO for shared blobs;
+- cached hybrid local plus remote.
+
+The content store can be swapped. The node store remains the source of truth.
+
+## Invariants
+
+- Public ids are stable handles. A caller should not need to know storage
+  layout to hold an id.
+- Existing rows are immutable. New versions append nodes.
+- Time travel is a read concern: choose an older head or artifact version.
+- Destructive delete is explicit and cascades through ownership.
+- Blob stores never define existence. A blob without a node is garbage; a node
+  with a missing blob is an integrity error.
+- Provider-specific prompt shapes stay outside the model.
+- File ergonomics are projections over artifacts, not a reason to make the
+  core a distributed filesystem.

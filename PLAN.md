@@ -1,182 +1,313 @@
-# PLAN — 2.0 implementation
+# PLAN - v2 reset
 
-The approval artifact. Everything below gets built EXACTLY as written, each
-phase as a Workflow, with a review gate between phases. Edit freely; nothing
-runs without explicit go. Deleted once 2.0 ships.
+This repo's older v2 plan drifted from the product shape. Current direction:
+UltraContext is a context SDK for AI applications, with local-first storage
+where possible and an edge-safe remote path where necessary.
 
-Contract = `core/CONTRACT.md` · model = `core/MODEL.md` (sources of truth;
-this file is HOW, those are WHAT).
+`core/MODEL.md` defines the data model. `core/CONTRACT.md` defines the product
+contract. This file is the implementation plan and can change as decisions
+settle.
 
-## Status
+## Current State
 
-- DONE: contract (pieces a–g) · skeleton (workspace, empty core crate,
-  fixtures/, sdks/ stubs, ci.yml)
-- BLOCKED: local builds need `sudo xcodebuild -license accept` (one-time)
-- Gate 0 (this plan) → Fase 3 → gate → Fase 4 → gate → Fase 5 → gate → Fase 6
+- `CLAUDE.md` is still the working-rule document.
+- `core/MODEL.md` has been adapted to the node + artifact + content-ref model.
+- `core/CONTRACT.md` has been reset around edge, local, artifacts, and agent
+  file surfaces.
+- The Rust core has a tested local SQLite alpha slice for contexts, fork, message
+  versions, soft delete, permanent context scrub, inline/local-dir artifacts,
+  path labels, file verbs, conflicts, FTS-backed search with fallback, listing,
+  artifact scrub, snapshot export/import, and a JSON dispatch boundary for
+  local SDK bindings.
+- The JS SDK has a fetch-only remote client, a fetch-compatible server handler,
+  a local N-API binding path over the Rust JSON dispatch, and server-only
+  SQLite/Postgres reference engines behind the same protocol. Content stores
+  include local-dir for SQLite/local native and injected S3-compatible storage
+  for Postgres/server deployments. The local N-API binding has been built and
+  smoke-tested on macOS.
+- The Python SDK has a stdlib remote client plus a PyO3 native binding crate
+  wired to the Rust JSON dispatch boundary. A local Python 3.12 venv has been
+  tested with `maturin develop`, local SQLite mode, local-dir content storage,
+  and wheel install.
 
-## Two new technical decisions (need your eye)
+## Shippable v2 Goal
 
-**1. Internal pointers use rowids, not public ids.** Consequence of ids-B
-(copies preserve `public_id` → message public_ids are NOT globally unique →
-SQLite foreign keys can't reference them). So: `prev` / `parent` / `owner`
-are INTEGER references to `nodes.id` (rowid — always unique), which is what
-makes ON DELETE CASCADE / SET NULL work. Public ids stay the ONLY thing the
-API ever shows; rowids never leak. Same model, sound FKs.
+Ship a small but real SDK that supports:
 
-Name map (MODEL.md concept → physical column): `type` → `kind` ·
-`prev_id` → `prev` · `parent_id` → `parent` · `context_id` → `owner`.
+1. Local apps and agents with a plain SQLite node store.
+2. Edge/serverless apps through a fetch-only remote client.
+3. Versioned artifacts for markdown, text, images, and other AI inputs/outputs.
+4. A path projection over artifacts so agents can use file-like verbs.
+5. Identical behavior across JS and Python where both environments support it.
 
-**2. Artifact ids are STABLE across their versions** (caught by the audit:
-the alternative breaks the schema). An artifact's versions all live under the
-same owner (the root) — if each version kept the same `art_` id, the plain
-`UNIQUE(owner, public_id)` index would reject the second `save`. Stable ids
-are the design intent (agents cache `art_` handles), so the index carves
-artifacts out: `UNIQUE(owner, public_id) WHERE kind != 'artifact'`, and
-artifact name-uniqueness (per context, per current version) is enforced by
-the `save` op. Messages keep the plain rule (copies live under different
-heads).
+Do not ship a distributed filesystem. Do not mount S3 as SQLite. Do not make
+JuiceFS, S3-FUSE, or kernel mounts dependencies of the core. FUSE is a
+first-class optional adapter over the file verbs, not the storage model.
 
-## Open questions (answer at Gate 0)
+## Architecture Blocks
 
-- **Fork id semantics**: v1 issued FRESH `msg_` ids on fork (`parent_id` =
-  provenance). Keep that in v2 (my rec — fork = new identity space, no
-  cross-context id ambiguity), or extend ids-B preservation across fork?
-- **Publish strategy**: `2.0.0-alpha` first or straight `2.0.0`? (crate
-  currently stamps `2.0.0-alpha.0`); npm `@ultracontext` org must be created
-  on your account before Fase 6.
-- **CLAUDE.md branch rule**: "work on feat/v2, never touch main" was removed
-  in your trim — deliberate, or restore?
+### Core Domain
 
-## Schema (draft DDL — finalized by the first RED tests)
+Rust core owns:
 
-```sql
-PRAGMA user_version = 1;          -- stamped at create; foreign/v1 file → incompatible_db
+- public id generation;
+- node graph invariants;
+- context create/fork/append/get/update/delete;
+- artifact save/load/delete with stable `art_` identity;
+- path normalization and path-to-artifact lookup;
+- artifact versioning and `ifVersion` conflicts;
+- FTS-backed search over current text messages and text artifacts with
+  conservative scan fallback;
+- SQLite local adapter.
+- JSON dispatch for thin local language bindings.
+- snapshot export/import for a first mirror path.
 
-CREATE TABLE nodes (
-    id         INTEGER PRIMARY KEY,
-    public_id  TEXT    NOT NULL,                 -- ctx_/msg_/art_ + 24 hex
-    kind       TEXT    NOT NULL CHECK (kind IN ('context','message','artifact')),
-    content    TEXT    NOT NULL DEFAULT '{}',    -- JSON
-    metadata   TEXT    NOT NULL DEFAULT '{}',    -- JSON
-    data       BLOB,                             -- artifact bytes (day 1, mostly NULL)
-    prev       INTEGER REFERENCES nodes(id),                       -- order
-    parent     INTEGER REFERENCES nodes(id) ON DELETE SET NULL,    -- provenance
-    owner      INTEGER REFERENCES nodes(id) ON DELETE CASCADE,     -- membership
-    created_at TEXT    NOT NULL                  -- ISO-8601 UTC ms
-);
+Core does not own:
 
-CREATE UNIQUE INDEX nodes_owner_pub ON nodes(owner, public_id);          -- ids-B uniqueness
-CREATE UNIQUE INDEX nodes_root_pub  ON nodes(public_id) WHERE owner IS NULL;
-CREATE INDEX nodes_owner ON nodes(owner);
+- provider-specific prompt formats;
+- hosted auth/billing;
+- kernel mount implementation details; FUSE lives in an adapter over file verbs;
+- S3 SDK policy beyond a content-store interface.
 
--- search: contentless FTS5, rows maintained by ops inside the write tx
-CREATE VIRTUAL TABLE nodes_fts USING fts5(
-    text, content='', tokenize='unicode61 remove_diacritics 2'
-);
-```
+### JS SDK
 
-Connection open order: `journal_mode=WAL` · `busy_timeout=5000` ·
-`synchronous=NORMAL` · `foreign_keys=ON` · user_version check.
+JS needs two execution paths:
 
-## Fase 3 — core (Workflow `core-tdd`)
+- **remote edge path**: fetch-only, no native import, works in Vercel Edge and
+  similar runtimes. Status: implemented in `sdks/js/src/index.js` with
+  `node:test` coverage, including protocol and server handler tests;
+- **local native path**: Node/Bun binding to the Rust core for local apps and
+  agents. Status: implemented through `sdks/js/native/`, built and
+  smoke-tested on macOS.
 
-Module map (`core/src/`):
+The SDK must avoid importing local native code when configured for remote
+mode. This is a product requirement, not an optimization.
 
-| Module | What |
-|---|---|
-| `result.rs` | `Result<T>` / `UcError {code, message}` — 5 codes |
-| `ids.rs` | public id gen (prefix + 24 hex, crypto rand) |
-| `time.rs` | ISO timestamp gen + normalization (never throws) |
-| `db.rs` | open: pragmas, DDL, user_version stamp/check, v1-file detect. Storage behind a small trait (rusqlite = the factory impl) — the seam future adapters (libsql/Turso/D1) plug into |
-| `engine.rs` | chain walks: current head, ordered messages, version log |
-| `view.rs` | MessageView assembly (+created_at), windowing (last/range/message), metadata filter |
-| `ops/` | one file per op: `create` `fork` `append` `get` `update` `delete` `list` `search` `save` `load` |
-| `fts.rs` | FTS maintenance (in-tx), query sanitizer, snippet |
-| `fixtures.rs` | runner: walks `fixtures/*.json`, executes, asserts |
+Binding crate location: the N-API crate lives under `sdks/js/native/` as a
+packaging detail of the JS SDK. It links to `core/` and must not contain domain
+logic.
 
-Portability rule (keeps 2.1 wasm alive): no tokio / `std::fs` /
-`SystemTime` in the portable layer; rusqlite stays behind the default
-`sqlite` feature; the wasm32 `cargo check` in CI is the tripwire.
+### Python SDK
 
-Workflow shape (respects TDD — every module RED→GREEN):
+Python ships:
 
-1. **foundations** — one agent, sequential: result/ids/time/db/engine + tests
-2. **ops wave 1** — parallel agents in worktrees: create+fork · append+get · list
-3. **ops wave 2** — parallel: update+delete (copy-on-write, ids-B) · search+fts · save+load
-4. **integration** — one agent: merge worktrees, fixture files per op
-   (ported from `core/contract/v1-extraction.json` behaviors + new-op cases),
-   full `cargo test` + clippy + fmt green
-5. **adversarial review** — reviewer agents against CONTRACT/MODEL invariants
-   (no-orphans, ids-B, version semantics, FTS-current-only), findings fixed
+- local native binding. Status: implemented through `sdks/python/native/` and
+  tested with `maturin develop` in a Python 3.12 venv;
+- remote HTTP client with the same shapes and error codes. Status: implemented
+  in `sdks/python/ultracontext/client.py` with `unittest` coverage.
 
-Before any code: a **spec addendum** (piece h) answers the 10 micro-spec
-gaps the audit found — incompatible_db detection matrix + messages, get
-selector-combination matrix + envelope (`total` scope, in-band truncation
-shape), fork id semantics, list validation (bad after/before, non-scalar
-filter values), update dispatch (label-merge vs version-note vs empty
-patches), stale-id mechanics (`supersedes` placement, stale-write
-code/message, deleted-id reads, `{message}` envelope), copied `created_at`
-(carried vs re-stamped), `save` details (identical data, kind default,
-size, text-vs-blob routing, errors), and the unified search hit shapes.
-Drafted for approval BEFORE the foundations agent starts.
+Python does not need edge constraints, but it must preserve contract parity.
 
-Deliverable: core green, fixture suite passing via `cargo test`. Gate: diff
-summary + test counts presented for approval.
+Binding crate location: the PyO3 crate lives under `sdks/python/native/` as a
+packaging detail of the Python SDK. It links to `core/` and must not contain
+domain logic.
 
-## Fase 4 — SDK JS (Workflow `sdk-js`)
+### Content Stores
 
-- `sdks/js/`: napi-rs glue crate (logic-free) + `index.ts` thin wrapper
-  (UltraContext class, Promise API, overloads get/delete, `err.code`)
-- async mechanics: `#[napi]` async fns over `spawn_blocking` +
-  `Mutex<Connection>`; tokio lives in the GLUE crate only, never core
-- workspace member; `cargo test` stays core-only (glue is test-free)
-- runner: `node:test` consuming `fixtures/*.json` against the BUILT binding
-- bun smoke test
-- Gate: same fixtures green on JS.
+Start with:
 
-## Fase 5 — SDK Python (Workflow `sdk-py`)
+- inline content for text/markdown and small data;
+- local directory content store for larger local bytes;
+- S3-compatible content store behind remote/server-side environments.
 
-- `sdks/python/`: PyO3 glue (logic-free, abi3) + thin `UltraContext`
-  (sync, snake_case, same shapes/codes), maturin build
-- runner: pytest consuming the same fixtures against the built wheel
-- Gate: same fixtures green on Python. Surface diff JS↔Py = zero (modulo idiom).
+The domain object stores a `storage` descriptor. The content-store driver is
+replaceable.
 
-## Fase 6 — release (own gate, nothing publishes without explicit go)
+### Agent File Surface
 
-- `release.yml`: napi-rs official template (prebuild matrix, platforms first)
-  + maturin official template (abi3 wheels) + cargo publish
-- npm `@ultracontext` org platform packages · PyPI · crates.io (core only —
-  glue crates `publish = false`)
-- version single-sourced from the git tag: stamps Cargo workspace,
-  `napi version` propagates npm packages, pyproject uses `dynamic` reading
-  Cargo.toml — one source, zero drift
-- PR CI runs on ubuntu + macos + windows (platform breakage surfaces on PR,
-  not at the first release tag)
-- dry-run via workflow_dispatch BEFORE any tag
-- v1 note: `uc update` via npm would fetch a bin-less 2.0 — accepted break,
-  release notes say so
+Build file verbs over artifacts and let every file surface share them:
 
-## Out of scope (already in CONTRACT "Deferred")
+- list;
+- read;
+- write;
+- move;
+- remove;
+- glob;
+- grep.
 
-Token counting, stats, since-cursor, preconditions/idempotency, compaction,
-forked_from, artifact refs/dedupe, checkpoint (undecided, parked). Whole
-surfaces out of 2.0, returning additively: remote/hosted + managed hosting
-(until then, browser/edge consume via the USER's own server — the Next.js
-pattern; the SDK is server-side, like any database client), mirror/agent-sync,
-events, drivers, MCP server, the `uc` CLI, docs site. wasm: demoted from
-milestone to optionality — browser never embeds the engine; the portability
-rule + CI check keep the door open at zero cost.
+Expose them as SDK helpers, local materialization, and the FUSE/native mount.
+The mount is a product feature, but it stays outside the core storage layer.
 
-## Recorded rationales (so they don't live only in chat)
+## Implementation Phases
 
-- **Mobile + edge are IN the product scope** — the reason the core is Rust
-  (native FFI now, wasm 2.1, UniFFI for Swift/Kotlin when mobile lands).
-- **Future blocks land at repo root** (`mirror/`, `cli/`, `docs/`) —
-  component-axis root; languages multiply inside `sdks/`.
-- **redb rejected**: no FTS — search is the central feature. **System
-  sqlite rejected**: version/FTS5 roulette per OS. **libsql/Turso rejected
-  as core dep**: ecosystem churn (clients archived/deprecated, engine being
-  rewritten) violates Ownership — returns as an optional storage-trait
-  adapter. **Direct Postgres from the SDK: forbidden** — managed DBs only
-  ever behind remote mode.
-- **crates.io publish exists to hold the `ultracontext` name** (Ownership).
+### Phase 0 - Spec Reset
+
+Done in docs:
+
+- update `core/MODEL.md`;
+- update `core/CONTRACT.md`;
+- update this plan;
+- update README and SDK READMEs to stop advertising stale scope.
+
+Gate: user agrees the spec matches the product direction.
+
+### Phase 1 - Rust Core, Local SQLite
+
+Status: done for alpha. The first vertical slice is implemented in `core/` and
+covered by `core/tests/core_behavior.rs`.
+
+TDD, vertical slices:
+
+1. DONE - Foundation: result/error types, ids, time, path normalization.
+2. DONE - SQLite schema and open checks.
+3. DONE - Context lifecycle: create, get/list, append.
+4. DONE - Context versioning: message update, fork, soft delete, and time
+   travel are in.
+5. DONE - Artifacts: save/load inline text, path upsert, id-targeted update,
+   rename.
+6. DONE - Artifact conflicts: `ifVersion` mismatch returns `conflict`.
+7. DONE - Binary/content refs: inline and local-dir storage exist in core.
+8. DONE - Search: FTS5-backed candidate search with scan fallback.
+9. DONE - Permanent delete: context and artifact scrub exist.
+10. DONE - Binding boundary: JSON dispatch returns remote-compatible shapes
+    and stable coded errors.
+
+Deliverable: `cargo test` green for core.
+
+### Phase 2 - JS Remote Client and Protocol
+
+Status: done for alpha. A fetch-only ESM client exists and is tested with a
+mock fetch. A fetch-compatible handler also exists and dispatches the protocol
+to an injected engine/store. Server-only SQLite and Postgres reference engines
+exist behind the same handler shape.
+
+Build the edge-safe surface before native packaging:
+
+1. DONE - Define the HTTP protocol from `core/CONTRACT.md` in executable
+   client/handler tests; full prose protocol docs can follow.
+2. DONE - Implement a fetch-only JS client.
+3. DONE - Add tests that run without native bindings.
+4. DONE - Add a minimal self-hostable handler shape for Node/server runtimes.
+5. DONE - Add a SQLite-backed reference engine for self-hosted tests.
+6. DONE - Add a Postgres-backed reference engine for remote/server deployments.
+
+Deliverable: JS remote mode works in an edge-like test environment.
+
+### Phase 3 - JS Local Native
+
+Add the local adapter:
+
+1. DONE - napi-rs binding calls Rust JSON dispatch; no domain logic in JS.
+2. DONE - JS wrapper chooses remote or local without bundling native code into remote
+   mode.
+3. DONE - Local N-API build and smoke test work on macOS.
+4. DONE - Same shared fixture suite runs against JS local native and JS remote.
+
+Deliverable: JS local and remote pass the same behavior tests where applicable.
+
+### Phase 4 - Python SDK
+
+1. DONE - PyO3/maturin binding calls Rust JSON dispatch; no domain logic in
+   Python.
+2. DONE - Python wrapper can dispatch remote or local mode with stable
+   `UltraContextError.code`.
+3. DONE - `maturin develop` works in a local Python 3.12 venv and local SQLite
+   mode has been smoke-tested.
+4. DONE - Same fixture suite runs against Python local native and Python
+   remote transport; release wheel build and install have been verified.
+
+Deliverable: Python parity for local and remote shapes.
+
+### Phase 5 - Shared Fixture Suite
+
+Status: done for alpha.
+
+Create one executable behavior matrix for the product contract. The same
+scenarios should run against:
+
+- Rust core JSON dispatch;
+- JS local native mode;
+- JS remote mode through the handler;
+- Python local native mode;
+- Python remote mode through a fixture transport.
+
+Scenarios:
+
+1. Context lifecycle: create, append, get, update, delete, fork.
+2. Artifact lifecycle: save, load, rename, version reads, conflicts.
+3. File verbs: write, read, list, glob, grep, move, remove.
+4. Error envelopes: `not_found`, `invalid_input`, `conflict`.
+
+Deliverable: one fixture source of truth and per-runtime adapters that prove
+parity.
+
+### Phase 6 - Content Store Drivers
+
+Status: partially done.
+
+1. DONE - Local directory content store in Rust core, JS SQLite engine, JS
+   local native, and Python local native.
+2. DONE - S3-compatible content store for server-side Postgres deployments via
+   injected client.
+3. DONE - Cached hybrid local plus remote content store for JS/server-side
+   deployments.
+
+Deliverable: artifacts can be inline, local-dir, or S3-backed without changing
+SDK calls.
+
+### Phase 7 - Release Packaging
+
+Status: done for alpha validation. CI builds installable packages plus native
+artifacts across OS matrices.
+
+1. DONE - JS package validates `npm pack` and package exports.
+2. DONE - JS native binding builds in CI across Linux/macOS/Windows and uploads
+   prebuild artifacts.
+3. DONE - Python package validates `maturin build` and wheel install in a fresh
+   venv.
+4. DONE - CI installs built packages and runs smoke tests against installed
+   artifacts.
+
+Deliverable: users can install the alpha package, not only run source-tree
+tests.
+
+### Phase 8 - Search FTS
+
+Status: done for Rust core/local SQLite.
+
+Replace the simple scan with an indexed search path where SQLite supports FTS5.
+Keep a conservative fallback for environments where FTS5 is unavailable.
+
+Deliverable: search remains API-compatible but stops depending on full scans
+for normal local databases.
+
+### Phase 9 - Sync/Mirror
+
+Status: done for alpha.
+
+After content stores exist, ship a minimum mirror block:
+
+1. DONE - Export/import node rows with stable ids and timestamps.
+2. DONE - Include referenced blob content in snapshot imports.
+3. DONE - Preserve append-only history and report structural node conflicts on
+   import.
+
+Deliverable: a local store can push/pull nodes plus blobs without mounting S3
+as a filesystem.
+
+### Phase 10 - Agent Surface
+
+1. DONE - SDK file helpers.
+2. DONE - Local materialization to real directories and sync-back from edited
+   files.
+3. NEXT - FUSE/native mount over the same file verbs for local agents.
+
+Deliverable: an agent can read/edit markdown artifacts through file-like verbs;
+FUSE gives local agents a real filesystem view without becoming a core storage
+dependency.
+
+## Non-Goals for v2.0
+
+- CRDT collaborative editing.
+- SQLite-on-S3, JuiceFS, or S3-FUSE as core storage.
+- Browser-embedded SQLite as the default product path.
+- Full managed hosted platform.
+- FUSE as the core storage model.
+- Provider-specific prompt serialization.
+- Garbage collection UI for orphaned blobs.
+
+## Remaining Later Work
+
+- CRDT merges for same-document concurrent edits.
+- FUSE/native mount hardening over the existing file verbs.
+- Hosted auth/billing and managed service operations.

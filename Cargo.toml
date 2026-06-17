@@ -1,9 +1,8 @@
-# workspace root — components at top level, languages inside sdks/
+# workspace root: components at top level, languages inside sdks/
 [workspace]
-members = ["core"]
+members = ["core", "sdks/js/native", "sdks/python/native"]
 resolver = "3"
 
-# release binaries: small and fast
 [profile.release]
 lto = true
 strip = true

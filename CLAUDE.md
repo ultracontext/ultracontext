@@ -1,12 +1,12 @@
-# CLAUDE.md
+# [CLAUDE.md](http://CLAUDE.md)
 
 Guidance for Claude Code working in this repo.
 
 ## What this is
 
-UltraContext is the context SDK for AI. You get local-first SDKs backed by a single rust core to manage the context windows of your agents and AI-powered applications.
+UltraContext is the context SDK to build AI applications. You get local-first SDKs backed by a single Rust core to manage context windows, artifacts, and file-like agent workflows in a simple way.
 
-Layout: `core/` (Rust engine) · `sdks/js` · `sdks/python` — components at root, languages inside `sdks/`. The op contract lives in `core/CONTRACT.md`.
+Layout: `core/` (Rust engine) · `sdks/js` (JS wrapper + N-API binding) · `sdks/python` (Python wrapper + PyO3 binding) — components at root, languages inside `sdks/`.
 
 ## Philosophy (load-bearing for every decision)
 
@@ -29,7 +29,7 @@ See `core/MODEL.md`.
 
 ## SDK rule
 
-Identical surface in every language: same methods, params, shapes, error codes. Only language idiom differs (JS Promise, Python sync).
+Identical surface in every language: same methods, params, shapes, error codes.
 
 ## TDD (mandatory)
 
@@ -38,10 +38,8 @@ Every module is RED (failing test first) → GREEN (implement).
 ## Style
 
 - Rust: rustfmt defaults; one short semantic comment atop each logical block + a blank line between blocks.
-- TS wrapper: 4-space indent, single quotes, kebab-case files, ESM.
+- JS wrapper: 4-space indent, single quotes, kebab-case files, ESM.
 
 ## Conventions
 
 - **Commits**: Conventional Commits. NEVER add `Co-Authored-By` (hard rule).
-
- 

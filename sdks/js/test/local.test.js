@@ -1,0 +1,81 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+import { UltraContext, UltraContextError } from '../src/index.js'
+
+class FakeCore {
+    constructor(path) {
+        this.path = path
+        this.calls = []
+    }
+
+    dispatchJson(operation, payload) {
+        const body = JSON.parse(payload)
+        this.calls.push({ operation, body })
+        if (operation === 'create') {
+            return JSON.stringify({
+                ok: {
+                    id: 'ctx_local',
+                    metadata: body.metadata,
+                    created_at: 'now'
+                }
+            })
+        }
+        if (operation === 'file_write') {
+            return JSON.stringify({
+                ok: {
+                    id: 'art_local',
+                    path: body.path,
+                    kind: body.kind ?? 'text/plain',
+                    version: 0
+                }
+            })
+        }
+        return JSON.stringify({
+            error: { code: 'not_found', message: 'missing' }
+        })
+    }
+}
+
+test('local client dispatches to injected native core', async () => {
+    let core
+    const native = {
+        UltraContextCore: class extends FakeCore {
+            constructor(path) {
+                super(path)
+                core = this
+            }
+        }
+    }
+    const uc = new UltraContext({ mode: 'local', path: '/tmp/uc-js.db', native })
+
+    const ctx = await uc.create({ metadata: { app: 'demo' } })
+    const artifact = await uc.write(ctx.id, 'draft.md', '# Draft', { kind: 'text/markdown' })
+
+    assert.equal(core.path, '/tmp/uc-js.db')
+    assert.equal(ctx.id, 'ctx_local')
+    assert.equal(artifact.id, 'art_local')
+    assert.deepEqual(core.calls[0], {
+        operation: 'create',
+        body: { metadata: { app: 'demo' } }
+    })
+    assert.equal(core.calls[1].operation, 'file_write')
+    assert.equal(core.calls[1].body.ctxId, 'ctx_local')
+    assert.equal(core.calls[1].body.path, 'draft.md')
+})
+
+test('local client preserves native error envelope', async () => {
+    const uc = new UltraContext({
+        mode: 'local',
+        native: { UltraContextCore: FakeCore }
+    })
+
+    await assert.rejects(
+        () => uc.get('ctx_missing'),
+        error => {
+            assert.ok(error instanceof UltraContextError)
+            assert.equal(error.code, 'not_found')
+            assert.equal(error.message, 'missing')
+            return true
+        }
+    )
+})

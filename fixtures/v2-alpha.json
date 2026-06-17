@@ -1,0 +1,29 @@
+{
+  "metadata": {
+    "app": "fixture",
+    "suite": "v2-alpha"
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": "draft the fixture launch note"
+    },
+    {
+      "role": "assistant",
+      "content": "fixture draft ready"
+    }
+  ],
+  "message_update": {
+    "index": 1,
+    "content": "fixture draft ready!"
+  },
+  "artifact": {
+    "path": "notes/draft.md",
+    "renamed_path": "notes/final.md",
+    "kind": "text/markdown",
+    "initial": "# Fixture Draft",
+    "final": "# Fixture Final\n\nlaunch fixture"
+  },
+  "search_query": "fixture",
+  "missing_context": "ctx_missing"
+}

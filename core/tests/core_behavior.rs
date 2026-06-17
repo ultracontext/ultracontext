@@ -1,0 +1,454 @@
+use serde_json::json;
+use ultracontext::{
+    AppendInput, ArtifactSave, ContentStore, DeleteTarget, ErrorCode, FileWrite, ForkOptions,
+    GetOptions, SearchKind, UltraContext, UltraContextOptions, UpdatePatch,
+};
+
+fn temp_db(name: &str) -> String {
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "ultracontext-v2-{name}-{}-{}.db",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    path.to_string_lossy().into_owned()
+}
+
+fn temp_dir(name: &str) -> std::path::PathBuf {
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "ultracontext-v2-{name}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    path
+}
+
+#[test]
+fn context_messages_are_appendable_and_versioned() {
+    let uc = UltraContext::open(temp_db("context")).unwrap();
+
+    let created = uc.create(json!({"project": "demo"})).unwrap();
+    let appended = uc
+        .append(
+            &created.id,
+            vec![
+                AppendInput::new(json!({"role": "user", "content": "oi"})),
+                AppendInput::new(json!({"role": "assistant", "content": "ola"})),
+            ],
+        )
+        .unwrap();
+
+    assert_eq!(appended.version, 0);
+    assert_eq!(appended.data.len(), 2);
+
+    let updated = uc
+        .update_message(
+            &created.id,
+            UpdatePatch::by_index(1, json!({"content": "ola!"})),
+            json!({"reason": "punctuation"}),
+        )
+        .unwrap();
+
+    assert_eq!(updated.version, 1);
+    assert_eq!(updated.data[1].content["content"], "ola!");
+
+    let current = uc.get(&created.id, GetOptions::default()).unwrap();
+    let old = uc
+        .get(&created.id, GetOptions { version: Some(0) })
+        .unwrap();
+
+    assert_eq!(current.version, 1);
+    assert_eq!(current.data[1].content["content"], "ola!");
+    assert_eq!(old.version, 0);
+    assert_eq!(old.data[1].content["content"], "ola");
+}
+
+#[test]
+fn artifact_path_is_a_mutable_label_not_identity() {
+    let uc = UltraContext::open(temp_db("artifact")).unwrap();
+    let ctx = uc.create(json!({})).unwrap();
+
+    let draft = uc
+        .save_artifact(
+            &ctx.id,
+            ArtifactSave::new("draft.md", "text/markdown", "# Draft"),
+        )
+        .unwrap();
+    let renamed = uc
+        .save_artifact(
+            &ctx.id,
+            ArtifactSave::new("final.md", "text/markdown", "# Final")
+                .with_id(&draft.id)
+                .with_if_version(draft.version),
+        )
+        .unwrap();
+
+    assert_eq!(renamed.id, draft.id);
+    assert_eq!(renamed.path, "final.md");
+    assert_eq!(renamed.version, draft.version + 1);
+
+    let current = uc.load_artifact(&ctx.id, "final.md", None).unwrap();
+    let previous = uc.load_artifact(&ctx.id, &draft.id, Some(0)).unwrap();
+
+    assert_eq!(current.id, draft.id);
+    assert_eq!(current.data.as_deref(), Some("# Final"));
+    assert_eq!(previous.path, "draft.md");
+    assert_eq!(previous.data.as_deref(), Some("# Draft"));
+}
+
+#[test]
+fn artifact_writes_can_be_guarded_by_version() {
+    let uc = UltraContext::open(temp_db("conflict")).unwrap();
+    let ctx = uc.create(json!({})).unwrap();
+
+    let artifact = uc
+        .save_artifact(
+            &ctx.id,
+            ArtifactSave::new("notes.md", "text/markdown", "v1"),
+        )
+        .unwrap();
+
+    let err = uc
+        .save_artifact(
+            &ctx.id,
+            ArtifactSave::new("notes.md", "text/markdown", "v2")
+                .with_if_version(artifact.version + 1),
+        )
+        .unwrap_err();
+
+    assert_eq!(err.code, ErrorCode::Conflict);
+    assert_eq!(err.message, "Artifact version conflict");
+}
+
+#[test]
+fn artifact_paths_are_normalized_and_safe() {
+    let uc = UltraContext::open(temp_db("paths")).unwrap();
+    let ctx = uc.create(json!({})).unwrap();
+
+    let saved = uc
+        .save_artifact(
+            &ctx.id,
+            ArtifactSave::new("notes//today.md", "text/markdown", "hello"),
+        )
+        .unwrap();
+    assert_eq!(saved.path, "notes/today.md");
+
+    let err = uc
+        .save_artifact(
+            &ctx.id,
+            ArtifactSave::new("../secret.md", "text/markdown", "nope"),
+        )
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidInput);
+    assert_eq!(err.message, "Invalid artifact path");
+}
+
+#[test]
+fn artifacts_can_store_large_content_in_a_local_directory() {
+    let content_root = temp_dir("content-store");
+    let uc = UltraContext::open_with_options(
+        temp_db("content-store"),
+        UltraContextOptions {
+            content_store: ContentStore::local_dir(&content_root, 4),
+        },
+    )
+    .unwrap();
+    let ctx = uc.create(json!({})).unwrap();
+
+    let saved = uc
+        .save_artifact(
+            &ctx.id,
+            ArtifactSave::new("large.md", "text/markdown", "larger than four bytes"),
+        )
+        .unwrap();
+    let loaded = uc.load_artifact(&ctx.id, "large.md", None).unwrap();
+
+    assert_eq!(loaded.data.as_deref(), Some("larger than four bytes"));
+    assert_eq!(loaded.storage["type"], "ref");
+    assert_eq!(loaded.storage["driver"], "local-dir");
+
+    let key = loaded.storage["key"].as_str().unwrap();
+    let blob_path = content_root.join(key);
+    assert!(blob_path.exists());
+
+    uc.delete_artifact_permanently(&saved.id).unwrap();
+    assert!(!blob_path.exists());
+}
+
+#[test]
+fn snapshots_can_mirror_nodes_and_blob_content_into_a_new_store() {
+    let content_root = temp_dir("snapshot-content");
+    let source = UltraContext::open_with_options(
+        temp_db("snapshot-source"),
+        UltraContextOptions {
+            content_store: ContentStore::local_dir(&content_root, 4),
+        },
+    )
+    .unwrap();
+    let ctx = source.create(json!({"mirror": "source"})).unwrap();
+    source
+        .append(
+            &ctx.id,
+            vec![AppendInput::new(json!({"content": "mirror me"}))],
+        )
+        .unwrap();
+    source
+        .save_artifact(
+            &ctx.id,
+            ArtifactSave::new("mirror.md", "text/markdown", "mirrored blob content"),
+        )
+        .unwrap();
+
+    let snapshot = source.export_snapshot().unwrap();
+    let mirror = UltraContext::open(temp_db("snapshot-mirror")).unwrap();
+    mirror.import_snapshot(snapshot).unwrap();
+
+    let mirrored_context = mirror.get(&ctx.id, GetOptions::default()).unwrap();
+    assert_eq!(mirrored_context.data[0].content["content"], "mirror me");
+    let mirrored_artifact = mirror.load_artifact(&ctx.id, "mirror.md", None).unwrap();
+    assert_eq!(
+        mirrored_artifact.data.as_deref(),
+        Some("mirrored blob content")
+    );
+    assert_eq!(mirrored_artifact.storage["type"], "inline");
+}
+
+#[test]
+fn incremental_changes_can_sync_from_a_shared_cursor_and_report_conflicts() {
+    let source = UltraContext::open(temp_db("changes-source")).unwrap();
+    let mirror = UltraContext::open(temp_db("changes-mirror")).unwrap();
+    let ctx = source.create(json!({"sync": "source"})).unwrap();
+    source
+        .append(&ctx.id, vec![AppendInput::new(json!({"content": "base"}))])
+        .unwrap();
+
+    let snapshot = source.export_snapshot().unwrap();
+    let cursor = snapshot["cursor"].as_i64().unwrap();
+    mirror.import_snapshot(snapshot).unwrap();
+
+    source
+        .append(&ctx.id, vec![AppendInput::new(json!({"content": "next"}))])
+        .unwrap();
+    source
+        .save_artifact(
+            &ctx.id,
+            ArtifactSave::new("sync.md", "text/markdown", "synced content"),
+        )
+        .unwrap();
+
+    let changes = source.export_changes(Some(cursor)).unwrap();
+    assert_eq!(changes["schema"], "ultracontext.changes.v1");
+    assert!(changes["cursor"].as_i64().unwrap() > cursor);
+
+    let imported = mirror.import_changes(changes.clone()).unwrap();
+    assert!(imported["imported"].as_u64().unwrap() > 0);
+    assert_eq!(imported["conflicts"].as_array().unwrap().len(), 0);
+
+    let mirrored = mirror.get(&ctx.id, GetOptions::default()).unwrap();
+    assert_eq!(mirrored.data[1].content["content"], "next");
+    let artifact = mirror.load_artifact(&ctx.id, "sync.md", None).unwrap();
+    assert_eq!(artifact.data.as_deref(), Some("synced content"));
+
+    let repeated = mirror.import_changes(changes.clone()).unwrap();
+    assert!(repeated["skipped"].as_u64().unwrap() > 0);
+    assert_eq!(repeated["conflicts"].as_array().unwrap().len(), 0);
+
+    let mut conflicting = changes;
+    conflicting["nodes"][0]["public_id"] = json!("ctx_conflicting");
+    let report = mirror.import_changes(conflicting).unwrap();
+    assert_eq!(report["conflicts"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn artifacts_can_be_listed_searched_and_deleted() {
+    let uc = UltraContext::open(temp_db("artifact-list")).unwrap();
+    let ctx = uc.create(json!({"name": "search"})).unwrap();
+
+    uc.append(
+        &ctx.id,
+        vec![AppendInput::new(json!({
+            "role": "user",
+            "content": "please draft a launch note"
+        }))],
+    )
+    .unwrap();
+
+    let artifact = uc
+        .save_artifact(
+            &ctx.id,
+            ArtifactSave::new("launch.md", "text/markdown", "initial launch note"),
+        )
+        .unwrap();
+    uc.save_artifact(
+        &ctx.id,
+        ArtifactSave::new("launch.md", "text/markdown", "final launch note")
+            .with_if_version(artifact.version),
+    )
+    .unwrap();
+
+    let artifacts = uc.list_artifacts(&ctx.id).unwrap();
+    assert_eq!(artifacts.len(), 1);
+    assert_eq!(artifacts[0].path, "launch.md");
+    assert_eq!(artifacts[0].version, 1);
+
+    let search = uc.search("launch").unwrap();
+    assert_eq!(search.data.len(), 2);
+    assert!(
+        search
+            .data
+            .iter()
+            .any(|hit| hit.kind == SearchKind::Message && hit.context_id == ctx.id)
+    );
+    assert!(search.data.iter().any(|hit| {
+        hit.kind == SearchKind::Artifact
+            && hit.context_id == ctx.id
+            && hit.path.as_deref() == Some("launch.md")
+            && hit.snippet.contains("final launch note")
+    }));
+    assert!(
+        !search
+            .data
+            .iter()
+            .any(|hit| hit.snippet.contains("initial launch note"))
+    );
+
+    uc.delete_artifact_permanently(&artifact.id).unwrap();
+    let err = uc.load_artifact(&ctx.id, "launch.md", None).unwrap_err();
+    assert_eq!(err.code, ErrorCode::NotFound);
+}
+
+#[test]
+fn fork_copies_the_selected_context_version_and_current_artifacts() {
+    let uc = UltraContext::open(temp_db("fork")).unwrap();
+    let ctx = uc.create(json!({"name": "source"})).unwrap();
+    uc.append(
+        &ctx.id,
+        vec![
+            AppendInput::new(json!({"content": "first"})),
+            AppendInput::new(json!({"content": "second"})),
+        ],
+    )
+    .unwrap();
+    uc.update_message(
+        &ctx.id,
+        UpdatePatch::by_index(1, json!({"content": "second patched"})),
+        json!({}),
+    )
+    .unwrap();
+    uc.save_artifact(
+        &ctx.id,
+        ArtifactSave::new("draft.md", "text/markdown", "current artifact"),
+    )
+    .unwrap();
+
+    let fork = uc
+        .fork(
+            &ctx.id,
+            ForkOptions {
+                version: Some(0),
+                metadata: json!({"name": "fork"}),
+            },
+        )
+        .unwrap();
+
+    let forked = uc.get(&fork.id, GetOptions::default()).unwrap();
+    assert_eq!(forked.version, 0);
+    assert_eq!(forked.data.len(), 2);
+    assert_eq!(forked.data[1].content["content"], "second");
+
+    let artifact = uc.load_artifact(&fork.id, "draft.md", None).unwrap();
+    assert_eq!(artifact.data.as_deref(), Some("current artifact"));
+}
+
+#[test]
+fn soft_delete_creates_a_new_recoverable_context_version() {
+    let uc = UltraContext::open(temp_db("soft-delete")).unwrap();
+    let ctx = uc.create(json!({})).unwrap();
+    uc.append(
+        &ctx.id,
+        vec![
+            AppendInput::new(json!({"content": "keep"})),
+            AppendInput::new(json!({"content": "remove"})),
+        ],
+    )
+    .unwrap();
+
+    let deleted = uc
+        .delete_messages(
+            &ctx.id,
+            vec![DeleteTarget::Index(1)],
+            json!({"reason": "cleanup"}),
+        )
+        .unwrap();
+
+    assert_eq!(deleted.version, 1);
+    assert_eq!(deleted.data.len(), 1);
+    assert_eq!(deleted.data[0].content["content"], "keep");
+
+    let old = uc.get(&ctx.id, GetOptions { version: Some(0) }).unwrap();
+    assert_eq!(old.data.len(), 2);
+    assert_eq!(old.data[1].content["content"], "remove");
+}
+
+#[test]
+fn permanent_context_delete_scrubs_messages_and_artifacts() {
+    let uc = UltraContext::open(temp_db("context-delete")).unwrap();
+    let ctx = uc.create(json!({})).unwrap();
+    uc.append(&ctx.id, vec![AppendInput::new(json!({"content": "bye"}))])
+        .unwrap();
+    uc.save_artifact(&ctx.id, ArtifactSave::new("bye.md", "text/markdown", "bye"))
+        .unwrap();
+
+    uc.delete_context_permanently(&ctx.id).unwrap();
+
+    let err = uc.get(&ctx.id, GetOptions::default()).unwrap_err();
+    assert_eq!(err.code, ErrorCode::NotFound);
+    let err = uc.load_artifact(&ctx.id, "bye.md", None).unwrap_err();
+    assert_eq!(err.code, ErrorCode::NotFound);
+}
+
+#[test]
+fn file_verbs_project_paths_over_artifacts() {
+    let uc = UltraContext::open(temp_db("file-verbs")).unwrap();
+    let ctx = uc.create(json!({})).unwrap();
+
+    let written = uc
+        .file_write(
+            &ctx.id,
+            FileWrite::new("notes/today.md", "hello").with_kind("text/markdown"),
+        )
+        .unwrap();
+    let read = uc.file_read(&ctx.id, "notes/today.md").unwrap();
+    assert_eq!(read.data.as_deref(), Some("hello"));
+
+    let moved = uc
+        .file_move(
+            &ctx.id,
+            "notes/today.md",
+            "archive/today.md",
+            Some(written.version),
+        )
+        .unwrap();
+    assert_eq!(moved.id, written.id);
+    assert_eq!(moved.path, "archive/today.md");
+
+    let files = uc.file_list(&ctx.id, Some("archive/")).unwrap();
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].path, "archive/today.md");
+
+    let grep = uc.file_grep(&ctx.id, "hello", Some("archive/")).unwrap();
+    assert_eq!(grep.data.len(), 1);
+    assert_eq!(grep.data[0].path.as_deref(), Some("archive/today.md"));
+
+    uc.file_remove(&ctx.id, "archive/today.md", Some(moved.version))
+        .unwrap();
+    let err = uc.file_read(&ctx.id, "archive/today.md").unwrap_err();
+    assert_eq!(err.code, ErrorCode::NotFound);
+}
