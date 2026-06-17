@@ -54,6 +54,8 @@ struct UcFuse {
     ctx_id: String,
     next_ino: u64,
     next_fh: u64,
+    uid: u32,
+    gid: u32,
     paths: HashMap<String, Entry>,
     inos: HashMap<u64, String>,
     open: HashMap<u64, OpenFile>,
@@ -79,6 +81,7 @@ struct OpenFile {
     buffer: Vec<u8>,
     base_version: Option<usize>,
     dirty: bool,
+    ignored: bool,
 }
 
 impl UcFuse {
@@ -99,6 +102,8 @@ impl UcFuse {
             ctx_id,
             next_ino: ROOT_INO + 1,
             next_fh: 1,
+            uid: unsafe { libc::getuid() },
+            gid: unsafe { libc::getgid() },
             paths,
             inos,
             open: HashMap::new(),
@@ -129,6 +134,10 @@ impl UcFuse {
         }
 
         for artifact in artifacts {
+            if ignored_mount_path(&artifact.path) {
+                continue;
+            }
+
             let mut parent = String::new();
             for part in artifact
                 .path
@@ -210,8 +219,8 @@ impl UcFuse {
             kind,
             perm,
             nlink,
-            uid: 0,
-            gid: 0,
+            uid: self.uid,
+            gid: self.gid,
             rdev: 0,
             blksize: 512,
             flags: 0,
@@ -223,10 +232,15 @@ impl UcFuse {
     }
 
     fn open_handle(&mut self, path: String) -> Result<u64, UcError> {
-        let (buffer, base_version) = match self.load_path(&path) {
-            Ok(artifact) => (artifact.data, Some(artifact.version)),
-            Err(error) if error.code == ErrorCode::NotFound => (Vec::new(), None),
-            Err(error) => return Err(error),
+        let ignored = ignored_mount_path(&path);
+        let (buffer, base_version) = if ignored {
+            (Vec::new(), None)
+        } else {
+            match self.load_path(&path) {
+                Ok(artifact) => (artifact.data, Some(artifact.version)),
+                Err(error) if error.code == ErrorCode::NotFound => (Vec::new(), None),
+                Err(error) => return Err(error),
+            }
         };
         let fh = self.next_fh;
         self.next_fh += 1;
@@ -237,6 +251,7 @@ impl UcFuse {
                 buffer,
                 base_version,
                 dirty: false,
+                ignored,
             },
         );
         Ok(fh)
@@ -251,6 +266,13 @@ impl UcFuse {
         }
 
         let path = file.path.clone();
+        if file.ignored {
+            file.dirty = false;
+            self.paths.remove(&path);
+            self.inos.retain(|_, candidate| candidate != &path);
+            return Ok(());
+        }
+
         let buffer = file.buffer.clone();
         let base_version = file.base_version;
 
@@ -274,6 +296,12 @@ impl UcFuse {
     }
 
     fn write_path(&mut self, path: &str, data: Vec<u8>) -> Result<ArtifactMeta, UcError> {
+        if ignored_mount_path(path) {
+            return Err(UcError::new(
+                ErrorCode::InvalidInput,
+                "Ignored mount sidecar path",
+            ));
+        }
         let base_version = self.load_path(path).ok().map(|artifact| artifact.version);
         let mut input = FileWrite::new(path, data)
             .with_kind(infer_kind(path))
@@ -734,6 +762,12 @@ fn parent_path(path: &str) -> String {
         .unwrap_or_default()
 }
 
+fn ignored_mount_path(path: &str) -> bool {
+    path.rsplit('/').next().is_some_and(|name| {
+        name == ".DS_Store" || name.starts_with("._") || name == ".Spotlight-V100"
+    })
+}
+
 fn infer_kind(path: &str) -> String {
     match Path::new(path).extension().and_then(|ext| ext.to_str()) {
         Some("md") | Some("markdown") => "text/markdown",
@@ -774,5 +808,12 @@ mod tests {
         assert_eq!(parent_path("draft.md"), "");
         assert_eq!(parent_path("drafts/brief.md"), "drafts");
         assert_eq!(join_path("drafts", "brief.md"), "drafts/brief.md");
+    }
+
+    #[test]
+    fn ignores_macos_sidecar_paths() {
+        assert!(ignored_mount_path(".DS_Store"));
+        assert!(ignored_mount_path("notes/._hello.md"));
+        assert!(!ignored_mount_path("notes/hello.md"));
     }
 }
