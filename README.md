@@ -23,6 +23,8 @@ agent-created files across local and edge/serverless environments.
 - **File ergonomics for agents** - artifacts have paths and file-like verbs;
   local materialization and the planned FUSE adapter project the same namespace
   into real files.
+- **CLI included** - the `uc` binary exposes context creation, file verbs,
+  materialization, directory sync, and `uc mount` for local FUSE workflows.
 - **LEGO blocks** - node store, content store, remote protocol, SDKs, search,
   mirror, and file surfaces are replaceable blocks behind one domain model.
 
@@ -31,6 +33,7 @@ agent-created files across local and edge/serverless environments.
 | Dir | What |
 |---|---|
 | `core/` | Rust core, model, and product contract |
+| `cli/` | `uc` command-line interface and optional FUSE mount |
 | `docs/` | Protocol and implementation notes |
 | `sdks/js` | JS/TS SDK, remote edge client, local N-API binding, server engines |
 | `sdks/python` | Python SDK, remote client, local PyO3 binding |

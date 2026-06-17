@@ -1,7 +1,8 @@
 # FUSE Adapter
 
-FUSE is the native file surface for local agents. It is not the node store, not
-the content store, and not a dependency of the Rust core.
+FUSE is the native file surface for local agents. It is exposed as `uc mount`.
+It is not the node store, not the content store, and not a dependency of the
+Rust core.
 
 The adapter mounts one context as a directory tree:
 
@@ -47,7 +48,17 @@ and diagnostics.
 
 ## Runtime Shape
 
-The adapter can be a separate native binary or package feature. It should link
-to the Rust core and call the same dispatch operations as JS/Python local
-bindings. It should never require S3-FUSE, JuiceFS, or a mounted remote
+The adapter lives in the `uc` CLI behind the optional `fuse` feature:
+
+```bash
+cargo build -p ultracontext-cli --features fuse
+./target/debug/uc --db ./ultracontext.db mount ctx_... ./mnt
+```
+
+On macOS, the build host needs macFUSE/osxfuse available to `pkg-config`. On
+Linux, the host needs libfuse/fuse3 development files. Without the feature, the
+CLI still builds and `uc mount` returns a clear error.
+
+The adapter links to the Rust core and calls the same operations as JS/Python
+local bindings. It should never require S3-FUSE, JuiceFS, or a mounted remote
 filesystem underneath.

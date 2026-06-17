@@ -28,6 +28,9 @@ jobs:
       - name: test
         run: cargo test -p ultracontext
 
+      - name: test CLI
+        run: cargo test -p ultracontext-cli
+
       - name: check python native binding
         run: cargo check -p ultracontext-python-native
 

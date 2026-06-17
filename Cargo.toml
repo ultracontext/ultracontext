@@ -1,6 +1,6 @@
 # workspace root: components at top level, languages inside sdks/
 [workspace]
-members = ["core", "sdks/js/native", "sdks/python/native"]
+members = ["core", "cli", "sdks/js/native", "sdks/python/native"]
 resolver = "3"
 
 [profile.release]

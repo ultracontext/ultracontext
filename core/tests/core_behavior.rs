@@ -183,6 +183,26 @@ fn artifacts_can_store_large_content_in_a_local_directory() {
 }
 
 #[test]
+fn artifacts_can_be_loaded_as_exact_bytes() {
+    let uc = UltraContext::open(temp_db("artifact-bytes")).unwrap();
+    let ctx = uc.create(json!({})).unwrap();
+    let data = vec![0, 159, 146, 150, 255, 10];
+
+    uc.save_artifact(
+        &ctx.id,
+        ArtifactSave::new("images/raw.bin", "application/octet-stream", &data),
+    )
+    .unwrap();
+
+    let loaded = uc
+        .load_artifact_bytes(&ctx.id, "images/raw.bin", None)
+        .unwrap();
+
+    assert_eq!(loaded.data, data);
+    assert_eq!(loaded.kind, "application/octet-stream");
+}
+
+#[test]
 fn snapshots_can_mirror_nodes_and_blob_content_into_a_new_store() {
     let content_root = temp_dir("snapshot-content");
     let source = UltraContext::open_with_options(

@@ -30,7 +30,7 @@ pub struct UcError {
 }
 
 impl UcError {
-    fn new(code: ErrorCode, message: impl Into<String>) -> Self {
+    pub fn new(code: ErrorCode, message: impl Into<String>) -> Self {
         Self {
             code,
             message: message.into(),
@@ -287,6 +287,19 @@ pub struct ArtifactData {
     pub metadata: Value,
     pub storage: Value,
     pub data: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArtifactBytes {
+    pub id: String,
+    pub path: String,
+    pub kind: String,
+    pub size: usize,
+    pub version: usize,
+    pub metadata: Value,
+    pub storage: Value,
+    pub data: Vec<u8>,
     pub created_at: String,
 }
 
@@ -791,6 +804,26 @@ impl UltraContext {
         path_or_id: &str,
         version: Option<usize>,
     ) -> UcResult<ArtifactData> {
+        let bytes = self.load_artifact_bytes(ctx_id, path_or_id, version)?;
+        Ok(ArtifactData {
+            id: bytes.id,
+            path: bytes.path,
+            kind: bytes.kind,
+            size: bytes.size,
+            version: bytes.version,
+            metadata: bytes.metadata,
+            storage: bytes.storage,
+            data: Some(String::from_utf8_lossy(&bytes.data).to_string()),
+            created_at: bytes.created_at,
+        })
+    }
+
+    pub fn load_artifact_bytes(
+        &self,
+        ctx_id: &str,
+        path_or_id: &str,
+        version: Option<usize>,
+    ) -> UcResult<ArtifactBytes> {
         let conn = self.lock_conn()?;
         let root = find_root(&conn, ctx_id)?;
         let current = if path_or_id.starts_with("art_") {
@@ -806,7 +839,7 @@ impl UltraContext {
             .get(version)
             .ok_or_else(|| UcError::new(ErrorCode::NotFound, "Artifact version not found"))?;
 
-        artifact_data(&self.content_store, row, version)
+        artifact_bytes(&self.content_store, row, version)
     }
 
     pub fn list_contexts(&self) -> UcResult<Vec<ContextView>> {
@@ -1858,10 +1891,10 @@ fn artifact_meta(conn: &Connection, row: &NodeRow) -> UcResult<ArtifactMeta> {
     })
 }
 
-fn artifact_data(store: &ContentStore, row: &NodeRow, version: usize) -> UcResult<ArtifactData> {
-    let data = read_content(store, row)?.map(|bytes| String::from_utf8_lossy(&bytes).to_string());
+fn artifact_bytes(store: &ContentStore, row: &NodeRow, version: usize) -> UcResult<ArtifactBytes> {
+    let data = read_content(store, row)?.unwrap_or_default();
 
-    Ok(ArtifactData {
+    Ok(ArtifactBytes {
         id: row.public_id.clone(),
         path: content_string(&row.content, "path")?,
         kind: content_string(&row.content, "kind")?,

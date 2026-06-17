@@ -1,0 +1,21 @@
+[package]
+name = "ultracontext-cli"
+version = "2.0.0-alpha.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "Command-line interface for UltraContext"
+repository = "https://github.com/ultracontext/ultracontext"
+
+[[bin]]
+name = "uc"
+path = "src/main.rs"
+
+[features]
+default = []
+fuse = ["dep:fuser", "dep:libc"]
+
+[dependencies]
+serde_json = "1"
+ultracontext = { path = "../core" }
+fuser = { version = "0.15", optional = true }
+libc = { version = "0.2", optional = true }

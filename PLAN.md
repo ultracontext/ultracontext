@@ -29,6 +29,9 @@ settle.
   wired to the Rust JSON dispatch boundary. A local Python 3.12 venv has been
   tested with `maturin develop`, local SQLite mode, local-dir content storage,
   and wheel install.
+- The Rust CLI crate ships the `uc` binary with context/file commands,
+  materialization, sync-dir, and a FUSE-backed `uc mount` adapter behind the
+  optional `fuse` feature.
 
 ## Shippable v2 Goal
 
@@ -127,6 +130,19 @@ Build file verbs over artifacts and let every file surface share them:
 
 Expose them as SDK helpers, local materialization, and the FUSE/native mount.
 The mount is a product feature, but it stays outside the core storage layer.
+
+### CLI
+
+The CLI is the local operator surface:
+
+- `uc create`
+- `uc contexts`
+- `uc file list/read/write/mv/rm/glob/grep`
+- `uc materialize`
+- `uc sync-dir`
+- `uc mount` with the optional FUSE feature
+
+The CLI links to the Rust core and must not reimplement domain rules.
 
 ## Implementation Phases
 
@@ -290,7 +306,9 @@ as a filesystem.
 1. DONE - SDK file helpers.
 2. DONE - Local materialization to real directories and sync-back from edited
    files.
-3. NEXT - FUSE/native mount over the same file verbs for local agents.
+3. DONE - CLI surface for context/file/materialize/sync-dir operations.
+4. DONE - FUSE/native mount implementation over the same file verbs, gated
+   behind the CLI's optional `fuse` feature.
 
 Deliverable: an agent can read/edit markdown artifacts through file-like verbs;
 FUSE gives local agents a real filesystem view without becoming a core storage
@@ -309,5 +327,6 @@ dependency.
 ## Remaining Later Work
 
 - CRDT merges for same-document concurrent edits.
-- FUSE/native mount hardening over the existing file verbs.
+- FUSE/native mount packaging, installer checks, and macOS/Linux smoke tests on
+  hosts with FUSE installed.
 - Hosted auth/billing and managed service operations.
