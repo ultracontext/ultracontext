@@ -76,6 +76,22 @@ impl From<rusqlite::Error> for UcError {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct WorkspaceView {
+    pub id: String,
+    pub metadata: Value,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SessionView {
+    pub id: String,
+    pub workspace_id: String,
+    pub context_id: String,
+    pub metadata: Value,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct ContextView {
     pub id: String,
     pub metadata: Value,
@@ -401,40 +417,58 @@ impl UltraContext {
         })
     }
 
-    pub fn create(&self, metadata: Value) -> UcResult<ContextView> {
+    pub fn create_workspace(&self, metadata: Value) -> UcResult<WorkspaceView> {
         let conn = self.lock_conn()?;
         let created_at = now_iso();
-        let root_id = public_id("ctx");
+        let workspace_id = public_id("ws");
 
         conn.execute(
             "INSERT INTO nodes (public_id, kind, content, metadata, created_at)
-             VALUES (?1, 'context', '{}', ?2, ?3)",
-            params![root_id, metadata.to_string(), created_at],
-        )?;
-        let root_rowid = conn.last_insert_rowid();
-
-        conn.execute(
-            "INSERT INTO nodes (public_id, kind, content, metadata, owner, created_at)
-             VALUES (?1, 'context', '{}', ?2, ?3, ?4)",
-            params![
-                public_id("ctx"),
-                json!({"operation": "create"}).to_string(),
-                root_rowid,
-                now_iso()
-            ],
+             VALUES (?1, 'workspace', '{}', ?2, ?3)",
+            params![workspace_id, metadata.to_string(), created_at],
         )?;
 
-        Ok(ContextView {
-            id: root_id,
+        Ok(WorkspaceView {
+            id: workspace_id,
             metadata,
             created_at,
         })
     }
 
+    pub fn list_workspaces(&self) -> UcResult<Vec<WorkspaceView>> {
+        let conn = self.lock_conn()?;
+        list_workspaces(&conn)
+    }
+
+    pub fn create_session(&self, workspace_id: &str, metadata: Value) -> UcResult<SessionView> {
+        let conn = self.lock_conn()?;
+        let workspace = workspace_by_id(&conn, workspace_id)?
+            .ok_or_else(|| UcError::new(ErrorCode::NotFound, "Workspace not found"))?;
+        Ok(create_session_nodes(&conn, &workspace, metadata)?.session)
+    }
+
+    pub fn create_in_workspace(
+        &self,
+        workspace_id: &str,
+        metadata: Value,
+    ) -> UcResult<ContextView> {
+        let conn = self.lock_conn()?;
+        let workspace = workspace_by_id(&conn, workspace_id)?
+            .ok_or_else(|| UcError::new(ErrorCode::NotFound, "Workspace not found"))?;
+        Ok(create_session_nodes(&conn, &workspace, metadata)?.session_context_view())
+    }
+
+    pub fn create(&self, metadata: Value) -> UcResult<ContextView> {
+        let conn = self.lock_conn()?;
+        let workspace = ensure_default_workspace(&conn)?;
+        Ok(create_session_nodes(&conn, &workspace, metadata)?.session_context_view())
+    }
+
     pub fn fork(&self, source_id: &str, options: ForkOptions) -> UcResult<ContextView> {
         let conn = self.lock_conn()?;
-        let source_root = find_root(&conn, source_id)?;
-        let source_heads = context_heads(&conn, source_root.rowid)?;
+        let source_session = resolve_session_handle(&conn, source_id)?;
+        let workspace = workspace_for_session(&conn, &source_session)?;
+        let source_heads = context_heads(&conn, source_session.rowid)?;
         let source_version = options
             .version
             .unwrap_or_else(|| source_heads.len().saturating_sub(1));
@@ -442,34 +476,11 @@ impl UltraContext {
             .get(source_version)
             .ok_or_else(|| UcError::new(ErrorCode::NotFound, "Version not found"))?;
 
-        let created_at = now_iso();
-        let fork_id = public_id("ctx");
-        conn.execute(
-            "INSERT INTO nodes (public_id, kind, content, metadata, parent, created_at)
-             VALUES (?1, 'context', '{}', ?2, ?3, ?4)",
-            params![
-                fork_id,
-                options.metadata.to_string(),
-                source_root.rowid,
-                created_at
-            ],
-        )?;
-        let fork_root = conn.last_insert_rowid();
-
-        conn.execute(
-            "INSERT INTO nodes (public_id, kind, content, metadata, owner, created_at)
-             VALUES (?1, 'context', '{}', ?2, ?3, ?4)",
-            params![
-                public_id("ctx"),
-                json!({"operation": "fork", "source": source_id}).to_string(),
-                fork_root,
-                now_iso()
-            ],
-        )?;
-        let fork_head = conn.last_insert_rowid();
+        let created = create_session_nodes(&conn, &workspace, options.metadata.clone())?;
+        let session = created.session_row.clone();
 
         let mut prev = None;
-        for message in ordered_children(&conn, source_head.rowid, "message")? {
+        for message in context_message_rows(&conn, &source_session, source_head)? {
             conn.execute(
                 "INSERT INTO nodes
                  (public_id, kind, content, metadata, prev, parent, owner, created_at)
@@ -480,7 +491,7 @@ impl UltraContext {
                     message.metadata.to_string(),
                     prev,
                     message.rowid,
-                    fork_head,
+                    session.rowid,
                     now_iso()
                 ],
             )?;
@@ -489,55 +500,23 @@ impl UltraContext {
             prev = Some(rowid);
         }
 
-        for artifact in current_artifacts(&conn, source_root.rowid)? {
-            let artifact_id = public_id("art");
-            let bytes = read_content(&self.content_store, &artifact)?.unwrap_or_default();
-            let stored = store_content(
-                &self.content_store,
-                &artifact_id,
-                0,
-                &content_string(&artifact.content, "kind")?,
-                &bytes,
-            )?;
-            let mut content = artifact.content.clone();
-            if let Some(map) = content.as_object_mut() {
-                map.insert("storage".to_string(), stored.storage);
-                map.insert("size".to_string(), json!(bytes.len()));
-                map.insert("sha256".to_string(), json!(content_fingerprint(&bytes)));
-            }
-            conn.execute(
-                "INSERT INTO nodes
-                 (public_id, kind, content, metadata, data, parent, owner, created_at)
-                 VALUES (?1, 'artifact', ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![
-                    artifact_id,
-                    content.to_string(),
-                    artifact.metadata.to_string(),
-                    stored.data,
-                    artifact.rowid,
-                    fork_root,
-                    now_iso()
-                ],
-            )?;
-            let rowid = conn.last_insert_rowid();
-            if content_string(&content, "kind")?.starts_with("text/") {
-                index_search(&conn, rowid, &String::from_utf8_lossy(&bytes))?;
-            }
-        }
-
-        Ok(ContextView {
-            id: fork_id,
-            metadata: options.metadata,
-            created_at,
-        })
+        Ok(created.session_context_view())
     }
 
     pub fn append(&self, ctx_id: &str, messages: Vec<AppendInput>) -> UcResult<MutationResult> {
         let conn = self.lock_conn()?;
-        let root = find_root(&conn, ctx_id)?;
-        let head = current_context_head(&conn, root.rowid)?;
-        let existing = ordered_children(&conn, head.rowid, "message")?;
+        let session = resolve_session_handle(&conn, ctx_id)?;
+        let head = current_context_head(&conn, session.rowid)?;
+        let existing = ordered_children(&conn, session.rowid, "message")?;
         let mut prev = existing.last().map(|node| node.rowid);
+        let mut projected_prev = ordered_children(&conn, head.rowid, "message")?
+            .last()
+            .map(|node| node.rowid);
+        let project_into_head = head
+            .content
+            .get("projection")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
 
         for message in messages {
             conn.execute(
@@ -549,16 +528,36 @@ impl UltraContext {
                     message.content.to_string(),
                     message.metadata.to_string(),
                     prev,
-                    head.rowid,
+                    session.rowid,
                     now_iso()
                 ],
             )?;
             let rowid = conn.last_insert_rowid();
             index_search(&conn, rowid, &text_from_value(&message.content))?;
             prev = Some(rowid);
+
+            if project_into_head {
+                conn.execute(
+                    "INSERT INTO nodes
+                     (public_id, kind, content, metadata, prev, parent, owner, created_at)
+                     VALUES (?1, 'message', ?2, ?3, ?4, ?5, ?6, ?7)",
+                    params![
+                        public_id("msg"),
+                        message.content.to_string(),
+                        message.metadata.to_string(),
+                        projected_prev,
+                        rowid,
+                        head.rowid,
+                        now_iso()
+                    ],
+                )?;
+                let projected_rowid = conn.last_insert_rowid();
+                index_search(&conn, projected_rowid, &text_from_value(&message.content))?;
+                projected_prev = Some(projected_rowid);
+            }
         }
 
-        let data = message_views(&conn, head.rowid)?;
+        let data = context_message_views(&conn, &session, &head)?;
         Ok(MutationResult {
             data,
             version: context_version(&conn, head.rowid)?,
@@ -567,8 +566,8 @@ impl UltraContext {
 
     pub fn get(&self, ctx_id: &str, options: GetOptions) -> UcResult<ContextData> {
         let conn = self.lock_conn()?;
-        let root = find_root(&conn, ctx_id)?;
-        let heads = context_heads(&conn, root.rowid)?;
+        let session = resolve_session_handle(&conn, ctx_id)?;
+        let heads = context_heads(&conn, session.rowid)?;
         let version = options
             .version
             .unwrap_or_else(|| heads.len().saturating_sub(1));
@@ -578,7 +577,7 @@ impl UltraContext {
 
         Ok(ContextData {
             id: ctx_id.to_string(),
-            data: message_views(&conn, head.rowid)?,
+            data: context_message_views(&conn, &session, head)?,
             version,
         })
     }
@@ -590,20 +589,21 @@ impl UltraContext {
         version_metadata: Value,
     ) -> UcResult<MutationResult> {
         let conn = self.lock_conn()?;
-        let root = find_root(&conn, ctx_id)?;
-        let current_head = current_context_head(&conn, root.rowid)?;
-        let messages = ordered_children(&conn, current_head.rowid, "message")?;
+        let session = resolve_session_handle(&conn, ctx_id)?;
+        let current_head = current_context_head(&conn, session.rowid)?;
+        let messages = context_message_rows(&conn, &session, &current_head)?;
         let target_index = resolve_update_target(&messages, &patch.target)?;
 
         conn.execute(
             "INSERT INTO nodes
              (public_id, kind, content, metadata, prev, owner, created_at)
-             VALUES (?1, 'context', '{}', ?2, ?3, ?4, ?5)",
+             VALUES (?1, 'context', ?2, ?3, ?4, ?5, ?6)",
             params![
                 public_id("ctx"),
+                json!({"role": "head", "operation": "update", "projection": true}).to_string(),
                 version_metadata.to_string(),
                 current_head.rowid,
-                root.rowid,
+                session.rowid,
                 now_iso()
             ],
         )?;
@@ -643,7 +643,7 @@ impl UltraContext {
             prev = Some(rowid);
         }
 
-        let data = message_views(&conn, new_head)?;
+        let data = message_views_for_owner(&conn, new_head)?;
         Ok(MutationResult {
             data,
             version: context_version(&conn, new_head)?,
@@ -664,9 +664,9 @@ impl UltraContext {
         }
 
         let conn = self.lock_conn()?;
-        let root = find_root(&conn, ctx_id)?;
-        let current_head = current_context_head(&conn, root.rowid)?;
-        let messages = ordered_children(&conn, current_head.rowid, "message")?;
+        let session = resolve_session_handle(&conn, ctx_id)?;
+        let current_head = current_context_head(&conn, session.rowid)?;
+        let messages = context_message_rows(&conn, &session, &current_head)?;
         let mut delete_indices = Vec::new();
         for target in targets {
             delete_indices.push(resolve_delete_target(&messages, &target)?);
@@ -677,12 +677,13 @@ impl UltraContext {
         conn.execute(
             "INSERT INTO nodes
              (public_id, kind, content, metadata, prev, owner, created_at)
-             VALUES (?1, 'context', '{}', ?2, ?3, ?4, ?5)",
+             VALUES (?1, 'context', ?2, ?3, ?4, ?5, ?6)",
             params![
                 public_id("ctx"),
+                json!({"role": "head", "operation": "delete", "projection": true}).to_string(),
                 version_metadata.to_string(),
                 current_head.rowid,
-                root.rowid,
+                session.rowid,
                 now_iso()
             ],
         )?;
@@ -712,7 +713,7 @@ impl UltraContext {
             prev = Some(rowid);
         }
 
-        let data = message_views(&conn, new_head)?;
+        let data = message_views_for_owner(&conn, new_head)?;
         Ok(MutationResult {
             data,
             version: context_version(&conn, new_head)?,
@@ -721,17 +722,38 @@ impl UltraContext {
 
     pub fn save_artifact(&self, ctx_id: &str, input: ArtifactSave) -> UcResult<ArtifactMeta> {
         let conn = self.lock_conn()?;
-        let root = find_root(&conn, ctx_id)?;
+        let session = resolve_session_handle(&conn, ctx_id)?;
+        let artifact_owner = workspace_for_session(&conn, &session)?;
+        self.save_artifact_for_owner(&conn, artifact_owner.rowid, input)
+    }
+
+    pub fn save_workspace_artifact(
+        &self,
+        workspace_id: &str,
+        input: ArtifactSave,
+    ) -> UcResult<ArtifactMeta> {
+        let conn = self.lock_conn()?;
+        let workspace = workspace_by_id(&conn, workspace_id)?
+            .ok_or_else(|| UcError::new(ErrorCode::NotFound, "Workspace not found"))?;
+        self.save_artifact_for_owner(&conn, workspace.rowid, input)
+    }
+
+    fn save_artifact_for_owner(
+        &self,
+        conn: &Connection,
+        owner_rowid: i64,
+        input: ArtifactSave,
+    ) -> UcResult<ArtifactMeta> {
         let normalized_path = normalize_path(&input.path)?;
         let current = if let Some(id) = input.id.as_deref() {
-            current_artifact_by_id(&conn, root.rowid, id)?
+            current_artifact_by_id(conn, owner_rowid, id)?
         } else {
-            current_artifact_by_path(&conn, root.rowid, &normalized_path)?
+            current_artifact_by_path(conn, owner_rowid, &normalized_path)?
         };
 
         if let Some(expected) = input.if_version {
             let actual = if let Some(ref artifact) = current {
-                artifact_version(&conn, artifact.rowid)?
+                artifact_version(conn, artifact.rowid)?
             } else {
                 return Err(UcError::new(
                     ErrorCode::Conflict,
@@ -753,7 +775,7 @@ impl UltraContext {
         let prev = current.as_ref().map(|node| node.rowid);
         let data = input.data;
         let next_version = if let Some(ref artifact) = current {
-            artifact_version(&conn, artifact.rowid)? + 1
+            artifact_version(conn, artifact.rowid)? + 1
         } else {
             0
         };
@@ -783,19 +805,19 @@ impl UltraContext {
                 stored.data,
                 prev,
                 prev,
-                root.rowid,
+                owner_rowid,
                 now_iso()
             ],
         )?;
 
         let inserted = conn.last_insert_rowid();
-        let row = node_by_rowid(&conn, inserted)?;
+        let row = node_by_rowid(conn, inserted)?;
         if content_string(&row.content, "kind")?.starts_with("text/")
             && let Some(bytes) = read_content(&self.content_store, &row)?
         {
-            index_search(&conn, inserted, &String::from_utf8_lossy(&bytes))?;
+            index_search(conn, inserted, &String::from_utf8_lossy(&bytes))?;
         }
-        artifact_meta(&conn, &row)
+        artifact_meta(conn, &row)
     }
 
     pub fn load_artifact(
@@ -825,11 +847,37 @@ impl UltraContext {
         version: Option<usize>,
     ) -> UcResult<ArtifactBytes> {
         let conn = self.lock_conn()?;
-        let root = find_root(&conn, ctx_id)?;
+        let session = resolve_session_handle(&conn, ctx_id)?;
+        let artifact_owner = workspace_for_session(&conn, &session)?;
         let current = if path_or_id.starts_with("art_") {
-            current_artifact_by_id(&conn, root.rowid, path_or_id)?
+            current_artifact_by_id(&conn, artifact_owner.rowid, path_or_id)?
         } else {
-            current_artifact_by_path(&conn, root.rowid, &normalize_path(path_or_id)?)?
+            current_artifact_by_path(&conn, artifact_owner.rowid, &normalize_path(path_or_id)?)?
+        }
+        .ok_or_else(|| UcError::new(ErrorCode::NotFound, "Artifact not found"))?;
+
+        let chain = artifact_chain(&conn, current.rowid)?;
+        let version = version.unwrap_or_else(|| chain.len().saturating_sub(1));
+        let row = chain
+            .get(version)
+            .ok_or_else(|| UcError::new(ErrorCode::NotFound, "Artifact version not found"))?;
+
+        artifact_bytes(&self.content_store, row, version)
+    }
+
+    pub fn load_workspace_artifact_bytes(
+        &self,
+        workspace_id: &str,
+        path_or_id: &str,
+        version: Option<usize>,
+    ) -> UcResult<ArtifactBytes> {
+        let conn = self.lock_conn()?;
+        let workspace = workspace_by_id(&conn, workspace_id)?
+            .ok_or_else(|| UcError::new(ErrorCode::NotFound, "Workspace not found"))?;
+        let current = if path_or_id.starts_with("art_") {
+            current_artifact_by_id(&conn, workspace.rowid, path_or_id)?
+        } else {
+            current_artifact_by_path(&conn, workspace.rowid, &normalize_path(path_or_id)?)?
         }
         .ok_or_else(|| UcError::new(ErrorCode::NotFound, "Artifact not found"))?;
 
@@ -844,30 +892,24 @@ impl UltraContext {
 
     pub fn list_contexts(&self) -> UcResult<Vec<ContextView>> {
         let conn = self.lock_conn()?;
-        let mut stmt = conn.prepare(
-            "SELECT id, public_id, content, metadata, data, prev, created_at
-             FROM nodes
-             WHERE kind = 'context' AND owner IS NULL
-             ORDER BY created_at DESC, id DESC",
-        )?;
-        let roots = stmt
-            .query_map([], row_from_sql)?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-
-        Ok(roots
-            .into_iter()
-            .map(|root| ContextView {
-                id: root.public_id,
-                metadata: root.metadata,
-                created_at: root.created_at,
-            })
-            .collect())
+        session_rows(&conn).map(|sessions| sessions.into_iter().map(context_view).collect())
     }
 
     pub fn list_artifacts(&self, ctx_id: &str) -> UcResult<Vec<ArtifactMeta>> {
         let conn = self.lock_conn()?;
-        let root = find_root(&conn, ctx_id)?;
-        current_artifacts(&conn, root.rowid)?
+        let session = resolve_session_handle(&conn, ctx_id)?;
+        let artifact_owner = workspace_for_session(&conn, &session)?;
+        current_artifacts(&conn, artifact_owner.rowid)?
+            .iter()
+            .map(|row| artifact_meta(&conn, row))
+            .collect()
+    }
+
+    pub fn list_workspace_artifacts(&self, workspace_id: &str) -> UcResult<Vec<ArtifactMeta>> {
+        let conn = self.lock_conn()?;
+        let workspace = workspace_by_id(&conn, workspace_id)?
+            .ok_or_else(|| UcError::new(ErrorCode::NotFound, "Workspace not found"))?;
+        current_artifacts(&conn, workspace.rowid)?
             .iter()
             .map(|row| artifact_meta(&conn, row))
             .collect()
@@ -886,15 +928,15 @@ impl UltraContext {
         let mut hits = Vec::new();
         let fts_hits = fts_hit_rowids(&conn, &needle)?;
 
-        for context in root_contexts(&conn)? {
-            let head = current_context_head(&conn, context.rowid)?;
-            for message in ordered_children(&conn, head.rowid, "message")? {
+        for session in session_rows(&conn)? {
+            let head = current_context_head(&conn, session.rowid)?;
+            for message in context_message_rows(&conn, &session, &head)? {
                 let haystack = text_from_value(&message.content);
                 if matches_search(&fts_hits, message.rowid, &haystack, &needle) {
                     hits.push(SearchHit {
                         kind: SearchKind::Message,
                         id: message.public_id,
-                        context_id: context.public_id.clone(),
+                        context_id: session.public_id.clone(),
                         path: None,
                         snippet: haystack,
                         metadata: message.metadata,
@@ -903,7 +945,8 @@ impl UltraContext {
                 }
             }
 
-            for artifact in current_artifacts(&conn, context.rowid)? {
+            let artifact_owner = workspace_for_session(&conn, &session)?;
+            for artifact in current_artifacts(&conn, artifact_owner.rowid)? {
                 let kind = content_string(&artifact.content, "kind")?;
                 if !kind.starts_with("text/") {
                     continue;
@@ -916,7 +959,7 @@ impl UltraContext {
                     hits.push(SearchHit {
                         kind: SearchKind::Artifact,
                         id: artifact.public_id,
-                        context_id: context.public_id.clone(),
+                        context_id: session.public_id.clone(),
                         path: Some(content_string(&artifact.content, "path")?),
                         snippet: haystack,
                         metadata: artifact.metadata,
@@ -946,14 +989,27 @@ impl UltraContext {
 
     pub fn delete_context_permanently(&self, ctx_id: &str) -> UcResult<()> {
         let conn = self.lock_conn()?;
-        let root = find_root(&conn, ctx_id)?;
-        conn.execute("DELETE FROM nodes WHERE id = ?1", params![root.rowid])?;
+        let session = resolve_session_handle(&conn, ctx_id)?;
+        conn.execute("DELETE FROM nodes WHERE id = ?1", params![session.rowid])?;
         Ok(())
     }
 
     pub fn file_write(&self, ctx_id: &str, input: FileWrite) -> UcResult<ArtifactMeta> {
         self.save_artifact(
             ctx_id,
+            ArtifactSave::new(input.path, input.kind, input.data)
+                .with_metadata(input.metadata)
+                .with_optional_if_version(input.if_version),
+        )
+    }
+
+    pub fn file_write_workspace(
+        &self,
+        workspace_id: &str,
+        input: FileWrite,
+    ) -> UcResult<ArtifactMeta> {
+        self.save_workspace_artifact(
+            workspace_id,
             ArtifactSave::new(input.path, input.kind, input.data)
                 .with_metadata(input.metadata)
                 .with_optional_if_version(input.if_version),
@@ -982,10 +1038,44 @@ impl UltraContext {
         )
     }
 
+    pub fn file_move_workspace(
+        &self,
+        workspace_id: &str,
+        from_path_or_id: &str,
+        to_path: &str,
+        if_version: Option<usize>,
+    ) -> UcResult<ArtifactMeta> {
+        let current = self.load_workspace_artifact_bytes(workspace_id, from_path_or_id, None)?;
+        self.save_workspace_artifact(
+            workspace_id,
+            ArtifactSave::new(to_path, current.kind, current.data)
+                .with_id(current.id)
+                .with_metadata(current.metadata)
+                .with_optional_if_version(if_version),
+        )
+    }
+
     pub fn file_list(&self, ctx_id: &str, prefix: Option<&str>) -> UcResult<Vec<ArtifactMeta>> {
         let prefix = prefix.map(normalize_prefix).transpose()?;
         Ok(self
             .list_artifacts(ctx_id)?
+            .into_iter()
+            .filter(|artifact| {
+                prefix
+                    .as_ref()
+                    .is_none_or(|prefix| artifact.path.starts_with(prefix))
+            })
+            .collect())
+    }
+
+    pub fn file_list_workspace(
+        &self,
+        workspace_id: &str,
+        prefix: Option<&str>,
+    ) -> UcResult<Vec<ArtifactMeta>> {
+        let prefix = prefix.map(normalize_prefix).transpose()?;
+        Ok(self
+            .list_workspace_artifacts(workspace_id)?
             .into_iter()
             .filter(|artifact| {
                 prefix
@@ -1011,10 +1101,14 @@ impl UltraContext {
         prefix: Option<&str>,
     ) -> UcResult<SearchResult> {
         let prefix = prefix.map(normalize_prefix).transpose()?;
+        let session_id = {
+            let conn = self.lock_conn()?;
+            resolve_session_handle(&conn, ctx_id)?.public_id
+        };
         let mut result = self.search(query)?;
         result.data.retain(|hit| {
             hit.kind == SearchKind::Artifact
-                && hit.context_id == ctx_id
+                && hit.context_id == session_id
                 && prefix.as_ref().is_none_or(|prefix| {
                     hit.path
                         .as_deref()
@@ -1042,6 +1136,24 @@ impl UltraContext {
         self.delete_artifact_permanently(&current.id)
     }
 
+    pub fn file_remove_workspace(
+        &self,
+        workspace_id: &str,
+        path_or_id: &str,
+        if_version: Option<usize>,
+    ) -> UcResult<()> {
+        let current = self.load_workspace_artifact_bytes(workspace_id, path_or_id, None)?;
+        if let Some(expected) = if_version
+            && current.version != expected
+        {
+            return Err(UcError::new(
+                ErrorCode::Conflict,
+                "Artifact version conflict",
+            ));
+        }
+        self.delete_artifact_permanently(&current.id)
+    }
+
     pub fn dispatch_json_str(&self, operation: &str, input: &str) -> UcResult<String> {
         let input = serde_json::from_str(input)
             .map_err(|_| UcError::new(ErrorCode::InvalidInput, "Input must be valid JSON"))?;
@@ -1050,9 +1162,33 @@ impl UltraContext {
 
     pub fn dispatch_json(&self, operation: &str, input: Value) -> UcResult<Value> {
         match operation {
-            "create" => Ok(context_view_json(
-                &self.create(input.get("metadata").cloned().unwrap_or_else(|| json!({})))?,
-            )),
+            "create" => {
+                let metadata = input.get("metadata").cloned().unwrap_or_else(|| json!({}));
+                if let Some(workspace_id) = optional_str(&input, &["workspaceId", "workspace_id"])?
+                {
+                    Ok(context_view_json(
+                        &self.create_in_workspace(workspace_id, metadata)?,
+                    ))
+                } else {
+                    Ok(context_view_json(&self.create(metadata)?))
+                }
+            }
+            "create_workspace" => {
+                Ok(workspace_view_json(&self.create_workspace(
+                    input.get("metadata").cloned().unwrap_or_else(|| json!({})),
+                )?))
+            }
+            "list_workspaces" => Ok(json!({
+                "data": self
+                    .list_workspaces()?
+                    .into_iter()
+                    .map(|view| workspace_view_json(&view))
+                    .collect::<Vec<_>>()
+            })),
+            "create_session" => Ok(session_view_json(&self.create_session(
+                required_str(&input, &["workspaceId", "workspace_id"])?,
+                input.get("metadata").cloned().unwrap_or_else(|| json!({})),
+            )?)),
             "fork" => Ok(context_view_json(&self.fork(
                 required_str(&input, &["sourceId", "source_id"])?,
                 ForkOptions {
@@ -1359,6 +1495,7 @@ impl UltraContext {
                 index_search(&conn, id, data)?;
             }
         }
+        migrate_context_roots(&conn)?;
         Ok(json!({
             "imported": imported,
             "skipped": skipped,
@@ -1368,6 +1505,7 @@ impl UltraContext {
 }
 
 fn init_schema(conn: &Connection) -> UcResult<()> {
+    migrate_node_kinds(conn)?;
     conn.execute_batch(
         "
         PRAGMA foreign_keys = ON;
@@ -1375,7 +1513,7 @@ fn init_schema(conn: &Connection) -> UcResult<()> {
         CREATE TABLE IF NOT EXISTS nodes (
             id         INTEGER PRIMARY KEY,
             public_id  TEXT NOT NULL,
-            kind       TEXT NOT NULL CHECK (kind IN ('context', 'message', 'artifact')),
+            kind       TEXT NOT NULL CHECK (kind IN ('workspace', 'session', 'context', 'message', 'artifact')),
             content    TEXT NOT NULL DEFAULT '{}',
             metadata   TEXT NOT NULL DEFAULT '{}',
             data       BLOB,
@@ -1396,12 +1534,274 @@ fn init_schema(conn: &Connection) -> UcResult<()> {
         USING fts5(node_id UNINDEXED, body);
         ",
     );
+    migrate_context_roots(conn)?;
+    Ok(())
+}
+
+fn migrate_node_kinds(conn: &Connection) -> UcResult<()> {
+    let sql: Option<String> = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'nodes'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(sql) = sql else {
+        return Ok(());
+    };
+    if sql.contains("'workspace'") && sql.contains("'session'") {
+        return Ok(());
+    }
+
+    conn.execute_batch(
+        "
+        PRAGMA foreign_keys = OFF;
+
+        ALTER TABLE nodes RENAME TO nodes_old;
+
+        CREATE TABLE nodes (
+            id         INTEGER PRIMARY KEY,
+            public_id  TEXT NOT NULL,
+            kind       TEXT NOT NULL CHECK (kind IN ('workspace', 'session', 'context', 'message', 'artifact')),
+            content    TEXT NOT NULL DEFAULT '{}',
+            metadata   TEXT NOT NULL DEFAULT '{}',
+            data       BLOB,
+            prev       INTEGER REFERENCES nodes(id),
+            parent     INTEGER REFERENCES nodes(id) ON DELETE SET NULL,
+            owner      INTEGER REFERENCES nodes(id) ON DELETE CASCADE,
+            created_at TEXT NOT NULL
+        );
+
+        INSERT INTO nodes (id, public_id, kind, content, metadata, data, prev, parent, owner, created_at)
+        SELECT id, public_id, kind, content, metadata, data, prev, parent, owner, created_at
+        FROM nodes_old;
+
+        DROP TABLE nodes_old;
+
+        PRAGMA foreign_keys = ON;
+        ",
+    )?;
+    Ok(())
+}
+
+fn migrate_context_roots(conn: &Connection) -> UcResult<()> {
+    migrate_orphan_context_roots(conn)?;
+    flatten_session_context_roots(conn)?;
+    Ok(())
+}
+
+fn migrate_orphan_context_roots(conn: &Connection) -> UcResult<()> {
+    let mut stmt = conn.prepare(
+        "SELECT id, public_id, content, metadata, data, prev, created_at
+         FROM nodes
+         WHERE kind = 'context' AND owner IS NULL
+         ORDER BY id ASC",
+    )?;
+    let roots = stmt
+        .query_map([], row_from_sql)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+    for root in roots {
+        let workspace_id = public_id("ws");
+        let created_at = now_iso();
+
+        conn.execute(
+            "INSERT INTO nodes (public_id, kind, content, metadata, owner, created_at)
+             VALUES (?1, 'workspace', ?2, ?3, NULL, ?4)",
+            params![
+                workspace_id,
+                json!({
+                    "migrated_from_context": root.public_id
+                })
+                .to_string(),
+                json!({
+                    "migrated_from_context": root.public_id
+                })
+                .to_string(),
+                created_at
+            ],
+        )?;
+        let workspace_rowid = conn.last_insert_rowid();
+
+        conn.execute(
+            "UPDATE nodes
+             SET kind = 'session', owner = ?1, content = ?2
+             WHERE id = ?3",
+            params![
+                workspace_rowid,
+                json!({
+                    "workspace_id": workspace_id,
+                    "migrated_from": "legacy-context-root",
+                    "legacy_context_id": root.public_id
+                })
+                .to_string(),
+                root.rowid
+            ],
+        )?;
+
+        conn.execute(
+            "UPDATE nodes
+             SET owner = ?1
+             WHERE kind = 'artifact' AND owner = ?2",
+            params![workspace_rowid, root.rowid],
+        )?;
+
+        let heads = ordered_children(conn, root.rowid, "context")?;
+        for head in heads {
+            mark_context_head(
+                conn,
+                &head,
+                root.rowid,
+                None,
+                &workspace_id,
+                &root.public_id,
+                true,
+                "migrated",
+            )?;
+        }
+
+        if ordered_children(conn, root.rowid, "context")?.is_empty() {
+            let context_id = public_id("ctx");
+            conn.execute(
+                "INSERT INTO nodes (public_id, kind, content, metadata, owner, created_at)
+                 VALUES (?1, 'context', ?2, ?3, ?4, ?5)",
+                params![
+                    context_id,
+                    json!({
+                        "role": "head",
+                        "operation": "migrated",
+                        "projection": false,
+                        "workspace_id": workspace_id,
+                        "session_id": root.public_id
+                    })
+                    .to_string(),
+                    json!({"operation": "migrated"}).to_string(),
+                    root.rowid,
+                    created_at
+                ],
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
+fn flatten_session_context_roots(conn: &Connection) -> UcResult<()> {
+    let mut stmt = conn.prepare(
+        "SELECT ctx.id, ctx.public_id, ctx.content, ctx.metadata, ctx.data, ctx.prev, ctx.created_at, ctx.owner
+         FROM nodes ctx
+         JOIN nodes session ON session.id = ctx.owner
+         WHERE ctx.kind = 'context'
+           AND session.kind = 'session'
+           AND json_extract(ctx.content, '$.role') = 'root'
+         ORDER BY ctx.id ASC",
+    )?;
+    let roots = stmt
+        .query_map([], |row| {
+            let content_text: String = row.get(2)?;
+            let metadata_text: String = row.get(3)?;
+            Ok((
+                NodeRow {
+                    rowid: row.get(0)?,
+                    public_id: row.get(1)?,
+                    content: serde_json::from_str(&content_text).unwrap_or_else(|_| json!({})),
+                    metadata: serde_json::from_str(&metadata_text).unwrap_or_else(|_| json!({})),
+                    data: row.get(4)?,
+                    prev: row.get(5)?,
+                    created_at: row.get(6)?,
+                },
+                row.get::<_, i64>(7)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+    for (root, session_rowid) in roots {
+        let session = node_by_rowid(conn, session_rowid)?;
+        let workspace = workspace_for_session(conn, &session)?;
+
+        mark_context_head(
+            conn,
+            &root,
+            session.rowid,
+            root.prev,
+            &workspace.public_id,
+            &session.public_id,
+            false,
+            "migrated-root",
+        )?;
+
+        let child_heads = ordered_children(conn, root.rowid, "context")?;
+        for child in child_heads {
+            let prev = child.prev.or(Some(root.rowid));
+            mark_context_head(
+                conn,
+                &child,
+                session.rowid,
+                prev,
+                &workspace.public_id,
+                &session.public_id,
+                true,
+                "migrated",
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
+fn mark_context_head(
+    conn: &Connection,
+    head: &NodeRow,
+    owner: i64,
+    prev: Option<i64>,
+    workspace_id: &str,
+    session_id: &str,
+    default_projection: bool,
+    default_operation: &str,
+) -> UcResult<()> {
+    let mut content = head.content.clone();
+    if !content.is_object() {
+        content = json!({});
+    }
+    if let Some(map) = content.as_object_mut() {
+        map.insert("role".to_string(), json!("head"));
+        map.insert("workspace_id".to_string(), json!(workspace_id));
+        map.insert("session_id".to_string(), json!(session_id));
+        map.entry("projection".to_string())
+            .or_insert(json!(default_projection));
+        map.entry("operation".to_string())
+            .or_insert(json!(default_operation));
+    }
+    conn.execute(
+        "UPDATE nodes
+         SET owner = ?1, prev = ?2, content = ?3
+         WHERE id = ?4",
+        params![owner, prev, content.to_string(), head.rowid],
+    )?;
     Ok(())
 }
 
 fn context_view_json(view: &ContextView) -> Value {
     json!({
         "id": view.id,
+        "metadata": view.metadata,
+        "created_at": view.created_at
+    })
+}
+
+fn workspace_view_json(view: &WorkspaceView) -> Value {
+    json!({
+        "id": view.id,
+        "metadata": view.metadata,
+        "created_at": view.created_at
+    })
+}
+
+fn session_view_json(view: &SessionView) -> Value {
+    json!({
+        "id": view.id,
+        "workspace_id": view.workspace_id,
+        "context_id": view.context_id,
         "metadata": view.metadata,
         "created_at": view.created_at
     })
@@ -1669,23 +2069,163 @@ fn optional_i64(input: &Value, key: &str) -> UcResult<Option<i64>> {
     })
 }
 
-fn find_root(conn: &Connection, public_id: &str) -> UcResult<NodeRow> {
+struct CreatedSession {
+    session: SessionView,
+    session_row: NodeRow,
+}
+
+impl CreatedSession {
+    fn session_context_view(&self) -> ContextView {
+        ContextView {
+            id: self.session.id.clone(),
+            metadata: self.session.metadata.clone(),
+            created_at: self.session.created_at.clone(),
+        }
+    }
+}
+
+fn ensure_default_workspace(conn: &Connection) -> UcResult<NodeRow> {
+    if let Some(workspace) = workspace_by_id(conn, "ws_default")? {
+        return Ok(workspace);
+    }
+
+    let created_at = now_iso();
+    conn.execute(
+        "INSERT INTO nodes (public_id, kind, content, metadata, created_at)
+         VALUES (?1, 'workspace', ?2, ?3, ?4)",
+        params![
+            "ws_default",
+            json!({"name": "default", "default": true}).to_string(),
+            json!({"name": "default", "default": true}).to_string(),
+            created_at
+        ],
+    )?;
+    node_by_rowid(conn, conn.last_insert_rowid())
+}
+
+fn create_session_nodes(
+    conn: &Connection,
+    workspace: &NodeRow,
+    metadata: Value,
+) -> UcResult<CreatedSession> {
+    let created_at = now_iso();
+    let session_id = public_id("ses");
+    let context_id = public_id("ctx");
+
+    conn.execute(
+        "INSERT INTO nodes (public_id, kind, content, metadata, owner, created_at)
+         VALUES (?1, 'session', ?2, ?3, ?4, ?5)",
+        params![
+            session_id,
+            json!({
+                "workspace_id": workspace.public_id,
+                "initial_context_id": context_id
+            })
+            .to_string(),
+            metadata.to_string(),
+            workspace.rowid,
+            created_at
+        ],
+    )?;
+    let session_row = node_by_rowid(conn, conn.last_insert_rowid())?;
+
+    conn.execute(
+        "INSERT INTO nodes (public_id, kind, content, metadata, owner, created_at)
+         VALUES (?1, 'context', ?2, ?3, ?4, ?5)",
+        params![
+            context_id,
+            json!({
+                "role": "head",
+                "operation": "create",
+                "projection": false,
+                "workspace_id": workspace.public_id,
+                "session_id": session_row.public_id
+            })
+            .to_string(),
+            json!({"operation": "create"}).to_string(),
+            session_row.rowid,
+            created_at
+        ],
+    )?;
+
+    Ok(CreatedSession {
+        session: SessionView {
+            id: session_row.public_id.clone(),
+            workspace_id: workspace.public_id.clone(),
+            context_id: context_id.clone(),
+            metadata,
+            created_at,
+        },
+        session_row,
+    })
+}
+
+fn workspace_by_id(conn: &Connection, public_id: &str) -> UcResult<Option<NodeRow>> {
     query_node(
         conn,
         "SELECT id, public_id, content, metadata, data, prev, created_at
          FROM nodes
-         WHERE public_id = ?1 AND kind = 'context' AND owner IS NULL
+         WHERE public_id = ?1 AND kind = 'workspace'
          LIMIT 1",
         params![public_id],
-    )?
-    .ok_or_else(|| UcError::new(ErrorCode::NotFound, "Context not found"))
+    )
 }
 
-fn root_contexts(conn: &Connection) -> UcResult<Vec<NodeRow>> {
+fn list_workspaces(conn: &Connection) -> UcResult<Vec<WorkspaceView>> {
     let mut stmt = conn.prepare(
         "SELECT id, public_id, content, metadata, data, prev, created_at
          FROM nodes
-         WHERE kind = 'context' AND owner IS NULL
+         WHERE kind = 'workspace'
+         ORDER BY created_at ASC, id ASC",
+    )?;
+    let rows = stmt
+        .query_map([], row_from_sql)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows
+        .into_iter()
+        .map(|row| WorkspaceView {
+            id: row.public_id,
+            metadata: row.metadata,
+            created_at: row.created_at,
+        })
+        .collect())
+}
+
+fn session_by_id(conn: &Connection, public_id: &str) -> UcResult<Option<NodeRow>> {
+    query_node(
+        conn,
+        "SELECT id, public_id, content, metadata, data, prev, created_at
+         FROM nodes
+         WHERE public_id = ?1 AND kind = 'session'
+         LIMIT 1",
+        params![public_id],
+    )
+}
+
+fn resolve_session_handle(conn: &Connection, public_id: &str) -> UcResult<NodeRow> {
+    if let Some(session) = session_by_id(conn, public_id)? {
+        return Ok(session);
+    }
+
+    query_node(
+        conn,
+        "SELECT session.id, session.public_id, session.content, session.metadata, session.data, session.prev, session.created_at
+         FROM nodes context
+         JOIN nodes session ON session.id = context.owner
+         WHERE context.public_id = ?1
+           AND context.kind = 'context'
+           AND session.kind = 'session'
+         LIMIT 1",
+        params![public_id],
+    )?
+    .ok_or_else(|| UcError::new(ErrorCode::NotFound, "Session not found"))
+}
+
+fn session_rows(conn: &Connection) -> UcResult<Vec<NodeRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, public_id, content, metadata, data, prev, created_at
+         FROM nodes
+         WHERE kind = 'session'
          ORDER BY created_at DESC, id DESC",
     )?;
     Ok(stmt
@@ -1693,7 +2233,30 @@ fn root_contexts(conn: &Connection) -> UcResult<Vec<NodeRow>> {
         .collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
-fn current_context_head(conn: &Connection, root_rowid: i64) -> UcResult<NodeRow> {
+fn context_view(row: NodeRow) -> ContextView {
+    ContextView {
+        id: row.public_id,
+        metadata: row.metadata,
+        created_at: row.created_at,
+    }
+}
+
+fn workspace_for_session(conn: &Connection, session: &NodeRow) -> UcResult<NodeRow> {
+    query_node(
+        conn,
+        "SELECT ws.id, ws.public_id, ws.content, ws.metadata, ws.data, ws.prev, ws.created_at
+         FROM nodes session
+         JOIN nodes ws ON ws.id = session.owner
+         WHERE session.id = ?1
+           AND session.kind = 'session'
+           AND ws.kind = 'workspace'
+         LIMIT 1",
+        params![session.rowid],
+    )?
+    .ok_or_else(|| UcError::new(ErrorCode::Internal, "Workspace not found for session"))
+}
+
+fn current_context_head(conn: &Connection, session_rowid: i64) -> UcResult<NodeRow> {
     query_node(
         conn,
         "SELECT n.id, n.public_id, n.content, n.metadata, n.data, n.prev, n.created_at
@@ -1706,13 +2269,13 @@ fn current_context_head(conn: &Connection, root_rowid: i64) -> UcResult<NodeRow>
            )
          ORDER BY n.id DESC
          LIMIT 1",
-        params![root_rowid],
+        params![session_rowid],
     )?
     .ok_or_else(|| UcError::new(ErrorCode::Internal, "HEAD not found"))
 }
 
-fn context_heads(conn: &Connection, root_rowid: i64) -> UcResult<Vec<NodeRow>> {
-    let current = current_context_head(conn, root_rowid)?;
+fn context_heads(conn: &Connection, session_rowid: i64) -> UcResult<Vec<NodeRow>> {
+    let current = current_context_head(conn, session_rowid)?;
     walk_prev_chain(conn, current.rowid)
 }
 
@@ -1732,8 +2295,36 @@ fn ordered_children(conn: &Connection, owner: i64, kind: &str) -> UcResult<Vec<N
     Ok(order_by_prev(rows))
 }
 
-fn message_views(conn: &Connection, head_rowid: i64) -> UcResult<Vec<MessageView>> {
-    Ok(ordered_children(conn, head_rowid, "message")?
+fn context_message_rows(
+    conn: &Connection,
+    session: &NodeRow,
+    head: &NodeRow,
+) -> UcResult<Vec<NodeRow>> {
+    if !head
+        .content
+        .get("projection")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return ordered_children(conn, session.rowid, "message");
+    }
+    ordered_children(conn, head.rowid, "message")
+}
+
+fn context_message_views(
+    conn: &Connection,
+    session: &NodeRow,
+    head: &NodeRow,
+) -> UcResult<Vec<MessageView>> {
+    message_views_from_rows(context_message_rows(conn, session, head)?)
+}
+
+fn message_views_for_owner(conn: &Connection, owner_rowid: i64) -> UcResult<Vec<MessageView>> {
+    message_views_from_rows(ordered_children(conn, owner_rowid, "message")?)
+}
+
+fn message_views_from_rows(rows: Vec<NodeRow>) -> UcResult<Vec<MessageView>> {
+    Ok(rows
         .into_iter()
         .enumerate()
         .map(|(index, row)| MessageView {

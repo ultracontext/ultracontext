@@ -10,7 +10,7 @@ class RemoteClientTests(unittest.TestCase):
 
         def transport(method, url, headers, payload):
             calls.append((method, url, headers, payload))
-            return 200, {"id": "ctx_abc", "metadata": {"app": "demo"}, "created_at": "now"}
+            return 200, {"id": "ses_abc", "metadata": {"app": "demo"}, "created_at": "now"}
 
         uc = UltraContext(
             mode="remote",
@@ -21,7 +21,7 @@ class RemoteClientTests(unittest.TestCase):
 
         created = uc.create(metadata={"app": "demo"})
 
-        self.assertEqual(created["id"], "ctx_abc")
+        self.assertEqual(created["id"], "ses_abc")
         method, url, headers, payload = calls[0]
         self.assertEqual(method, "POST")
         self.assertEqual(url, "https://uc.example/v2/contexts")
@@ -41,18 +41,18 @@ class RemoteClientTests(unittest.TestCase):
 
         uc = UltraContext(mode="remote", base_url="https://uc.example", transport=transport)
 
-        uc.append("ctx_abc", {"role": "user", "content": "hi"})
-        uc.save("ctx_abc", {"path": "draft.md", "kind": "text/markdown", "data": "# Draft"})
-        artifact = uc.load("ctx_abc", "draft.md")
+        uc.append("ses_abc", {"role": "user", "content": "hi"})
+        uc.save("ses_abc", {"path": "draft.md", "kind": "text/markdown", "data": "# Draft"})
+        artifact = uc.load("ses_abc", "draft.md")
 
         self.assertEqual(artifact["data"], "# Draft")
-        self.assertEqual(calls[0][1], "https://uc.example/v2/contexts/ctx_abc/messages")
+        self.assertEqual(calls[0][1], "https://uc.example/v2/contexts/ses_abc/messages")
         self.assertEqual(
             json.loads(calls[0][2].decode("utf-8")),
             {"messages": [{"role": "user", "content": "hi"}]},
         )
-        self.assertEqual(calls[1][1], "https://uc.example/v2/contexts/ctx_abc/artifacts")
-        self.assertEqual(calls[2][1], "https://uc.example/v2/contexts/ctx_abc/artifacts/load")
+        self.assertEqual(calls[1][1], "https://uc.example/v2/contexts/ses_abc/artifacts")
+        self.assertEqual(calls[2][1], "https://uc.example/v2/contexts/ses_abc/artifacts/load")
 
     def test_remote_errors_preserve_code_and_status(self):
         def transport(method, url, headers, payload):

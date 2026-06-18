@@ -55,14 +55,25 @@ test('postgres engine can use an injected S3-compatible content store', async ()
         bucket: 'uc-test',
         prefix: 'objects'
     })
-    const root = {
+    const workspace = {
         id: 1,
-        public_id: 'ctx_root',
-        kind: 'context',
+        public_id: 'ws_project',
+        kind: 'workspace',
         content: {},
         metadata: {},
         data: null,
         prev: null,
+        created_at: '2026-01-01T00:00:00.000Z'
+    }
+    const session = {
+        id: 2,
+        public_id: 'ses_run',
+        kind: 'session',
+        content: { workspace_id: 'ws_project' },
+        metadata: {},
+        data: null,
+        prev: null,
+        owner: 1,
         created_at: '2026-01-01T00:00:00.000Z'
     }
     const externalArtifact = {
@@ -85,13 +96,17 @@ test('postgres engine can use an injected S3-compatible content store', async ()
         metadata: {},
         data: null,
         prev: null,
+        owner: 1,
         created_at: '2026-01-01T00:00:01.000Z'
     }
     const pool = new ScriptedPool([
-        { rows: [root] },
+        { rows: [session] },
+        { rows: [workspace] },
         { rows: [] },
         { rows: [{ id: 10 }] },
-        { rows: [root] },
+        { rows: [externalArtifact] },
+        { rows: [session] },
+        { rows: [workspace] },
         { rows: [externalArtifact] },
         { rows: [externalArtifact] }
     ])
@@ -103,12 +118,12 @@ test('postgres engine can use an injected S3-compatible content store', async ()
         now: () => '2026-01-01T00:00:01.000Z'
     })
 
-    const saved = await engine.save('ctx_root', {
+    const saved = await engine.save('ses_run', {
         path: 'large.md',
         kind: 'text/markdown',
         data: 'larger than four bytes'
     })
-    const loaded = await engine.load('ctx_root', 'large.md')
+    const loaded = await engine.load('ses_run', 'large.md')
 
     assert.equal(saved.id, 'art_external')
     assert.equal(saved.version, 0)

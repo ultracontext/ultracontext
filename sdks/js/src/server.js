@@ -50,6 +50,23 @@ async function dispatch(engine, method, segments, body) {
         if (action === 'import_changes') return engine.importChanges(body)
     }
 
+    if (resource === 'workspaces') {
+        if (method === 'GET' && segments.length === 2) {
+            return engine.listWorkspaces()
+        }
+
+        if (method === 'POST' && segments.length === 2) {
+            return engine.createWorkspace(body)
+        }
+
+        const workspaceId = contextId
+        if (method === 'POST' && action === 'sessions' && segments.length === 4) {
+            return engine.createSession(workspaceId, body)
+        }
+
+        throw notFound()
+    }
+
     if (resource !== 'contexts') {
         throw notFound()
     }

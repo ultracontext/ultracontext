@@ -39,6 +39,14 @@ class NativeHttpTransport:
         segments = [segment for segment in path.split("/") if segment]
         if segments[:2] == ["v2", "search"] and method == "POST":
             return self.call("search", body)
+        if segments[:2] == ["v2", "workspaces"]:
+            if method == "POST" and len(segments) == 2:
+                return self.call("create_workspace", body)
+            if method == "GET" and len(segments) == 2:
+                return self.call("list_workspaces", {})
+            if method == "POST" and len(segments) == 4 and segments[3] == "sessions":
+                return self.call("create_session", {"workspaceId": segments[2], **body})
+            raise UltraContextError("Route not found", code="not_found")
         if segments[:2] != ["v2", "contexts"]:
             raise UltraContextError("Route not found", code="not_found")
         if method == "POST" and len(segments) == 2:
@@ -103,9 +111,10 @@ class NativeHttpTransport:
         }.get(code, 500)
 
 
-def run_shared_fixture(testcase, uc):
+def run_shared_fixture(testcase, uc, legacy_context_id=False):
     ctx = uc.create(metadata=FIXTURE["metadata"])
-    testcase.assertTrue(ctx["id"].startswith("ctx_"))
+    prefixes = ("ses_", "ctx_") if legacy_context_id else ("ses_",)
+    testcase.assertTrue(ctx["id"].startswith(prefixes))
 
     appended = uc.append(ctx["id"], FIXTURE["messages"])
     testcase.assertEqual(appended["version"], 0)
@@ -184,7 +193,7 @@ class SharedFixtureTests(unittest.TestCase):
 
         with tempfile.NamedTemporaryFile(suffix=".db") as db:
             uc = UltraContext(mode="local", path=db.name, native=native)
-            run_shared_fixture(self, uc)
+            run_shared_fixture(self, uc, legacy_context_id=True)
 
     def test_shared_v2_alpha_fixture_passes_through_python_remote_transport(self):
         native = load_native()

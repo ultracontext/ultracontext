@@ -18,13 +18,15 @@ class ScriptedPool {
     }
 }
 
-test('postgres engine installs schema and creates context', async () => {
+test('postgres engine installs schema and creates session context', async () => {
     const pool = new ScriptedPool([
         { rows: [] },
+        { rows: [] },
         { rows: [{ id: 1 }] },
-        { rows: [{ id: 2 }] }
+        { rows: [{ id: 2 }] },
+        { rows: [{ id: 3 }] }
     ])
-    const ids = ['ctx_root', 'ctx_head']
+    const ids = ['ses_run', 'ctx_head']
     const engine = createPostgresEngine({
         pool,
         idGenerator: prefix => ids.shift() ?? `${prefix}_x`,
@@ -34,23 +36,37 @@ test('postgres engine installs schema and creates context', async () => {
     await engine.install()
     const ctx = await engine.create({ metadata: { app: 'demo' } })
 
-    assert.equal(ctx.id, 'ctx_root')
+    assert.equal(ctx.id, 'ses_run')
     assert.deepEqual(ctx.metadata, { app: 'demo' })
     assert.match(pool.calls[0].text, /CREATE TABLE IF NOT EXISTS nodes/)
-    assert.match(pool.calls[1].text, /INSERT INTO nodes/)
-    assert.deepEqual(pool.calls[1].params[0], 'ctx_root')
-    assert.deepEqual(pool.calls[1].params[3], { app: 'demo' })
+    assert.match(pool.calls[1].text, /SELECT \* FROM nodes/)
+    assert.match(pool.calls[2].text, /INSERT INTO nodes/)
+    assert.deepEqual(pool.calls[2].params[0], 'ws_default')
+    assert.match(pool.calls[3].text, /INSERT INTO nodes/)
+    assert.deepEqual(pool.calls[3].params[0], 'ses_run')
+    assert.deepEqual(pool.calls[3].params[3], { app: 'demo' })
 })
 
 test('postgres engine saves and loads inline artifacts', async () => {
-    const root = {
+    const workspace = {
         id: 1,
-        public_id: 'ctx_root',
-        kind: 'context',
+        public_id: 'ws_project',
+        kind: 'workspace',
         content: {},
         metadata: {},
         data: null,
         prev: null,
+        created_at: '2026-01-01T00:00:00.000Z'
+    }
+    const session = {
+        id: 2,
+        public_id: 'ses_run',
+        kind: 'session',
+        content: { workspace_id: 'ws_project' },
+        metadata: {},
+        data: null,
+        prev: null,
+        owner: 1,
         created_at: '2026-01-01T00:00:00.000Z'
     }
     const artifact = {
@@ -67,13 +83,17 @@ test('postgres engine saves and loads inline artifacts', async () => {
         metadata: { source: 'test' },
         data: '# Draft',
         prev: null,
+        owner: 1,
         created_at: '2026-01-01T00:00:01.000Z'
     }
     const pool = new ScriptedPool([
-        { rows: [root] },
+        { rows: [session] },
+        { rows: [workspace] },
         { rows: [] },
         { rows: [artifact] },
-        { rows: [root] },
+        { rows: [artifact] },
+        { rows: [session] },
+        { rows: [workspace] },
         { rows: [artifact] },
         { rows: [artifact] }
     ])
@@ -83,18 +103,18 @@ test('postgres engine saves and loads inline artifacts', async () => {
         now: () => '2026-01-01T00:00:01.000Z'
     })
 
-    const saved = await engine.save('ctx_root', {
+    const saved = await engine.save('ses_run', {
         path: 'draft.md',
         kind: 'text/markdown',
         data: '# Draft',
         metadata: { source: 'test' }
     })
-    const loaded = await engine.load('ctx_root', 'draft.md')
+    const loaded = await engine.load('ses_run', 'draft.md')
 
     assert.equal(saved.id, 'art_1')
     assert.equal(saved.path, 'draft.md')
     assert.equal(loaded.data, '# Draft')
     assert.equal(loaded.version, 0)
-    assert.match(pool.calls[1].text, /content->>'path' = \$2/)
-    assert.match(pool.calls[2].text, /RETURNING \*/)
+    assert.match(pool.calls[2].text, /content->>'path' = \$2/)
+    assert.match(pool.calls[3].text, /RETURNING \*/)
 })

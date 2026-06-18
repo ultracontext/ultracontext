@@ -37,7 +37,7 @@ class UltraContext:
             else None
         )
 
-    def create(self, input=None, **kwargs):
+    def create_workspace(self, input=None, **kwargs):
         metadata = kwargs.pop("metadata", None)
         if input is None:
             input = {}
@@ -45,6 +45,41 @@ class UltraContext:
             input = {"metadata": metadata}
         elif "metadata" not in input:
             input = {"metadata": input}
+        return self._call("create_workspace", input, "POST", "/v2/workspaces", input)
+
+    def list_workspaces(self):
+        return self._call("list_workspaces", {}, "GET", "/v2/workspaces")
+
+    def create_session(self, workspace_id, input=None, **kwargs):
+        metadata = kwargs.pop("metadata", None)
+        if input is None:
+            input = {}
+        if metadata is not None:
+            input = {"metadata": metadata}
+        elif "metadata" not in input:
+            input = {"metadata": input}
+        local = {"workspaceId": workspace_id, **input}
+        return self._call(
+            "create_session",
+            local,
+            "POST",
+            f"/v2/workspaces/{workspace_id}/sessions",
+            input,
+        )
+
+    def create(self, input=None, **kwargs):
+        metadata = kwargs.pop("metadata", None)
+        workspace_id = kwargs.pop("workspaceId", kwargs.pop("workspace_id", None))
+        if input is None:
+            input = {}
+        if isinstance(input, dict):
+            workspace_id = input.get("workspaceId", input.get("workspace_id", workspace_id))
+        if metadata is not None:
+            input = {"metadata": metadata}
+        elif "metadata" not in input:
+            input = {"metadata": input}
+        if workspace_id is not None:
+            input = {**input, "workspaceId": workspace_id}
         return self._call("create", input, "POST", "/v2/contexts", input)
 
     def fork(self, source_id, **options):

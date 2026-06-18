@@ -1,3 +1,4 @@
+use rusqlite::{Connection, params};
 use serde_json::json;
 use ultracontext::{
     AppendInput, ArtifactSave, ContentStore, DeleteTarget, ErrorCode, FileWrite, ForkOptions,
@@ -28,6 +29,163 @@ fn temp_dir(name: &str) -> std::path::PathBuf {
             .as_nanos()
     ));
     path
+}
+
+#[test]
+fn legacy_context_roots_are_migrated_into_workspaces() {
+    let db = temp_db("legacy-migration");
+    let conn = Connection::open(&db).unwrap();
+    conn.execute_batch(
+        "
+        CREATE TABLE nodes (
+            id         INTEGER PRIMARY KEY,
+            public_id  TEXT NOT NULL,
+            kind       TEXT NOT NULL CHECK (kind IN ('context', 'message', 'artifact')),
+            content    TEXT NOT NULL DEFAULT '{}',
+            metadata   TEXT NOT NULL DEFAULT '{}',
+            data       BLOB,
+            prev       INTEGER REFERENCES nodes(id),
+            parent     INTEGER REFERENCES nodes(id) ON DELETE SET NULL,
+            owner      INTEGER REFERENCES nodes(id) ON DELETE CASCADE,
+            created_at TEXT NOT NULL
+        );
+        ",
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO nodes (id, public_id, kind, content, metadata, created_at)
+         VALUES (1, 'ctx_legacy', 'context', '{}', '{}', '2026-01-01T00:00:00.000Z')",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO nodes (id, public_id, kind, content, metadata, owner, created_at)
+         VALUES (2, 'ctx_head', 'context', '{}', '{}', 1, '2026-01-01T00:00:00.001Z')",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO nodes (id, public_id, kind, content, metadata, owner, created_at)
+         VALUES (3, 'msg_legacy', 'message', ?1, '{}', 2, '2026-01-01T00:00:00.002Z')",
+        params![json!({"content": "legacy message"}).to_string()],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO nodes (id, public_id, kind, content, metadata, data, owner, created_at)
+         VALUES (4, 'art_legacy', 'artifact', ?1, '{}', ?2, 1, '2026-01-01T00:00:00.003Z')",
+        params![
+            json!({
+                "path": "legacy.md",
+                "kind": "text/markdown",
+                "size": 6,
+                "sha256": "legacy",
+                "storage": {"type": "inline"}
+            })
+            .to_string(),
+            b"legacy".to_vec()
+        ],
+    )
+    .unwrap();
+    drop(conn);
+
+    let uc = UltraContext::open(db).unwrap();
+    let context = uc.get("ctx_legacy", GetOptions::default()).unwrap();
+    assert_eq!(context.data[0].content["content"], "legacy message");
+
+    let workspaces = uc.list_workspaces().unwrap();
+    assert_eq!(workspaces.len(), 1);
+    let files = uc.list_workspace_artifacts(&workspaces[0].id).unwrap();
+    assert_eq!(files[0].path, "legacy.md");
+
+    let artifact = uc.load_artifact("ctx_legacy", "legacy.md", None).unwrap();
+    assert_eq!(artifact.data.as_deref(), Some("legacy"));
+
+    let snapshot = uc.export_snapshot().unwrap();
+    let nodes = snapshot["nodes"].as_array().unwrap();
+    let session = nodes
+        .iter()
+        .find(|node| node["public_id"] == "ctx_legacy")
+        .unwrap();
+    assert_eq!(session["kind"], "session");
+    let session_rowid = session["id"].as_i64().unwrap();
+    let context_head = nodes
+        .iter()
+        .find(|node| node["public_id"] == "ctx_head")
+        .unwrap();
+    assert_eq!(context_head["kind"], "context");
+    assert_eq!(context_head["owner"].as_i64(), Some(session_rowid));
+}
+
+#[test]
+fn intermediate_session_context_roots_are_flattened() {
+    let db = temp_db("intermediate-root-migration");
+    let conn = Connection::open(&db).unwrap();
+    conn.execute_batch(
+        "
+        CREATE TABLE nodes (
+            id         INTEGER PRIMARY KEY,
+            public_id  TEXT NOT NULL,
+            kind       TEXT NOT NULL CHECK (kind IN ('workspace', 'session', 'context', 'message', 'artifact')),
+            content    TEXT NOT NULL DEFAULT '{}',
+            metadata   TEXT NOT NULL DEFAULT '{}',
+            data       BLOB,
+            prev       INTEGER REFERENCES nodes(id),
+            parent     INTEGER REFERENCES nodes(id) ON DELETE SET NULL,
+            owner      INTEGER REFERENCES nodes(id) ON DELETE CASCADE,
+            created_at TEXT NOT NULL
+        );
+        ",
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO nodes (id, public_id, kind, content, metadata, created_at)
+         VALUES (1, 'ws_project', 'workspace', '{}', '{}', '2026-01-01T00:00:00.000Z')",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO nodes (id, public_id, kind, content, metadata, owner, created_at)
+         VALUES (2, 'ses_run', 'session', '{}', '{}', 1, '2026-01-01T00:00:00.001Z')",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO nodes (id, public_id, kind, content, metadata, owner, created_at)
+         VALUES (3, 'ctx_root', 'context', ?1, '{}', 2, '2026-01-01T00:00:00.002Z')",
+        params![json!({"role": "root"}).to_string()],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO nodes (id, public_id, kind, content, metadata, owner, created_at)
+         VALUES (4, 'ctx_head', 'context', ?1, '{}', 3, '2026-01-01T00:00:00.003Z')",
+        params![json!({"projection": true}).to_string()],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO nodes (id, public_id, kind, content, metadata, owner, created_at)
+         VALUES (5, 'msg_projected', 'message', ?1, '{}', 4, '2026-01-01T00:00:00.004Z')",
+        params![json!({"content": "projected"}).to_string()],
+    )
+    .unwrap();
+    drop(conn);
+
+    let uc = UltraContext::open(db).unwrap();
+    let current = uc.get("ses_run", GetOptions::default()).unwrap();
+    assert_eq!(current.data[0].content["content"], "projected");
+
+    let snapshot = uc.export_snapshot().unwrap();
+    let nodes = snapshot["nodes"].as_array().unwrap();
+    assert!(
+        !nodes
+            .iter()
+            .any(|node| node["kind"] == "context" && node["content"]["role"] == "root")
+    );
+    let head = nodes
+        .iter()
+        .find(|node| node["public_id"] == "ctx_head")
+        .unwrap();
+    assert_eq!(head["owner"].as_i64(), Some(2));
+    assert_eq!(head["prev"].as_i64(), Some(3));
 }
 
 #[test]
@@ -68,6 +226,96 @@ fn context_messages_are_appendable_and_versioned() {
     assert_eq!(current.data[1].content["content"], "ola!");
     assert_eq!(old.version, 0);
     assert_eq!(old.data[1].content["content"], "ola");
+}
+
+#[test]
+fn workspace_owns_artifacts_across_sessions() {
+    let uc = UltraContext::open(temp_db("workspace-artifacts")).unwrap();
+    let workspace = uc.create_workspace(json!({"name": "project"})).unwrap();
+    let first = uc
+        .create_in_workspace(&workspace.id, json!({"name": "first"}))
+        .unwrap();
+    let second = uc
+        .create_session(&workspace.id, json!({"name": "second"}))
+        .unwrap();
+
+    let saved = uc
+        .save_artifact(
+            &first.id,
+            ArtifactSave::new("brief.md", "text/markdown", "# Brief"),
+        )
+        .unwrap();
+
+    let loaded = uc
+        .load_artifact(&second.context_id, "brief.md", None)
+        .unwrap();
+    assert_eq!(loaded.id, saved.id);
+    assert_eq!(loaded.data.as_deref(), Some("# Brief"));
+
+    let workspace_files = uc.list_workspace_artifacts(&workspace.id).unwrap();
+    assert_eq!(workspace_files.len(), 1);
+    assert_eq!(workspace_files[0].path, "brief.md");
+
+    let snapshot = uc.export_snapshot().unwrap();
+    let nodes = snapshot["nodes"].as_array().unwrap();
+    let workspace_rowid = nodes
+        .iter()
+        .find(|node| node["public_id"] == workspace.id)
+        .and_then(|node| node["id"].as_i64())
+        .unwrap();
+    let artifact_owner = nodes
+        .iter()
+        .find(|node| node["public_id"] == saved.id && node["kind"] == "artifact")
+        .and_then(|node| node["owner"].as_i64())
+        .unwrap();
+    assert_eq!(artifact_owner, workspace_rowid);
+}
+
+#[test]
+fn session_log_stays_append_only_when_context_window_changes() {
+    let uc = UltraContext::open(temp_db("session-log")).unwrap();
+    let ctx = uc.create(json!({"name": "session"})).unwrap();
+
+    uc.append(
+        &ctx.id,
+        vec![
+            AppendInput::new(json!({"content": "keep"})),
+            AppendInput::new(json!({"content": "remove from context"})),
+        ],
+    )
+    .unwrap();
+    uc.delete_messages(&ctx.id, vec![DeleteTarget::Index(1)], json!({}))
+        .unwrap();
+    uc.append(&ctx.id, vec![AppendInput::new(json!({"content": "new"}))])
+        .unwrap();
+
+    let current = uc.get(&ctx.id, GetOptions::default()).unwrap();
+    let current_contents = current
+        .data
+        .iter()
+        .map(|message| message.content["content"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(current_contents, vec!["keep", "new"]);
+
+    let snapshot = uc.export_snapshot().unwrap();
+    let nodes = snapshot["nodes"].as_array().unwrap();
+    let session = nodes
+        .iter()
+        .find(|node| node["public_id"] == ctx.id && node["kind"] == "session")
+        .unwrap();
+    let session_rowid = session["id"].as_i64().unwrap();
+    let session_messages = nodes
+        .iter()
+        .filter(|node| node["kind"] == "message" && node["owner"].as_i64() == Some(session_rowid))
+        .map(|node| node["content"]["content"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(session_messages, vec!["keep", "remove from context", "new"]);
+
+    let context_heads = nodes
+        .iter()
+        .filter(|node| node["kind"] == "context" && node["owner"].as_i64() == Some(session_rowid))
+        .count();
+    assert_eq!(context_heads, 2);
 }
 
 #[test]
@@ -418,7 +666,7 @@ fn soft_delete_creates_a_new_recoverable_context_version() {
 }
 
 #[test]
-fn permanent_context_delete_scrubs_messages_and_artifacts() {
+fn permanent_session_delete_scrubs_session_data_and_preserves_workspace_artifacts() {
     let uc = UltraContext::open(temp_db("context-delete")).unwrap();
     let ctx = uc.create(json!({})).unwrap();
     uc.append(&ctx.id, vec![AppendInput::new(json!({"content": "bye"}))])
@@ -432,6 +680,10 @@ fn permanent_context_delete_scrubs_messages_and_artifacts() {
     assert_eq!(err.code, ErrorCode::NotFound);
     let err = uc.load_artifact(&ctx.id, "bye.md", None).unwrap_err();
     assert_eq!(err.code, ErrorCode::NotFound);
+
+    let artifacts = uc.list_workspace_artifacts("ws_default").unwrap();
+    assert_eq!(artifacts.len(), 1);
+    assert_eq!(artifacts[0].path, "bye.md");
 }
 
 #[test]

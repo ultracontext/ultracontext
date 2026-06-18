@@ -25,8 +25,28 @@ export class UltraContext {
         }
     }
 
-    async create(input = {}) {
+    async createWorkspace(input = {}) {
         const body = { metadata: input.metadata ?? input ?? {} }
+        return this.#call('create_workspace', body, '/v2/workspaces', { method: 'POST', body })
+    }
+
+    async listWorkspaces() {
+        return this.#call('list_workspaces', {}, '/v2/workspaces', { method: 'GET' })
+    }
+
+    async createSession(workspaceId, input = {}) {
+        const body = { metadata: input.metadata ?? input ?? {} }
+        return this.#call('create_session', { workspaceId, ...body }, `/v2/workspaces/${encodeURIComponent(workspaceId)}/sessions`, {
+            method: 'POST',
+            body
+        })
+    }
+
+    async create(input = {}) {
+        const workspaceId = input.workspaceId ?? input.workspace_id
+        const metadata = input.metadata ?? omit(input ?? {}, ['workspaceId', 'workspace_id'])
+        const body = { metadata }
+        if (workspaceId) body.workspaceId = workspaceId
         return this.#call('create', body, '/v2/contexts', { method: 'POST', body })
     }
 

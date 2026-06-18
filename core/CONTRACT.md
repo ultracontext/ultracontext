@@ -28,18 +28,19 @@ Path/artifact verbs
   |
 Node store                Content store
   |                       |
-contexts/messages         inline text | local-dir | S3/R2/MinIO
+workspaces/sessions       inline text | local-dir | S3/R2/MinIO
+contexts/messages
 artifacts/versions
 ```
 
 Blocks must be replaceable without changing domain objects:
 
-- **Node store**: context/message/artifact graph, versions, paths, metadata,
-  conflict checks, search index.
+- **Node store**: workspace/session/context/message/artifact graph, versions,
+  paths, metadata, conflict checks, search index.
 - **Content store**: bytes behind an artifact version. Inline data is one
   content-store implementation.
 - **Path projection**: maps relative paths to artifact ids.
-- **Agent surface**: SDK verbs, local materialization, and optional FUSE/native
+- **Agent surface**: SDK verbs, local materialization, and optional native
   mounts over the same path projection.
 
 ## Environments
@@ -74,58 +75,74 @@ Requirements:
 
 Agents should be able to operate on artifacts with file verbs even when there
 is no real filesystem. The canonical surface is path-based verbs over the
-artifact store. A FUSE mount is the native adapter over the same verbs for
-laptops, workstations, and servers that can mount filesystems.
+artifact store. Native mount adapters such as NFS or FUSE expose the same verbs
+for laptops, workstations, and servers that can mount filesystems.
 
 Required path verbs for the agent surface:
 
-- `list(ctxId, {prefix?})`
-- `read(ctxId, pathOrId, {version?})`
-- `write(ctxId, pathOrId, data, {kind?, metadata?, ifVersion?})`
-- `move(ctxId, fromPathOrId, toPath, {ifVersion?})`
-- `remove(ctxId, pathOrId, {ifVersion?})`
-- `glob(ctxId, pattern)`
-- `grep(ctxId, query, {prefix?})`
+- `list(handle, {prefix?})`
+- `read(handle, pathOrId, {version?})`
+- `write(handle, pathOrId, data, {kind?, metadata?, ifVersion?})`
+- `move(handle, fromPathOrId, toPath, {ifVersion?})`
+- `remove(handle, pathOrId, {ifVersion?})`
+- `glob(handle, pattern)`
+- `grep(handle, query, {prefix?})`
 
-These are SDK helpers and can also back local materialization or FUSE/native
+These are SDK helpers and can also back local materialization or native
 mounts. They are projections over `save`, `load`, `search`, and `delete`, not
 separate storage semantics.
+
+Artifact paths are scoped by workspace. The simple SDK accepts a session or
+context handle for file/artifact verbs and resolves the workspace from that
+session. Advanced callers may target a workspace directly.
 
 ## SDK Surface
 
 The language SDKs should expose a small flat class. Names may use language
 idiom, but behavior and shapes must match.
 
+Progressive disclosure rule:
+
+- simple apps call `create()` and receive a stable handle. In v2 this is the
+  session id, but `ctxId` remains accepted as a compatibility parameter name;
+- project-aware apps create workspaces explicitly and create sessions inside
+  them;
+- sessions are append-only logs;
+- contexts are immutable model-window snapshots owned directly by a session;
+  the current context is the latest snapshot in the session's context chain.
+
 Core context verbs:
 
+- `createWorkspace({metadata?}) -> {id, metadata, created_at}`
+- `createSession(workspaceId, {metadata?}) -> {id, workspace_id, context_id, metadata, created_at}`
 - `create({metadata?}) -> {id, metadata, created_at}`
 - `fork(sourceId, {version?, metadata?}) -> {id, metadata, created_at}`
-- `append(ctxId, message | message[]) -> {data, version}`
-- `get()` lists contexts
-- `get(ctxId, options?)` reads one context
-- `update(ctxId, updates, options?) -> {data, version}`
-- `delete(ctxId, ids | {permanent: true}, options?)`
+- `append(handle, message | message[]) -> {data, version}`
+- `get()` lists sessions through the compatibility context-list shape
+- `get(handle, options?)` reads one session's current or versioned context
+- `update(handle, updates, options?) -> {data, version}`
+- `delete(handle, ids | {permanent: true}, options?)`
 - `search(query, options?) -> {data}`
 
 Artifact verbs:
 
-- `save(ctxId, input) -> {id, path, kind, size, version, created_at}`
-- `load(ctxId, options?) -> {data}` lists artifact metadata
-- `load(ctxId, pathOrId, options?) -> artifact version with inline data or a storage descriptor`
+- `save(handle, input) -> {id, path, kind, size, version, created_at}`
+- `load(handle, options?) -> {data}` lists artifact metadata
+- `load(handle, pathOrId, options?) -> artifact version with inline data or a storage descriptor`
 - artifact removal uses `delete(artId, {permanent: true})` or the file-surface
   `remove` helper
 
 `save` accepts either path identity or artifact identity:
 
 ```ts
-save(ctxId, {
+save(handle, {
   path: 'draft.md',
   kind: 'text/markdown',
   data: '# Draft',
   metadata: { source: 'agent' }
 })
 
-save(ctxId, {
+save(handle, {
   id: 'art_...',
   path: 'final.md',        // optional rename
   data: '# Final',         // optional new content
@@ -136,11 +153,13 @@ save(ctxId, {
 Rules:
 
 - `id` targets an existing artifact and preserves identity.
-- `path` without `id` upserts by current path inside the context.
+- `path` without `id` upserts by current path inside the resolved workspace.
 - changing `path` without changing data is still a new artifact version.
 - `ifVersion` prevents silent overwrite; mismatch returns `conflict`.
 - `path` is a relative POSIX path: no absolute path, no `..`.
 - directories are prefixes in v2, not nodes.
+- artifacts time travel through their own version chain; this is independent
+  from session/context time travel.
 
 ## Message Content and Attachments
 
@@ -281,7 +300,7 @@ application policy.
 
 These are important, but not required for the first shippable v2 core:
 
-- FUSE/native mount over the same path projection;
+- native mount adapters over the same path projection;
 - managed hosted service;
 - local mirror daemon;
 - event stream/watch for live propagation;

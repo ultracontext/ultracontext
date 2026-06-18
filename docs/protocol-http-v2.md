@@ -31,7 +31,67 @@ Domain error codes stay stable across SDKs:
 | `incompatible_db` | 500 |
 | `internal` | 500 |
 
-## Contexts
+## Workspaces
+
+### Create Workspace
+
+`POST /v2/workspaces`
+
+```json
+{
+  "metadata": {
+    "name": "project"
+  }
+}
+```
+
+Returns `{ "id": "ws_...", "metadata": {}, "created_at": "..." }`.
+
+### List Workspaces
+
+`GET /v2/workspaces`
+
+Returns `{ "data": [...] }`.
+
+## Sessions
+
+Sessions are append-only logs inside a workspace. Each session owns a chain of
+context snapshots; the current context window is the latest snapshot in that
+chain.
+
+### Create Session
+
+`POST /v2/workspaces/:workspaceId/sessions`
+
+```json
+{
+  "metadata": {
+    "name": "agent run"
+  }
+}
+```
+
+Returns:
+
+```json
+{
+  "id": "ses_...",
+  "workspace_id": "ws_...",
+  "context_id": "ctx_...",
+  "metadata": {},
+  "created_at": "2026-06-17T00:00:00.000Z"
+}
+```
+
+## Context Handles
+
+Simple clients can keep using context-shaped routes as the main surface. Under
+the hood, `POST /v2/contexts` creates a session plus an initial context
+snapshot in the default workspace unless a `workspaceId` is supplied.
+
+The route parameter is named `:contextId` for compatibility, but it accepts
+either a `ses_...` session id or a `ctx_...` context snapshot id. New clients
+should treat the returned `id` as an opaque session/context handle.
 
 ### Create Context
 
@@ -39,6 +99,7 @@ Domain error codes stay stable across SDKs:
 
 ```json
 {
+  "workspaceId": "ws_...",
   "metadata": {
     "app": "demo"
   }
@@ -49,7 +110,7 @@ Returns:
 
 ```json
 {
-  "id": "ctx_...",
+  "id": "ses_...",
   "metadata": {
     "app": "demo"
   },
@@ -67,7 +128,7 @@ Returns:
 {
   "data": [
     {
-      "id": "ctx_...",
+      "id": "ses_...",
       "metadata": {},
       "created_at": "2026-06-17T00:00:00.000Z"
     }
@@ -75,7 +136,7 @@ Returns:
 }
 ```
 
-### Fork Context
+### Fork Session Context
 
 `POST /v2/contexts/:contextId/fork`
 
@@ -88,7 +149,7 @@ Returns:
 }
 ```
 
-Returns a new context view.
+Returns a new session/context handle.
 
 ### Append Messages
 
@@ -136,7 +197,7 @@ Returns:
 }
 ```
 
-`version` is optional. Omit it to read the latest head.
+`version` is optional. Omit it to read the latest context snapshot.
 
 ### Update Message
 
@@ -157,7 +218,7 @@ Returns:
 `updates` may be a single object or an array; current alpha semantics apply
 the first update.
 
-### Delete Messages Or Context
+### Delete Messages Or Session
 
 `POST /v2/contexts/:contextId/delete`
 
@@ -174,7 +235,7 @@ Delete messages:
 }
 ```
 
-Delete a whole context permanently:
+Delete a whole session permanently:
 
 ```json
 {
@@ -185,6 +246,11 @@ Delete a whole context permanently:
 ```
 
 ## Artifacts
+
+Artifacts live in the workspace. Context-scoped artifact routes are a simple
+API convenience: the server resolves the session from `:contextId`, resolves
+that session's workspace, and then applies the file/artifact operation in that
+workspace. Deleting a session does not delete workspace artifacts.
 
 ### Save Artifact
 
@@ -251,6 +317,9 @@ Returns artifact data:
   "created_at": "2026-06-17T00:00:00.000Z"
 }
 ```
+
+`version` here is the artifact version. It is independent from context snapshot
+versions.
 
 ## File Verbs
 

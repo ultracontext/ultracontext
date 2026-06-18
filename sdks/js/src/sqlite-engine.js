@@ -17,7 +17,7 @@ class SqliteEngine {
             CREATE TABLE IF NOT EXISTS nodes (
                 id INTEGER PRIMARY KEY,
                 public_id TEXT NOT NULL,
-                kind TEXT NOT NULL CHECK (kind IN ('context', 'message', 'artifact')),
+                kind TEXT NOT NULL CHECK (kind IN ('workspace', 'session', 'context', 'message', 'artifact')),
                 content TEXT NOT NULL DEFAULT '{}',
                 metadata TEXT NOT NULL DEFAULT '{}',
                 data TEXT,
@@ -33,63 +33,101 @@ class SqliteEngine {
         `)
     }
 
-    create(input = {}) {
+    createWorkspace(input = {}) {
         const metadata = input.metadata ?? {}
-        const rootId = id('ctx')
+        const workspaceId = id('ws')
         const createdAt = now()
-
         this.insertNode({
-            publicId: rootId,
-            kind: 'context',
-            content: {},
+            publicId: workspaceId,
+            kind: 'workspace',
+            content: metadata,
             metadata,
             createdAt
         })
-        const rootRow = this.db.prepare('SELECT last_insert_rowid() AS id').get().id
+        return { id: workspaceId, metadata, created_at: createdAt }
+    }
+
+    listWorkspaces() {
+        return {
+            data: this.workspaces().map(row => ({
+                id: row.public_id,
+                metadata: row.metadata,
+                created_at: row.created_at
+            }))
+        }
+    }
+
+    createSession(workspaceId, input = {}) {
+        const workspace = this.workspace(workspaceId)
+        return this.createSessionNodes(workspace, input.metadata ?? {}).session
+    }
+
+    create(input = {}) {
+        const workspace = input.workspaceId || input.workspace_id
+            ? this.workspace(input.workspaceId ?? input.workspace_id)
+            : this.ensureDefaultWorkspace()
+        return this.createSessionNodes(workspace, input.metadata ?? {}).context
+    }
+
+    createSessionNodes(workspace, metadata) {
+        const sessionId = id('ses')
+        const contextId = id('ctx')
+        const createdAt = now()
+
         this.insertNode({
-            publicId: id('ctx'),
+            publicId: sessionId,
+            kind: 'session',
+            content: {
+                workspace_id: workspace.public_id,
+                initial_context_id: contextId
+            },
+            metadata,
+            owner: workspace.id,
+            createdAt
+        })
+        const sessionRow = this.row(this.db.prepare('SELECT last_insert_rowid() AS id').get().id)
+        this.insertNode({
+            publicId: contextId,
             kind: 'context',
-            content: {},
+            content: {
+                role: 'head',
+                operation: 'create',
+                projection: false,
+                workspace_id: workspace.public_id,
+                session_id: sessionRow.public_id
+            },
             metadata: { operation: 'create' },
-            owner: rootRow,
+            owner: sessionRow.id,
             createdAt: now()
         })
 
-        return { id: rootId, metadata, created_at: createdAt }
+        return {
+            session: {
+                id: sessionRow.public_id,
+                workspace_id: workspace.public_id,
+                context_id: contextId,
+                metadata,
+                created_at: createdAt
+            },
+            context: { id: sessionRow.public_id, metadata, created_at: createdAt },
+            sessionRow
+        }
     }
 
     fork(sourceId, options = {}) {
-        const sourceRoot = this.root(sourceId)
-        const sourceHeads = this.heads(sourceRoot.id)
+        const sourceSession = this.resolveSession(sourceId)
+        const workspace = this.workspaceForSession(sourceSession)
+        const sourceHeads = this.heads(sourceSession.id)
         const sourceHead = sourceHeads[options.version ?? sourceHeads.length - 1]
         if (!sourceHead) {
             throw domainError('not_found', 'Version not found')
         }
 
-        const forkId = id('ctx')
-        const metadata = options.metadata ?? {}
-        const createdAt = now()
-        this.insertNode({
-            publicId: forkId,
-            kind: 'context',
-            content: {},
-            metadata,
-            parent: sourceRoot.id,
-            createdAt
-        })
-        const forkRoot = this.db.prepare('SELECT last_insert_rowid() AS id').get().id
-        this.insertNode({
-            publicId: id('ctx'),
-            kind: 'context',
-            content: {},
-            metadata: { operation: 'fork', source: sourceId },
-            owner: forkRoot,
-            createdAt: now()
-        })
-        const forkHead = this.db.prepare('SELECT last_insert_rowid() AS id').get().id
+        const created = this.createSessionNodes(workspace, options.metadata ?? {})
+        const session = created.sessionRow
 
         let prev = null
-        for (const message of this.children(sourceHead.id, 'message')) {
+        for (const message of this.contextMessages(sourceSession, sourceHead)) {
             this.insertNode({
                 publicId: id('msg'),
                 kind: 'message',
@@ -97,47 +135,23 @@ class SqliteEngine {
                 metadata: message.metadata,
                 prev,
                 parent: message.id,
-                owner: forkHead,
+                owner: session.id,
                 createdAt: now()
             })
             prev = this.db.prepare('SELECT last_insert_rowid() AS id').get().id
         }
 
-        for (const artifact of this.currentArtifacts(sourceRoot.id)) {
-            const forkArtifactId = id('art')
-            const data = this.readArtifactData(artifact)
-            const stored = this.storeArtifactContent({
-                artifactId: forkArtifactId,
-                version: 0,
-                data,
-                kind: artifact.content.kind
-            })
-            this.insertNode({
-                publicId: forkArtifactId,
-                kind: 'artifact',
-                content: {
-                    ...artifact.content,
-                    size: byteLength(data),
-                    sha256: fingerprint(String(data)),
-                    storage: stored.storage
-                },
-                metadata: artifact.metadata,
-                data: stored.data,
-                parent: artifact.id,
-                owner: forkRoot,
-                createdAt: now()
-            })
-        }
-
-        return { id: forkId, metadata, created_at: createdAt }
+        return created.context
     }
 
     append(contextId, messages) {
         messages = Array.isArray(messages) ? messages : [messages]
-        const root = this.root(contextId)
-        const head = this.currentHead(root.id)
-        const existing = this.children(head.id, 'message')
+        const session = this.resolveSession(contextId)
+        const head = this.currentHead(session.id)
+        const existing = this.children(session.id, 'message')
         let prev = existing.at(-1)?.id ?? null
+        let projectedPrev = this.children(head.id, 'message').at(-1)?.id ?? null
+        const projectIntoHead = head.content.projection === true
 
         for (const message of messages) {
             this.insertNode({
@@ -146,29 +160,44 @@ class SqliteEngine {
                 content: message,
                 metadata: message.metadata ?? {},
                 prev,
-                owner: head.id,
+                owner: session.id,
                 createdAt: now()
             })
-            prev = this.db.prepare('SELECT last_insert_rowid() AS id').get().id
+            const rowId = this.db.prepare('SELECT last_insert_rowid() AS id').get().id
+            prev = rowId
+
+            if (projectIntoHead) {
+                this.insertNode({
+                    publicId: id('msg'),
+                    kind: 'message',
+                    content: message,
+                    metadata: message.metadata ?? {},
+                    prev: projectedPrev,
+                    parent: rowId,
+                    owner: head.id,
+                    createdAt: now()
+                })
+                projectedPrev = this.db.prepare('SELECT last_insert_rowid() AS id').get().id
+            }
         }
 
-        return { data: this.messageViews(head.id), version: this.version(head.id) }
+        return { data: this.contextMessageViews(session, head), version: this.version(head.id) }
     }
 
     get(contextId, options = {}) {
-        const root = this.root(contextId)
-        const heads = this.heads(root.id)
+        const session = this.resolveSession(contextId)
+        const heads = this.heads(session.id)
         const version = options.version ?? heads.length - 1
         const head = heads[version]
         if (!head) {
             throw domainError('not_found', 'Version not found')
         }
-        return { id: contextId, data: this.messageViews(head.id), version }
+        return { id: contextId, data: this.contextMessageViews(session, head), version }
     }
 
     listContexts() {
         return {
-            data: this.roots().map(row => ({
+            data: this.sessions().map(row => ({
                 id: row.public_id,
                 metadata: row.metadata,
                 created_at: row.created_at
@@ -177,9 +206,9 @@ class SqliteEngine {
     }
 
     update(contextId, updates, options = {}) {
-        const root = this.root(contextId)
-        const current = this.currentHead(root.id)
-        const messages = this.children(current.id, 'message')
+        const session = this.resolveSession(contextId)
+        const current = this.currentHead(session.id)
+        const messages = this.contextMessages(session, current)
         const update = Array.isArray(updates) ? updates[0] : updates
         const targetIndex = update.index ?? messages.findIndex(message => message.public_id === update.id)
         if (targetIndex < 0 || targetIndex >= messages.length) {
@@ -189,10 +218,10 @@ class SqliteEngine {
         this.insertNode({
             publicId: id('ctx'),
             kind: 'context',
-            content: {},
+            content: { role: 'head', operation: 'update', projection: true },
             metadata: options.metadata ?? {},
             prev: current.id,
-            owner: root.id,
+            owner: session.id,
             createdAt: now()
         })
         const newHead = this.db.prepare('SELECT last_insert_rowid() AS id').get().id
@@ -220,17 +249,17 @@ class SqliteEngine {
 
     delete(contextId, target, options = {}) {
         if (target?.permanent) {
-            const root = this.root(contextId)
-            this.db.prepare('DELETE FROM nodes WHERE id = ?').run(root.id)
+            const session = this.resolveSession(contextId)
+            this.db.prepare('DELETE FROM nodes WHERE id = ?').run(session.id)
             return { deleted: true, id: contextId }
         }
         return this.deleteMessages(contextId, Array.isArray(target) ? target : [target], options)
     }
 
     deleteMessages(contextId, targets, options = {}) {
-        const root = this.root(contextId)
-        const current = this.currentHead(root.id)
-        const messages = this.children(current.id, 'message')
+        const session = this.resolveSession(contextId)
+        const current = this.currentHead(session.id)
+        const messages = this.contextMessages(session, current)
         const deleteIndexes = new Set(targets.map(target => {
             if (typeof target === 'number') {
                 return target
@@ -244,10 +273,10 @@ class SqliteEngine {
         this.insertNode({
             publicId: id('ctx'),
             kind: 'context',
-            content: {},
+            content: { role: 'head', operation: 'delete', projection: true },
             metadata: options.metadata ?? {},
             prev: current.id,
-            owner: root.id,
+            owner: session.id,
             createdAt: now()
         })
         const newHead = this.db.prepare('SELECT last_insert_rowid() AS id').get().id
@@ -271,11 +300,12 @@ class SqliteEngine {
     }
 
     save(contextId, input) {
-        const root = this.root(contextId)
+        const session = this.resolveSession(contextId)
+        const workspace = this.workspaceForSession(session)
         const path = normalizePath(input.path)
         const current = input.id
-            ? this.currentArtifactById(root.id, input.id)
-            : this.currentArtifactByPath(root.id, path)
+            ? this.currentArtifactById(workspace.id, input.id)
+            : this.currentArtifactByPath(workspace.id, path)
 
         if (input.ifVersion !== undefined) {
             if (!current || this.artifactVersion(current.id) !== input.ifVersion) {
@@ -307,7 +337,7 @@ class SqliteEngine {
             data: stored.data,
             prev: current?.id ?? null,
             parent: current?.id ?? null,
-            owner: root.id,
+            owner: workspace.id,
             createdAt: now()
         })
 
@@ -316,10 +346,11 @@ class SqliteEngine {
     }
 
     load(contextId, pathOrId, options = {}) {
-        const root = this.root(contextId)
+        const session = this.resolveSession(contextId)
+        const workspace = this.workspaceForSession(session)
         const current = pathOrId.startsWith('art_')
-            ? this.currentArtifactById(root.id, pathOrId)
-            : this.currentArtifactByPath(root.id, normalizePath(pathOrId))
+            ? this.currentArtifactById(workspace.id, pathOrId)
+            : this.currentArtifactByPath(workspace.id, normalizePath(pathOrId))
         if (!current) {
             throw domainError('not_found', 'Artifact not found')
         }
@@ -333,8 +364,9 @@ class SqliteEngine {
     }
 
     listArtifacts(contextId) {
-        const root = this.root(contextId)
-        return { data: this.currentArtifacts(root.id).map(row => this.artifactMeta(row)) }
+        const session = this.resolveSession(contextId)
+        const workspace = this.workspaceForSession(session)
+        return { data: this.currentArtifacts(workspace.id).map(row => this.artifactMeta(row)) }
     }
 
     read(contextId, pathOrId, options = {}) {
@@ -362,7 +394,9 @@ class SqliteEngine {
         if (options.ifVersion !== undefined && current.version !== options.ifVersion) {
             throw domainError('conflict', 'Artifact version conflict')
         }
-        for (const row of this.chain(this.currentArtifactById(this.root(contextId).id, current.id).id).reverse()) {
+        const session = this.resolveSession(contextId)
+        const workspace = this.workspaceForSession(session)
+        for (const row of this.chain(this.currentArtifactById(workspace.id, current.id).id).reverse()) {
             this.deleteArtifactData(row)
             this.db.prepare('DELETE FROM nodes WHERE id = ?').run(row.id)
         }
@@ -376,10 +410,11 @@ class SqliteEngine {
 
     grep(contextId, query, options = {}) {
         const prefix = options.prefix ? normalizePrefix(options.prefix) : null
+        const session = this.resolveSession(contextId)
         const result = this.search(query)
         result.data = result.data.filter(hit => (
             hit.kind === 'artifact'
-            && hit.context_id === contextId
+            && hit.context_id === session.public_id
             && (!prefix || hit.path?.startsWith(prefix))
         ))
         return result
@@ -391,15 +426,15 @@ class SqliteEngine {
             throw domainError('invalid_input', 'Search query is empty')
         }
         const hits = []
-        for (const context of this.roots()) {
-            const head = this.currentHead(context.id)
-            for (const message of this.children(head.id, 'message')) {
+        for (const session of this.sessions()) {
+            const head = this.currentHead(session.id)
+            for (const message of this.contextMessages(session, head)) {
                 const text = textFromValue(message.content)
                 if (text.toLowerCase().includes(needle)) {
                     hits.push({
                         kind: 'message',
                         id: message.public_id,
-                        context_id: context.public_id,
+                        context_id: session.public_id,
                         path: null,
                         snippet: text,
                         metadata: message.metadata,
@@ -407,13 +442,14 @@ class SqliteEngine {
                     })
                 }
             }
-            for (const artifact of this.currentArtifacts(context.id)) {
+            const workspace = this.workspaceForSession(session)
+            for (const artifact of this.currentArtifacts(workspace.id)) {
                 const text = this.readArtifactData(artifact) ?? ''
                 if (artifact.content.kind?.startsWith('text/') && text.toLowerCase().includes(needle)) {
                     hits.push({
                         kind: 'artifact',
                         id: artifact.public_id,
-                        context_id: context.public_id,
+                        context_id: session.public_id,
                         path: artifact.content.path,
                         snippet: text,
                         metadata: artifact.metadata,
@@ -470,25 +506,90 @@ class SqliteEngine {
         `).run(rowId, publicId, kind, JSON.stringify(content), JSON.stringify(metadata), data, prev, parent, owner, createdAt)
     }
 
-    root(publicId) {
+    ensureDefaultWorkspace() {
+        const existing = this.db.prepare(`
+            SELECT * FROM nodes
+            WHERE public_id = 'ws_default' AND kind = 'workspace'
+            LIMIT 1
+        `).get()
+        if (existing) return decode(existing)
+
+        const createdAt = now()
+        this.insertNode({
+            publicId: 'ws_default',
+            kind: 'workspace',
+            content: { name: 'default', default: true },
+            metadata: { name: 'default', default: true },
+            createdAt
+        })
+        return this.row(this.db.prepare('SELECT last_insert_rowid() AS id').get().id)
+    }
+
+    workspace(publicId) {
         const row = this.db.prepare(`
             SELECT * FROM nodes
-            WHERE public_id = ? AND kind = 'context' AND owner IS NULL
+            WHERE public_id = ? AND kind = 'workspace'
             LIMIT 1
         `).get(publicId)
-        if (!row) throw domainError('not_found', 'Context not found')
+        if (!row) throw domainError('not_found', 'Workspace not found')
         return decode(row)
     }
 
-    roots() {
+    workspaces() {
         return this.db.prepare(`
             SELECT * FROM nodes
-            WHERE kind = 'context' AND owner IS NULL
+            WHERE kind = 'workspace'
+            ORDER BY created_at ASC, id ASC
+        `).all().map(decode)
+    }
+
+    session(publicId) {
+        const row = this.db.prepare(`
+            SELECT * FROM nodes
+            WHERE public_id = ? AND kind = 'session'
+            LIMIT 1
+        `).get(publicId)
+        return row ? decode(row) : null
+    }
+
+    resolveSession(publicId) {
+        const direct = this.session(publicId)
+        if (direct) return direct
+
+        const row = this.db.prepare(`
+            SELECT session.* FROM nodes context
+            JOIN nodes session ON session.id = context.owner
+            WHERE context.public_id = ?
+              AND context.kind = 'context'
+              AND session.kind = 'session'
+            LIMIT 1
+        `).get(publicId)
+        if (!row) throw domainError('not_found', 'Session not found')
+        return decode(row)
+    }
+
+    workspaceForSession(session) {
+        const row = this.db.prepare(`
+            SELECT workspace.* FROM nodes session
+            JOIN nodes workspace ON workspace.id = session.owner
+            WHERE session.id = ?
+              AND session.kind = 'session'
+              AND workspace.kind = 'workspace'
+            LIMIT 1
+        `).get(session.id)
+        if (!row) throw domainError('internal', 'Workspace not found for session')
+        return decode(row)
+    }
+
+    sessions() {
+        return this.db.prepare(`
+            SELECT * FROM nodes
+            WHERE kind = 'session'
             ORDER BY created_at DESC, id DESC
         `).all().map(decode)
     }
 
-    currentHead(rootRowId) {
+    currentHead(sessionRowId) {
         const row = this.db.prepare(`
             SELECT n.* FROM nodes n
             WHERE n.kind = 'context'
@@ -499,13 +600,13 @@ class SqliteEngine {
               )
             ORDER BY n.id DESC
             LIMIT 1
-        `).get(rootRowId)
+        `).get(sessionRowId)
         if (!row) throw domainError('internal', 'HEAD not found')
         return decode(row)
     }
 
-    heads(rootRowId) {
-        return this.chain(this.currentHead(rootRowId).id)
+    heads(sessionRowId) {
+        return this.chain(this.currentHead(sessionRowId).id)
     }
 
     children(owner, kind) {
@@ -516,6 +617,23 @@ class SqliteEngine {
 
     messageViews(headRowId) {
         return this.children(headRowId, 'message').map((row, index) => ({
+            id: row.public_id,
+            index,
+            ...row.content,
+            metadata: row.metadata,
+            created_at: row.created_at
+        }))
+    }
+
+    contextMessages(session, head) {
+        if (head.content.projection !== true) {
+            return this.children(session.id, 'message')
+        }
+        return this.children(head.id, 'message')
+    }
+
+    contextMessageViews(session, head) {
+        return this.contextMessages(session, head).map((row, index) => ({
             id: row.public_id,
             index,
             ...row.content,
@@ -611,7 +729,7 @@ class SqliteEngine {
         return rows.reverse()
     }
 
-    currentArtifactByPath(rootRowId, path) {
+    currentArtifactByPath(ownerRowId, path) {
         const row = this.db.prepare(`
             SELECT n.* FROM nodes n
             WHERE n.kind = 'artifact'
@@ -623,11 +741,11 @@ class SqliteEngine {
               )
             ORDER BY n.id DESC
             LIMIT 1
-        `).get(rootRowId, path)
+        `).get(ownerRowId, path)
         return row ? decode(row) : null
     }
 
-    currentArtifactById(rootRowId, publicId) {
+    currentArtifactById(ownerRowId, publicId) {
         const row = this.db.prepare(`
             SELECT n.* FROM nodes n
             WHERE n.kind = 'artifact'
@@ -639,11 +757,11 @@ class SqliteEngine {
               )
             ORDER BY n.id DESC
             LIMIT 1
-        `).get(rootRowId, publicId)
+        `).get(ownerRowId, publicId)
         return row ? decode(row) : null
     }
 
-    currentArtifacts(rootRowId) {
+    currentArtifacts(ownerRowId) {
         return this.db.prepare(`
             SELECT n.* FROM nodes n
             WHERE n.kind = 'artifact'
@@ -653,7 +771,7 @@ class SqliteEngine {
                 WHERE child.kind = 'artifact' AND child.prev = n.id
               )
             ORDER BY json_extract(n.content, '$.path') ASC, n.id ASC
-        `).all(rootRowId).map(decode)
+        `).all(ownerRowId).map(decode)
     }
 
     artifactVersion(rowId) {

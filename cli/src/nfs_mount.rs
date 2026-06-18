@@ -99,8 +99,14 @@ fn spawn_background(config: MountConfig) -> Result<(), UcError> {
         command.arg("--content-dir").arg(content_dir);
     }
     command.arg("mount");
-    if let MountScope::Context(ctx_id) = &config.scope {
-        command.arg("--context").arg(ctx_id);
+    match &config.scope {
+        MountScope::Context(ctx_id) => {
+            command.arg("--context").arg(ctx_id);
+        }
+        MountScope::Workspace(workspace_id) => {
+            command.arg("--workspace").arg(workspace_id);
+        }
+        MountScope::Database => {}
     }
     command
         .arg(&mountpoint)
@@ -492,8 +498,22 @@ enum EntryKind {
 
 #[derive(Debug, Clone)]
 struct ArtifactTarget {
-    ctx_id: String,
+    owner: ArtifactOwner,
     path: String,
+}
+
+#[derive(Debug, Clone)]
+enum ArtifactOwner {
+    Context(String),
+    Workspace(String),
+}
+
+fn same_artifact_owner(left: &ArtifactOwner, right: &ArtifactOwner) -> bool {
+    match (left, right) {
+        (ArtifactOwner::Context(left), ArtifactOwner::Context(right)) => left == right,
+        (ArtifactOwner::Workspace(left), ArtifactOwner::Workspace(right)) => left == right,
+        _ => false,
+    }
 }
 
 impl UcNfs {
@@ -543,13 +563,18 @@ impl NfsState {
                     self.insert_artifact_entry(&mut next, artifact.path.clone(), artifact);
                 }
             }
+            MountScope::Workspace(workspace_id) => {
+                for artifact in self.uc.file_list_workspace(&workspace_id, None)? {
+                    self.insert_artifact_entry(&mut next, artifact.path.clone(), artifact);
+                }
+            }
             MountScope::Database => {
-                self.insert_dir_entry(&mut next, "contexts");
-                for ctx in self.uc.list_contexts()? {
-                    let context_root = join_path("contexts", &ctx.id);
-                    self.insert_dir_entry(&mut next, &context_root);
-                    for artifact in self.uc.file_list(&ctx.id, None)? {
-                        let visible_path = join_path(&context_root, &artifact.path);
+                self.insert_dir_entry(&mut next, "workspaces");
+                for workspace in self.uc.list_workspaces()? {
+                    let workspace_root = join_path("workspaces", &workspace.id);
+                    self.insert_dir_entry(&mut next, &workspace_root);
+                    for artifact in self.uc.file_list_workspace(&workspace.id, None)? {
+                        let visible_path = join_path(&workspace_root, &artifact.path);
                         self.insert_artifact_entry(&mut next, visible_path, artifact);
                     }
                 }
@@ -699,7 +724,20 @@ impl NfsState {
                     ))
                 } else {
                     Ok(ArtifactTarget {
-                        ctx_id: ctx_id.clone(),
+                        owner: ArtifactOwner::Context(ctx_id.clone()),
+                        path: path.to_string(),
+                    })
+                }
+            }
+            MountScope::Workspace(workspace_id) => {
+                if path.is_empty() {
+                    Err(UcError::new(
+                        ErrorCode::InvalidInput,
+                        "Path is not an artifact",
+                    ))
+                } else {
+                    Ok(ArtifactTarget {
+                        owner: ArtifactOwner::Workspace(workspace_id.clone()),
                         path: path.to_string(),
                     })
                 }
@@ -707,18 +745,18 @@ impl NfsState {
             MountScope::Database => {
                 let parts = path.splitn(3, '/').collect::<Vec<_>>();
                 if parts.len() == 3
-                    && parts[0] == "contexts"
+                    && parts[0] == "workspaces"
                     && !parts[1].is_empty()
                     && !parts[2].is_empty()
                 {
                     Ok(ArtifactTarget {
-                        ctx_id: parts[1].to_string(),
+                        owner: ArtifactOwner::Workspace(parts[1].to_string()),
                         path: parts[2].to_string(),
                     })
                 } else {
                     Err(UcError::new(
                         ErrorCode::InvalidInput,
-                        "DB-wide mount artifact paths must be under contexts/<ctx_id>/",
+                        "DB-wide mount artifact paths must be under workspaces/<workspace_id>/",
                     ))
                 }
             }
@@ -728,11 +766,12 @@ impl NfsState {
     fn is_managed_directory(&self, path: &str) -> bool {
         match &self.scope {
             MountScope::Context(_) => path.is_empty(),
+            MountScope::Workspace(_) => path.is_empty(),
             MountScope::Database => {
                 path.is_empty()
-                    || path == "contexts"
+                    || path == "workspaces"
                     || path
-                        .strip_prefix("contexts/")
+                        .strip_prefix("workspaces/")
                         .is_some_and(|rest| !rest.is_empty() && !rest.contains('/'))
             }
         }
@@ -740,8 +779,15 @@ impl NfsState {
 
     fn load_path(&self, path: &str) -> Result<ArtifactBytes, UcError> {
         let target = self.artifact_target(path)?;
-        self.uc
-            .load_artifact_bytes(&target.ctx_id, &target.path, None)
+        match target.owner {
+            ArtifactOwner::Context(ctx_id) => {
+                self.uc.load_artifact_bytes(&ctx_id, &target.path, None)
+            }
+            ArtifactOwner::Workspace(workspace_id) => {
+                self.uc
+                    .load_workspace_artifact_bytes(&workspace_id, &target.path, None)
+            }
+        }
     }
 
     fn write_path(&mut self, path: &str, data: Vec<u8>) -> Result<ArtifactMeta, UcError> {
@@ -769,7 +815,12 @@ impl NfsState {
         if let Some(version) = base_version {
             input = input.with_if_version(version);
         }
-        self.uc.file_write(&target.ctx_id, input)
+        match target.owner {
+            ArtifactOwner::Context(ctx_id) => self.uc.file_write(&ctx_id, input),
+            ArtifactOwner::Workspace(workspace_id) => {
+                self.uc.file_write_workspace(&workspace_id, input)
+            }
+        }
     }
 
     fn remove_path(&mut self, path: &str) -> Result<(), UcError> {
@@ -779,7 +830,13 @@ impl NfsState {
             return Ok(());
         }
         let target = self.artifact_target(path)?;
-        self.uc.file_remove(&target.ctx_id, &target.path, None)
+        match target.owner {
+            ArtifactOwner::Context(ctx_id) => self.uc.file_remove(&ctx_id, &target.path, None),
+            ArtifactOwner::Workspace(workspace_id) => {
+                self.uc
+                    .file_remove_workspace(&workspace_id, &target.path, None)
+            }
+        }
     }
 
     fn truncate(&mut self, path: &str, size: u64) -> Result<ArtifactMeta, UcError> {
@@ -886,15 +943,20 @@ impl NfsState {
             self.write_path(to, source.data)?;
             self.remove_path(from)
         } else if let Ok(to_target) = self.artifact_target(to) {
-            if from_target.ctx_id == to_target.ctx_id && self.load_path(to).is_err() {
-                self.uc
-                    .file_move(
-                        &from_target.ctx_id,
-                        &from_target.path,
-                        &to_target.path,
-                        None,
-                    )
-                    .map(|_| ())
+            if same_artifact_owner(&from_target.owner, &to_target.owner)
+                && self.load_path(to).is_err()
+            {
+                match (&from_target.owner, &to_target.owner) {
+                    (ArtifactOwner::Context(ctx_id), ArtifactOwner::Context(_)) => self
+                        .uc
+                        .file_move(ctx_id, &from_target.path, &to_target.path, None)
+                        .map(|_| ()),
+                    (ArtifactOwner::Workspace(workspace_id), ArtifactOwner::Workspace(_)) => self
+                        .uc
+                        .file_move_workspace(workspace_id, &from_target.path, &to_target.path, None)
+                        .map(|_| ()),
+                    _ => unreachable!(),
+                }
             } else {
                 self.write_path(to, source.data)?;
                 self.remove_path(from)

@@ -7,25 +7,33 @@ dependency of the Rust core.
 By default, the adapter mounts the whole node database as a directory tree:
 
 ```
-contexts/
-  ctx_.../
+workspaces/
+  ws_default/
     drafts/brief.md
     uploads/screenshot.png
-  ctx_.../
+  ws_.../
     notes/meeting.md
 ```
 
 That top-level namespace matters because artifact paths are scoped to a
-context. Two contexts can both contain `drafts/brief.md`, so the DB-wide mount
-uses `contexts/<ctx_id>/...` to keep paths unambiguous.
+workspace. Two workspaces can both contain `drafts/brief.md`, so the DB-wide
+mount uses `workspaces/<workspace_id>/...` to keep paths unambiguous.
 
-For focused agent workflows, one context can also be mounted directly:
+For focused agent workflows, one workspace can also be mounted directly:
 
 ```bash
-uc --db ./ultracontext.db mount --context ctx_... ./mnt
+uc --db ./ultracontext.db mount --workspace ws_default ./mnt
 ```
 
-In context mode, the mount root is the artifact tree itself:
+One session/context handle can also be mounted directly as a
+compatibility/convenience path. The adapter resolves that handle's workspace
+and projects the workspace files:
+
+```bash
+uc --db ./ultracontext.db mount --context ses_... ./mnt
+```
+
+In workspace or context mode, the mount root is the artifact tree itself:
 
 ```
 drafts/brief.md
@@ -37,13 +45,13 @@ SDKs:
 
 | Filesystem | UltraContext |
 |---|---|
-| `readdir` | `list(ctx, { prefix })` |
-| `read` | `read(ctx, path, { version? })` |
-| `write` + `flush` | `write(ctx, path, bytes, { ifVersion })` |
-| `rename` | `move(ctx, from, to, { ifVersion })` |
-| `unlink` | `remove(ctx, path, { ifVersion })` |
-| path glob | `glob(ctx, pattern)` |
-| text search | `grep(ctx, query, { prefix? })` |
+| `readdir` | `list(workspace, { prefix })` or `list(ctx, { prefix })` |
+| `read` | `read(workspace, path, { version? })` |
+| `write` + `flush` | `write(workspace, path, bytes, { ifVersion })` |
+| `rename` | `move(workspace, from, to, { ifVersion })` |
+| `unlink` | `remove(workspace, path, { ifVersion })` |
+| path glob | `glob(workspace, pattern)` |
+| text search | `grep(workspace, query, { prefix? })` |
 
 The node store remains authoritative for identity, history, path labels,
 versions, and conflicts. Blob bytes may live inline or in a local directory
@@ -98,14 +106,14 @@ The FUSE adapter remains available as an explicit backend behind the optional
 
 ```bash
 cargo build -p ultracontext-cli --features fuse
-./target/debug/uc --db ./ultracontext.db mount --context ctx_... ./mnt --backend fuse
+./target/debug/uc --db ./ultracontext.db mount --context ses_... ./mnt --backend fuse
 ```
 
 On macOS, the build host needs macFUSE/osxfuse available to `pkg-config`. On
 Linux, the host needs libfuse/fuse3 development files. Without the feature, the
 CLI still builds and `uc mount --backend fuse` returns a clear error. FUSE is
-currently context-scoped and foreground-only; DB-wide/background mounts use the
-default NFS backend.
+currently context-scoped and foreground-only; DB-wide and workspace background
+mounts use the default NFS backend.
 
 Both adapters link to the Rust core and call the same operations as JS/Python
 local bindings. They should never require S3-FUSE, JuiceFS, or a mounted remote

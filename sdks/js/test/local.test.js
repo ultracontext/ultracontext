@@ -14,7 +14,7 @@ class FakeCore {
         if (operation === 'create') {
             return JSON.stringify({
                 ok: {
-                    id: 'ctx_local',
+                    id: 'ses_local',
                     metadata: body.metadata,
                     created_at: 'now'
                 }
@@ -52,14 +52,14 @@ test('local client dispatches to injected native core', async () => {
     const artifact = await uc.write(ctx.id, 'draft.md', '# Draft', { kind: 'text/markdown' })
 
     assert.equal(core.path, '/tmp/uc-js.db')
-    assert.equal(ctx.id, 'ctx_local')
+    assert.equal(ctx.id, 'ses_local')
     assert.equal(artifact.id, 'art_local')
     assert.deepEqual(core.calls[0], {
         operation: 'create',
         body: { metadata: { app: 'demo' } }
     })
     assert.equal(core.calls[1].operation, 'file_write')
-    assert.equal(core.calls[1].body.ctxId, 'ctx_local')
+    assert.equal(core.calls[1].body.ctxId, 'ses_local')
     assert.equal(core.calls[1].body.path, 'draft.md')
 })
 

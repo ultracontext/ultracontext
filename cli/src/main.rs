@@ -441,6 +441,9 @@ fn parse_command(args: &mut Args) -> Result<Command, UcError> {
                     "--context" | "--ctx" => {
                         scope = Some(MountScope::Context(args.required("--context value")?));
                     }
+                    "--workspace" | "--ws" => {
+                        scope = Some(MountScope::Workspace(args.required("--workspace value")?));
+                    }
                     "--backend" => {
                         backend = match args.required("--backend value")?.as_str() {
                             "nfs" => MountBackend::Nfs,
@@ -583,7 +586,7 @@ fn parse_mount_positionals(
         (Some(_), []) => Err(UcError::new(ErrorCode::InvalidInput, "Missing mountpoint")),
         (Some(_), _) => Err(UcError::new(
             ErrorCode::InvalidInput,
-            "Pass only one mountpoint when using --context",
+            "Pass only one mountpoint when using --context or --workspace",
         )),
         (None, [mountpoint]) => Ok((MountScope::Database, mountpoint.clone())),
         (None, [ctx_id, mountpoint]) => {
@@ -592,7 +595,7 @@ fn parse_mount_positionals(
         (None, []) => Err(UcError::new(ErrorCode::InvalidInput, "Missing mountpoint")),
         (None, _) => Err(UcError::new(
             ErrorCode::InvalidInput,
-            "Usage: uc mount [--context ctx_id] <mountpoint>",
+            "Usage: uc mount [--context handle|--workspace ws_id] <mountpoint>",
         )),
     }
 }
@@ -708,7 +711,7 @@ fn mount_context(
                 let MountScope::Context(ctx_id) = scope else {
                     return Err(UcError::new(
                         ErrorCode::InvalidInput,
-                        "FUSE backend currently requires `--context ctx_...`; DB-wide mounts use the default NFS backend",
+                        "FUSE backend currently requires `--context <handle>`; DB-wide and workspace mounts use the default NFS backend",
                     ));
                 };
                 let options = fuse_mount::MountConfig {
@@ -788,9 +791,10 @@ Commands:
   file grep <ctx> <query> [--prefix p]
   materialize <ctx> <dir>      Write context artifacts to a directory
   sync-dir <ctx> <dir>         Import directory files as artifacts
-  mount <mountpoint>           Mount the full DB at contexts/<ctx_id>/...
-  mount --context <ctx> <mnt>  Mount one context directly
-  mount <ctx> <mountpoint>     Legacy shorthand for --context
+  mount <mountpoint>           Mount the full DB at workspaces/<ws_id>/...
+  mount --workspace <ws> <mnt> Mount one workspace directly
+  mount --context <handle> <mnt> Mount one session/context workspace directly
+  mount <handle> <mountpoint>    Legacy shorthand for --context
   unmount <mountpoint>         Unmount and stop the local mount server
     [--backend nfs|fuse]       Select mount backend (default: nfs)
     [--foreground|--background]
@@ -904,6 +908,28 @@ mod tests {
             parsed.command,
             Command::Mount {
                 scope: MountScope::Context("ctx_1".into()),
+                mountpoint: "/tmp/uc".into(),
+                mode: MountMode::Default,
+                backend: MountBackend::Nfs,
+                state_file: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parses_workspace_mount_flag() {
+        let parsed = Invocation::parse(vec![
+            "mount".into(),
+            "--workspace".into(),
+            "ws_project".into(),
+            "/tmp/uc".into(),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            parsed.command,
+            Command::Mount {
+                scope: MountScope::Workspace("ws_project".into()),
                 mountpoint: "/tmp/uc".into(),
                 mode: MountMode::Default,
                 backend: MountBackend::Nfs,

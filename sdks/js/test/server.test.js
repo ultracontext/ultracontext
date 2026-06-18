@@ -11,7 +11,7 @@ test('handler dispatches remote protocol calls to the engine', async () => {
     const engine = {
         async create(input) {
             calls.push(['create', input])
-            return { id: 'ctx_abc', metadata: input.metadata, created_at: 'now' }
+            return { id: 'ses_abc', metadata: input.metadata, created_at: 'now' }
         },
         async append(contextId, messages) {
             calls.push(['append', contextId, messages])
@@ -28,11 +28,11 @@ test('handler dispatches remote protocol calls to the engine', async () => {
         method: 'POST',
         body: JSON.stringify({ metadata: { app: 'demo' } })
     }))
-    const appendResponse = await handler(new Request('https://app.test/v2/contexts/ctx_abc/messages', {
+    const appendResponse = await handler(new Request('https://app.test/v2/contexts/ses_abc/messages', {
         method: 'POST',
         body: JSON.stringify({ role: 'user', content: 'hi' })
     }))
-    const loadResponse = await handler(new Request('https://app.test/v2/contexts/ctx_abc/artifacts/load', {
+    const loadResponse = await handler(new Request('https://app.test/v2/contexts/ses_abc/artifacts/load', {
         method: 'POST',
         body: JSON.stringify({ pathOrId: 'draft.md', version: 0 })
     }))
@@ -43,8 +43,8 @@ test('handler dispatches remote protocol calls to the engine', async () => {
     assert.deepEqual(await readJson(loadResponse), { id: 'art_abc', path: 'draft.md', data: '# Draft' })
     assert.deepEqual(calls, [
         ['create', { metadata: { app: 'demo' } }],
-        ['append', 'ctx_abc', [{ role: 'user', content: 'hi' }]],
-        ['load', 'ctx_abc', 'draft.md', { version: 0 }]
+        ['append', 'ses_abc', [{ role: 'user', content: 'hi' }]],
+        ['load', 'ses_abc', 'draft.md', { version: 0 }]
     ])
 })
 

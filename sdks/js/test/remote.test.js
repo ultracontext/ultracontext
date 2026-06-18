@@ -13,7 +13,7 @@ test('remote client sends fetch-only context requests', async () => {
     const calls = []
     const fetch = async (url, init) => {
         calls.push({ url, init })
-        return jsonResponse({ id: 'ctx_abc', metadata: { app: 'demo' }, created_at: 'now' })
+        return jsonResponse({ id: 'ses_abc', metadata: { app: 'demo' }, created_at: 'now' })
     }
     const uc = new UltraContext({
         mode: 'remote',
@@ -24,7 +24,7 @@ test('remote client sends fetch-only context requests', async () => {
 
     const created = await uc.create({ metadata: { app: 'demo' } })
 
-    assert.equal(created.id, 'ctx_abc')
+    assert.equal(created.id, 'ses_abc')
     assert.equal(calls[0].url, 'https://uc.example/v2/contexts')
     assert.equal(calls[0].init.method, 'POST')
     assert.equal(calls[0].init.headers.authorization, 'Bearer uc_test_key')
@@ -45,17 +45,17 @@ test('remote client supports messages and artifacts', async () => {
     }
     const uc = new UltraContext({ mode: 'remote', baseUrl: 'https://uc.example', fetch })
 
-    await uc.append('ctx_abc', { role: 'user', content: 'hi' })
-    await uc.save('ctx_abc', { path: 'draft.md', kind: 'text/markdown', data: '# Draft' })
-    const artifact = await uc.load('ctx_abc', 'draft.md')
+    await uc.append('ses_abc', { role: 'user', content: 'hi' })
+    await uc.save('ses_abc', { path: 'draft.md', kind: 'text/markdown', data: '# Draft' })
+    const artifact = await uc.load('ses_abc', 'draft.md')
 
     assert.equal(artifact.data, '# Draft')
-    assert.equal(calls[0].url, 'https://uc.example/v2/contexts/ctx_abc/messages')
+    assert.equal(calls[0].url, 'https://uc.example/v2/contexts/ses_abc/messages')
     assert.deepEqual(JSON.parse(calls[0].init.body), {
         messages: [{ role: 'user', content: 'hi' }]
     })
-    assert.equal(calls[1].url, 'https://uc.example/v2/contexts/ctx_abc/artifacts')
-    assert.equal(calls[2].url, 'https://uc.example/v2/contexts/ctx_abc/artifacts/load')
+    assert.equal(calls[1].url, 'https://uc.example/v2/contexts/ses_abc/artifacts')
+    assert.equal(calls[2].url, 'https://uc.example/v2/contexts/ses_abc/artifacts/load')
 })
 
 test('remote errors preserve UltraContext code', async () => {

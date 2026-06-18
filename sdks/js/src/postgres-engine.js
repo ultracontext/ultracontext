@@ -22,7 +22,7 @@ class PostgresEngine {
             CREATE TABLE IF NOT EXISTS nodes (
                 id BIGSERIAL PRIMARY KEY,
                 public_id TEXT NOT NULL,
-                kind TEXT NOT NULL CHECK (kind IN ('context', 'message', 'artifact')),
+                kind TEXT NOT NULL CHECK (kind IN ('workspace', 'session', 'context', 'message', 'artifact')),
                 content JSONB NOT NULL DEFAULT '{}'::jsonb,
                 metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
                 data TEXT,
@@ -38,60 +38,100 @@ class PostgresEngine {
         `)
     }
 
-    async create(input = {}) {
+    async createWorkspace(input = {}) {
         const metadata = input.metadata ?? {}
-        const rootId = this.id('ctx')
+        const workspaceId = this.id('ws')
         const createdAt = this.now()
-        const root = await this.insertNode({
-            publicId: rootId,
-            kind: 'context',
-            content: {},
+        await this.insertNode({
+            publicId: workspaceId,
+            kind: 'workspace',
+            content: metadata,
             metadata,
+            createdAt
+        })
+        return { id: workspaceId, metadata, created_at: createdAt }
+    }
+
+    async listWorkspaces() {
+        return {
+            data: (await this.workspaces()).map(row => ({
+                id: row.public_id,
+                metadata: row.metadata,
+                created_at: row.created_at
+            }))
+        }
+    }
+
+    async createSession(workspaceId, input = {}) {
+        const workspace = await this.workspace(workspaceId)
+        return (await this.createSessionNodes(workspace, input.metadata ?? {})).session
+    }
+
+    async create(input = {}) {
+        const workspace = input.workspaceId || input.workspace_id
+            ? await this.workspace(input.workspaceId ?? input.workspace_id)
+            : await this.ensureDefaultWorkspace()
+        return (await this.createSessionNodes(workspace, input.metadata ?? {})).context
+    }
+
+    async createSessionNodes(workspace, metadata) {
+        const sessionId = this.id('ses')
+        const contextId = this.id('ctx')
+        const createdAt = this.now()
+        const sessionRow = await this.insertNode({
+            publicId: sessionId,
+            kind: 'session',
+            content: {
+                workspace_id: workspace.public_id,
+                initial_context_id: contextId
+            },
+            metadata,
+            owner: workspace.id,
             createdAt
         })
 
         await this.insertNode({
-            publicId: this.id('ctx'),
+            publicId: contextId,
             kind: 'context',
-            content: {},
+            content: {
+                role: 'head',
+                operation: 'create',
+                projection: false,
+                workspace_id: workspace.public_id,
+                session_id: sessionRow.public_id
+            },
             metadata: { operation: 'create' },
-            owner: root.id,
+            owner: sessionRow.id,
             createdAt: this.now()
         })
 
-        return { id: rootId, metadata, created_at: createdAt }
+        return {
+            session: {
+                id: sessionRow.public_id,
+                workspace_id: workspace.public_id,
+                context_id: contextId,
+                metadata,
+                created_at: createdAt
+            },
+            context: { id: sessionRow.public_id, metadata, created_at: createdAt },
+            sessionRow
+        }
     }
 
     async fork(sourceId, options = {}) {
-        const sourceRoot = await this.root(sourceId)
-        const sourceHeads = await this.heads(sourceRoot.id)
+        const sourceSession = await this.resolveSession(sourceId)
+        const workspace = await this.workspaceForSession(sourceSession)
+        const sourceHeads = await this.heads(sourceSession.id)
         const sourceHead = sourceHeads[options.version ?? sourceHeads.length - 1]
         if (!sourceHead) {
             throw domainError('not_found', 'Version not found')
         }
 
-        const forkId = this.id('ctx')
-        const metadata = options.metadata ?? {}
-        const createdAt = this.now()
-        const forkRoot = await this.insertNode({
-            publicId: forkId,
-            kind: 'context',
-            content: {},
-            metadata,
-            parent: sourceRoot.id,
-            createdAt
-        })
-        const forkHead = await this.insertNode({
-            publicId: this.id('ctx'),
-            kind: 'context',
-            content: {},
-            metadata: { operation: 'fork', source: sourceId },
-            owner: forkRoot.id,
-            createdAt: this.now()
-        })
+        const created = await this.createSessionNodes(workspace, options.metadata ?? {})
+        const session = created.sessionRow
 
         let prev = null
-        for (const message of await this.children(sourceHead.id, 'message')) {
+        for (const message of await this.contextMessages(sourceSession, sourceHead)) {
             const row = await this.insertNode({
                 publicId: this.id('msg'),
                 kind: 'message',
@@ -99,47 +139,23 @@ class PostgresEngine {
                 metadata: message.metadata,
                 prev,
                 parent: message.id,
-                owner: forkHead.id,
+                owner: session.id,
                 createdAt: this.now()
             })
             prev = row.id
         }
 
-        for (const artifact of await this.currentArtifacts(sourceRoot.id)) {
-            const forkArtifactId = this.id('art')
-            const data = await this.readArtifactData(artifact)
-            const stored = await this.storeArtifactContent({
-                artifactId: forkArtifactId,
-                version: 0,
-                data,
-                kind: artifact.content.kind
-            })
-            await this.insertNode({
-                publicId: forkArtifactId,
-                kind: 'artifact',
-                content: {
-                    ...artifact.content,
-                    size: byteLength(data),
-                    sha256: fingerprint(String(data)),
-                    storage: stored.storage
-                },
-                metadata: artifact.metadata,
-                data: stored.data,
-                parent: artifact.id,
-                owner: forkRoot.id,
-                createdAt: this.now()
-            })
-        }
-
-        return { id: forkId, metadata, created_at: createdAt }
+        return created.context
     }
 
     async append(contextId, messages) {
         messages = Array.isArray(messages) ? messages : [messages]
-        const root = await this.root(contextId)
-        const head = await this.currentHead(root.id)
-        const existing = await this.children(head.id, 'message')
+        const session = await this.resolveSession(contextId)
+        const head = await this.currentHead(session.id)
+        const existing = await this.children(session.id, 'message')
         let prev = existing.at(-1)?.id ?? null
+        let projectedPrev = (await this.children(head.id, 'message')).at(-1)?.id ?? null
+        const projectIntoHead = head.content.projection === true
 
         for (const message of messages) {
             const row = await this.insertNode({
@@ -148,29 +164,43 @@ class PostgresEngine {
                 content: message,
                 metadata: message.metadata ?? {},
                 prev,
-                owner: head.id,
+                owner: session.id,
                 createdAt: this.now()
             })
             prev = row.id
+
+            if (projectIntoHead) {
+                const projected = await this.insertNode({
+                    publicId: this.id('msg'),
+                    kind: 'message',
+                    content: message,
+                    metadata: message.metadata ?? {},
+                    prev: projectedPrev,
+                    parent: row.id,
+                    owner: head.id,
+                    createdAt: this.now()
+                })
+                projectedPrev = projected.id
+            }
         }
 
-        return { data: await this.messageViews(head.id), version: await this.version(head.id) }
+        return { data: await this.contextMessageViews(session, head), version: await this.version(head.id) }
     }
 
     async get(contextId, options = {}) {
-        const root = await this.root(contextId)
-        const heads = await this.heads(root.id)
+        const session = await this.resolveSession(contextId)
+        const heads = await this.heads(session.id)
         const version = options.version ?? heads.length - 1
         const head = heads[version]
         if (!head) {
             throw domainError('not_found', 'Version not found')
         }
-        return { id: contextId, data: await this.messageViews(head.id), version }
+        return { id: contextId, data: await this.contextMessageViews(session, head), version }
     }
 
     async listContexts() {
         return {
-            data: (await this.roots()).map(row => ({
+            data: (await this.sessions()).map(row => ({
                 id: row.public_id,
                 metadata: row.metadata,
                 created_at: row.created_at
@@ -179,9 +209,9 @@ class PostgresEngine {
     }
 
     async update(contextId, updates, options = {}) {
-        const root = await this.root(contextId)
-        const current = await this.currentHead(root.id)
-        const messages = await this.children(current.id, 'message')
+        const session = await this.resolveSession(contextId)
+        const current = await this.currentHead(session.id)
+        const messages = await this.contextMessages(session, current)
         const update = Array.isArray(updates) ? updates[0] : updates
         const targetIndex = update.index ?? messages.findIndex(message => message.public_id === update.id)
         if (targetIndex < 0 || targetIndex >= messages.length) {
@@ -191,10 +221,10 @@ class PostgresEngine {
         const newHead = await this.insertNode({
             publicId: this.id('ctx'),
             kind: 'context',
-            content: {},
+            content: { role: 'head', operation: 'update', projection: true },
             metadata: options.metadata ?? {},
             prev: current.id,
-            owner: root.id,
+            owner: session.id,
             createdAt: this.now()
         })
 
@@ -221,17 +251,17 @@ class PostgresEngine {
 
     async delete(contextId, target, options = {}) {
         if (target?.permanent) {
-            const root = await this.root(contextId)
-            await this.query('DELETE FROM nodes WHERE id = $1', [root.id])
+            const session = await this.resolveSession(contextId)
+            await this.query('DELETE FROM nodes WHERE id = $1', [session.id])
             return { deleted: true, id: contextId }
         }
         return this.deleteMessages(contextId, Array.isArray(target) ? target : [target], options)
     }
 
     async deleteMessages(contextId, targets, options = {}) {
-        const root = await this.root(contextId)
-        const current = await this.currentHead(root.id)
-        const messages = await this.children(current.id, 'message')
+        const session = await this.resolveSession(contextId)
+        const current = await this.currentHead(session.id)
+        const messages = await this.contextMessages(session, current)
         const deleteIndexes = new Set(targets.map(target => {
             if (typeof target === 'number') {
                 return target
@@ -245,10 +275,10 @@ class PostgresEngine {
         const newHead = await this.insertNode({
             publicId: this.id('ctx'),
             kind: 'context',
-            content: {},
+            content: { role: 'head', operation: 'delete', projection: true },
             metadata: options.metadata ?? {},
             prev: current.id,
-            owner: root.id,
+            owner: session.id,
             createdAt: this.now()
         })
 
@@ -271,11 +301,12 @@ class PostgresEngine {
     }
 
     async save(contextId, input) {
-        const root = await this.root(contextId)
+        const session = await this.resolveSession(contextId)
+        const workspace = await this.workspaceForSession(session)
         const path = normalizePath(input.path)
         const current = input.id
-            ? await this.currentArtifactById(root.id, input.id)
-            : await this.currentArtifactByPath(root.id, path)
+            ? await this.currentArtifactById(workspace.id, input.id)
+            : await this.currentArtifactByPath(workspace.id, path)
 
         if (input.ifVersion !== undefined) {
             if (!current || await this.artifactVersion(current.id) !== input.ifVersion) {
@@ -308,17 +339,18 @@ class PostgresEngine {
             data: stored.data,
             prev: current?.id ?? null,
             parent: current?.id ?? null,
-            owner: root.id,
+            owner: workspace.id,
             createdAt: this.now()
         })
         return this.artifactMeta(row, version)
     }
 
     async load(contextId, pathOrId, options = {}) {
-        const root = await this.root(contextId)
+        const session = await this.resolveSession(contextId)
+        const workspace = await this.workspaceForSession(session)
         const current = pathOrId.startsWith('art_')
-            ? await this.currentArtifactById(root.id, pathOrId)
-            : await this.currentArtifactByPath(root.id, normalizePath(pathOrId))
+            ? await this.currentArtifactById(workspace.id, pathOrId)
+            : await this.currentArtifactByPath(workspace.id, normalizePath(pathOrId))
         if (!current) {
             throw domainError('not_found', 'Artifact not found')
         }
@@ -332,8 +364,9 @@ class PostgresEngine {
     }
 
     async listArtifacts(contextId) {
-        const root = await this.root(contextId)
-        const rows = await this.currentArtifacts(root.id)
+        const session = await this.resolveSession(contextId)
+        const workspace = await this.workspaceForSession(session)
+        const rows = await this.currentArtifacts(workspace.id)
         return { data: await Promise.all(rows.map(row => this.artifactMeta(row))) }
     }
 
@@ -362,8 +395,9 @@ class PostgresEngine {
         if (options.ifVersion !== undefined && current.version !== options.ifVersion) {
             throw domainError('conflict', 'Artifact version conflict')
         }
-        const root = await this.root(contextId)
-        const latest = await this.currentArtifactById(root.id, current.id)
+        const session = await this.resolveSession(contextId)
+        const workspace = await this.workspaceForSession(session)
+        const latest = await this.currentArtifactById(workspace.id, current.id)
         for (const row of (await this.chain(latest.id)).reverse()) {
             await this.deleteArtifactData(row)
             await this.query('DELETE FROM nodes WHERE id = $1', [row.id])
@@ -378,10 +412,11 @@ class PostgresEngine {
 
     async grep(contextId, query, options = {}) {
         const prefix = options.prefix ? normalizePrefix(options.prefix) : null
+        const session = await this.resolveSession(contextId)
         const result = await this.search(query)
         result.data = result.data.filter(hit => (
             hit.kind === 'artifact'
-            && hit.context_id === contextId
+            && hit.context_id === session.public_id
             && (!prefix || hit.path?.startsWith(prefix))
         ))
         return result
@@ -393,15 +428,15 @@ class PostgresEngine {
             throw domainError('invalid_input', 'Search query is empty')
         }
         const hits = []
-        for (const context of await this.roots()) {
-            const head = await this.currentHead(context.id)
-            for (const message of await this.children(head.id, 'message')) {
+        for (const session of await this.sessions()) {
+            const head = await this.currentHead(session.id)
+            for (const message of await this.contextMessages(session, head)) {
                 const text = textFromValue(message.content)
                 if (text.toLowerCase().includes(needle)) {
                     hits.push({
                         kind: 'message',
                         id: message.public_id,
-                        context_id: context.public_id,
+                        context_id: session.public_id,
                         path: null,
                         snippet: text,
                         metadata: message.metadata,
@@ -409,13 +444,14 @@ class PostgresEngine {
                     })
                 }
             }
-            for (const artifact of await this.currentArtifacts(context.id)) {
+            const workspace = await this.workspaceForSession(session)
+            for (const artifact of await this.currentArtifacts(workspace.id)) {
                 const text = await this.readArtifactData(artifact) ?? ''
                 if (artifact.content.kind?.startsWith('text/') && text.toLowerCase().includes(needle)) {
                     hits.push({
                         kind: 'artifact',
                         id: artifact.public_id,
-                        context_id: context.public_id,
+                        context_id: session.public_id,
                         path: artifact.content.path,
                         snippet: text,
                         metadata: artifact.metadata,
@@ -485,27 +521,93 @@ class PostgresEngine {
         `, [rowId, publicId, kind, content, metadata, data, prev, parent, owner, createdAt])
     }
 
-    async root(publicId) {
+    async ensureDefaultWorkspace() {
         const result = await this.query(`
             SELECT * FROM nodes
-            WHERE public_id = $1 AND kind = 'context' AND owner IS NULL
+            WHERE public_id = 'ws_default' AND kind = 'workspace'
+            LIMIT 1
+        `)
+        if (result.rows[0]) return decode(result.rows[0])
+
+        return this.insertNode({
+            publicId: 'ws_default',
+            kind: 'workspace',
+            content: { name: 'default', default: true },
+            metadata: { name: 'default', default: true },
+            createdAt: this.now()
+        })
+    }
+
+    async workspace(publicId) {
+        const result = await this.query(`
+            SELECT * FROM nodes
+            WHERE public_id = $1 AND kind = 'workspace'
             LIMIT 1
         `, [publicId])
         const row = result.rows[0]
-        if (!row) throw domainError('not_found', 'Context not found')
+        if (!row) throw domainError('not_found', 'Workspace not found')
         return decode(row)
     }
 
-    async roots() {
+    async workspaces() {
         const result = await this.query(`
             SELECT * FROM nodes
-            WHERE kind = 'context' AND owner IS NULL
+            WHERE kind = 'workspace'
+            ORDER BY created_at ASC, id ASC
+        `)
+        return result.rows.map(decode)
+    }
+
+    async session(publicId) {
+        const result = await this.query(`
+            SELECT * FROM nodes
+            WHERE public_id = $1 AND kind = 'session'
+            LIMIT 1
+        `, [publicId])
+        return result.rows[0] ? decode(result.rows[0]) : null
+    }
+
+    async resolveSession(publicId) {
+        const direct = await this.session(publicId)
+        if (direct) return direct
+
+        const result = await this.query(`
+            SELECT session.* FROM nodes context
+            JOIN nodes session ON session.id = context.owner
+            WHERE context.public_id = $1
+              AND context.kind = 'context'
+              AND session.kind = 'session'
+            LIMIT 1
+        `, [publicId])
+        const row = result.rows[0]
+        if (!row) throw domainError('not_found', 'Session not found')
+        return decode(row)
+    }
+
+    async workspaceForSession(session) {
+        const result = await this.query(`
+            SELECT workspace.* FROM nodes session
+            JOIN nodes workspace ON workspace.id = session.owner
+            WHERE session.id = $1
+              AND session.kind = 'session'
+              AND workspace.kind = 'workspace'
+            LIMIT 1
+        `, [session.id])
+        const row = result.rows[0]
+        if (!row) throw domainError('internal', 'Workspace not found for session')
+        return decode(row)
+    }
+
+    async sessions() {
+        const result = await this.query(`
+            SELECT * FROM nodes
+            WHERE kind = 'session'
             ORDER BY created_at DESC, id DESC
         `)
         return result.rows.map(decode)
     }
 
-    async currentHead(rootRowId) {
+    async currentHead(sessionRowId) {
         const result = await this.query(`
             SELECT n.* FROM nodes n
             WHERE n.kind = 'context'
@@ -516,14 +618,14 @@ class PostgresEngine {
               )
             ORDER BY n.id DESC
             LIMIT 1
-        `, [rootRowId])
+        `, [sessionRowId])
         const row = result.rows[0]
         if (!row) throw domainError('internal', 'HEAD not found')
         return decode(row)
     }
 
-    async heads(rootRowId) {
-        return this.chain((await this.currentHead(rootRowId)).id)
+    async heads(sessionRowId) {
+        return this.chain((await this.currentHead(sessionRowId)).id)
     }
 
     async children(owner, kind) {
@@ -535,6 +637,23 @@ class PostgresEngine {
 
     async messageViews(headRowId) {
         return (await this.children(headRowId, 'message')).map((row, index) => ({
+            id: row.public_id,
+            index,
+            ...row.content,
+            metadata: row.metadata,
+            created_at: row.created_at
+        }))
+    }
+
+    async contextMessages(session, head) {
+        if (head.content.projection !== true) {
+            return this.children(session.id, 'message')
+        }
+        return this.children(head.id, 'message')
+    }
+
+    async contextMessageViews(session, head) {
+        return (await this.contextMessages(session, head)).map((row, index) => ({
             id: row.public_id,
             index,
             ...row.content,
@@ -632,7 +751,7 @@ class PostgresEngine {
         return rows.reverse()
     }
 
-    async currentArtifactByPath(rootRowId, path) {
+    async currentArtifactByPath(ownerRowId, path) {
         const result = await this.query(`
             SELECT n.* FROM nodes n
             WHERE n.kind = 'artifact'
@@ -644,11 +763,11 @@ class PostgresEngine {
               )
             ORDER BY n.id DESC
             LIMIT 1
-        `, [rootRowId, path])
+        `, [ownerRowId, path])
         return result.rows[0] ? decode(result.rows[0]) : null
     }
 
-    async currentArtifactById(rootRowId, publicId) {
+    async currentArtifactById(ownerRowId, publicId) {
         const result = await this.query(`
             SELECT n.* FROM nodes n
             WHERE n.kind = 'artifact'
@@ -660,11 +779,11 @@ class PostgresEngine {
               )
             ORDER BY n.id DESC
             LIMIT 1
-        `, [rootRowId, publicId])
+        `, [ownerRowId, publicId])
         return result.rows[0] ? decode(result.rows[0]) : null
     }
 
-    async currentArtifacts(rootRowId) {
+    async currentArtifacts(ownerRowId) {
         const result = await this.query(`
             SELECT n.* FROM nodes n
             WHERE n.kind = 'artifact'
@@ -674,7 +793,7 @@ class PostgresEngine {
                 WHERE child.kind = 'artifact' AND child.prev = n.id
               )
             ORDER BY n.content->>'path' ASC, n.id ASC
-        `, [rootRowId])
+        `, [ownerRowId])
         return result.rows.map(decode)
     }
 

@@ -13,9 +13,9 @@ function localFetch(handler) {
     return async (url, init = {}) => handler(new Request(url, init))
 }
 
-async function runSharedFixture(uc) {
+async function runSharedFixture(uc, { legacyContextId = false } = {}) {
     const ctx = await uc.create({ metadata: fixture.metadata })
-    assert.match(ctx.id, /^ctx_/)
+    assert.match(ctx.id, legacyContextId ? /^(ses|ctx)_/ : /^ses_/)
 
     const appended = await uc.append(ctx.id, fixture.messages)
     assert.equal(appended.version, 0)
@@ -111,5 +111,5 @@ test('shared v2 alpha fixture passes through JS local native', { skip: !nativePa
     const dbPath = join(tmpdir(), `uc-js-shared-${process.pid}-${Date.now()}.db`)
     const uc = new UltraContext({ mode: 'local', path: dbPath })
 
-    await runSharedFixture(uc)
+    await runSharedFixture(uc, { legacyContextId: true })
 })

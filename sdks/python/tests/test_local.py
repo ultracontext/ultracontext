@@ -15,7 +15,7 @@ class FakeCore:
             return json.dumps(
                 {
                     "ok": {
-                        "id": "ctx_local",
+                        "id": "ses_local",
                         "metadata": body["metadata"],
                         "created_at": "now",
                     }
@@ -56,11 +56,11 @@ class LocalClientTests(unittest.TestCase):
         artifact = uc.write(ctx["id"], "draft.md", "# Draft", kind="text/markdown")
 
         self.assertEqual(native.path, "/tmp/uc.db")
-        self.assertEqual(ctx["id"], "ctx_local")
+        self.assertEqual(ctx["id"], "ses_local")
         self.assertEqual(artifact["id"], "art_local")
         self.assertEqual(core.calls[0], ("create", {"metadata": {"app": "demo"}}))
         self.assertEqual(core.calls[1][0], "file_write")
-        self.assertEqual(core.calls[1][1]["ctxId"], "ctx_local")
+        self.assertEqual(core.calls[1][1]["ctxId"], "ses_local")
         self.assertEqual(core.calls[1][1]["path"], "draft.md")
 
     def test_local_client_maps_native_error_envelope(self):

@@ -116,6 +116,43 @@ fn json_dispatch_exposes_sdk_shapes_over_core_logic() {
 }
 
 #[test]
+fn json_dispatch_exposes_workspace_and_session_shapes() {
+    let uc = UltraContext::open(temp_db("workspace-session")).unwrap();
+
+    let workspace = uc
+        .dispatch_json("create_workspace", json!({"metadata": {"name": "project"}}))
+        .unwrap();
+    let workspace_id = workspace["id"].as_str().unwrap();
+
+    let session = uc
+        .dispatch_json(
+            "create_session",
+            json!({
+                "workspaceId": workspace_id,
+                "metadata": {"name": "run"}
+            }),
+        )
+        .unwrap();
+    assert_eq!(session["workspace_id"], workspace_id);
+    assert!(session["id"].as_str().unwrap().starts_with("ses_"));
+    assert!(session["context_id"].as_str().unwrap().starts_with("ctx_"));
+
+    let ctx = uc
+        .dispatch_json(
+            "create",
+            json!({
+                "workspaceId": workspace_id,
+                "metadata": {"name": "simple"}
+            }),
+        )
+        .unwrap();
+    assert!(ctx["id"].as_str().unwrap().starts_with("ses_"));
+
+    let workspaces = uc.dispatch_json("list_workspaces", json!({})).unwrap();
+    assert_eq!(workspaces["data"].as_array().unwrap().len(), 1);
+}
+
+#[test]
 fn json_dispatch_preserves_stable_error_codes() {
     let uc = UltraContext::open(temp_db("errors")).unwrap();
 
