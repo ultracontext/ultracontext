@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 import urllib.error
 import urllib.request
 
@@ -219,55 +218,6 @@ class UltraContext:
             body,
         )
 
-    def materialize(self, context_id, directory, *, prefix=None):
-        directory = Path(directory)
-        prefix = _normalize_prefix(prefix)
-        artifacts = self.load(context_id).get("data", [])
-        written = []
-        for artifact in artifacts:
-            path = artifact["path"]
-            if prefix and not path.startswith(prefix):
-                continue
-            loaded = self.read(context_id, artifact["id"])
-            if loaded.get("data") is None:
-                continue
-            file = _safe_join(directory, path)
-            file.parent.mkdir(parents=True, exist_ok=True)
-            file.write_text(loaded["data"])
-            written.append(
-                {
-                    "path": path,
-                    "file": str(file),
-                    "id": artifact["id"],
-                    "version": loaded["version"],
-                }
-            )
-        return {"data": written}
-
-    def sync_directory(self, context_id, directory, *, prefix=None, kind_by_path=None):
-        directory = Path(directory)
-        prefix = _normalize_prefix(prefix)
-        synced = []
-        for file in sorted(path for path in directory.rglob("*") if path.is_file()):
-            path = file.relative_to(directory).as_posix()
-            if prefix and not path.startswith(prefix):
-                continue
-            saved = self.write(
-                context_id,
-                path,
-                file.read_text(),
-                kind=_kind_for_path(path, kind_by_path),
-            )
-            synced.append(
-                {
-                    "path": saved["path"],
-                    "file": str(file),
-                    "id": saved["id"],
-                    "version": saved["version"],
-                }
-            )
-        return {"data": synced}
-
     def export_snapshot(self):
         return self._call(
             "export_snapshot",
@@ -377,27 +327,3 @@ class UltraContext:
         except urllib.error.HTTPError as error:
             text = error.read().decode("utf-8")
             return error.code, json.loads(text) if text else None
-
-
-def _safe_join(root, path):
-    if not path or path.startswith("/") or ".." in Path(path).parts:
-        raise UltraContextError(f"Invalid materialized path: {path}", code="invalid_input")
-    return root.joinpath(*path.split("/"))
-
-
-def _normalize_prefix(prefix):
-    if not prefix:
-        return ""
-    return str(prefix).strip("/")
-
-
-def _kind_for_path(path, kind_by_path):
-    if kind_by_path is not None:
-        return kind_by_path(path)
-    if path.endswith(".md"):
-        return "text/markdown"
-    if path.endswith(".json"):
-        return "application/json"
-    if path.endswith(".txt"):
-        return "text/plain"
-    return "text/plain"

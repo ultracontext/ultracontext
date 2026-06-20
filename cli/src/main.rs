@@ -1,8 +1,10 @@
 use serde_json::{Value, json};
 use std::env;
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
+use std::process;
+use toml_edit::{Array, DocumentMut, value};
 use ultracontext::{
     ContentStore, ErrorCode, FileWrite, UcError, UltraContext, UltraContextOptions,
 };
@@ -19,23 +21,35 @@ mod nfs_mount;
 )]
 mod nfsserve;
 
-#[cfg(feature = "fuse")]
-mod fuse_mount;
-
 use mount_utils::{MountScope, infer_kind, io_error};
 
+const DEFAULT_INLINE_LIMIT: usize = 64 * 1024;
+const PROJECT_CONFIG_FILE: &str = "ultracontext.json";
+
+#[allow(dead_code)]
 fn main() {
+    entry();
+}
+
+pub(crate) fn entry() {
+    let color = io::stdout().is_terminal() && env::var_os("NO_COLOR").is_none();
     if let Err(error) = run(
         env::args().skip(1).collect(),
         &mut io::stdout(),
         &mut io::stderr(),
+        color,
     ) {
         let _ = writeln!(io::stderr(), "{}: {}", error.code_str(), error.message);
         std::process::exit(exit_code(&error));
     }
 }
 
-fn run(args: Vec<String>, out: &mut dyn Write, err: &mut dyn Write) -> Result<(), UcError> {
+fn run(
+    args: Vec<String>,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+    color: bool,
+) -> Result<(), UcError> {
     let invocation = Invocation::parse(args)?;
     let Invocation {
         db,
@@ -47,11 +61,75 @@ fn run(args: Vec<String>, out: &mut dyn Write, err: &mut dyn Write) -> Result<()
 
     match command {
         Command::Help => {
-            write_help(out)?;
+            write_help(out, color)?;
             Ok(())
         }
+        Command::InitHelp => {
+            write_init_help(out)?;
+            Ok(())
+        }
+        Command::MountHelp => {
+            write_mount_help(out)?;
+            Ok(())
+        }
+        Command::UnmountHelp => {
+            write_unmount_help(out)?;
+            Ok(())
+        }
+        Command::ContextHelp => {
+            write_context_help(out)?;
+            Ok(())
+        }
+        Command::FsHelp => {
+            write_fs_help(out)?;
+            Ok(())
+        }
+        Command::ConfigHelp => {
+            write_config_help(out)?;
+            Ok(())
+        }
+        Command::ConfigList => {
+            let config = read_active_config()?;
+            print_json(out, config.value)
+        }
+        Command::ConfigPath => {
+            let config = read_active_config()?;
+            print_json(out, json!({ "path": db_path_string(&config.path)? }))
+        }
+        Command::ConfigGet { key } => {
+            let config = read_active_config()?;
+            print_json(out, get_config_value(&config.value, &key)?)
+        }
+        Command::ConfigSet { key, value } => {
+            let mut config = read_active_config()?;
+            let normalized = set_config_value(&mut config.value, &key, &value)?;
+            write_config_value(&config.path, &config.value)?;
+            print_json(
+                out,
+                json!({
+                    "updated": true,
+                    "key": normalized,
+                    "config": db_path_string(&config.path)?
+                }),
+            )
+        }
+        Command::Init {
+            local,
+            force,
+            install_sdk,
+        } => {
+            let result = init_store(
+                db.as_deref(),
+                content_dir.as_ref(),
+                inline_limit,
+                local,
+                force,
+                install_sdk,
+            )?;
+            print_json(out, result)
+        }
         Command::Create { metadata } => {
-            let uc = open_store(&db, content_dir.as_ref(), inline_limit)?;
+            let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, false)?;
             let ctx = uc.create(metadata)?;
             print_json(
                 out,
@@ -63,7 +141,7 @@ fn run(args: Vec<String>, out: &mut dyn Write, err: &mut dyn Write) -> Result<()
             )
         }
         Command::Contexts => {
-            let uc = open_store(&db, content_dir.as_ref(), inline_limit)?;
+            let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
             let data = uc
                 .list_contexts()?
                 .into_iter()
@@ -78,7 +156,7 @@ fn run(args: Vec<String>, out: &mut dyn Write, err: &mut dyn Write) -> Result<()
             print_json(out, json!({ "data": data }))
         }
         Command::FileList { ctx_id, prefix } => {
-            let uc = open_store(&db, content_dir.as_ref(), inline_limit)?;
+            let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
             let data = uc
                 .file_list(&ctx_id, prefix.as_deref())?
                 .into_iter()
@@ -87,7 +165,7 @@ fn run(args: Vec<String>, out: &mut dyn Write, err: &mut dyn Write) -> Result<()
             print_json(out, json!({ "data": data }))
         }
         Command::FileRead { ctx_id, path } => {
-            let uc = open_store(&db, content_dir.as_ref(), inline_limit)?;
+            let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
             if json {
                 let artifact = uc.file_read(&ctx_id, &path)?;
                 print_json(out, artifact_data_json(artifact))
@@ -104,7 +182,7 @@ fn run(args: Vec<String>, out: &mut dyn Write, err: &mut dyn Write) -> Result<()
             kind,
         } => {
             let data = read_input(source.as_deref())?;
-            let uc = open_store(&db, content_dir.as_ref(), inline_limit)?;
+            let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
             let saved = uc.file_write(
                 &ctx_id,
                 FileWrite::new(path, data)
@@ -114,17 +192,17 @@ fn run(args: Vec<String>, out: &mut dyn Write, err: &mut dyn Write) -> Result<()
             print_json(out, artifact_meta_json(saved))
         }
         Command::FileMove { ctx_id, from, to } => {
-            let uc = open_store(&db, content_dir.as_ref(), inline_limit)?;
+            let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
             let moved = uc.file_move(&ctx_id, &from, &to, None)?;
             print_json(out, artifact_meta_json(moved))
         }
         Command::FileRemove { ctx_id, path } => {
-            let uc = open_store(&db, content_dir.as_ref(), inline_limit)?;
+            let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
             uc.file_remove(&ctx_id, &path, None)?;
             print_json(out, json!({ "deleted": true, "path": path }))
         }
         Command::FileGlob { ctx_id, pattern } => {
-            let uc = open_store(&db, content_dir.as_ref(), inline_limit)?;
+            let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
             let data = uc
                 .file_glob(&ctx_id, &pattern)?
                 .into_iter()
@@ -137,7 +215,7 @@ fn run(args: Vec<String>, out: &mut dyn Write, err: &mut dyn Write) -> Result<()
             query,
             prefix,
         } => {
-            let uc = open_store(&db, content_dir.as_ref(), inline_limit)?;
+            let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
             let data = uc
                 .file_grep(&ctx_id, &query, prefix.as_deref())?
                 .data
@@ -156,35 +234,27 @@ fn run(args: Vec<String>, out: &mut dyn Write, err: &mut dyn Write) -> Result<()
                 .collect::<Vec<_>>();
             print_json(out, json!({ "data": data }))
         }
-        Command::Materialize { ctx_id, dir } => {
-            let uc = open_store(&db, content_dir.as_ref(), inline_limit)?;
-            materialize_context(&uc, &ctx_id, &dir)?;
-            print_json(out, json!({ "materialized": true, "dir": dir }))
-        }
-        Command::SyncDir { ctx_id, dir } => {
-            let uc = open_store(&db, content_dir.as_ref(), inline_limit)?;
-            sync_dir_to_context(&uc, &ctx_id, &dir)?;
-            print_json(out, json!({ "synced": true, "dir": dir }))
-        }
         Command::Mount {
             scope,
             mountpoint,
             mode,
-            backend,
             state_file,
-        } => mount_context(
-            StoreConfig {
-                db,
-                content_dir,
-                inline_limit,
-            },
-            scope,
-            mountpoint,
-            mode,
-            backend,
-            state_file,
-            err,
-        ),
+        } => {
+            let resolved =
+                resolve_store_config(db.as_deref(), content_dir.as_ref(), inline_limit, false)?;
+            mount_context(
+                StoreConfig {
+                    db: db_path_string(&resolved.db)?,
+                    content_dir: resolved.content_dir,
+                    inline_limit: resolved.inline_limit,
+                },
+                scope,
+                mountpoint,
+                mode,
+                state_file,
+                err,
+            )
+        }
         Command::Unmount { mountpoint } => {
             nfs_mount::unmount(PathBuf::from(&mountpoint))?;
             print_json(out, json!({ "unmounted": true, "mountpoint": mountpoint }))
@@ -194,9 +264,9 @@ fn run(args: Vec<String>, out: &mut dyn Write, err: &mut dyn Write) -> Result<()
 
 #[derive(Debug)]
 struct Invocation {
-    db: String,
+    db: Option<String>,
     content_dir: Option<PathBuf>,
-    inline_limit: usize,
+    inline_limit: Option<usize>,
     json: bool,
     command: Command,
 }
@@ -204,6 +274,26 @@ struct Invocation {
 #[derive(Debug, PartialEq)]
 enum Command {
     Help,
+    InitHelp,
+    MountHelp,
+    UnmountHelp,
+    ContextHelp,
+    FsHelp,
+    ConfigHelp,
+    ConfigList,
+    ConfigPath,
+    ConfigGet {
+        key: String,
+    },
+    ConfigSet {
+        key: String,
+        value: String,
+    },
+    Init {
+        local: bool,
+        force: bool,
+        install_sdk: bool,
+    },
     Create {
         metadata: Value,
     },
@@ -240,30 +330,15 @@ enum Command {
         query: String,
         prefix: Option<String>,
     },
-    Materialize {
-        ctx_id: String,
-        dir: String,
-    },
-    SyncDir {
-        ctx_id: String,
-        dir: String,
-    },
     Mount {
         scope: MountScope,
         mountpoint: String,
         mode: MountMode,
-        backend: MountBackend,
         state_file: Option<PathBuf>,
     },
     Unmount {
         mountpoint: String,
     },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MountBackend {
-    Nfs,
-    Fuse,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -276,12 +351,11 @@ enum MountMode {
 impl Invocation {
     fn parse(args: Vec<String>) -> Result<Self, UcError> {
         let mut parser = Args::new(args);
-        let mut db = env::var("UC_DB").unwrap_or_else(|_| "ultracontext.db".to_string());
+        let mut db = env::var("UC_DB").ok();
         let mut content_dir = env::var_os("UC_CONTENT_DIR").map(PathBuf::from);
         let mut inline_limit = env::var("UC_INLINE_LIMIT")
             .ok()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(64 * 1024);
+            .and_then(|value| value.parse().ok());
         let mut json_output = false;
 
         while let Some(flag) = parser.peek() {
@@ -298,7 +372,7 @@ impl Invocation {
                 }
                 "--db" => {
                     parser.next();
-                    db = parser.required("--db value")?;
+                    db = Some(parser.required("--db value")?);
                 }
                 "--content-dir" => {
                     parser.next();
@@ -306,16 +380,11 @@ impl Invocation {
                 }
                 "--inline-limit" => {
                     parser.next();
-                    inline_limit =
-                        parser
-                            .required("--inline-limit value")?
-                            .parse()
-                            .map_err(|_| {
-                                UcError::new(
-                                    ErrorCode::InvalidInput,
-                                    "--inline-limit must be a number",
-                                )
-                            })?;
+                    inline_limit = Some(parser.required("--inline-limit value")?.parse().map_err(
+                        |_| {
+                            UcError::new(ErrorCode::InvalidInput, "--inline-limit must be a number")
+                        },
+                    )?);
                 }
                 "--json" => {
                     parser.next();
@@ -336,22 +405,735 @@ impl Invocation {
     }
 }
 
-#[cfg_attr(not(feature = "fuse"), allow(dead_code))]
 struct StoreConfig {
     db: String,
     content_dir: Option<PathBuf>,
     inline_limit: usize,
 }
 
+#[derive(Debug)]
+struct ResolvedStoreConfig {
+    db: PathBuf,
+    content_dir: Option<PathBuf>,
+    inline_limit: usize,
+}
+
+#[derive(Debug)]
+struct ConfigFile {
+    path: PathBuf,
+    value: Value,
+    db: PathBuf,
+    content_dir: Option<PathBuf>,
+    inline_limit: Option<usize>,
+}
+
 fn open_store(
-    db: &str,
+    db: Option<&str>,
+    content_dir: Option<&PathBuf>,
+    inline_limit: Option<usize>,
+    require_existing: bool,
+) -> Result<UltraContext, UcError> {
+    let resolved = resolve_store_config(db, content_dir, inline_limit, require_existing)?;
+    if require_existing && !resolved.db.exists() {
+        return Err(UcError::new(
+            ErrorCode::NotFound,
+            format!("Database not found: {}", resolved.db.display()),
+        ));
+    }
+    if !require_existing && let Some(parent) = resolved.db.parent() {
+        fs::create_dir_all(parent).map_err(io_error)?;
+    }
+    if let Some(content_dir) = &resolved.content_dir {
+        fs::create_dir_all(content_dir).map_err(io_error)?;
+    }
+    open_store_at(
+        &resolved.db,
+        resolved.content_dir.as_ref(),
+        resolved.inline_limit,
+    )
+}
+
+fn open_store_at(
+    db: &Path,
     content_dir: Option<&PathBuf>,
     inline_limit: usize,
 ) -> Result<UltraContext, UcError> {
     let content_store = content_dir
         .map(|root| ContentStore::local_dir(root, inline_limit))
         .unwrap_or_else(|| ContentStore::inline_with_limit(inline_limit));
-    UltraContext::open_with_options(db, UltraContextOptions { content_store })
+    let db = db_path_string(db)?;
+    UltraContext::open_with_options(&db, UltraContextOptions { content_store })
+}
+
+fn init_store(
+    db: Option<&str>,
+    content_dir: Option<&PathBuf>,
+    inline_limit: Option<usize>,
+    local: bool,
+    force: bool,
+    install_sdk: bool,
+) -> Result<Value, UcError> {
+    let cwd = env::current_dir().map_err(io_error)?;
+    let config_path = if local {
+        cwd.join(PROJECT_CONFIG_FILE)
+    } else {
+        global_config_path()?
+    };
+    let base_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
+    let db_config_value = db
+        .map(str::to_string)
+        .unwrap_or_else(|| default_db_config_value(local));
+    let content_dir_config_value = content_dir
+        .map(path_to_config_string)
+        .unwrap_or_else(|| default_content_dir_config_value(local));
+    let inline_limit = inline_limit.unwrap_or(DEFAULT_INLINE_LIMIT);
+    let db_path = resolve_config_relative_path(base_dir, &db_config_value);
+    let content_dir_path = resolve_config_relative_path(base_dir, &content_dir_config_value);
+
+    if config_path.exists() && !force {
+        let existing = read_config(&config_path)?;
+        if existing != db_path {
+            return Err(UcError::new(
+                ErrorCode::Conflict,
+                format!(
+                    "ultracontext is already initialized at {}. Pass --force to replace it.",
+                    existing.display()
+                ),
+            ));
+        }
+    }
+
+    if let Some(parent) = db_path.parent() {
+        fs::create_dir_all(parent).map_err(io_error)?;
+    }
+    if let Some(parent) = config_path.parent() {
+        fs::create_dir_all(parent).map_err(io_error)?;
+    }
+    fs::create_dir_all(&content_dir_path).map_err(io_error)?;
+    if local {
+        ensure_local_state_gitignore(&cwd)?;
+    }
+
+    let db_existed = db_path.exists();
+    let config_existed = config_path.exists();
+    let uc = open_store_at(&db_path, Some(&content_dir_path), inline_limit)?;
+    let workspace = uc.ensure_default_workspace()?;
+    let config = json!({
+        "version": 1,
+        "db": db_config_value,
+        "storage": {
+            "contentDir": content_dir_config_value,
+            "inlineLimit": inline_limit
+        },
+        "mount": {
+            "defaultScope": "auto"
+        }
+    });
+    write_config_value(&config_path, &config)?;
+    let sdk = maybe_install_project_sdks(&cwd, local && install_sdk)?;
+
+    Ok(json!({
+        "initialized": true,
+        "created": !db_existed || !config_existed,
+        "scope": if local { "local" } else { "global" },
+        "config": db_path_string(&config_path)?,
+        "db": db_path_string(&db_path)?,
+        "content_dir": db_path_string(&content_dir_path)?,
+        "sdk": sdk,
+        "workspace_id": workspace.id
+    }))
+}
+
+fn resolve_store_config(
+    db: Option<&str>,
+    content_dir: Option<&PathBuf>,
+    inline_limit: Option<usize>,
+    require_existing: bool,
+) -> Result<ResolvedStoreConfig, UcError> {
+    if let Some(db) = db {
+        return Ok(ResolvedStoreConfig {
+            db: absolute_path(db)?,
+            content_dir: content_dir.cloned(),
+            inline_limit: inline_limit.unwrap_or(DEFAULT_INLINE_LIMIT),
+        });
+    }
+    if let Some(config) = find_local_config() {
+        return apply_config_overrides(read_config_file(&config)?, content_dir, inline_limit);
+    }
+    let global = global_config_path()?;
+    if global.exists() {
+        return apply_config_overrides(read_config_file(&global)?, content_dir, inline_limit);
+    }
+
+    let message = if require_existing {
+        "ultracontext is not initialized. Run `uc init`, set UC_DB, or pass --db <path>."
+    } else {
+        "ultracontext is not initialized. Run `uc init` first, or pass --db <path>."
+    };
+    Err(UcError::new(ErrorCode::InvalidInput, message))
+}
+
+fn apply_config_overrides(
+    config: ConfigFile,
+    content_dir: Option<&PathBuf>,
+    inline_limit: Option<usize>,
+) -> Result<ResolvedStoreConfig, UcError> {
+    Ok(ResolvedStoreConfig {
+        db: config.db,
+        content_dir: content_dir.cloned().or(config.content_dir),
+        inline_limit: inline_limit
+            .or(config.inline_limit)
+            .unwrap_or(DEFAULT_INLINE_LIMIT),
+    })
+}
+
+fn find_local_config() -> Option<PathBuf> {
+    let mut dir = env::current_dir().ok()?;
+    loop {
+        let candidate = dir.join(PROJECT_CONFIG_FILE);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+        let legacy = dir.join(".ultracontext").join("config.json");
+        if legacy.exists() {
+            return Some(legacy);
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
+fn read_config(config_path: &Path) -> Result<PathBuf, UcError> {
+    Ok(read_config_file(config_path)?.db)
+}
+
+fn read_active_config() -> Result<ConfigFile, UcError> {
+    let path = active_config_path()?;
+    read_config_file(&path)
+}
+
+fn active_config_path() -> Result<PathBuf, UcError> {
+    if let Some(config) = find_local_config() {
+        return Ok(config);
+    }
+    let global = global_config_path()?;
+    if global.exists() {
+        return Ok(global);
+    }
+    Err(UcError::new(
+        ErrorCode::InvalidInput,
+        "ultracontext is not initialized. Run `uc init` first.",
+    ))
+}
+
+fn read_config_file(config_path: &Path) -> Result<ConfigFile, UcError> {
+    let data = fs::read_to_string(config_path).map_err(io_error)?;
+    let value: Value = serde_json::from_str(&data)
+        .map_err(|_| UcError::new(ErrorCode::InvalidInput, "Invalid ultracontext config JSON"))?;
+    let db = config_string(&value, "db")
+        .ok_or_else(|| {
+            UcError::new(
+                ErrorCode::InvalidInput,
+                format!("ultracontext config missing db: {}", config_path.display()),
+            )
+        })?
+        .to_string();
+    let base_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
+    let content_dir = config_string(&value, "storage.contentDir")
+        .or_else(|| config_string(&value, "storage.content_dir"))
+        .map(|path| resolve_config_relative_path(base_dir, path));
+    let inline_limit = config_usize(&value, "storage.inlineLimit")
+        .or_else(|| config_usize(&value, "storage.inline_limit"));
+    Ok(ConfigFile {
+        path: config_path.to_path_buf(),
+        value,
+        db: resolve_config_relative_path(base_dir, &db),
+        content_dir,
+        inline_limit,
+    })
+}
+
+fn write_config_value(config_path: &Path, value: &Value) -> Result<(), UcError> {
+    let config_text = serde_json::to_string_pretty(value)
+        .map_err(|error| UcError::new(ErrorCode::Internal, error.to_string()))?;
+    fs::write(config_path, format!("{config_text}\n")).map_err(io_error)
+}
+
+fn default_db_config_value(local: bool) -> String {
+    if local {
+        ".ultracontext/ultracontext.db".to_string()
+    } else {
+        "ultracontext.db".to_string()
+    }
+}
+
+fn default_content_dir_config_value(local: bool) -> String {
+    if local {
+        ".ultracontext/blobs".to_string()
+    } else {
+        "blobs".to_string()
+    }
+}
+
+fn path_to_config_string(path: &PathBuf) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn resolve_config_relative_path(base_dir: &Path, value: &str) -> PathBuf {
+    let path = PathBuf::from(value);
+    if path.is_absolute() {
+        path
+    } else {
+        base_dir.join(path)
+    }
+}
+
+fn ensure_local_state_gitignore(project_root: &Path) -> Result<(), UcError> {
+    let state_dir = project_root.join(".ultracontext");
+    fs::create_dir_all(&state_dir).map_err(io_error)?;
+    let gitignore = state_dir.join(".gitignore");
+    if !gitignore.exists() {
+        fs::write(gitignore, "*\n!.gitignore\n").map_err(io_error)?;
+    }
+    Ok(())
+}
+
+fn maybe_install_project_sdks(project_root: &Path, enabled: bool) -> Result<Value, UcError> {
+    Ok(json!({
+        "javascript": maybe_install_js_sdk(project_root, enabled)?,
+        "python": maybe_install_python_sdk(project_root, enabled)?,
+    }))
+}
+
+fn maybe_install_js_sdk(project_root: &Path, enabled: bool) -> Result<Value, UcError> {
+    if !enabled {
+        return Ok(json!({ "installed": false, "reason": "disabled" }));
+    }
+
+    let package_json = project_root.join("package.json");
+    if !package_json.exists() {
+        return Ok(json!({ "installed": false, "reason": "no_package_json" }));
+    }
+
+    let package_name =
+        env::var("UC_NPM_PACKAGE_NAME").unwrap_or_else(|_| "ultracontext".to_string());
+    let package_spec = env::var("UC_NPM_SPEC").unwrap_or_else(|_| package_name.clone());
+
+    if package_json_has_dependency(&package_json, &package_name)? {
+        return Ok(json!({
+            "installed": false,
+            "reason": "already_present",
+            "package": package_name
+        }));
+    }
+
+    let package_manager = detect_package_manager(project_root);
+    let status = package_manager
+        .install_command(&package_spec)
+        .current_dir(project_root)
+        .status()
+        .map_err(|error| {
+            UcError::new(
+                ErrorCode::InvalidInput,
+                format!(
+                    "Failed to run {} while installing {package_spec}: {error}",
+                    package_manager.bin
+                ),
+            )
+        })?;
+
+    if !status.success() {
+        return Err(UcError::new(
+            ErrorCode::Internal,
+            format!(
+                "{} failed while installing {package_spec}. Install the SDK dependency manually and rerun `uc init`.",
+                package_manager.bin
+            ),
+        ));
+    }
+
+    Ok(json!({
+        "installed": true,
+        "package": package_spec,
+        "package_manager": package_manager.name
+    }))
+}
+
+struct PackageManager {
+    name: &'static str,
+    bin: &'static str,
+    command: &'static [&'static str],
+}
+
+impl PackageManager {
+    fn install_command(&self, package: &str) -> process::Command {
+        let mut command = process::Command::new(self.bin);
+        command.args(self.command).arg(package);
+        command
+    }
+}
+
+fn detect_package_manager(project_root: &Path) -> PackageManager {
+    if project_root.join("pnpm-lock.yaml").exists() {
+        return PackageManager {
+            name: "pnpm",
+            bin: "pnpm",
+            command: &["add"],
+        };
+    }
+    if project_root.join("bun.lock").exists() || project_root.join("bun.lockb").exists() {
+        return PackageManager {
+            name: "bun",
+            bin: "bun",
+            command: &["add"],
+        };
+    }
+    if project_root.join("yarn.lock").exists() {
+        return PackageManager {
+            name: "yarn",
+            bin: "yarn",
+            command: &["add"],
+        };
+    }
+    PackageManager {
+        name: "npm",
+        bin: "npm",
+        command: &["install"],
+    }
+}
+
+fn package_json_has_dependency(path: &Path, package_name: &str) -> Result<bool, UcError> {
+    let data = fs::read_to_string(path).map_err(io_error)?;
+    let value: Value = serde_json::from_str(&data).map_err(|_| {
+        UcError::new(
+            ErrorCode::InvalidInput,
+            format!("Invalid package.json: {}", path.display()),
+        )
+    })?;
+    let sections = [
+        "dependencies",
+        "devDependencies",
+        "peerDependencies",
+        "optionalDependencies",
+    ];
+    Ok(sections.iter().any(|section| {
+        value
+            .get(section)
+            .and_then(Value::as_object)
+            .is_some_and(|deps| deps.contains_key(package_name))
+    }))
+}
+
+fn maybe_install_python_sdk(project_root: &Path, enabled: bool) -> Result<Value, UcError> {
+    if !enabled {
+        return Ok(json!({ "installed": false, "reason": "disabled" }));
+    }
+
+    let package_name =
+        env::var("UC_PYTHON_PACKAGE_NAME").unwrap_or_else(|_| "ultracontext".to_string());
+    let package_spec = env::var("UC_PYTHON_SPEC").unwrap_or_else(|_| package_name.clone());
+    let pyproject = project_root.join("pyproject.toml");
+    let requirements = project_root.join("requirements.txt");
+
+    if pyproject.exists() {
+        return add_pyproject_dependency(&pyproject, &package_name, &package_spec);
+    }
+    if requirements.exists() {
+        return add_requirements_dependency(&requirements, &package_name, &package_spec);
+    }
+
+    Ok(json!({ "installed": false, "reason": "no_python_project" }))
+}
+
+fn add_pyproject_dependency(
+    path: &Path,
+    package_name: &str,
+    package_spec: &str,
+) -> Result<Value, UcError> {
+    let data = fs::read_to_string(path).map_err(io_error)?;
+    let mut document = data.parse::<DocumentMut>().map_err(|error| {
+        UcError::new(
+            ErrorCode::InvalidInput,
+            format!("Invalid pyproject.toml: {}: {error}", path.display()),
+        )
+    })?;
+
+    if !document["project"].is_table() {
+        document["project"] = toml_edit::table();
+    }
+    if document["project"]["dependencies"].is_none() {
+        document["project"]["dependencies"] = value(Array::new());
+    }
+
+    let dependencies = document["project"]["dependencies"]
+        .as_array_mut()
+        .ok_or_else(|| {
+            UcError::new(
+                ErrorCode::InvalidInput,
+                format!(
+                    "pyproject.toml dependencies must be an array: {}",
+                    path.display()
+                ),
+            )
+        })?;
+
+    if dependencies
+        .iter()
+        .filter_map(|dependency| dependency.as_str())
+        .any(|dependency| python_requirement_matches(dependency, package_name))
+    {
+        return Ok(json!({
+            "installed": false,
+            "reason": "already_present",
+            "package": package_name,
+            "file": db_path_string(path)?
+        }));
+    }
+
+    dependencies.push(package_spec);
+    fs::write(path, document.to_string()).map_err(io_error)?;
+    Ok(json!({
+        "installed": false,
+        "dependency_added": true,
+        "package": package_spec,
+        "file": db_path_string(path)?
+    }))
+}
+
+fn add_requirements_dependency(
+    path: &Path,
+    package_name: &str,
+    package_spec: &str,
+) -> Result<Value, UcError> {
+    let data = fs::read_to_string(path).map_err(io_error)?;
+    if data
+        .lines()
+        .any(|line| python_requirement_matches(line, package_name))
+    {
+        return Ok(json!({
+            "installed": false,
+            "reason": "already_present",
+            "package": package_name,
+            "file": db_path_string(path)?
+        }));
+    }
+
+    let mut next = data;
+    if !next.is_empty() && !next.ends_with('\n') {
+        next.push('\n');
+    }
+    next.push_str(package_spec);
+    next.push('\n');
+    fs::write(path, next).map_err(io_error)?;
+    Ok(json!({
+        "installed": false,
+        "dependency_added": true,
+        "package": package_spec,
+        "file": db_path_string(path)?
+    }))
+}
+
+fn python_requirement_matches(requirement: &str, package_name: &str) -> bool {
+    let candidate = requirement
+        .split('#')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'');
+    if candidate.is_empty() || candidate.starts_with('-') {
+        return false;
+    }
+    let name_end = candidate
+        .find(|ch: char| {
+            ch.is_whitespace() || matches!(ch, '[' | '<' | '>' | '=' | '!' | '~' | ';' | '@')
+        })
+        .unwrap_or(candidate.len());
+    normalize_python_package_name(&candidate[..name_end])
+        == normalize_python_package_name(package_name)
+}
+
+fn normalize_python_package_name(name: &str) -> String {
+    name.chars()
+        .map(|ch| {
+            if matches!(ch, '_' | '.' | '-') {
+                '-'
+            } else {
+                ch.to_ascii_lowercase()
+            }
+        })
+        .collect()
+}
+
+fn config_string<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
+    match normalize_config_key(key) {
+        Some("db") => value.get("db").and_then(Value::as_str),
+        Some("storage.contentDir") => value
+            .get("storage")
+            .and_then(|storage| {
+                storage
+                    .get("contentDir")
+                    .or_else(|| storage.get("content_dir"))
+            })
+            .and_then(Value::as_str),
+        Some("mount.defaultScope") => value
+            .get("mount")
+            .and_then(|mount| mount.get("defaultScope"))
+            .and_then(Value::as_str),
+        Some("mount.defaultWorkspace") => value
+            .get("mount")
+            .and_then(|mount| mount.get("defaultWorkspace"))
+            .and_then(Value::as_str),
+        _ => None,
+    }
+}
+
+fn config_usize(value: &Value, key: &str) -> Option<usize> {
+    match normalize_config_key(key) {
+        Some("storage.inlineLimit") => value
+            .get("storage")
+            .and_then(|storage| {
+                storage
+                    .get("inlineLimit")
+                    .or_else(|| storage.get("inline_limit"))
+            })
+            .and_then(Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok()),
+        _ => None,
+    }
+}
+
+fn get_config_value(value: &Value, key: &str) -> Result<Value, UcError> {
+    let normalized = normalize_config_key(key).ok_or_else(|| unknown_config_key(key))?;
+    match normalized {
+        "db" => value.get("db").cloned(),
+        "storage.contentDir" => value
+            .get("storage")
+            .and_then(|storage| storage.get("contentDir"))
+            .cloned(),
+        "storage.inlineLimit" => value
+            .get("storage")
+            .and_then(|storage| storage.get("inlineLimit"))
+            .cloned(),
+        "mount.defaultScope" => value
+            .get("mount")
+            .and_then(|mount| mount.get("defaultScope"))
+            .cloned(),
+        "mount.defaultWorkspace" => value
+            .get("mount")
+            .and_then(|mount| mount.get("defaultWorkspace"))
+            .cloned(),
+        _ => None,
+    }
+    .ok_or_else(|| {
+        UcError::new(
+            ErrorCode::NotFound,
+            format!("Config key not found: {normalized}"),
+        )
+    })
+}
+
+fn set_config_value(config: &mut Value, key: &str, raw: &str) -> Result<&'static str, UcError> {
+    let normalized = normalize_config_key(key).ok_or_else(|| unknown_config_key(key))?;
+    let root = config.as_object_mut().ok_or_else(|| {
+        UcError::new(
+            ErrorCode::InvalidInput,
+            "ultracontext config must be a JSON object",
+        )
+    })?;
+
+    match normalized {
+        "db" => {
+            root.insert("db".to_string(), Value::String(raw.to_string()));
+        }
+        "storage.contentDir" => {
+            let storage = ensure_config_section(root, "storage")?;
+            storage.insert("contentDir".to_string(), Value::String(raw.to_string()));
+        }
+        "storage.inlineLimit" => {
+            let value = raw.parse::<usize>().map_err(|_| {
+                UcError::new(
+                    ErrorCode::InvalidInput,
+                    "storage.inlineLimit must be a number",
+                )
+            })?;
+            let storage = ensure_config_section(root, "storage")?;
+            storage.insert("inlineLimit".to_string(), json!(value));
+        }
+        "mount.defaultScope" => {
+            let mount = ensure_config_section(root, "mount")?;
+            mount.insert("defaultScope".to_string(), Value::String(raw.to_string()));
+        }
+        "mount.defaultWorkspace" => {
+            let mount = ensure_config_section(root, "mount")?;
+            mount.insert(
+                "defaultWorkspace".to_string(),
+                Value::String(raw.to_string()),
+            );
+        }
+        _ => return Err(unknown_config_key(key)),
+    }
+    Ok(normalized)
+}
+
+fn ensure_config_section<'a>(
+    root: &'a mut serde_json::Map<String, Value>,
+    name: &str,
+) -> Result<&'a mut serde_json::Map<String, Value>, UcError> {
+    let section = root.entry(name.to_string()).or_insert_with(|| json!({}));
+    section.as_object_mut().ok_or_else(|| {
+        UcError::new(
+            ErrorCode::InvalidInput,
+            format!("ultracontext config section must be an object: {name}"),
+        )
+    })
+}
+
+fn normalize_config_key(key: &str) -> Option<&'static str> {
+    match key {
+        "db" | "db.path" => Some("db"),
+        "storage.contentDir" | "storage.content_dir" => Some("storage.contentDir"),
+        "storage.inlineLimit" | "storage.inline_limit" => Some("storage.inlineLimit"),
+        "mount.defaultScope" | "mount.default_scope" => Some("mount.defaultScope"),
+        "mount.defaultWorkspace" | "mount.default_workspace" => Some("mount.defaultWorkspace"),
+        _ => None,
+    }
+}
+
+fn unknown_config_key(key: &str) -> UcError {
+    UcError::new(
+        ErrorCode::InvalidInput,
+        format!("Unknown config key: {key}"),
+    )
+}
+
+fn global_config_path() -> Result<PathBuf, UcError> {
+    Ok(home_dir()?.join(".ultracontext").join("config.json"))
+}
+
+fn home_dir() -> Result<PathBuf, UcError> {
+    env::var_os("HOME").map(PathBuf::from).ok_or_else(|| {
+        UcError::new(
+            ErrorCode::InvalidInput,
+            "Cannot resolve home directory; pass --db <path>",
+        )
+    })
+}
+
+fn absolute_path(path: &str) -> Result<PathBuf, UcError> {
+    let path = PathBuf::from(path);
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Ok(env::current_dir().map_err(io_error)?.join(path))
+    }
+}
+
+fn db_path_string(path: &Path) -> Result<String, UcError> {
+    path.to_str()
+        .map(str::to_string)
+        .ok_or_else(|| UcError::new(ErrorCode::InvalidInput, "Path must be valid UTF-8"))
 }
 
 struct Args {
@@ -401,6 +1183,33 @@ fn parse_command(args: &mut Args) -> Result<Command, UcError> {
     let command = args.optional().unwrap_or_else(|| "help".to_string());
     match command.as_str() {
         "help" => Ok(Command::Help),
+        "init" => {
+            let mut local = true;
+            let mut force = false;
+            let mut install_sdk = true;
+            while let Some(arg) = args.optional() {
+                match arg.as_str() {
+                    "--help" | "-h" | "help" => return Ok(Command::InitHelp),
+                    "--local" => local = true,
+                    "--global" => local = false,
+                    "--force" => force = true,
+                    "--no-install" => install_sdk = false,
+                    _ => {
+                        return Err(UcError::new(
+                            ErrorCode::InvalidInput,
+                            format!("Unexpected argument: {arg}"),
+                        ));
+                    }
+                }
+            }
+            Ok(Command::Init {
+                local,
+                force,
+                install_sdk,
+            })
+        }
+        "context" | "ctx" => parse_context_command(args),
+        "config" => parse_config_command(args),
         "create" => {
             let metadata = parse_metadata_arg(args.optional())?;
             args.finish()?;
@@ -410,20 +1219,13 @@ fn parse_command(args: &mut Args) -> Result<Command, UcError> {
             args.finish()?;
             Ok(Command::Contexts)
         }
-        "file" => parse_file_command(args),
-        "materialize" => {
-            let ctx_id = args.required("context id")?;
-            let dir = args.required("directory")?;
-            args.finish()?;
-            Ok(Command::Materialize { ctx_id, dir })
-        }
-        "sync-dir" => {
-            let ctx_id = args.required("context id")?;
-            let dir = args.required("directory")?;
-            args.finish()?;
-            Ok(Command::SyncDir { ctx_id, dir })
-        }
+        "fs" => parse_fs_command(args),
         "unmount" | "umount" => {
+            if matches!(args.peek(), Some("--help" | "-h" | "help")) {
+                args.next();
+                args.finish()?;
+                return Ok(Command::UnmountHelp);
+            }
             let mountpoint = args.required("mountpoint")?;
             args.finish()?;
             Ok(Command::Unmount { mountpoint })
@@ -432,10 +1234,10 @@ fn parse_command(args: &mut Args) -> Result<Command, UcError> {
             let mut positionals = Vec::new();
             let mut scope = None;
             let mut mode = MountMode::Default;
-            let mut backend = MountBackend::Nfs;
             let mut state_file = None;
             while let Some(arg) = args.optional() {
                 match arg.as_str() {
+                    "--help" | "-h" | "help" => return Ok(Command::MountHelp),
                     "--foreground" => mode = MountMode::Foreground,
                     "--background" => mode = MountMode::Background,
                     "--context" | "--ctx" => {
@@ -444,17 +1246,14 @@ fn parse_command(args: &mut Args) -> Result<Command, UcError> {
                     "--workspace" | "--ws" => {
                         scope = Some(MountScope::Workspace(args.required("--workspace value")?));
                     }
+                    "--all-workspaces" | "--database" => {
+                        scope = Some(MountScope::Database);
+                    }
                     "--backend" => {
-                        backend = match args.required("--backend value")?.as_str() {
-                            "nfs" => MountBackend::Nfs,
-                            "fuse" => MountBackend::Fuse,
-                            other => {
-                                return Err(UcError::new(
-                                    ErrorCode::InvalidInput,
-                                    format!("Unknown mount backend: {other}"),
-                                ));
-                            }
-                        };
+                        return Err(UcError::new(
+                            ErrorCode::InvalidInput,
+                            "Mount backend selection was removed; `uc mount` uses NFS",
+                        ));
                     }
                     "--mount-state-file" => {
                         state_file =
@@ -465,12 +1264,14 @@ fn parse_command(args: &mut Args) -> Result<Command, UcError> {
                     }
                 }
             }
+            if positionals.is_empty() {
+                return Ok(Command::MountHelp);
+            }
             let (scope, mountpoint) = parse_mount_positionals(scope, positionals)?;
             Ok(Command::Mount {
                 scope,
                 mountpoint,
                 mode,
-                backend,
                 state_file,
             })
         }
@@ -481,9 +1282,77 @@ fn parse_command(args: &mut Args) -> Result<Command, UcError> {
     }
 }
 
-fn parse_file_command(args: &mut Args) -> Result<Command, UcError> {
-    let command = args.required("file command")?;
+fn parse_config_command(args: &mut Args) -> Result<Command, UcError> {
+    let Some(command) = args.optional() else {
+        return Ok(Command::ConfigHelp);
+    };
+
     match command.as_str() {
+        "help" | "--help" | "-h" => {
+            args.finish()?;
+            Ok(Command::ConfigHelp)
+        }
+        "list" | "ls" => {
+            args.finish()?;
+            Ok(Command::ConfigList)
+        }
+        "path" => {
+            args.finish()?;
+            Ok(Command::ConfigPath)
+        }
+        "get" => {
+            let key = args.required("config key")?;
+            args.finish()?;
+            Ok(Command::ConfigGet { key })
+        }
+        "set" => {
+            let key = args.required("config key")?;
+            let value = args.required("config value")?;
+            args.finish()?;
+            Ok(Command::ConfigSet { key, value })
+        }
+        _ => Err(UcError::new(
+            ErrorCode::InvalidInput,
+            format!("Unknown config command: {command}"),
+        )),
+    }
+}
+
+fn parse_context_command(args: &mut Args) -> Result<Command, UcError> {
+    let Some(command) = args.optional() else {
+        return Ok(Command::ContextHelp);
+    };
+
+    match command.as_str() {
+        "help" | "--help" | "-h" => {
+            args.finish()?;
+            Ok(Command::ContextHelp)
+        }
+        "create" | "new" => {
+            let metadata = parse_metadata_arg(args.optional())?;
+            args.finish()?;
+            Ok(Command::Create { metadata })
+        }
+        "list" | "ls" => {
+            args.finish()?;
+            Ok(Command::Contexts)
+        }
+        _ => Err(UcError::new(
+            ErrorCode::InvalidInput,
+            format!("Unknown context command: {command}"),
+        )),
+    }
+}
+
+fn parse_fs_command(args: &mut Args) -> Result<Command, UcError> {
+    let Some(command) = args.optional() else {
+        return Ok(Command::FsHelp);
+    };
+    match command.as_str() {
+        "help" | "--help" | "-h" => {
+            args.finish()?;
+            Ok(Command::FsHelp)
+        }
         "list" | "ls" => {
             let ctx_id = args.required("context id")?;
             let mut prefix = None;
@@ -572,7 +1441,7 @@ fn parse_file_command(args: &mut Args) -> Result<Command, UcError> {
         }
         _ => Err(UcError::new(
             ErrorCode::InvalidInput,
-            format!("Unknown file command: {command}"),
+            format!("Unknown fs command: {command}"),
         )),
     }
 }
@@ -586,16 +1455,16 @@ fn parse_mount_positionals(
         (Some(_), []) => Err(UcError::new(ErrorCode::InvalidInput, "Missing mountpoint")),
         (Some(_), _) => Err(UcError::new(
             ErrorCode::InvalidInput,
-            "Pass only one mountpoint when using --context or --workspace",
+            "Pass only one mountpoint when using --context, --workspace, or --all-workspaces",
         )),
-        (None, [mountpoint]) => Ok((MountScope::Database, mountpoint.clone())),
+        (None, [mountpoint]) => Ok((MountScope::Auto, mountpoint.clone())),
         (None, [ctx_id, mountpoint]) => {
             Ok((MountScope::Context(ctx_id.clone()), mountpoint.clone()))
         }
         (None, []) => Err(UcError::new(ErrorCode::InvalidInput, "Missing mountpoint")),
         (None, _) => Err(UcError::new(
             ErrorCode::InvalidInput,
-            "Usage: uc mount [--context handle|--workspace ws_id] <mountpoint>",
+            "Usage: uc mount [--context handle|--workspace ws_id|--all-workspaces] <mountpoint>",
         )),
     }
 }
@@ -619,122 +1488,29 @@ fn read_input(path: Option<&str>) -> Result<Vec<u8>, UcError> {
     }
 }
 
-fn materialize_context(uc: &UltraContext, ctx_id: &str, dir: &str) -> Result<(), UcError> {
-    let root = Path::new(dir);
-    fs::create_dir_all(root).map_err(io_error)?;
-    for artifact in uc.file_list(ctx_id, None)? {
-        let data = uc.load_artifact_bytes(ctx_id, &artifact.path, None)?;
-        let path = root.join(&artifact.path);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(io_error)?;
-        }
-        fs::write(path, data.data).map_err(io_error)?;
-    }
-    Ok(())
-}
-
-fn sync_dir_to_context(uc: &UltraContext, ctx_id: &str, dir: &str) -> Result<(), UcError> {
-    let root = Path::new(dir);
-    for path in walk_files(root)? {
-        let relative = path
-            .strip_prefix(root)
-            .map_err(|error| UcError::new(ErrorCode::InvalidInput, error.to_string()))?
-            .to_string_lossy()
-            .replace('\\', "/");
-        let data = fs::read(&path).map_err(io_error)?;
-        uc.file_write(
-            ctx_id,
-            FileWrite::new(&relative, data)
-                .with_kind(infer_kind(&relative))
-                .with_metadata(json!({"source": "uc-cli-sync-dir"})),
-        )?;
-    }
-    Ok(())
-}
-
-fn walk_files(root: &Path) -> Result<Vec<PathBuf>, UcError> {
-    let mut out = Vec::new();
-    if !root.exists() {
-        return Err(UcError::new(
-            ErrorCode::NotFound,
-            format!("Directory not found: {}", root.display()),
-        ));
-    }
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        for entry in fs::read_dir(&dir).map_err(io_error)? {
-            let entry = entry.map_err(io_error)?;
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
-            } else if path.is_file() {
-                out.push(path);
-            }
-        }
-    }
-    out.sort();
-    Ok(out)
-}
-
 fn mount_context(
     store: StoreConfig,
     scope: MountScope,
     mountpoint: String,
     mode: MountMode,
-    backend: MountBackend,
     state_file: Option<PathBuf>,
     _err: &mut dyn Write,
 ) -> Result<(), UcError> {
-    let foreground = match (backend, mode) {
-        (_, MountMode::Foreground) => true,
-        (_, MountMode::Background) => false,
-        (MountBackend::Nfs, MountMode::Default) => false,
-        (MountBackend::Fuse, MountMode::Default) => true,
+    let foreground = match mode {
+        MountMode::Foreground => true,
+        MountMode::Background | MountMode::Default => false,
     };
 
-    match backend {
-        MountBackend::Nfs => {
-            let options = nfs_mount::MountConfig {
-                db: store.db,
-                content_dir: store.content_dir,
-                inline_limit: store.inline_limit,
-                scope,
-                mountpoint: PathBuf::from(mountpoint),
-                foreground,
-                state_file,
-            };
-            nfs_mount::mount(options)
-        }
-        MountBackend::Fuse => {
-            #[cfg(feature = "fuse")]
-            {
-                let MountScope::Context(ctx_id) = scope else {
-                    return Err(UcError::new(
-                        ErrorCode::InvalidInput,
-                        "FUSE backend currently requires `--context <handle>`; DB-wide and workspace mounts use the default NFS backend",
-                    ));
-                };
-                let options = fuse_mount::MountConfig {
-                    db: store.db,
-                    content_dir: store.content_dir,
-                    inline_limit: store.inline_limit,
-                    ctx_id,
-                    mountpoint: PathBuf::from(mountpoint),
-                    foreground,
-                };
-                fuse_mount::mount(options)
-            }
-
-            #[cfg(not(feature = "fuse"))]
-            {
-                let _ = (store, scope, mountpoint, foreground);
-                Err(UcError::new(
-                    ErrorCode::InvalidInput,
-                    "FUSE backend requires building the CLI with `--features fuse` and system FUSE installed",
-                ))
-            }
-        }
-    }
+    let options = nfs_mount::MountConfig {
+        db: store.db,
+        content_dir: store.content_dir,
+        inline_limit: store.inline_limit,
+        scope,
+        mountpoint: PathBuf::from(mountpoint),
+        foreground,
+        state_file,
+    };
+    nfs_mount::mount(options)
 }
 
 fn artifact_meta_json(meta: ultracontext::ArtifactMeta) -> Value {
@@ -768,41 +1544,144 @@ fn print_json(out: &mut dyn Write, value: Value) -> Result<(), UcError> {
     out.write_all(b"\n").map_err(io_error)
 }
 
-fn write_help(out: &mut dyn Write) -> Result<(), UcError> {
+fn write_help(out: &mut dyn Write, color: bool) -> Result<(), UcError> {
+    if color {
+        write_colored_title(out)?;
+    } else {
+        out.write_all(b"ultracontext\ncontrol what agents see.\n\n")
+            .map_err(io_error)?;
+    }
+
     out.write_all(
         br#"Usage: uc [options] <command>
 
+Basics:
+  uc init                                      Create a local project DB/config
+  uc mount <dir>                              Mount directly when one workspace exists; otherwise workspaces/<ws_id>/...
+  uc unmount <dir>                            Stop a mounted workspace
+  uc context <command>                        Manage contexts
+  uc fs <command>                             Use the virtual filesystem API
+  uc config <command>                         Manage project config
+
 Options:
-  --db <path>                  SQLite node store path (default: ultracontext.db)
-  --content-dir <path>         Store large artifact bytes in a local directory
-  --inline-limit <bytes>       Inline content limit (default: 65536)
+  --db <path>                  Use a specific DB
   --json                       Keep read output as JSON instead of raw bytes
   -h, --help                   Show help
+"#,
+    )
+    .map_err(io_error)
+}
+
+fn write_colored_title(out: &mut dyn Write) -> Result<(), UcError> {
+    out.write_all(
+        b"\x1b[38;2;235;95;87mu\
+\x1b[38;2;245;139;87ml\
+\x1b[38;2;250;195;95mt\
+\x1b[38;2;145;200;130mr\
+\x1b[38;2;130;170;220ma\
+\x1b[38;2;155;130;200mc\
+\x1b[38;2;200;130;180mo\
+\x1b[38;2;235;95;87mn\
+\x1b[38;2;245;139;87mt\
+\x1b[38;2;250;195;95me\
+\x1b[38;2;145;200;130mx\
+\x1b[38;2;130;170;220mt\
+\x1b[0m\ncontrol what agents see.\n\n",
+    )
+    .map_err(io_error)
+}
+
+fn write_init_help(out: &mut dyn Write) -> Result<(), UcError> {
+    out.write_all(
+        br#"Usage:
+  uc init [--global] [--force]
+
+Creates ultracontext.json in this project and local state in .ultracontext/.
+If a JS or Python project is detected, also adds the ultracontext SDK dependency.
+
+Options:
+  --global      Create ~/.ultracontext/config.json instead
+  --force       Replace existing config
+"#,
+    )
+    .map_err(io_error)
+}
+
+fn write_config_help(out: &mut dyn Write) -> Result<(), UcError> {
+    out.write_all(
+        br#"Usage:
+  uc config <command>
 
 Commands:
-  create [metadata-json]       Create a context
-  contexts                     List contexts
-  file list <ctx> [--prefix p] List artifact files
-  file read <ctx> <path>       Print a file
-  file write <ctx> <path> [source|-] [--kind mime]
-  file mv <ctx> <from> <to>
-  file rm <ctx> <path>
-  file glob <ctx> <pattern>
-  file grep <ctx> <query> [--prefix p]
-  materialize <ctx> <dir>      Write context artifacts to a directory
-  sync-dir <ctx> <dir>         Import directory files as artifacts
-  mount <mountpoint>           Mount the full DB at workspaces/<ws_id>/...
-  mount --workspace <ws> <mnt> Mount one workspace directly
-  mount --context <handle> <mnt> Mount one session/context workspace directly
-  mount <handle> <mountpoint>    Legacy shorthand for --context
-  unmount <mountpoint>         Unmount and stop the local mount server
-    [--backend nfs|fuse]       Select mount backend (default: nfs)
-    [--foreground|--background]
+  list             Print the active config
+  path             Print the active config path
+  get <key>        Print one config value
+  set <key> <val>  Update one config value
 
-Mount:
-  NFS is the default backend, runs in background by default, and does not require macFUSE.
-  Use `uc unmount <mountpoint>` to stop it. Pass --foreground for logs/debug.
-  FUSE is optional and foreground-only.
+Common keys:
+  db
+  storage.contentDir
+  storage.inlineLimit
+  mount.defaultScope
+"#,
+    )
+    .map_err(io_error)
+}
+
+fn write_mount_help(out: &mut dyn Write) -> Result<(), UcError> {
+    out.write_all(
+        br#"Usage:
+  uc mount <dir>
+
+Mounts directly when one workspace exists; otherwise uses workspaces/<ws_id>/...
+
+Options:
+  --workspace <ws>      Mount one workspace directly
+  --all-workspaces      Mount all workspaces at workspaces/<ws_id>/...
+  --foreground          Keep the mount server attached for logs
+"#,
+    )
+    .map_err(io_error)
+}
+
+fn write_unmount_help(out: &mut dyn Write) -> Result<(), UcError> {
+    out.write_all(
+        br#"Usage:
+  uc unmount <dir>
+
+Stops a mounted workspace.
+"#,
+    )
+    .map_err(io_error)
+}
+
+fn write_context_help(out: &mut dyn Write) -> Result<(), UcError> {
+    out.write_all(
+        br#"Usage:
+  uc context <command>
+
+Commands:
+  create [json]   Create a context
+  list            List contexts
+"#,
+    )
+    .map_err(io_error)
+}
+
+fn write_fs_help(out: &mut dyn Write) -> Result<(), UcError> {
+    out.write_all(
+        br#"Usage:
+  uc fs <command>
+
+Commands:
+  list <ctx> [--prefix p]   List files
+  read <ctx> <path>         Print a file
+  write <ctx> <path> [file|-]
+                              Write a file
+  move <ctx> <from> <to>    Move a file
+  remove <ctx> <path>       Remove a file
+  glob <ctx> <pattern>      Match files by glob
+  grep <ctx> <query>        Search text files
 "#,
     )
     .map_err(io_error)
@@ -829,7 +1708,7 @@ mod tests {
             "--db".into(),
             "test.db".into(),
             "--json".into(),
-            "file".into(),
+            "fs".into(),
             "list".into(),
             "ctx_1".into(),
             "--prefix".into(),
@@ -837,7 +1716,7 @@ mod tests {
         ])
         .unwrap();
 
-        assert_eq!(parsed.db, "test.db");
+        assert_eq!(parsed.db.as_deref(), Some("test.db"));
         assert!(parsed.json);
         assert_eq!(
             parsed.command,
@@ -849,6 +1728,150 @@ mod tests {
     }
 
     #[test]
+    fn parses_init_options() {
+        let parsed =
+            Invocation::parse(vec!["init".into(), "--local".into(), "--force".into()]).unwrap();
+
+        assert_eq!(
+            parsed.command,
+            Command::Init {
+                local: true,
+                force: true,
+                install_sdk: true,
+            }
+        );
+    }
+
+    #[test]
+    fn parses_init_as_local_by_default() {
+        let parsed = Invocation::parse(vec!["init".into()]).unwrap();
+        let no_install = Invocation::parse(vec!["init".into(), "--no-install".into()]).unwrap();
+
+        assert_eq!(
+            parsed.command,
+            Command::Init {
+                local: true,
+                force: false,
+                install_sdk: true,
+            }
+        );
+        assert_eq!(
+            no_install.command,
+            Command::Init {
+                local: true,
+                force: false,
+                install_sdk: false,
+            }
+        );
+    }
+
+    #[test]
+    fn parses_global_init_option() {
+        let parsed = Invocation::parse(vec!["init".into(), "--global".into()]).unwrap();
+
+        assert_eq!(
+            parsed.command,
+            Command::Init {
+                local: false,
+                force: false,
+                install_sdk: true,
+            }
+        );
+    }
+
+    #[test]
+    fn parses_context_namespace_commands() {
+        let created = Invocation::parse(vec![
+            "context".into(),
+            "create".into(),
+            "{\"name\":\"demo\"}".into(),
+        ])
+        .unwrap();
+        let listed = Invocation::parse(vec!["context".into(), "list".into()]).unwrap();
+
+        assert_eq!(
+            created.command,
+            Command::Create {
+                metadata: json!({"name": "demo"}),
+            }
+        );
+        assert_eq!(listed.command, Command::Contexts);
+    }
+
+    #[test]
+    fn parses_config_namespace_commands() {
+        let listed = Invocation::parse(vec!["config".into(), "list".into()]).unwrap();
+        let path = Invocation::parse(vec!["config".into(), "path".into()]).unwrap();
+        let get = Invocation::parse(vec![
+            "config".into(),
+            "get".into(),
+            "storage.inlineLimit".into(),
+        ])
+        .unwrap();
+        let set = Invocation::parse(vec![
+            "config".into(),
+            "set".into(),
+            "storage.inline_limit".into(),
+            "131072".into(),
+        ])
+        .unwrap();
+
+        assert_eq!(listed.command, Command::ConfigList);
+        assert_eq!(path.command, Command::ConfigPath);
+        assert_eq!(
+            get.command,
+            Command::ConfigGet {
+                key: "storage.inlineLimit".into(),
+            }
+        );
+        assert_eq!(
+            set.command,
+            Command::ConfigSet {
+                key: "storage.inline_limit".into(),
+                value: "131072".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn shows_namespace_help_without_subcommand() {
+        let context = Invocation::parse(vec!["context".into()]).unwrap();
+        let fs = Invocation::parse(vec!["fs".into()]).unwrap();
+        let config = Invocation::parse(vec!["config".into()]).unwrap();
+
+        assert_eq!(context.command, Command::ContextHelp);
+        assert_eq!(fs.command, Command::FsHelp);
+        assert_eq!(config.command, Command::ConfigHelp);
+    }
+
+    #[test]
+    fn parses_subcommand_help_flags() {
+        let init = Invocation::parse(vec!["init".into(), "--help".into()]).unwrap();
+        let mount = Invocation::parse(vec!["mount".into(), "--help".into()]).unwrap();
+        let mount_without_args = Invocation::parse(vec!["mount".into()]).unwrap();
+        let unmount = Invocation::parse(vec!["unmount".into(), "--help".into()]).unwrap();
+        let context = Invocation::parse(vec!["context".into(), "--help".into()]).unwrap();
+        let fs = Invocation::parse(vec!["fs".into(), "--help".into()]).unwrap();
+        let config = Invocation::parse(vec!["config".into(), "--help".into()]).unwrap();
+
+        assert_eq!(init.command, Command::InitHelp);
+        assert_eq!(mount.command, Command::MountHelp);
+        assert_eq!(mount_without_args.command, Command::MountHelp);
+        assert_eq!(unmount.command, Command::UnmountHelp);
+        assert_eq!(context.command, Command::ContextHelp);
+        assert_eq!(fs.command, Command::FsHelp);
+        assert_eq!(config.command, Command::ConfigHelp);
+    }
+
+    #[test]
+    fn rejects_legacy_file_namespace() {
+        let err = Invocation::parse(vec!["file".into(), "--help".into()]).unwrap_err();
+
+        assert_eq!(err.code_str(), "invalid_input");
+        assert!(err.message.contains("Unknown command: file"));
+    }
+
+    #[test]
     fn infers_common_mime_types() {
         assert_eq!(infer_kind("draft.md"), "text/markdown");
         assert_eq!(infer_kind("screenshot.png"), "image/png");
@@ -856,31 +1879,103 @@ mod tests {
     }
 
     #[test]
-    fn parses_mount_backend() {
-        let parsed = Invocation::parse(vec![
-            "mount".into(),
-            "ctx_1".into(),
-            "/tmp/uc".into(),
-            "--backend".into(),
-            "fuse".into(),
-        ])
+    fn matches_python_requirements_by_package_name() {
+        assert!(python_requirement_matches(
+            "ultracontext==2.0.0a0",
+            "ultracontext"
+        ));
+        assert!(python_requirement_matches(
+            "Ultra_Context[cli] >= 2",
+            "ultra-context"
+        ));
+        assert!(!python_requirement_matches(
+            "other-ultracontext==1",
+            "ultracontext"
+        ));
+        assert!(!python_requirement_matches(
+            "-r requirements-dev.txt",
+            "ultracontext"
+        ));
+    }
+
+    #[test]
+    fn adds_python_dependency_to_pyproject() {
+        let dir = unique_test_dir("pyproject");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("pyproject.toml");
+        fs::write(
+            &path,
+            "[project]\nname = \"demo\"\ndependencies = [\"requests\"]\n",
+        )
         .unwrap();
+
+        let added =
+            add_pyproject_dependency(&path, "ultracontext", "ultracontext==2.0.0a0").unwrap();
+        assert_eq!(added["dependency_added"], true);
+
+        let data = fs::read_to_string(&path).unwrap();
+        assert!(data.contains("\"requests\""));
+        assert!(data.contains("\"ultracontext==2.0.0a0\""));
+
+        let existing =
+            add_pyproject_dependency(&path, "ultracontext", "ultracontext==2.0.0a0").unwrap();
+        assert_eq!(existing["reason"], "already_present");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn adds_python_dependency_to_requirements() {
+        let dir = unique_test_dir("requirements");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("requirements.txt");
+        fs::write(&path, "requests==2\n").unwrap();
+
+        let added =
+            add_requirements_dependency(&path, "ultracontext", "ultracontext==2.0.0a0").unwrap();
+        assert_eq!(added["dependency_added"], true);
+        assert!(
+            fs::read_to_string(&path)
+                .unwrap()
+                .contains("ultracontext==2.0.0a0\n")
+        );
+
+        let existing =
+            add_requirements_dependency(&path, "ultracontext", "ultracontext==2.0.0a0").unwrap();
+        assert_eq!(existing["reason"], "already_present");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn unique_test_dir(label: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        env::temp_dir().join(format!("uc-cli-{label}-{}-{nanos}", process::id()))
+    }
+
+    #[test]
+    fn parses_auto_mount_by_default() {
+        let parsed = Invocation::parse(vec!["mount".into(), "/tmp/uc".into()]).unwrap();
 
         assert_eq!(
             parsed.command,
             Command::Mount {
-                scope: MountScope::Context("ctx_1".into()),
+                scope: MountScope::Auto,
                 mountpoint: "/tmp/uc".into(),
                 mode: MountMode::Default,
-                backend: MountBackend::Fuse,
                 state_file: None,
             }
         );
     }
 
     #[test]
-    fn parses_database_mount_by_default() {
-        let parsed = Invocation::parse(vec!["mount".into(), "/tmp/uc".into()]).unwrap();
+    fn parses_all_workspaces_mount_flag() {
+        let parsed = Invocation::parse(vec![
+            "mount".into(),
+            "--all-workspaces".into(),
+            "/tmp/uc".into(),
+        ])
+        .unwrap();
 
         assert_eq!(
             parsed.command,
@@ -888,10 +1983,23 @@ mod tests {
                 scope: MountScope::Database,
                 mountpoint: "/tmp/uc".into(),
                 mode: MountMode::Default,
-                backend: MountBackend::Nfs,
                 state_file: None,
             }
         );
+    }
+
+    #[test]
+    fn rejects_mount_backend_option() {
+        let err = Invocation::parse(vec![
+            "mount".into(),
+            "/tmp/uc".into(),
+            "--backend".into(),
+            "nfs".into(),
+        ])
+        .unwrap_err();
+
+        assert_eq!(err.code_str(), "invalid_input");
+        assert!(err.message.contains("uses NFS"));
     }
 
     #[test]
@@ -910,7 +2018,6 @@ mod tests {
                 scope: MountScope::Context("ctx_1".into()),
                 mountpoint: "/tmp/uc".into(),
                 mode: MountMode::Default,
-                backend: MountBackend::Nfs,
                 state_file: None,
             }
         );
@@ -932,7 +2039,6 @@ mod tests {
                 scope: MountScope::Workspace("ws_project".into()),
                 mountpoint: "/tmp/uc".into(),
                 mode: MountMode::Default,
-                backend: MountBackend::Nfs,
                 state_file: None,
             }
         );

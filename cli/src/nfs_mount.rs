@@ -15,14 +15,14 @@ use ultracontext::{
     UltraContextOptions,
 };
 
-use crate::mount_utils::{
+use super::mount_utils::{
     MountScope, ignored_mount_path, infer_kind, io_error, join_path, parent_path,
 };
-use crate::nfsserve::nfs::{
+use super::nfsserve::nfs::{
     fattr3, fileid3, filename3, ftype3, nfspath3, nfsstat3, nfstime3, sattr3, set_size3, specdata3,
 };
-use crate::nfsserve::tcp::{NFSTcp, NFSTcpListener};
-use crate::nfsserve::vfs::{DirEntry, NFSFileSystem, ReadDirResult, VFSCapabilities, auth_unix};
+use super::nfsserve::tcp::{NFSTcp, NFSTcpListener};
+use super::nfsserve::vfs::{DirEntry, NFSFileSystem, ReadDirResult, VFSCapabilities, auth_unix};
 
 const ROOT_INO: fileid3 = 1;
 const DEFAULT_NFS_PORT: u16 = 11111;
@@ -100,18 +100,19 @@ fn spawn_background(config: MountConfig) -> Result<(), UcError> {
     }
     command.arg("mount");
     match &config.scope {
+        MountScope::Auto => {}
         MountScope::Context(ctx_id) => {
             command.arg("--context").arg(ctx_id);
         }
         MountScope::Workspace(workspace_id) => {
             command.arg("--workspace").arg(workspace_id);
         }
-        MountScope::Database => {}
+        MountScope::Database => {
+            command.arg("--all-workspaces");
+        }
     }
     command
         .arg(&mountpoint)
-        .arg("--backend")
-        .arg("nfs")
         .arg("--foreground")
         .arg("--mount-state-file")
         .arg(&state_file);
@@ -179,7 +180,8 @@ async fn mount_async(config: MountConfig) -> Result<(), UcError> {
         .map(|root| ContentStore::local_dir(root, config.inline_limit))
         .unwrap_or_else(|| ContentStore::inline_with_limit(config.inline_limit));
     let uc = UltraContext::open_with_options(&config.db, UltraContextOptions { content_store })?;
-    let fs = UcNfs::new(uc, config.scope);
+    let scope = resolve_mount_scope(&uc, config.scope)?;
+    let fs = UcNfs::new(uc, scope);
     let port = find_available_port(DEFAULT_NFS_PORT)?;
     let bind_addr = format!("127.0.0.1:{port}");
     let listener = NFSTcpListener::bind(&bind_addr, fs)
@@ -203,6 +205,23 @@ async fn mount_async(config: MountConfig) -> Result<(), UcError> {
         server.abort();
     }
     Ok(())
+}
+
+fn resolve_mount_scope(uc: &UltraContext, scope: MountScope) -> Result<MountScope, UcError> {
+    match scope {
+        MountScope::Auto => {
+            let workspaces = uc.list_workspaces()?;
+            match workspaces.as_slice() {
+                [] => {
+                    let workspace = uc.ensure_default_workspace()?;
+                    Ok(MountScope::Workspace(workspace.id))
+                }
+                [workspace] => Ok(MountScope::Workspace(workspace.id.clone())),
+                _ => Ok(MountScope::Database),
+            }
+        }
+        scope => Ok(scope),
+    }
 }
 
 fn find_available_port(start: u16) -> Result<u16, UcError> {
@@ -568,7 +587,7 @@ impl NfsState {
                     self.insert_artifact_entry(&mut next, artifact.path.clone(), artifact);
                 }
             }
-            MountScope::Database => {
+            MountScope::Database | MountScope::Auto => {
                 self.insert_dir_entry(&mut next, "workspaces");
                 for workspace in self.uc.list_workspaces()? {
                     let workspace_root = join_path("workspaces", &workspace.id);
@@ -742,7 +761,7 @@ impl NfsState {
                     })
                 }
             }
-            MountScope::Database => {
+            MountScope::Database | MountScope::Auto => {
                 let parts = path.splitn(3, '/').collect::<Vec<_>>();
                 if parts.len() == 3
                     && parts[0] == "workspaces"
@@ -767,7 +786,7 @@ impl NfsState {
         match &self.scope {
             MountScope::Context(_) => path.is_empty(),
             MountScope::Workspace(_) => path.is_empty(),
-            MountScope::Database => {
+            MountScope::Database | MountScope::Auto => {
                 path.is_empty()
                     || path == "workspaces"
                     || path

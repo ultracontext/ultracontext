@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { UltraContext } from '../src/index.js'
+import { UltraContext } from '../src/local.js'
 
 const triple = {
     'darwin:arm64': 'darwin-arm64',
@@ -19,13 +19,13 @@ const nativePath = triple
 
 test('local client can use built native binding', { skip: !nativePath || !existsSync(nativePath) }, async () => {
     const dbPath = join(tmpdir(), `uc-js-native-${process.pid}-${Date.now()}.db`)
-    const uc = new UltraContext({ mode: 'local', path: dbPath })
+    const uc = new UltraContext({ path: dbPath })
 
     const ctx = await uc.create({ metadata: { app: 'native-test' } })
     const written = await uc.write(ctx.id, 'draft.md', '# Draft', { kind: 'text/markdown' })
     const read = await uc.read(ctx.id, 'draft.md')
 
-    assert.match(ctx.id, /^ctx_/)
+    assert.match(ctx.id, /^ses_/)
     assert.match(written.id, /^art_/)
     assert.equal(read.data, '# Draft')
 })
@@ -35,7 +35,6 @@ test('local client can use local-dir content store options', { skip: !nativePath
     const dbPath = join(tmpdir(), `uc-js-native-content-${suffix}.db`)
     const contentDir = join(tmpdir(), `uc-js-native-content-${suffix}`)
     const uc = new UltraContext({
-        mode: 'local',
         path: dbPath,
         contentDir,
         inlineLimit: 4

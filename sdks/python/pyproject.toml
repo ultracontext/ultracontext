@@ -10,6 +10,9 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
 
+[project.scripts]
+ultracontext = "ultracontext.cli:main"
+
 [tool.maturin]
 manifest-path = "native/Cargo.toml"
 module-name = "ultracontext._native"

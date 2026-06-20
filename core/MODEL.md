@@ -3,7 +3,7 @@
 UltraContext is a context and artifact store for AI applications. The core
 model is not a filesystem and not an object-store wrapper. It is a small node
 graph that can be projected into SDK calls, remote HTTP, local
-materialization, and optional native mount adapters.
+materialization, and an optional native NFS mount.
 
 The database is the source of truth for identity, history, metadata,
 provenance, paths, and content references. Small text can live inline in the

@@ -237,30 +237,6 @@ class SharedFixtureTests(unittest.TestCase):
                 self.assertEqual(read["storage"]["driver"], "local-dir")
                 self.assertTrue((Path(content_dir) / read["storage"]["key"]).exists())
 
-    def test_python_sdk_can_materialize_and_sync_directory_edits(self):
-        native = load_native()
-        if native is None:
-            self.skipTest("native extension is not installed")
-
-        with tempfile.NamedTemporaryFile(suffix=".db") as db:
-            with tempfile.TemporaryDirectory() as directory:
-                uc = UltraContext(mode="local", path=db.name, native=native)
-                ctx = uc.create(metadata={"app": "materialize"})
-                uc.write(ctx["id"], "notes/draft.md", "# Draft", kind="text/markdown")
-
-                materialized = uc.materialize(ctx["id"], directory)
-                self.assertEqual(materialized["data"][0]["path"], "notes/draft.md")
-                draft = Path(directory) / "notes" / "draft.md"
-                self.assertEqual(draft.read_text(), "# Draft")
-
-                draft.write_text("# Final")
-                synced = uc.sync_directory(ctx["id"], directory)
-                self.assertEqual(synced["data"][0]["path"], "notes/draft.md")
-
-                read = uc.read(ctx["id"], "notes/draft.md")
-                self.assertEqual(read["data"], "# Final")
-                self.assertEqual(read["version"], 1)
-
     def test_python_sdk_can_export_and_import_incremental_changes(self):
         native = load_native()
         if native is None:

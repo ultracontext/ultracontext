@@ -20,7 +20,7 @@ class SqliteEngine {
                 kind TEXT NOT NULL CHECK (kind IN ('workspace', 'session', 'context', 'message', 'artifact')),
                 content TEXT NOT NULL DEFAULT '{}',
                 metadata TEXT NOT NULL DEFAULT '{}',
-                data TEXT,
+                data BLOB,
                 prev INTEGER REFERENCES nodes(id),
                 parent INTEGER REFERENCES nodes(id) ON DELETE SET NULL,
                 owner INTEGER REFERENCES nodes(id) ON DELETE CASCADE,
@@ -496,14 +496,14 @@ class SqliteEngine {
         this.db.prepare(`
             INSERT INTO nodes (public_id, kind, content, metadata, data, prev, parent, owner, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(publicId, kind, JSON.stringify(content), JSON.stringify(metadata), data, prev, parent, owner, createdAt)
+        `).run(publicId, kind, JSON.stringify(content), JSON.stringify(metadata), dataToBuffer(data), prev, parent, owner, createdAt)
     }
 
     insertNodeWithId({ id: rowId, publicId, kind, content, metadata = {}, data = null, prev = null, parent = null, owner = null, createdAt }) {
         this.db.prepare(`
             INSERT INTO nodes (id, public_id, kind, content, metadata, data, prev, parent, owner, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(rowId, publicId, kind, JSON.stringify(content), JSON.stringify(metadata), data, prev, parent, owner, createdAt)
+        `).run(rowId, publicId, kind, JSON.stringify(content), JSON.stringify(metadata), dataToBuffer(data), prev, parent, owner, createdAt)
     }
 
     ensureDefaultWorkspace() {
@@ -662,7 +662,9 @@ class SqliteEngine {
             : this.db.prepare('SELECT * FROM nodes WHERE id > ? ORDER BY id ASC').all(since)
         return rows.map(row => {
             const decoded = decode(row)
-            const data = decoded.data ?? (decoded.kind === 'artifact' ? this.readArtifactData(decoded) : null)
+            const data = decoded.data !== null && decoded.data !== undefined
+                ? dataToString(decoded.data)
+                : (decoded.kind === 'artifact' ? this.readArtifactData(decoded) : null)
             return {
                 id: decoded.id,
                 public_id: decoded.public_id,
@@ -815,7 +817,7 @@ class SqliteEngine {
 
     readArtifactData(row) {
         if (row.data !== null && row.data !== undefined) {
-            return row.data
+            return dataToString(row.data)
         }
         const storage = row.content.storage
         if (storage?.type !== 'ref') {
@@ -866,11 +868,25 @@ function sameImportedNode(existing, candidate) {
         && existing.kind === candidate.kind
         && JSON.stringify(existing.content) === JSON.stringify(candidate.content)
         && JSON.stringify(existing.metadata) === JSON.stringify(candidate.metadata)
-        && (existing.data ?? null) === (candidate.data ?? null)
+        && dataToString(existing.data) === dataToString(candidate.data)
         && (existing.prev ?? null) === (candidate.prev ?? null)
         && (existing.parent ?? null) === (candidate.parent ?? null)
         && (existing.owner ?? null) === (candidate.owner ?? null)
         && existing.created_at === candidate.createdAt
+}
+
+function dataToBuffer(data) {
+    if (data === null || data === undefined) return null
+    if (Buffer.isBuffer(data)) return data
+    if (data instanceof Uint8Array) return Buffer.from(data)
+    return Buffer.from(String(data))
+}
+
+function dataToString(data) {
+    if (data === null || data === undefined) return null
+    if (Buffer.isBuffer(data)) return data.toString('utf8')
+    if (data instanceof Uint8Array) return Buffer.from(data).toString('utf8')
+    return String(data)
 }
 
 function normalizePath(path) {

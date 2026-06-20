@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { UltraContext, UltraContextError } from '../src/index.js'
+import { UltraContext, UltraContextError } from '../src/local.js'
 
 class FakeCore {
     constructor(path) {
@@ -46,7 +46,7 @@ test('local client dispatches to injected native core', async () => {
             }
         }
     }
-    const uc = new UltraContext({ mode: 'local', path: '/tmp/uc-js.db', native })
+    const uc = new UltraContext({ path: '/tmp/uc-js.db', native })
 
     const ctx = await uc.create({ metadata: { app: 'demo' } })
     const artifact = await uc.write(ctx.id, 'draft.md', '# Draft', { kind: 'text/markdown' })
@@ -65,7 +65,6 @@ test('local client dispatches to injected native core', async () => {
 
 test('local client preserves native error envelope', async () => {
     const uc = new UltraContext({
-        mode: 'local',
         native: { UltraContextCore: FakeCore }
     })
 

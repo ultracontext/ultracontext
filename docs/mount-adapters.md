@@ -1,10 +1,19 @@
-# Mount Adapters
+# Mount Adapter
 
-Mount adapters are the native file surface for local agents. They are exposed
-as `uc mount`. They are not the node store, not the content store, and not a
+The mount adapter is the native file surface for local agents. It is exposed
+as `uc mount`. It is not the node store, not the content store, and not a
 dependency of the Rust core.
 
-By default, the adapter mounts the whole node database as a directory tree:
+By default, the adapter chooses the least noisy tree. If the database has zero
+or one workspace, the mount root is the workspace's artifact tree directly:
+
+```
+drafts/brief.md
+uploads/screenshot.png
+```
+
+If the database has multiple workspaces, the adapter mounts the whole node
+database as a directory tree:
 
 ```
 workspaces/
@@ -18,6 +27,12 @@ workspaces/
 That top-level namespace matters because artifact paths are scoped to a
 workspace. Two workspaces can both contain `drafts/brief.md`, so the DB-wide
 mount uses `workspaces/<workspace_id>/...` to keep paths unambiguous.
+
+To force the DB-wide shape even with one workspace, pass `--all-workspaces`:
+
+```bash
+uc --db ./ultracontext.db mount --all-workspaces ./mnt
+```
 
 For focused agent workflows, one workspace can also be mounted directly:
 
@@ -76,17 +91,17 @@ diagnostics.
 
 ## Runtime Shape
 
-The NFS adapter is the default `uc mount` backend:
+`uc mount` runs a local NFS adapter:
 
 ```bash
+uc init
 cargo build -p ultracontext-cli
-./target/debug/uc --db ./ultracontext.db mount ./mnt
+./target/debug/uc mount ./mnt
 ```
 
 It runs an NFSv3 server bound to `127.0.0.1` on a high local port, then mounts
 that export into the requested directory. On macOS this uses `/sbin/mount_nfs`;
-on Linux it uses `mount -t nfs`. It does not require macFUSE or a kernel
-extension.
+on Linux it uses `mount -t nfs`. It does not require a kernel extension.
 
 NFS mounts run in the background by default. Use `uc unmount` to stop the
 server and unmount the directory:
@@ -98,23 +113,9 @@ server and unmount the directory:
 For debugging logs in the current terminal, pass `--foreground`:
 
 ```bash
-./target/debug/uc --db ./ultracontext.db mount ./mnt --foreground
+./target/debug/uc mount ./mnt --foreground
 ```
 
-The FUSE adapter remains available as an explicit backend behind the optional
-`fuse` feature:
-
-```bash
-cargo build -p ultracontext-cli --features fuse
-./target/debug/uc --db ./ultracontext.db mount --context ses_... ./mnt --backend fuse
-```
-
-On macOS, the build host needs macFUSE/osxfuse available to `pkg-config`. On
-Linux, the host needs libfuse/fuse3 development files. Without the feature, the
-CLI still builds and `uc mount --backend fuse` returns a clear error. FUSE is
-currently context-scoped and foreground-only; DB-wide and workspace background
-mounts use the default NFS backend.
-
-Both adapters link to the Rust core and call the same operations as JS/Python
-local bindings. They should never require S3-FUSE, JuiceFS, or a mounted remote
+The adapter links to the Rust core and calls the same operations as JS/Python
+local bindings. It should never require S3 mounts, JuiceFS, or a mounted remote
 filesystem underneath.

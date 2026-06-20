@@ -175,8 +175,8 @@ pub fn is_owner(auth: &auth_unix, attr: &fattr3) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::super::nfs::{ftype3, nfstime3, specdata3};
     use super::*;
-    use crate::nfsserve::nfs::{ftype3, nfstime3, specdata3};
 
     fn make_auth(uid: u32, gid: u32, gids: Vec<u32>) -> auth_unix {
         auth_unix {

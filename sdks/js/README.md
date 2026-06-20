@@ -1,42 +1,144 @@
 # ultracontext (JS)
 
-The JS/TS SDK has two modes:
+UltraContext's JS package has one client API with separate runtime entrypoints:
 
-- remote fetch-only mode for edge/serverless runtimes;
-- local native mode for Node/Bun apps, CLIs, and agents.
+- `ultracontext`: normal browser/edge-safe remote client. No native imports.
+- `ultracontext/ssr`: SSR helpers, with `createBrowserClient` and
+  `createServerClient`, plus route/HTTP handlers for server frameworks.
+- `ultracontext/server`: server-side exports, including `createServerClient`
+  and the fetch-compatible HTTP handler.
+- `ultracontext/browser`: explicit browser client alias.
+- `ultracontext/node` and `ultracontext/local`: explicit Node local client
+  aliases backed by the Rust/N-API core.
 
-Both modes expose the same UltraContext surface from `../../core/CONTRACT.md`.
-Remote mode must not import native bindings.
+Initialize a project:
 
-Current status:
+```sh
+npx ultracontext init
+```
 
-- `src/index.js` implements the fetch-only remote client.
-- `src/index.js` also supports local mode by lazily loading the N-API binding.
-- `src/server.js` implements a fetch-compatible handler that dispatches the
-  remote protocol to an injected engine/store.
-- `src/sqlite-engine.js` implements a server-only reference engine using
-  Node's built-in `node:sqlite`.
-- `src/postgres-engine.js` implements a server-only Postgres engine over an
-  injected `pool.query(sql, params)` interface.
-- `src/content-store.js` implements local-dir, injected S3-compatible, and
-  cached hybrid content stores.
-- `src/materialize.js` writes artifact paths to a real local directory and can
-  sync edited files back as artifact versions.
-- `native/` implements a napi-rs binding that calls the Rust core JSON
-  dispatch.
+That writes `ultracontext.json` in the project. Server-side code can open it
+without manually resolving db paths, blob directories, inline limits, cwd, or
+env overrides.
 
-Remote client:
+## Browser / Edge
+
+Use the default package entrypoint in browsers, Vercel Edge, and client bundles:
 
 ```js
-import { UltraContext } from 'ultracontext'
+import { createClient } from 'ultracontext'
+
+const uc = createClient('/api/ultracontext')
+```
+
+Use `ultracontext/browser` when you want the runtime boundary to be explicit:
+
+```js
+import { createClient } from 'ultracontext/browser'
+```
+
+The default client is fetch-only. If you try to use local mode from this
+entrypoint, it throws and tells you to import `ultracontext/local`. The client
+also binds `globalThis.fetch` internally, so browser-native fetch does not need
+a manual wrapper.
+
+## SSR
+
+This mirrors the Supabase split: browser code creates a browser client, server
+code creates a server client.
+
+```ts
+// lib/ultracontext/client.ts
+import { createBrowserClient } from 'ultracontext/ssr'
+
+export function createClient() {
+    return createBrowserClient('/api/ultracontext')
+}
+```
+
+```ts
+// lib/ultracontext/server.ts
+import { createServerClient } from 'ultracontext/ssr'
+
+export async function createClient() {
+    return createServerClient({ projectRoot: process.cwd() })
+}
+```
+
+`createBrowserClient` always returns the remote fetch client.
+`createServerClient` opens the local project by default using
+`ultracontext.json`; pass a `baseUrl` or string URL if the server should call a
+remote UltraContext endpoint instead.
+
+## Route Handlers
+
+Create `app/api/ultracontext/[...path]/route.ts`:
+
+```ts
+import { createRouteHandler } from 'ultracontext/ssr'
+
+export const { GET, POST, PATCH, DELETE } =
+    createRouteHandler({ projectRoot: process.cwd() })
+```
+
+This server-framework adapter loads `ultracontext.json`, opens the SQLite
+store, wires the local content store, and exposes the official UltraContext
+HTTP protocol. Apps do not need their own REST translation layer.
+
+## Node Local
+
+Use the local entrypoint in Node apps, CLIs, tests, and agents:
+
+```js
+import { UltraContext } from 'ultracontext/local'
+
+const uc = await UltraContext.openProject()
+```
+
+Server-side app code can usually prefer the SSR helper:
+
+```js
+import { createServerClient } from 'ultracontext/ssr'
+
+const uc = await createServerClient()
+```
+
+`ultracontext/node` is the same local entrypoint with a more explicit runtime
+name:
+
+```js
+import { UltraContext } from 'ultracontext/node'
+```
+
+Direct local config is still available when needed:
+
+```js
+import { UltraContext } from 'ultracontext/local'
 
 const uc = new UltraContext({
-    mode: 'remote',
-    baseUrl: 'https://your-ultracontext-endpoint.example'
+    path: './.ultracontext/ultracontext.db',
+    contentDir: './.ultracontext/blobs',
+    inlineLimit: 64 * 1024
 })
 ```
 
-Self-hosted handler with SQLite:
+## Devtools
+
+In browser development, the remote client mounts the local UltraContext modal:
+
+```js
+const uc = createClient({
+    baseUrl: '/api/ultracontext'
+})
+```
+
+The modal lists contexts and lets you inspect the current message window. It is
+disabled in production unless explicitly enabled with `devtools: true`. Pass
+`devtools: false` to disable it in development.
+
+## Lower-Level Server APIs
+
+Self-hosted fetch handler:
 
 ```js
 import { createUltraContextHandler } from 'ultracontext/server'
@@ -52,7 +154,7 @@ const handler = createUltraContextHandler({
 })
 ```
 
-Self-hosted handler with Postgres:
+Postgres + S3-compatible blobs:
 
 ```js
 import { Pool } from 'pg'
@@ -79,37 +181,36 @@ await engine.install()
 const handler = createUltraContextHandler({ engine })
 ```
 
-Local native workflow:
+## Bundlers
 
-```sh
-npm install
-npm run build:native
-npm test
-```
+Do not import `ultracontext/node`, `ultracontext/local`, `ultracontext/sqlite`,
+or server-side helpers from `ultracontext/ssr` in browser or edge bundles. Those entrypoints are
+server-only and may load Node APIs or the native binding. Browser code should
+use `ultracontext` or `ultracontext/browser`.
 
-Local mode:
-
-```js
-import { UltraContext } from 'ultracontext'
-
-const uc = new UltraContext({
-    mode: 'local',
-    path: './uc.sqlite',
-    contentDir: './uc-blobs',
-    inlineLimit: 64 * 1024
-})
-```
-
-Materialization:
+The local client loads the generated napi-rs entrypoint at
+`ultracontext/native/index.js`, then falls back to direct `.node` files. For
+Next standalone builds, make sure the package's native files are traced into
+the standalone output:
 
 ```js
-import { materializeContext, syncDirectoryToContext } from 'ultracontext/materialize'
-
-await materializeContext(uc, ctx.id, './workspace')
-await syncDirectoryToContext(uc, ctx.id, './workspace')
+// next.config.js
+export default {
+    output: 'standalone',
+    outputFileTracingIncludes: {
+        '/api/ultracontext/**/*': [
+            './node_modules/ultracontext/native/**/*',
+            './node_modules/ultracontext/ultracontext.*.node'
+        ]
+    }
+}
 ```
 
-Sync:
+For Electron, keep `ultracontext/node` in the main process or a preload/server
+bridge. Renderer code should use `ultracontext/browser` against a local HTTP
+route.
+
+## Sync
 
 ```js
 const snapshot = await source.exportSnapshot()

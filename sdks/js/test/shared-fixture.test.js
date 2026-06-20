@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { UltraContext, UltraContextError } from '../src/index.js'
+import { UltraContext as LocalUltraContext } from '../src/local.js'
 import { createUltraContextHandler } from '../src/server.js'
 import { createSqliteEngine } from '../src/sqlite-engine.js'
 
@@ -109,7 +110,7 @@ const nativePath = triple
 
 test('shared v2 alpha fixture passes through JS local native', { skip: !nativePath || !existsSync(nativePath) }, async () => {
     const dbPath = join(tmpdir(), `uc-js-shared-${process.pid}-${Date.now()}.db`)
-    const uc = new UltraContext({ mode: 'local', path: dbPath })
+    const uc = new LocalUltraContext({ path: dbPath })
 
     await runSharedFixture(uc, { legacyContextId: true })
 })

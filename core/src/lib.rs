@@ -440,6 +440,16 @@ impl UltraContext {
         list_workspaces(&conn)
     }
 
+    pub fn ensure_default_workspace(&self) -> UcResult<WorkspaceView> {
+        let conn = self.lock_conn()?;
+        let workspace = ensure_default_workspace(&conn)?;
+        Ok(WorkspaceView {
+            id: workspace.public_id,
+            metadata: workspace.metadata,
+            created_at: workspace.created_at,
+        })
+    }
+
     pub fn create_session(&self, workspace_id: &str, metadata: Value) -> UcResult<SessionView> {
         let conn = self.lock_conn()?;
         let workspace = workspace_by_id(&conn, workspace_id)?

@@ -7,6 +7,8 @@ const STATUS_BY_CODE = {
     internal: 500
 }
 
+export { createServerClient } from './ssr.js'
+
 export function createUltraContextHandler({ engine }) {
     if (!engine) {
         throw new Error('createUltraContextHandler requires an engine')
@@ -168,7 +170,7 @@ async function readBody(request) {
 function json(body, status = 200) {
     const headers = {
         'access-control-allow-origin': '*',
-        'access-control-allow-methods': 'GET,POST,OPTIONS',
+        'access-control-allow-methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
         'access-control-allow-headers': 'content-type,authorization'
     }
 

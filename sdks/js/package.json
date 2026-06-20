@@ -3,20 +3,61 @@
     "version": "2.0.0-alpha.0",
     "type": "module",
     "main": "src/index.js",
+    "types": "src/index.d.ts",
+    "bin": {
+        "uc": "./bin/uc.js",
+        "ultracontext": "./bin/uc.js"
+    },
     "files": [
         "README.md",
+        "bin",
         "src",
         "native/index.js",
+        "native/package.json",
         "native/index.*.node",
         "ultracontext.*.node"
     ],
     "exports": {
-        ".": "./src/index.js",
-        "./server": "./src/server.js",
-        "./sqlite": "./src/sqlite-engine.js",
-        "./postgres": "./src/postgres-engine.js",
-        "./content-store": "./src/content-store.js",
-        "./materialize": "./src/materialize.js"
+        ".": {
+            "types": "./src/index.d.ts",
+            "default": "./src/index.js"
+        },
+        "./browser": {
+            "types": "./src/browser.d.ts",
+            "default": "./src/browser.js"
+        },
+        "./node": {
+            "types": "./src/node.d.ts",
+            "default": "./src/node.js"
+        },
+        "./ssr": {
+            "types": "./src/ssr.d.ts",
+            "default": "./src/ssr.js"
+        },
+        "./local": {
+            "types": "./src/local.d.ts",
+            "default": "./src/local.js"
+        },
+        "./config": {
+            "types": "./src/config.d.ts",
+            "default": "./src/config.js"
+        },
+        "./server": {
+            "types": "./src/server.d.ts",
+            "default": "./src/server.js"
+        },
+        "./sqlite": {
+            "types": "./src/sqlite-engine.d.ts",
+            "default": "./src/sqlite-engine.js"
+        },
+        "./postgres": {
+            "types": "./src/postgres-engine.d.ts",
+            "default": "./src/postgres-engine.js"
+        },
+        "./content-store": {
+            "types": "./src/content-store.d.ts",
+            "default": "./src/content-store.js"
+        }
     },
     "scripts": {
         "build:native": "napi build --manifest-path native/Cargo.toml --platform",

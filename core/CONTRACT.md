@@ -75,8 +75,8 @@ Requirements:
 
 Agents should be able to operate on artifacts with file verbs even when there
 is no real filesystem. The canonical surface is path-based verbs over the
-artifact store. Native mount adapters such as NFS or FUSE expose the same verbs
-for laptops, workstations, and servers that can mount filesystems.
+artifact store. The native NFS mount adapter exposes the same verbs for
+laptops, workstations, and servers that can mount filesystems.
 
 Required path verbs for the agent surface:
 
@@ -272,8 +272,8 @@ binding layer to stay thin.
 
 ## Sync and Mirrors
 
-Do not mount S3 as the database. Do not put SQLite on FUSE. Do not use
-JuiceFS as the core model.
+Do not mount S3 as the database. Do not put SQLite on a remote or virtual
+filesystem mount. Do not use JuiceFS as the core model.
 
 The sync shape is:
 
@@ -300,7 +300,7 @@ application policy.
 
 These are important, but not required for the first shippable v2 core:
 
-- native mount adapters over the same path projection;
+- native NFS mount adapter over the same path projection;
 - managed hosted service;
 - local mirror daemon;
 - event stream/watch for live propagation;

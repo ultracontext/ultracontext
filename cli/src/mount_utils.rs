@@ -3,6 +3,7 @@ use ultracontext::{ErrorCode, UcError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MountScope {
+    Auto,
     Database,
     Workspace(String),
     Context(String),
