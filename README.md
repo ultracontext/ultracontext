@@ -63,6 +63,51 @@ also installs the JS SDK using the detected package manager (`pnpm`, `bun`,
 `yarn`, or `npm`). If `pyproject.toml` or `requirements.txt` exists, it adds
 the Python SDK dependency there.
 
+## Examples
+
+Next.js route handler:
+
+```ts
+// app/api/ultracontext/[...path]/route.ts
+import { createUltraContextNextHandler } from 'ultracontext/next'
+
+export const { GET, POST, PATCH, DELETE } =
+  createUltraContextNextHandler({ projectRoot: process.cwd() })
+```
+
+Browser client:
+
+```ts
+import { createClient } from 'ultracontext'
+
+const uc = createClient('/api/ultracontext')
+const session = await uc.create({ metadata: { app: 'demo' } })
+await uc.append(session.id, { role: 'user', content: 'Draft a README' })
+```
+
+Server/local client:
+
+```ts
+import { createServerClient } from 'ultracontext/ssr'
+
+const uc = await createServerClient({ projectRoot: process.cwd() })
+```
+
+Artifacts:
+
+```ts
+await uc.write(session.id, 'draft.md', '# Draft', { kind: 'text/markdown' })
+const draft = await uc.read(session.id, 'draft.md')
+```
+
+Local filesystem mount:
+
+```bash
+uc init
+uc mount ./UltraContext
+open ./UltraContext
+```
+
 - **Edge-safe** - JS remote mode is fetch-only, so Vercel Edge-style apps do
   not need SQLite, native bindings, or a persistent filesystem. The JS package
   exposes Supabase-style `createClient`, `createBrowserClient`, and
