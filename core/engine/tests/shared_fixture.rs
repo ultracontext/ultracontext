@@ -15,11 +15,11 @@ fn temp_db(name: &str) -> String {
 }
 
 fn fixture() -> Value {
-    serde_json::from_str(include_str!("../../../fixtures/v2-alpha.json")).unwrap()
+    serde_json::from_str(include_str!("../../../fixtures/sdk-parity.json")).unwrap()
 }
 
 #[test]
-fn shared_v2_alpha_fixture_passes_through_json_dispatch() {
+fn shared_sdk_parity_fixture_passes_through_json_dispatch() {
     let f = fixture();
     let uc = UltraContext::open(temp_db("core")).unwrap();
 

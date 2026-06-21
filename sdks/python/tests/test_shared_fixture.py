@@ -8,7 +8,7 @@ from ultracontext import UltraContext, UltraContextError
 
 
 FIXTURE = json.loads(
-    (Path(__file__).resolve().parents[3] / "fixtures" / "v2-alpha.json").read_text()
+    (Path(__file__).resolve().parents[3] / "fixtures" / "sdk-parity.json").read_text()
 )
 
 
@@ -211,7 +211,7 @@ def run_shared_fixture(testcase, uc, legacy_context_id=False):
 
 
 class SharedFixtureTests(unittest.TestCase):
-    def test_shared_v2_alpha_fixture_passes_through_python_local_native(self):
+    def test_shared_sdk_parity_fixture_passes_through_python_local_native(self):
         native = load_native()
         if native is None:
             self.skipTest("native extension is not installed")
@@ -220,7 +220,7 @@ class SharedFixtureTests(unittest.TestCase):
             uc = UltraContext(mode="local", path=db.name, native=native)
             run_shared_fixture(self, uc, legacy_context_id=True)
 
-    def test_shared_v2_alpha_fixture_passes_through_python_remote_transport(self):
+    def test_shared_sdk_parity_fixture_passes_through_python_remote_transport(self):
         native = load_native()
         if native is None:
             self.skipTest("native extension is not installed")

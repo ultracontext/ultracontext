@@ -7,7 +7,7 @@ import { UltraContext, UltraContextError } from '../src/index.js'
 import { UltraContext as LocalUltraContext } from '../src/local.js'
 import { createRouteHandler } from '../src/ssr.js'
 
-const fixture = JSON.parse(readFileSync(new URL('../../../fixtures/v2-alpha.json', import.meta.url), 'utf8'))
+const fixture = JSON.parse(readFileSync(new URL('../../../fixtures/sdk-parity.json', import.meta.url), 'utf8'))
 
 const triple = {
     'darwin:arm64': 'darwin-arm64',
@@ -125,7 +125,7 @@ async function runSharedFixture(uc, { legacyContextId = false } = {}) {
     )
 }
 
-test('shared v2 alpha fixture passes through JS remote handler backed by Rust core', { skip: !hasNative }, async () => {
+test('shared sdk parity fixture passes through JS remote handler backed by Rust core', { skip: !hasNative }, async () => {
     const root = createProjectRoot('shared-remote')
     const routes = createRouteHandler({ projectRoot: root })
     const uc = new UltraContext({
@@ -141,7 +141,7 @@ test('shared v2 alpha fixture passes through JS remote handler backed by Rust co
     }
 })
 
-test('shared v2 alpha fixture passes through JS local native', { skip: !hasNative }, async () => {
+test('shared sdk parity fixture passes through JS local native', { skip: !hasNative }, async () => {
     const dbPath = join(tmpdir(), `uc-js-shared-${process.pid}-${Date.now()}.db`)
     const uc = new LocalUltraContext({ path: dbPath })
 
