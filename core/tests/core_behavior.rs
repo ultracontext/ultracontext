@@ -2,7 +2,7 @@ use rusqlite::{Connection, params};
 use serde_json::json;
 use ultracontext::{
     AppendInput, ArtifactSave, ContentStore, DeleteTarget, ErrorCode, FileWrite, ForkOptions,
-    GetOptions, SearchKind, UltraContext, UltraContextOptions, UpdatePatch,
+    GetOptions, S3ContentStore, SearchKind, UltraContext, UltraContextOptions, UpdatePatch,
 };
 
 fn temp_db(name: &str) -> String {
@@ -29,6 +29,103 @@ fn temp_dir(name: &str) -> std::path::PathBuf {
             .as_nanos()
     ));
     path
+}
+
+struct MockS3Server {
+    endpoint: String,
+    handle: std::thread::JoinHandle<()>,
+}
+
+impl MockS3Server {
+    fn start() -> Self {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let stored = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let thread_stored = stored.clone();
+        let handle = std::thread::spawn(move || {
+            for _ in 0..4 {
+                let (mut stream, _) = listener.accept().unwrap();
+                handle_mock_s3_request(&mut stream, &thread_stored);
+            }
+        });
+        Self { endpoint, handle }
+    }
+
+    fn join(self) {
+        self.handle.join().unwrap();
+    }
+}
+
+fn handle_mock_s3_request(
+    stream: &mut std::net::TcpStream,
+    stored: &std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+) {
+    use std::io::{Read, Write};
+
+    let mut buffer = Vec::new();
+    let mut chunk = [0_u8; 1024];
+    let header_end = loop {
+        let read = stream.read(&mut chunk).unwrap();
+        assert!(read > 0);
+        buffer.extend_from_slice(&chunk[..read]);
+        if let Some(position) = buffer.windows(4).position(|window| window == b"\r\n\r\n") {
+            break position + 4;
+        }
+    };
+
+    let header = String::from_utf8_lossy(&buffer[..header_end]);
+    let mut lines = header.lines();
+    let request_line = lines.next().unwrap().to_string();
+    let lower_header = header.to_ascii_lowercase();
+    assert!(lower_header.contains("authorization: aws4-hmac-sha256"));
+
+    let content_length = lower_header
+        .lines()
+        .find_map(|line| line.strip_prefix("content-length:"))
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .unwrap_or(0);
+    let mut body = buffer[header_end..].to_vec();
+    while body.len() < content_length {
+        let read = stream.read(&mut chunk).unwrap();
+        assert!(read > 0);
+        body.extend_from_slice(&chunk[..read]);
+    }
+    body.truncate(content_length);
+
+    let mut request_parts = request_line.split_whitespace();
+    let method = request_parts.next().unwrap();
+    let path = request_parts.next().unwrap();
+    assert!(path.starts_with("/bucket/uc-test/artifacts/art_"));
+
+    match method {
+        "PUT" => {
+            *stored.lock().unwrap() = body;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )
+            .unwrap();
+        }
+        "GET" => {
+            let body = stored.lock().unwrap().clone();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            )
+            .unwrap();
+            stream.write_all(&body).unwrap();
+        }
+        "DELETE" => {
+            stored.lock().unwrap().clear();
+            write!(
+                stream,
+                "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )
+            .unwrap();
+        }
+        other => panic!("unexpected mock S3 method: {other}"),
+    }
 }
 
 #[test]
@@ -484,6 +581,51 @@ fn artifacts_can_store_large_content_in_a_local_directory() {
 
     uc.delete_artifact_permanently(&saved.id).unwrap();
     assert!(!blob_path.exists());
+}
+
+#[test]
+fn artifacts_can_store_large_content_in_s3_compatible_storage() {
+    let server = MockS3Server::start();
+    let uc = UltraContext::open_with_options(
+        temp_db("s3-content-store"),
+        UltraContextOptions {
+            content_store: ContentStore::s3(S3ContentStore {
+                endpoint: server.endpoint.clone(),
+                bucket: "bucket".to_string(),
+                region: "auto".to_string(),
+                access_key_id: "test-key".to_string(),
+                secret_access_key: "test-secret".to_string(),
+                session_token: None,
+                prefix: Some("uc-test".to_string()),
+                inline_limit: 4,
+            }),
+        },
+    )
+    .unwrap();
+    let ctx = uc.create(json!({})).unwrap();
+
+    let saved = uc
+        .save_artifact(
+            &ctx.id,
+            ArtifactSave::new("large.md", "text/markdown", "larger than four bytes"),
+        )
+        .unwrap();
+    let loaded = uc.load_artifact(&ctx.id, "large.md", None).unwrap();
+
+    assert_eq!(loaded.data.as_deref(), Some("larger than four bytes"));
+    assert_eq!(loaded.storage["type"], "ref");
+    assert_eq!(loaded.storage["driver"], "s3");
+    assert_eq!(loaded.storage["bucket"], "bucket");
+    assert_eq!(loaded.storage["region"], "auto");
+    assert!(
+        loaded.storage["key"]
+            .as_str()
+            .unwrap()
+            .starts_with("uc-test/artifacts/art_")
+    );
+
+    uc.delete_artifact_permanently(&saved.id).unwrap();
+    server.join();
 }
 
 #[test]

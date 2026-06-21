@@ -39,10 +39,11 @@ class FakeNative:
     def __init__(self, core):
         self.core = core
 
-    def UltraContextCore(self, path, content_dir=None, inline_limit=None):
+    def UltraContextCore(self, path, content_dir=None, inline_limit=None, s3=None):
         self.path = path
         self.content_dir = content_dir
         self.inline_limit = inline_limit
+        self.s3 = s3
         return self.core
 
 
@@ -52,11 +53,11 @@ class LocalClientTests(unittest.TestCase):
         native = FakeNative(core)
         uc = UltraContext(mode="local", path="/tmp/uc.db", native=native)
 
-        ctx = uc.create(metadata={"app": "demo"})
-        artifact = uc.write(ctx["id"], "draft.md", "# Draft", kind="text/markdown")
+        ctx = uc.sessions.create(metadata={"app": "demo"})
+        artifact = ctx.fs.write("draft.md", "# Draft", kind="text/markdown")
 
         self.assertEqual(native.path, "/tmp/uc.db")
-        self.assertEqual(ctx["id"], "ses_local")
+        self.assertEqual(ctx.id, "ses_local")
         self.assertEqual(artifact["id"], "art_local")
         self.assertEqual(core.calls[0], ("create", {"metadata": {"app": "demo"}}))
         self.assertEqual(core.calls[1][0], "file_write")
@@ -67,10 +68,40 @@ class LocalClientTests(unittest.TestCase):
         uc = UltraContext(mode="local", native=FakeNative(FakeCore()))
 
         with self.assertRaises(UltraContextError) as error:
-            uc.get("ctx_missing")
+            uc.sessions.get("ctx_missing").context.current()
 
         self.assertEqual(error.exception.code, "not_found")
         self.assertEqual(str(error.exception), "missing")
+
+    def test_local_client_passes_s3_config_to_native_core(self):
+        native = FakeNative(FakeCore())
+        UltraContext(
+            mode="local",
+            path="/tmp/uc-s3.db",
+            native=native,
+            inline_limit=123,
+            s3={
+                "endpoint": "https://r2.example",
+                "bucket": "uc",
+                "region": "auto",
+                "accessKeyId": "key",
+                "secretAccessKey": "secret",
+                "prefix": "project-a",
+            },
+        )
+
+        self.assertEqual(native.inline_limit, 123)
+        self.assertEqual(
+            json.loads(native.s3),
+            {
+                "endpoint": "https://r2.example",
+                "bucket": "uc",
+                "region": "auto",
+                "accessKeyId": "key",
+                "secretAccessKey": "secret",
+                "prefix": "project-a",
+            },
+        )
 
 
 if __name__ == "__main__":

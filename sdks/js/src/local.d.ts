@@ -1,6 +1,6 @@
 export type * from './types'
 import type { UltraContextClient, UltraContextErrorOptions } from './types'
-import type { ProjectConfigOptions } from './config'
+import type { ProjectConfigOptions, S3ProjectConfig } from './config'
 
 export class UltraContextError extends Error {
     name: 'UltraContextError'
@@ -21,6 +21,8 @@ export interface LocalUltraContextOptions {
     db?: string
     contentDir?: string
     inlineLimit?: number
+    storageDriver?: 'local-dir' | 's3' | 'inline' | string
+    s3?: S3ProjectConfig
     native?: UltraContextNativeBinding
     core?: {
         dispatchJson(operation: string, payload: string): string
@@ -39,6 +41,8 @@ export class UltraContext {
     path: string
     contentDir?: string
     inlineLimit?: number
+    storageDriver?: string
+    s3?: S3ProjectConfig
     constructor(config?: LocalUltraContextOptions)
     static openProject(options?: OpenProjectOptions): Promise<UltraContext>
 }

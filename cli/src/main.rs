@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process;
 use toml_edit::{Array, DocumentMut, value};
 use ultracontext::{
-    ContentStore, ErrorCode, FileWrite, UcError, UltraContext, UltraContextOptions,
+    ContentStore, ErrorCode, FileWrite, S3ContentStore, UcError, UltraContext, UltraContextOptions,
 };
 
 mod mount_utils;
@@ -247,6 +247,7 @@ fn run(
                     db: db_path_string(&resolved.db)?,
                     content_dir: resolved.content_dir,
                     inline_limit: resolved.inline_limit,
+                    s3: resolved.s3,
                 },
                 scope,
                 mountpoint,
@@ -409,6 +410,7 @@ struct StoreConfig {
     db: String,
     content_dir: Option<PathBuf>,
     inline_limit: usize,
+    s3: Option<S3StoreConfig>,
 }
 
 #[derive(Debug)]
@@ -416,6 +418,7 @@ struct ResolvedStoreConfig {
     db: PathBuf,
     content_dir: Option<PathBuf>,
     inline_limit: usize,
+    s3: Option<S3StoreConfig>,
 }
 
 #[derive(Debug)]
@@ -425,6 +428,33 @@ struct ConfigFile {
     db: PathBuf,
     content_dir: Option<PathBuf>,
     inline_limit: Option<usize>,
+    s3: Option<S3StoreConfig>,
+}
+
+#[derive(Debug, Clone)]
+struct S3StoreConfig {
+    endpoint: String,
+    bucket: String,
+    region: String,
+    access_key_id: String,
+    secret_access_key: String,
+    session_token: Option<String>,
+    prefix: Option<String>,
+}
+
+impl S3StoreConfig {
+    fn to_core(&self, inline_limit: usize) -> S3ContentStore {
+        S3ContentStore {
+            endpoint: self.endpoint.clone(),
+            bucket: self.bucket.clone(),
+            region: self.region.clone(),
+            access_key_id: self.access_key_id.clone(),
+            secret_access_key: self.secret_access_key.clone(),
+            session_token: self.session_token.clone(),
+            prefix: self.prefix.clone(),
+            inline_limit,
+        }
+    }
 }
 
 fn open_store(
@@ -443,13 +473,16 @@ fn open_store(
     if !require_existing && let Some(parent) = resolved.db.parent() {
         fs::create_dir_all(parent).map_err(io_error)?;
     }
-    if let Some(content_dir) = &resolved.content_dir {
+    if resolved.s3.is_none()
+        && let Some(content_dir) = &resolved.content_dir
+    {
         fs::create_dir_all(content_dir).map_err(io_error)?;
     }
     open_store_at(
         &resolved.db,
         resolved.content_dir.as_ref(),
         resolved.inline_limit,
+        resolved.s3.as_ref(),
     )
 }
 
@@ -457,9 +490,11 @@ fn open_store_at(
     db: &Path,
     content_dir: Option<&PathBuf>,
     inline_limit: usize,
+    s3: Option<&S3StoreConfig>,
 ) -> Result<UltraContext, UcError> {
-    let content_store = content_dir
-        .map(|root| ContentStore::local_dir(root, inline_limit))
+    let content_store = s3
+        .map(|config| ContentStore::s3(config.to_core(inline_limit)))
+        .or_else(|| content_dir.map(|root| ContentStore::local_dir(root, inline_limit)))
         .unwrap_or_else(|| ContentStore::inline_with_limit(inline_limit));
     let db = db_path_string(db)?;
     UltraContext::open_with_options(&db, UltraContextOptions { content_store })
@@ -516,7 +551,7 @@ fn init_store(
 
     let db_existed = db_path.exists();
     let config_existed = config_path.exists();
-    let uc = open_store_at(&db_path, Some(&content_dir_path), inline_limit)?;
+    let uc = open_store_at(&db_path, Some(&content_dir_path), inline_limit, None)?;
     let workspace = uc.ensure_default_workspace()?;
     let config = json!({
         "version": 1,
@@ -551,10 +586,16 @@ fn resolve_store_config(
     require_existing: bool,
 ) -> Result<ResolvedStoreConfig, UcError> {
     if let Some(db) = db {
+        let s3 = s3_config_from_env()?;
         return Ok(ResolvedStoreConfig {
             db: absolute_path(db)?,
-            content_dir: content_dir.cloned(),
+            content_dir: if s3.is_some() {
+                None
+            } else {
+                content_dir.cloned()
+            },
             inline_limit: inline_limit.unwrap_or(DEFAULT_INLINE_LIMIT),
+            s3,
         });
     }
     if let Some(config) = find_local_config() {
@@ -580,10 +621,19 @@ fn apply_config_overrides(
 ) -> Result<ResolvedStoreConfig, UcError> {
     Ok(ResolvedStoreConfig {
         db: config.db,
-        content_dir: content_dir.cloned().or(config.content_dir),
+        content_dir: if config.s3.is_some() && content_dir.is_none() {
+            None
+        } else {
+            content_dir.cloned().or(config.content_dir)
+        },
         inline_limit: inline_limit
             .or(config.inline_limit)
             .unwrap_or(DEFAULT_INLINE_LIMIT),
+        s3: if content_dir.is_some() {
+            None
+        } else {
+            config.s3
+        },
     })
 }
 
@@ -640,18 +690,163 @@ fn read_config_file(config_path: &Path) -> Result<ConfigFile, UcError> {
         })?
         .to_string();
     let base_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
+    let storage_driver = env::var("UC_STORAGE_DRIVER")
+        .ok()
+        .or_else(|| config_string(&value, "storage.driver").map(ToOwned::to_owned));
     let content_dir = config_string(&value, "storage.contentDir")
         .or_else(|| config_string(&value, "storage.content_dir"))
         .map(|path| resolve_config_relative_path(base_dir, path));
     let inline_limit = config_usize(&value, "storage.inlineLimit")
         .or_else(|| config_usize(&value, "storage.inline_limit"));
+    let s3 = s3_config_from_value(&value)?;
     Ok(ConfigFile {
         path: config_path.to_path_buf(),
         value,
         db: resolve_config_relative_path(base_dir, &db),
-        content_dir,
+        content_dir: if matches!(storage_driver.as_deref(), Some("inline") | Some("s3")) {
+            None
+        } else {
+            content_dir
+        },
         inline_limit,
+        s3,
     })
+}
+
+fn s3_config_from_value(value: &Value) -> Result<Option<S3StoreConfig>, UcError> {
+    let storage = value.get("storage").and_then(Value::as_object);
+    let driver = env::var("UC_STORAGE_DRIVER")
+        .ok()
+        .or_else(|| {
+            storage?
+                .get("driver")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        })
+        .unwrap_or_default();
+    let s3_value = storage.and_then(|storage| storage.get("s3"));
+    if driver != "s3" && s3_value.is_none() && env::var_os("UC_S3_BUCKET").is_none() {
+        return Ok(None);
+    }
+
+    s3_config_from_parts(
+        config_str_env("UC_S3_ENDPOINT").or_else(|| {
+            s3_value
+                .and_then(|value| value.get("endpoint"))
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        }),
+        config_str_env("UC_S3_BUCKET").or_else(|| {
+            s3_value
+                .and_then(|value| value.get("bucket"))
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        }),
+        config_str_env("UC_S3_REGION").or_else(|| {
+            s3_value
+                .and_then(|value| value.get("region"))
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        }),
+        config_str_env("UC_S3_ACCESS_KEY_ID").or_else(|| {
+            s3_value
+                .and_then(|value| {
+                    value
+                        .get("accessKeyId")
+                        .or_else(|| value.get("access_key_id"))
+                })
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        }),
+        config_str_env("UC_S3_SECRET_ACCESS_KEY").or_else(|| {
+            s3_value
+                .and_then(|value| {
+                    value
+                        .get("secretAccessKey")
+                        .or_else(|| value.get("secret_access_key"))
+                })
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        }),
+        config_str_env("UC_S3_SESSION_TOKEN").or_else(|| {
+            s3_value
+                .and_then(|value| {
+                    value
+                        .get("sessionToken")
+                        .or_else(|| value.get("session_token"))
+                })
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        }),
+        config_str_env("UC_S3_PREFIX").or_else(|| {
+            s3_value
+                .and_then(|value| value.get("prefix"))
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        }),
+    )
+    .map(Some)
+}
+
+fn s3_config_from_env() -> Result<Option<S3StoreConfig>, UcError> {
+    if env::var("UC_STORAGE_DRIVER").ok().as_deref() != Some("s3")
+        && env::var_os("UC_S3_BUCKET").is_none()
+    {
+        return Ok(None);
+    }
+    s3_config_from_parts(
+        config_str_env("UC_S3_ENDPOINT"),
+        config_str_env("UC_S3_BUCKET"),
+        config_str_env("UC_S3_REGION"),
+        config_str_env("UC_S3_ACCESS_KEY_ID"),
+        config_str_env("UC_S3_SECRET_ACCESS_KEY"),
+        config_str_env("UC_S3_SESSION_TOKEN"),
+        config_str_env("UC_S3_PREFIX"),
+    )
+    .map(Some)
+}
+
+fn s3_config_from_parts(
+    endpoint: Option<String>,
+    bucket: Option<String>,
+    region: Option<String>,
+    access_key_id: Option<String>,
+    secret_access_key: Option<String>,
+    session_token: Option<String>,
+    prefix: Option<String>,
+) -> Result<S3StoreConfig, UcError> {
+    Ok(S3StoreConfig {
+        endpoint: required_config_part(endpoint, "storage.s3.endpoint")?,
+        bucket: required_config_part(bucket, "storage.s3.bucket")?,
+        region: region.unwrap_or_else(|| "auto".to_string()),
+        access_key_id: required_config_part(access_key_id, "storage.s3.accessKeyId")?,
+        secret_access_key: required_config_part(secret_access_key, "storage.s3.secretAccessKey")?,
+        session_token: empty_to_none(session_token),
+        prefix: empty_to_none(prefix),
+    })
+}
+
+fn required_config_part(value: Option<String>, name: &str) -> Result<String, UcError> {
+    value
+        .and_then(|value| empty_to_none(Some(value)))
+        .ok_or_else(|| UcError::new(ErrorCode::InvalidInput, format!("Missing config: {name}")))
+}
+
+fn empty_to_none(value: Option<String>) -> Option<String> {
+    value.and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
+fn config_str_env(name: &str) -> Option<String> {
+    env::var(name)
+        .ok()
+        .and_then(|value| empty_to_none(Some(value)))
 }
 
 fn write_config_value(config_path: &Path, value: &Value) -> Result<(), UcError> {
@@ -977,6 +1172,23 @@ fn config_string<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
                     .or_else(|| storage.get("content_dir"))
             })
             .and_then(Value::as_str),
+        Some("storage.driver") => value
+            .get("storage")
+            .and_then(|storage| storage.get("driver"))
+            .and_then(Value::as_str),
+        Some("storage.s3.endpoint") => nested_config_string(value, &["storage", "s3", "endpoint"]),
+        Some("storage.s3.bucket") => nested_config_string(value, &["storage", "s3", "bucket"]),
+        Some("storage.s3.region") => nested_config_string(value, &["storage", "s3", "region"]),
+        Some("storage.s3.accessKeyId") => {
+            nested_config_string(value, &["storage", "s3", "accessKeyId"])
+        }
+        Some("storage.s3.secretAccessKey") => {
+            nested_config_string(value, &["storage", "s3", "secretAccessKey"])
+        }
+        Some("storage.s3.sessionToken") => {
+            nested_config_string(value, &["storage", "s3", "sessionToken"])
+        }
+        Some("storage.s3.prefix") => nested_config_string(value, &["storage", "s3", "prefix"]),
         Some("mount.defaultScope") => value
             .get("mount")
             .and_then(|mount| mount.get("defaultScope"))
@@ -1016,6 +1228,19 @@ fn get_config_value(value: &Value, key: &str) -> Result<Value, UcError> {
             .get("storage")
             .and_then(|storage| storage.get("inlineLimit"))
             .cloned(),
+        "storage.driver" => value
+            .get("storage")
+            .and_then(|storage| storage.get("driver"))
+            .cloned(),
+        "storage.s3.endpoint" => nested_config_value(value, &["storage", "s3", "endpoint"]),
+        "storage.s3.bucket" => nested_config_value(value, &["storage", "s3", "bucket"]),
+        "storage.s3.region" => nested_config_value(value, &["storage", "s3", "region"]),
+        "storage.s3.accessKeyId" => nested_config_value(value, &["storage", "s3", "accessKeyId"]),
+        "storage.s3.secretAccessKey" => {
+            nested_config_value(value, &["storage", "s3", "secretAccessKey"])
+        }
+        "storage.s3.sessionToken" => nested_config_value(value, &["storage", "s3", "sessionToken"]),
+        "storage.s3.prefix" => nested_config_value(value, &["storage", "s3", "prefix"]),
         "mount.defaultScope" => value
             .get("mount")
             .and_then(|mount| mount.get("defaultScope"))
@@ -1061,6 +1286,25 @@ fn set_config_value(config: &mut Value, key: &str, raw: &str) -> Result<&'static
             let storage = ensure_config_section(root, "storage")?;
             storage.insert("inlineLimit".to_string(), json!(value));
         }
+        "storage.driver" => {
+            let storage = ensure_config_section(root, "storage")?;
+            storage.insert("driver".to_string(), Value::String(raw.to_string()));
+        }
+        "storage.s3.endpoint" => {
+            set_nested_config_string(root, &["storage", "s3", "endpoint"], raw)?
+        }
+        "storage.s3.bucket" => set_nested_config_string(root, &["storage", "s3", "bucket"], raw)?,
+        "storage.s3.region" => set_nested_config_string(root, &["storage", "s3", "region"], raw)?,
+        "storage.s3.accessKeyId" => {
+            set_nested_config_string(root, &["storage", "s3", "accessKeyId"], raw)?
+        }
+        "storage.s3.secretAccessKey" => {
+            set_nested_config_string(root, &["storage", "s3", "secretAccessKey"], raw)?
+        }
+        "storage.s3.sessionToken" => {
+            set_nested_config_string(root, &["storage", "s3", "sessionToken"], raw)?
+        }
+        "storage.s3.prefix" => set_nested_config_string(root, &["storage", "s3", "prefix"], raw)?,
         "mount.defaultScope" => {
             let mount = ensure_config_section(root, "mount")?;
             mount.insert("defaultScope".to_string(), Value::String(raw.to_string()));
@@ -1090,11 +1334,53 @@ fn ensure_config_section<'a>(
     })
 }
 
+fn set_nested_config_string(
+    root: &mut serde_json::Map<String, Value>,
+    path: &[&str],
+    raw: &str,
+) -> Result<(), UcError> {
+    let mut cursor = root;
+    for section in &path[..path.len() - 1] {
+        cursor = ensure_config_section(cursor, section)?;
+    }
+    cursor.insert(
+        path[path.len() - 1].to_string(),
+        Value::String(raw.to_string()),
+    );
+    Ok(())
+}
+
+fn nested_config_value(value: &Value, path: &[&str]) -> Option<Value> {
+    let mut cursor = value;
+    for part in path {
+        cursor = cursor.get(*part)?;
+    }
+    Some(cursor.clone())
+}
+
+fn nested_config_string<'a>(value: &'a Value, path: &[&str]) -> Option<&'a str> {
+    let mut cursor = value;
+    for part in path {
+        cursor = cursor.get(*part)?;
+    }
+    cursor.as_str()
+}
+
 fn normalize_config_key(key: &str) -> Option<&'static str> {
     match key {
         "db" | "db.path" => Some("db"),
         "storage.contentDir" | "storage.content_dir" => Some("storage.contentDir"),
         "storage.inlineLimit" | "storage.inline_limit" => Some("storage.inlineLimit"),
+        "storage.driver" => Some("storage.driver"),
+        "storage.s3.endpoint" => Some("storage.s3.endpoint"),
+        "storage.s3.bucket" => Some("storage.s3.bucket"),
+        "storage.s3.region" => Some("storage.s3.region"),
+        "storage.s3.accessKeyId" | "storage.s3.access_key_id" => Some("storage.s3.accessKeyId"),
+        "storage.s3.secretAccessKey" | "storage.s3.secret_access_key" => {
+            Some("storage.s3.secretAccessKey")
+        }
+        "storage.s3.sessionToken" | "storage.s3.session_token" => Some("storage.s3.sessionToken"),
+        "storage.s3.prefix" => Some("storage.s3.prefix"),
         "mount.defaultScope" | "mount.default_scope" => Some("mount.defaultScope"),
         "mount.defaultWorkspace" | "mount.default_workspace" => Some("mount.defaultWorkspace"),
         _ => None,
@@ -1505,6 +1791,7 @@ fn mount_context(
         db: store.db,
         content_dir: store.content_dir,
         inline_limit: store.inline_limit,
+        s3: store.s3.map(|config| config.to_core(store.inline_limit)),
         scope,
         mountpoint: PathBuf::from(mountpoint),
         foreground,
@@ -1622,6 +1909,13 @@ Common keys:
   db
   storage.contentDir
   storage.inlineLimit
+  storage.driver
+  storage.s3.endpoint
+  storage.s3.bucket
+  storage.s3.region
+  storage.s3.accessKeyId
+  storage.s3.secretAccessKey
+  storage.s3.prefix
   mount.defaultScope
 "#,
     )

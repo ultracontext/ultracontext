@@ -139,6 +139,8 @@ export interface ArtifactStorage {
     type: 'inline' | 'ref' | string
     driver?: string
     bucket?: string
+    endpoint?: string
+    region?: string
     key?: string
     kind?: string
     [key: string]: unknown
@@ -240,78 +242,86 @@ export interface ImportResult {
 }
 
 export interface UltraContextClient {
-    createWorkspace(input?: WorkspaceInput): Promise<WorkspaceSummary>
-    listWorkspaces(): Promise<WorkspaceList>
-    createSession(workspaceId: string, input?: SessionInput): Promise<SessionSummary>
-    create(input?: ContextInput): Promise<ContextSummary>
-    fork(sourceId: string, options?: ContextReadOptions & { metadata?: Metadata }): Promise<ContextSummary>
-    append(contextId: string, messages: Message | Message[]): Promise<ContextResult>
-    get(): Promise<ContextList>
-    get(contextId: string, options?: ContextReadOptions): Promise<ContextResult>
-    contextHistory(contextId: string): Promise<ContextHistory>
-    clearContext(contextId: string, options?: ContextUpdateOptions): Promise<ContextResult>
-    restoreContext(contextId: string, restoreContextId: string, options?: ContextUpdateOptions): Promise<ContextResult>
-    update(contextId: string, updates: ContextUpdate | ContextUpdate[], options?: ContextUpdateOptions): Promise<ContextResult>
-    delete(contextId: string, target: ContextDeleteTarget | ContextDeleteTarget[], options?: ContextUpdateOptions): Promise<DeleteResult | ContextResult>
-    search(query: string, options?: SearchOptions): Promise<SearchResult>
-    save(contextId: string, input: ArtifactSaveInput): Promise<ArtifactMeta>
-    load(contextId: string): Promise<ArtifactList>
-    load(contextId: string, pathOrId: string, options?: ArtifactReadOptions): Promise<ArtifactData>
-    read(contextId: string, pathOrId: string, options?: ArtifactReadOptions): Promise<ArtifactData>
-    write(contextId: string, path: string, data: unknown, options?: ArtifactWriteOptions): Promise<ArtifactMeta>
-    move(contextId: string, fromPathOrId: string, toPath: string, options?: ArtifactMoveOptions): Promise<ArtifactMeta>
-    remove(contextId: string, pathOrId: string, options?: ArtifactRemoveOptions): Promise<DeleteResult>
-    glob(contextId: string, pattern: string, options?: ArtifactGlobOptions): Promise<ArtifactList>
-    grep(contextId: string, query: string, options?: ArtifactGrepOptions): Promise<SearchResult>
+    workspaces: WorkspacesApi
+    sessions: SessionsApi
+    artifacts: WorkspaceArtifactsApi
+    fs: FileSystemApi
+    search: SearchApi
+    sync: SyncApi
+}
+
+export interface WorkspacesApi {
+    create(input?: WorkspaceInput): Promise<WorkspaceSummary>
+    list(): Promise<WorkspaceList>
+}
+
+export interface SessionsApi {
+    create(input?: ContextInput): Promise<SessionHandle>
+    get(id: string): Promise<SessionHandle>
+    list(): Promise<ContextList>
+    delete(id: string): Promise<DeleteResult>
+    fork(sourceId: string, options?: ContextReadOptions & { metadata?: Metadata }): Promise<SessionHandle>
+}
+
+export interface SessionHandle extends SessionSummary {
+    context: SessionContextApi
+    artifacts: SessionArtifactsApi
+    fs: SessionFileSystemApi
+    delete(): Promise<DeleteResult>
+    fork(options?: ContextReadOptions & { metadata?: Metadata }): Promise<SessionHandle>
+    toJSON(): SessionSummary
+}
+
+export interface SessionContextApi {
+    current(options?: ContextReadOptions): Promise<ContextResult>
+    get(options?: ContextReadOptions): Promise<ContextResult>
+    list(options?: ContextReadOptions): Promise<ContextResult>
+    append(entries: Message | Message[]): Promise<ContextResult>
+    update(update: ContextUpdate | ContextUpdate[], options?: ContextUpdateOptions): Promise<ContextResult>
+    delete(target: ContextDeleteTarget | ContextDeleteTarget[], options?: ContextUpdateOptions): Promise<ContextResult>
+    clear(options?: ContextUpdateOptions): Promise<ContextResult>
+    history(): Promise<ContextHistory>
+    restore(contextId: string, options?: ContextUpdateOptions): Promise<ContextResult>
+}
+
+export interface SessionArtifactsApi {
+    create(input: ArtifactSaveInput): Promise<ArtifactMeta>
+    list(): Promise<ArtifactList>
+    get(pathOrId: string, options?: ArtifactReadOptions): Promise<ArtifactData>
+    update(pathOrId: string, data: unknown, options?: ArtifactWriteOptions): Promise<ArtifactMeta>
+    delete(pathOrId: string, options?: ArtifactRemoveOptions): Promise<DeleteResult>
+}
+
+export interface WorkspaceArtifactsApi {
+    session(sessionId: string): SessionArtifactsApi
+}
+
+export interface FileSystemApi {
+    session(sessionId: string): SessionFileSystemApi
+}
+
+export interface SessionFileSystemApi {
+    list(options?: { prefix?: string }): Promise<ArtifactList>
+    read(pathOrId: string, options?: ArtifactReadOptions): Promise<ArtifactData>
+    write(path: string, data: unknown, options?: ArtifactWriteOptions): Promise<ArtifactMeta>
+    move(fromPathOrId: string, toPath: string, options?: ArtifactMoveOptions): Promise<ArtifactMeta>
+    remove(pathOrId: string, options?: ArtifactRemoveOptions): Promise<DeleteResult>
+    glob(pattern: string, options?: ArtifactGlobOptions): Promise<ArtifactList>
+    grep(query: string, options?: ArtifactGrepOptions): Promise<SearchResult>
+}
+
+export interface SyncApi {
     exportSnapshot(): Promise<Snapshot>
     importSnapshot(snapshot: Snapshot): Promise<ImportResult>
     exportChanges(options?: { since?: number }): Promise<Changes>
     importChanges(changes: Changes): Promise<ImportResult>
 }
 
+export interface SearchApi {
+    query(query: string, options?: SearchOptions): Promise<SearchResult>
+}
+
 export interface UltraContextEngine {
     install?(): Awaitable<void>
-    createWorkspace(input?: WorkspaceInput): Awaitable<WorkspaceSummary>
-    listWorkspaces(): Awaitable<WorkspaceList>
-    createSession(workspaceId: string, input?: SessionInput): Awaitable<SessionSummary>
-    create(input?: ContextInput): Awaitable<ContextSummary>
-    fork(sourceId: string, options?: ContextReadOptions & { metadata?: Metadata }): Awaitable<ContextSummary>
-    append(contextId: string, messages: Message | Message[]): Awaitable<ContextResult>
-    get(contextId: string, options?: ContextReadOptions): Awaitable<ContextResult>
-    listContexts(): Awaitable<ContextList>
-    contextHistory(contextId: string): Awaitable<ContextHistory>
-    clear(contextId: string, options?: ContextUpdateOptions): Awaitable<ContextResult>
-    restore(contextId: string, restoreContextId: string, options?: ContextUpdateOptions): Awaitable<ContextResult>
-    update(contextId: string, updates: ContextUpdate | ContextUpdate[], options?: ContextUpdateOptions): Awaitable<ContextResult>
-    delete(contextId: string, target: ContextDeleteTarget | ContextDeleteTarget[], options?: ContextUpdateOptions): Awaitable<DeleteResult | ContextResult>
-    search(query: string, options?: SearchOptions): Awaitable<SearchResult>
-    save(contextId: string, input: ArtifactSaveInput): Awaitable<ArtifactMeta>
-    load(contextId: string, pathOrId: string, options?: ArtifactReadOptions): Awaitable<ArtifactData>
-    listArtifacts(contextId: string): Awaitable<ArtifactList>
-    read(contextId: string, pathOrId: string, options?: ArtifactReadOptions): Awaitable<ArtifactData>
-    write(contextId: string, path: string, data: unknown, options?: ArtifactWriteOptions): Awaitable<ArtifactMeta>
-    move(contextId: string, fromPathOrId: string, toPath: string, options?: ArtifactMoveOptions): Awaitable<ArtifactMeta>
-    remove(contextId: string, pathOrId: string, options?: ArtifactRemoveOptions): Awaitable<DeleteResult>
-    glob(contextId: string, pattern: string, options?: ArtifactGlobOptions): Awaitable<ArtifactList>
-    grep(contextId: string, query: string, options?: ArtifactGrepOptions): Awaitable<SearchResult>
-    exportSnapshot(options?: unknown): Awaitable<Snapshot>
-    importSnapshot(snapshot: Snapshot): Awaitable<ImportResult>
-    exportChanges(options?: { since?: number }): Awaitable<Changes>
-    importChanges(changes: Changes): Awaitable<ImportResult>
-}
-
-export interface ContentStoreWriteInput {
-    artifactId: string
-    version: number
-    data: unknown
-    kind?: string
-}
-
-export interface ContentStore {
-    driver?: string
-    write(input: ContentStoreWriteInput): Awaitable<ArtifactStorage>
-    read(storage: ArtifactStorage): Awaitable<string>
-    exists?(storage: ArtifactStorage): Awaitable<boolean>
-    put?(storage: ArtifactStorage, data: unknown): Awaitable<void>
-    delete?(storage: ArtifactStorage): Awaitable<void>
+    dispatch(operation: string, payload: Record<string, unknown>): Awaitable<unknown>
 }

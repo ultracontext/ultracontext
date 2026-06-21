@@ -21,9 +21,9 @@ test('local client can use built native binding', { skip: !nativePath || !exists
     const dbPath = join(tmpdir(), `uc-js-native-${process.pid}-${Date.now()}.db`)
     const uc = new UltraContext({ path: dbPath })
 
-    const ctx = await uc.create({ metadata: { app: 'native-test' } })
-    const written = await uc.write(ctx.id, 'draft.md', '# Draft', { kind: 'text/markdown' })
-    const read = await uc.read(ctx.id, 'draft.md')
+    const ctx = await uc.sessions.create({ metadata: { app: 'native-test' } })
+    const written = await ctx.fs.write('draft.md', '# Draft', { kind: 'text/markdown' })
+    const read = await ctx.fs.read('draft.md')
 
     assert.match(ctx.id, /^ses_/)
     assert.match(written.id, /^art_/)
@@ -40,9 +40,9 @@ test('local client can use local-dir content store options', { skip: !nativePath
         inlineLimit: 4
     })
 
-    const ctx = await uc.create({ metadata: { app: 'native-content-test' } })
-    await uc.write(ctx.id, 'large.md', 'larger than four bytes', { kind: 'text/markdown' })
-    const read = await uc.read(ctx.id, 'large.md')
+    const ctx = await uc.sessions.create({ metadata: { app: 'native-content-test' } })
+    await ctx.fs.write('large.md', 'larger than four bytes', { kind: 'text/markdown' })
+    const read = await ctx.fs.read('large.md')
 
     assert.equal(read.data, 'larger than four bytes')
     assert.equal(read.storage.type, 'ref')

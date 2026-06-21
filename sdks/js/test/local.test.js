@@ -48,8 +48,8 @@ test('local client dispatches to injected native core', async () => {
     }
     const uc = new UltraContext({ path: '/tmp/uc-js.db', native })
 
-    const ctx = await uc.create({ metadata: { app: 'demo' } })
-    const artifact = await uc.write(ctx.id, 'draft.md', '# Draft', { kind: 'text/markdown' })
+    const ctx = await uc.sessions.create({ metadata: { app: 'demo' } })
+    const artifact = await ctx.fs.write('draft.md', '# Draft', { kind: 'text/markdown' })
 
     assert.equal(core.path, '/tmp/uc-js.db')
     assert.equal(ctx.id, 'ses_local')
@@ -69,7 +69,10 @@ test('local client preserves native error envelope', async () => {
     })
 
     await assert.rejects(
-        () => uc.get('ctx_missing'),
+        async () => {
+            const session = await uc.sessions.get('ctx_missing')
+            await session.context.current()
+        },
         error => {
             assert.ok(error instanceof UltraContextError)
             assert.equal(error.code, 'not_found')

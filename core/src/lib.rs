@@ -1,13 +1,18 @@
 //! UltraContext core: context and artifact storage for AI applications.
 
+use hmac::{Hmac, Mac};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Map, Value, json};
+use sha2::{Digest, Sha256};
 use std::collections::HashSet;
+use std::fmt;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+use url::Url;
 
 static ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
@@ -391,6 +396,38 @@ impl Default for UltraContextOptions {
 pub enum ContentStore {
     Inline { inline_limit: usize },
     LocalDir { root: PathBuf, inline_limit: usize },
+    S3(S3ContentStore),
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct S3ContentStore {
+    pub endpoint: String,
+    pub bucket: String,
+    pub region: String,
+    pub access_key_id: String,
+    pub secret_access_key: String,
+    pub session_token: Option<String>,
+    pub prefix: Option<String>,
+    pub inline_limit: usize,
+}
+
+impl fmt::Debug for S3ContentStore {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("S3ContentStore")
+            .field("endpoint", &self.endpoint)
+            .field("bucket", &self.bucket)
+            .field("region", &self.region)
+            .field("access_key_id", &redact_middle(&self.access_key_id))
+            .field("secret_access_key", &"<redacted>")
+            .field(
+                "session_token",
+                &self.session_token.as_ref().map(|_| "<redacted>"),
+            )
+            .field("prefix", &self.prefix)
+            .field("inline_limit", &self.inline_limit)
+            .finish()
+    }
 }
 
 impl ContentStore {
@@ -409,6 +446,10 @@ impl ContentStore {
             root: root.into(),
             inline_limit,
         }
+    }
+
+    pub fn s3(config: S3ContentStore) -> Self {
+        Self::S3(config)
     }
 }
 
@@ -2758,6 +2799,26 @@ fn store_content(
                 data: None,
             })
         }
+        ContentStore::S3(config) if bytes.len() <= config.inline_limit => Ok(StoredContent {
+            storage: json!({"type": "inline"}),
+            data: Some(bytes.to_vec()),
+        }),
+        ContentStore::S3(config) => {
+            let key = s3_ref_key(config, artifact_id, version);
+            s3_put(config, &key, bytes, kind)?;
+            Ok(StoredContent {
+                storage: json!({
+                    "type": "ref",
+                    "driver": "s3",
+                    "bucket": &config.bucket,
+                    "endpoint": &config.endpoint,
+                    "region": &config.region,
+                    "key": key,
+                    "kind": kind
+                }),
+                data: None,
+            })
+        }
     }
 }
 
@@ -2793,6 +2854,16 @@ fn read_content(store: &ContentStore, row: &NodeRow) -> UcResult<Option<Vec<u8>>
                 Err(error) => Err(io_error(error)),
             }
         }
+        Some("s3") => {
+            let ContentStore::S3(config) = store else {
+                return Ok(None);
+            };
+            let key = storage
+                .get("key")
+                .and_then(Value::as_str)
+                .ok_or_else(|| UcError::new(ErrorCode::Internal, "Content ref missing key"))?;
+            Ok(Some(s3_get(config, key)?))
+        }
         _ => Ok(None),
     }
 }
@@ -2801,23 +2872,34 @@ fn delete_content(store: &ContentStore, row: &NodeRow) -> UcResult<()> {
     let Some(storage) = row.content.get("storage") else {
         return Ok(());
     };
-    if storage.get("type").and_then(Value::as_str) != Some("ref")
-        || storage.get("driver").and_then(Value::as_str) != Some("local-dir")
-    {
+    if storage.get("type").and_then(Value::as_str) != Some("ref") {
         return Ok(());
     }
-
-    let ContentStore::LocalDir { root, .. } = store else {
-        return Ok(());
-    };
-    let Some(key) = storage.get("key").and_then(Value::as_str) else {
-        return Ok(());
-    };
-    let path = local_ref_path(root, key)?;
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(io_error(error)),
+    match storage.get("driver").and_then(Value::as_str) {
+        Some("local-dir") => {
+            let ContentStore::LocalDir { root, .. } = store else {
+                return Ok(());
+            };
+            let Some(key) = storage.get("key").and_then(Value::as_str) else {
+                return Ok(());
+            };
+            let path = local_ref_path(root, key)?;
+            match fs::remove_file(path) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(io_error(error)),
+            }
+        }
+        Some("s3") => {
+            let ContentStore::S3(config) = store else {
+                return Ok(());
+            };
+            let Some(key) = storage.get("key").and_then(Value::as_str) else {
+                return Ok(());
+            };
+            s3_delete(config, key)
+        }
+        _ => Ok(()),
     }
 }
 
@@ -2837,6 +2919,219 @@ fn local_ref_path(root: &Path, key: &str) -> UcResult<PathBuf> {
         path.push(part);
     }
     Ok(path)
+}
+
+type HmacSha256 = Hmac<Sha256>;
+
+fn s3_ref_key(config: &S3ContentStore, artifact_id: &str, version: usize) -> String {
+    let key = content_key(artifact_id, version);
+    match config
+        .prefix
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        Some(prefix) => format!("{}/{}", prefix.trim_matches('/'), key),
+        None => key,
+    }
+}
+
+fn s3_put(config: &S3ContentStore, key: &str, bytes: &[u8], kind: &str) -> UcResult<()> {
+    let request = signed_s3_request(config, "PUT", key, bytes)?;
+    let response = ureq::put(&request.url)
+        .set("host", &request.host)
+        .set("authorization", &request.authorization)
+        .set("x-amz-content-sha256", &request.payload_hash)
+        .set("x-amz-date", &request.amz_date)
+        .set("content-type", kind);
+    let response = if let Some(token) = config.session_token.as_deref() {
+        response.set("x-amz-security-token", token)
+    } else {
+        response
+    };
+    response.send_bytes(bytes).map(|_| ()).map_err(s3_error)
+}
+
+fn s3_get(config: &S3ContentStore, key: &str) -> UcResult<Vec<u8>> {
+    let request = signed_s3_request(config, "GET", key, &[])?;
+    let response = ureq::get(&request.url)
+        .set("host", &request.host)
+        .set("authorization", &request.authorization)
+        .set("x-amz-content-sha256", &request.payload_hash)
+        .set("x-amz-date", &request.amz_date);
+    let response = if let Some(token) = config.session_token.as_deref() {
+        response.set("x-amz-security-token", token)
+    } else {
+        response
+    };
+    let response = response.call().map_err(s3_error)?;
+    let mut reader = response.into_reader();
+    let mut bytes = Vec::new();
+    reader.read_to_end(&mut bytes).map_err(io_error)?;
+    Ok(bytes)
+}
+
+fn s3_delete(config: &S3ContentStore, key: &str) -> UcResult<()> {
+    let request = signed_s3_request(config, "DELETE", key, &[])?;
+    let response = ureq::delete(&request.url)
+        .set("host", &request.host)
+        .set("authorization", &request.authorization)
+        .set("x-amz-content-sha256", &request.payload_hash)
+        .set("x-amz-date", &request.amz_date);
+    let response = if let Some(token) = config.session_token.as_deref() {
+        response.set("x-amz-security-token", token)
+    } else {
+        response
+    };
+    match response.call() {
+        Ok(_) => Ok(()),
+        Err(ureq::Error::Status(404, _)) => Ok(()),
+        Err(error) => Err(s3_error(error)),
+    }
+}
+
+struct SignedS3Request {
+    url: String,
+    host: String,
+    payload_hash: String,
+    amz_date: String,
+    authorization: String,
+}
+
+fn signed_s3_request(
+    config: &S3ContentStore,
+    method: &str,
+    key: &str,
+    payload: &[u8],
+) -> UcResult<SignedS3Request> {
+    let endpoint = config.endpoint.trim_end_matches('/');
+    let bucket = uri_encode(&config.bucket, true);
+    let encoded_key = uri_encode(key, false);
+    let canonical_uri = format!("/{bucket}/{encoded_key}");
+    let url = format!("{endpoint}{canonical_uri}");
+    let parsed = Url::parse(&url).map_err(|error| {
+        UcError::new(
+            ErrorCode::InvalidInput,
+            format!("Invalid S3 endpoint or key: {error}"),
+        )
+    })?;
+    let host = match (parsed.host_str(), parsed.port()) {
+        (Some(host), Some(port)) => format!("{host}:{port}"),
+        (Some(host), None) => host.to_string(),
+        _ => {
+            return Err(UcError::new(
+                ErrorCode::InvalidInput,
+                "Invalid S3 endpoint host",
+            ));
+        }
+    };
+
+    let payload_hash = sha256_hex(payload);
+    let (date_stamp, amz_date) = amz_dates();
+    let signed_headers = if config.session_token.is_some() {
+        "host;x-amz-content-sha256;x-amz-date;x-amz-security-token"
+    } else {
+        "host;x-amz-content-sha256;x-amz-date"
+    };
+    let mut canonical_headers =
+        format!("host:{host}\nx-amz-content-sha256:{payload_hash}\nx-amz-date:{amz_date}\n");
+    if let Some(token) = config.session_token.as_deref() {
+        canonical_headers.push_str(&format!("x-amz-security-token:{}\n", token.trim()));
+    }
+    let canonical_request = format!(
+        "{method}\n{canonical_uri}\n\n{canonical_headers}\n{signed_headers}\n{payload_hash}"
+    );
+    let credential_scope = format!("{}/{}/s3/aws4_request", date_stamp, config.region);
+    let string_to_sign = format!(
+        "AWS4-HMAC-SHA256\n{amz_date}\n{credential_scope}\n{}",
+        sha256_hex(canonical_request.as_bytes())
+    );
+    let signing_key = s3_signing_key(&config.secret_access_key, &date_stamp, &config.region)?;
+    let signature = hex::encode(hmac_sha256(&signing_key, string_to_sign.as_bytes())?);
+    let authorization = format!(
+        "AWS4-HMAC-SHA256 Credential={}/{}, SignedHeaders={}, Signature={}",
+        config.access_key_id, credential_scope, signed_headers, signature
+    );
+
+    Ok(SignedS3Request {
+        url,
+        host,
+        payload_hash,
+        amz_date,
+        authorization,
+    })
+}
+
+fn s3_signing_key(secret: &str, date_stamp: &str, region: &str) -> UcResult<Vec<u8>> {
+    let k_date = hmac_sha256(format!("AWS4{secret}").as_bytes(), date_stamp.as_bytes())?;
+    let k_region = hmac_sha256(&k_date, region.as_bytes())?;
+    let k_service = hmac_sha256(&k_region, b"s3")?;
+    hmac_sha256(&k_service, b"aws4_request")
+}
+
+fn hmac_sha256(key: &[u8], data: &[u8]) -> UcResult<Vec<u8>> {
+    let mut mac = HmacSha256::new_from_slice(key)
+        .map_err(|error| UcError::new(ErrorCode::Internal, error.to_string()))?;
+    mac.update(data);
+    Ok(mac.finalize().into_bytes().to_vec())
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hex::encode(hasher.finalize())
+}
+
+fn uri_encode(value: &str, encode_slash: bool) -> String {
+    let mut encoded = String::new();
+    for byte in value.as_bytes() {
+        match *byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(*byte as char)
+            }
+            b'/' if !encode_slash => encoded.push('/'),
+            other => encoded.push_str(&format!("%{other:02X}")),
+        }
+    }
+    encoded
+}
+
+fn amz_dates() -> (String, String) {
+    let now = now_iso();
+    let date_stamp = format!("{}{}{}", &now[0..4], &now[5..7], &now[8..10]);
+    let amz_date = format!(
+        "{}T{}{}{}Z",
+        date_stamp,
+        &now[11..13],
+        &now[14..16],
+        &now[17..19]
+    );
+    (date_stamp, amz_date)
+}
+
+fn s3_error(error: ureq::Error) -> UcError {
+    match error {
+        ureq::Error::Status(404, _) => {
+            UcError::new(ErrorCode::Internal, "Content ref points to a missing blob")
+        }
+        ureq::Error::Status(status, response) => {
+            let body = response
+                .into_string()
+                .unwrap_or_else(|_| "S3 request failed".to_string());
+            UcError::new(
+                ErrorCode::Internal,
+                format!("S3 request failed with HTTP {status}: {body}"),
+            )
+        }
+        ureq::Error::Transport(error) => UcError::new(ErrorCode::Internal, error.to_string()),
+    }
+}
+
+fn redact_middle(value: &str) -> String {
+    if value.len() <= 8 {
+        return "<redacted>".to_string();
+    }
+    format!("{}...{}", &value[..4], &value[value.len() - 4..])
 }
 
 fn io_error(error: std::io::Error) -> UcError {

@@ -126,23 +126,59 @@ const uc = new UltraContext({
 
 ## Context Windows
 
-The alpha JS surface is flat and backed by Rust core operations:
+The JS surface is namespace-based and backed by Rust core operations:
 
 ```js
-const session = await uc.create({ metadata: { app: 'demo' } })
-const appended = await uc.append(session.id, { role: 'user', content: 'hi' })
+const session = await uc.sessions.create({ metadata: { app: 'demo' } })
+const appended = await session.context.append({ role: 'user', content: 'hi' })
 
-const history = await uc.contextHistory(session.id)
-const cleared = await uc.clearContext(session.id, {
+const history = await session.context.history()
+const cleared = await session.context.clear({
     metadata: { reason: 'reset window' }
 })
-const restored = await uc.restoreContext(session.id, appended.context_id, {
+const restored = await session.context.restore(appended.context_id, {
     metadata: { reason: 'time travel' }
 })
 ```
 
-The planned `uc.sessions.*` / `session.context.*` API should remain a thin
-wrapper over these same protocol operations.
+The namespaces are thin wrappers over core/protocol operations.
+
+## Artifacts And Files
+
+```js
+await session.artifacts.create({
+    path: 'draft.md',
+    kind: 'text/markdown',
+    data: '# Draft'
+})
+
+await session.fs.write('notes/today.md', '# Notes', {
+    kind: 'text/markdown'
+})
+
+const file = await session.fs.read('notes/today.md')
+```
+
+## S3 / R2 Content Store
+
+Project config can store large artifact bytes in an S3-compatible bucket:
+
+```json
+{
+  "storage": {
+    "driver": "s3",
+    "inlineLimit": 65536,
+    "s3": {
+      "endpoint": "https://<account>.r2.cloudflarestorage.com",
+      "bucket": "ultracontext",
+      "region": "auto",
+      "accessKeyId": "...",
+      "secretAccessKey": "...",
+      "prefix": "project-a"
+    }
+  }
+}
+```
 
 ## Devtools
 
@@ -166,12 +202,16 @@ Self-hosted fetch handler with an explicit engine:
 import { createUltraContextHandler } from 'ultracontext/server'
 
 const handler = createUltraContextHandler({
-    engine: coreBackedEngine
+    engine: {
+        dispatch(operation, payload) {
+            return core.dispatch(operation, payload)
+        }
+    }
 })
 ```
 
-The package no longer ships JS implementations of the node store. Domain
-semantics live in the Rust core. Postgres, S3/R2, and other storage backends
+The package does not ship JS implementations of the node store or content
+store. Domain and storage semantics live in the Rust core. Future backends
 should be added as Rust core adapters so every SDK keeps one source of truth.
 
 ## Bundlers
@@ -206,9 +246,9 @@ route.
 ## Sync
 
 ```js
-const snapshot = await source.exportSnapshot()
-await mirror.importSnapshot(snapshot)
+const snapshot = await source.sync.exportSnapshot()
+await mirror.sync.importSnapshot(snapshot)
 
-const changes = await source.exportChanges({ since: snapshot.cursor })
-await mirror.importChanges(changes)
+const changes = await source.sync.exportChanges({ since: snapshot.cursor })
+await mirror.sync.importChanges(changes)
 ```

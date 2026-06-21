@@ -35,11 +35,11 @@ Current status:
   installed; otherwise it raises a coded `UltraContextError`.
 - local mode can use `content_dir` plus `inline_limit` to keep large artifacts
   outside the SQLite database.
-- context-window operations are available as flat core-backed methods:
-  `context_history(session_id)`, `clear_context(session_id, metadata={...})`,
-  and `restore_context(session_id, context_id, metadata={...})`.
-- `export_snapshot()` / `export_changes()` and matching import calls provide a
-  first sync/mirror path.
+- local mode can use `s3={...}` to store large artifacts in S3/R2/MinIO through
+  the Rust core content-store adapter.
+- context-window operations are available through `session.context.*`.
+- `uc.sync.export_snapshot()` / `uc.sync.export_changes()` and matching import
+  calls provide a first sync/mirror path.
 
 Example:
 
@@ -47,15 +47,32 @@ Example:
 from ultracontext import UltraContext
 
 uc = UltraContext(mode="local", path=".ultracontext/ultracontext.db")
-session = uc.create(metadata={"app": "demo"})
-appended = uc.append(session["id"], {"role": "user", "content": "hi"})
+session = uc.sessions.create(metadata={"app": "demo"})
+appended = session.context.append({"role": "user", "content": "hi"})
 
-history = uc.context_history(session["id"])
-uc.clear_context(session["id"], metadata={"reason": "reset window"})
-uc.restore_context(
-    session["id"],
+history = session.context.history()
+session.context.clear(metadata={"reason": "reset window"})
+session.context.restore(
     appended["context_id"],
     metadata={"reason": "time travel"},
+)
+```
+
+S3/R2 local config:
+
+```py
+uc = UltraContext(
+    mode="local",
+    path=".ultracontext/ultracontext.db",
+    inline_limit=64 * 1024,
+    s3={
+        "endpoint": "https://<account>.r2.cloudflarestorage.com",
+        "bucket": "ultracontext",
+        "region": "auto",
+        "accessKeyId": "...",
+        "secretAccessKey": "...",
+        "prefix": "project-a",
+    },
 )
 ```
 

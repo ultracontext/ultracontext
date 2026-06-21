@@ -11,6 +11,8 @@ export class UltraContext extends UltraContextBase {
         this.path = transport.path
         this.contentDir = transport.contentDir
         this.inlineLimit = transport.inlineLimit
+        this.storageDriver = transport.storageDriver
+        this.s3 = transport.s3
     }
 
     static async openProject(options = {}) {
@@ -28,6 +30,8 @@ export async function openProject(options = {}) {
         path: config.db,
         contentDir: config.contentDir,
         inlineLimit: config.inlineLimit,
+        storageDriver: config.storageDriver,
+        s3: config.s3,
         native: options.native,
         core: options.core
     })
@@ -38,15 +42,19 @@ function createLocalTransport(config) {
     const path = config.path ?? config.db ?? 'ultracontext.db'
     const contentDir = config.contentDir
     const inlineLimit = config.inlineLimit
+    const storageDriver = config.storageDriver ?? (config.s3 ? 's3' : 'local-dir')
+    const s3 = config.s3
 
     return {
         path,
         contentDir,
         inlineLimit,
+        storageDriver,
+        s3,
         call(operation, body) {
             if (!core) {
                 const native = config.native ?? loadNative()
-                core = new native.UltraContextCore(path, nativeOptions({ contentDir, inlineLimit }))
+                core = new native.UltraContextCore(path, nativeOptions({ contentDir, inlineLimit, storageDriver, s3 }))
             }
             const envelope = JSON.parse(core.dispatchJson(operation, JSON.stringify(body)))
             if (envelope.error) {
@@ -62,7 +70,9 @@ function createLocalTransport(config) {
 
 function nativeOptions(client) {
     const options = {}
-    if (client.contentDir !== undefined) {
+    if (client.storageDriver === 's3' && client.s3 !== undefined) {
+        options.s3 = JSON.stringify(client.s3)
+    } else if (client.contentDir !== undefined) {
         options.contentDir = client.contentDir
         options.content_dir = client.contentDir
     }

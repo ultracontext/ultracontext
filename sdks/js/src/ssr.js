@@ -69,33 +69,7 @@ async function createHandler(options) {
 
 function coreBackedEngine(client) {
     return {
-        createWorkspace: input => client.createWorkspace(input),
-        listWorkspaces: () => client.listWorkspaces(),
-        createSession: (workspaceId, input) => client.createSession(workspaceId, input),
-        create: input => client.create(input),
-        fork: (sourceId, options) => client.fork(sourceId, options),
-        append: (contextId, messages) => client.append(contextId, messages),
-        get: (contextId, options) => client.get(contextId, options),
-        listContexts: () => client.get(),
-        contextHistory: contextId => client.contextHistory(contextId),
-        clear: (contextId, options) => client.clearContext(contextId, options),
-        restore: (contextId, restoreContextId, options) => client.restoreContext(contextId, restoreContextId, options),
-        update: (contextId, updates, options) => client.update(contextId, updates, options),
-        delete: (contextId, target, options) => client.delete(contextId, target, options),
-        search: (query, options) => client.search(query, options),
-        save: (contextId, input) => client.save(contextId, input),
-        load: (contextId, pathOrId, options) => client.load(contextId, pathOrId, options),
-        listArtifacts: contextId => client.load(contextId),
-        read: (contextId, pathOrId, options) => client.read(contextId, pathOrId, options),
-        write: (contextId, path, data, options) => client.write(contextId, path, data, options),
-        move: (contextId, fromPathOrId, toPath, options) => client.move(contextId, fromPathOrId, toPath, options),
-        remove: (contextId, pathOrId, options) => client.remove(contextId, pathOrId, options),
-        glob: (contextId, pattern, options) => client.glob(contextId, pattern, options),
-        grep: (contextId, query, options) => client.grep(contextId, query, options),
-        exportSnapshot: () => client.exportSnapshot(),
-        importSnapshot: snapshot => client.importSnapshot(snapshot),
-        exportChanges: options => client.exportChanges(options),
-        importChanges: changes => client.importChanges(changes)
+        dispatch: (operation, payload) => client._call(operation, payload ?? {})
     }
 }
 

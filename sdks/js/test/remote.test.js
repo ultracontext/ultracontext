@@ -26,7 +26,7 @@ test('remote client sends fetch-only context requests', async () => {
         fetch
     })
 
-    const created = await uc.create({ metadata: { app: 'demo' } })
+    const created = await uc.sessions.create({ metadata: { app: 'demo' } })
 
     assert.equal(created.id, 'ses_abc')
     assert.equal(calls[0].url, 'https://uc.example/v2/contexts')
@@ -43,7 +43,7 @@ test('createClient accepts Supabase-style base URL shorthand', async () => {
     }
     const uc = createClient('https://uc.example', { fetch })
 
-    await uc.get()
+    await uc.sessions.list()
 
     assert.equal(uc.baseUrl, 'https://uc.example')
     assert.equal(calls[0].url, 'https://uc.example/v2/contexts')
@@ -63,9 +63,10 @@ test('remote client supports messages and artifacts', async () => {
     }
     const uc = new UltraContext({ mode: 'remote', baseUrl: 'https://uc.example', fetch })
 
-    await uc.append('ses_abc', { role: 'user', content: 'hi' })
-    await uc.save('ses_abc', { path: 'draft.md', kind: 'text/markdown', data: '# Draft' })
-    const artifact = await uc.load('ses_abc', 'draft.md')
+    const session = await uc.sessions.get('ses_abc')
+    await session.context.append({ role: 'user', content: 'hi' })
+    await session.artifacts.create({ path: 'draft.md', kind: 'text/markdown', data: '# Draft' })
+    const artifact = await session.artifacts.get('draft.md')
 
     assert.equal(artifact.data, '# Draft')
     assert.equal(calls[0].url, 'https://uc.example/v2/contexts/ses_abc/messages')
@@ -89,9 +90,10 @@ test('remote client supports context window operations', async () => {
     }
     const uc = new UltraContext({ mode: 'remote', baseUrl: 'https://uc.example', fetch })
 
-    const history = await uc.contextHistory('ses_abc')
-    await uc.clearContext('ses_abc', { metadata: { reason: 'reset' } })
-    await uc.restoreContext('ses_abc', 'ctx_v1', { metadata: { reason: 'time travel' } })
+    const session = await uc.sessions.get('ses_abc')
+    const history = await session.context.history()
+    await session.context.clear({ metadata: { reason: 'reset' } })
+    await session.context.restore('ctx_v1', { metadata: { reason: 'time travel' } })
 
     assert.equal(history.data[0].id, 'ctx_v1')
     assert.equal(calls[0].url, 'https://uc.example/v2/contexts/ses_abc/history')
@@ -113,7 +115,10 @@ test('remote errors preserve UltraContext code', async () => {
     const uc = new UltraContext({ mode: 'remote', baseUrl: 'https://uc.example', fetch })
 
     await assert.rejects(
-        () => uc.get('ctx_missing'),
+        async () => {
+            const session = await uc.sessions.get('ctx_missing')
+            await session.context.current()
+        },
         error => {
             assert.ok(error instanceof UltraContextError)
             assert.equal(error.code, 'not_found')
@@ -134,7 +139,7 @@ test('remote client binds global fetch to avoid browser illegal invocation', asy
 
     try {
         const uc = new UltraContext({ baseUrl: 'https://uc.example' })
-        await uc.get()
+        await uc.sessions.list()
         assert.equal(receiver, globalThis)
     } finally {
         globalThis.fetch = originalFetch
@@ -177,7 +182,7 @@ test('createBrowserClient returns a browser remote client', async () => {
     }
     const uc = createBrowserClient('https://uc.example', { fetch })
 
-    await uc.get()
+    await uc.sessions.list()
 
     assert.equal(uc.mode, 'remote')
     assert.equal(calls[0].url, 'https://uc.example/v2/contexts')

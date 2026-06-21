@@ -28,7 +28,7 @@ Path/artifact verbs
   |
 Node store                Content store
   |                       |
-workspaces/sessions       inline text | local-dir | future S3/R2/MinIO
+workspaces/sessions       inline text | local-dir | S3/R2/MinIO
 contexts/messages
 artifacts/versions
 ```
@@ -37,9 +37,8 @@ Blocks must be replaceable without changing domain objects:
 
 - **Node store**: workspace/session/context/message/artifact graph, versions,
   paths, metadata, conflict checks, search index.
-- **Content store**: bytes behind an artifact version. Inline and local-dir are
-  current Rust core implementations; S3/R2/MinIO should be Rust core adapters,
-  not SDK-only node-store implementations.
+- **Content store**: bytes behind an artifact version. Inline, local-dir, and
+  S3-compatible object stores are current Rust core implementations.
 - **Path projection**: maps relative paths to artifact ids.
 - **Agent surface**: SDK verbs, local materialization, and optional native
   mounts over the same path projection.
@@ -55,8 +54,7 @@ Requirements:
 
 - one inspectable database file by default;
 - small text artifacts inline by default;
-- optional local directory content store for large bytes today; S3/R2 should
-  be added as Rust core adapters;
+- optional local directory or S3-compatible content store for large bytes;
 - same public behavior as remote mode.
 
 ### Remote Edge
@@ -100,10 +98,9 @@ session. Advanced callers may target a workspace directly.
 
 ## SDK Surface
 
-The language SDKs should expose a session-first handle API. Names may use
-language idiom, but behavior and shapes must match. The current alpha ships a
-flat compatibility client first; handle APIs should be added only as thin
-wrappers over Rust core/protocol operations.
+The language SDKs expose a session-first handle API. Names may use language
+idiom, but behavior and shapes must match. SDK methods must stay thin wrappers
+over Rust core/protocol operations.
 
 Progressive disclosure rule:
 
@@ -114,79 +111,48 @@ Progressive disclosure rule:
   subagents, a session log, and context snapshots;
 - `session.context` is the current model-facing window for that session;
 - mutations through `session.context.*` advance the current context while
-  preserving the durable session log and context revision history;
-- compatibility flat verbs such as `create`, `append`, `get`, `update`,
-  `delete`, `save`, and `load` remain part of the alpha surface while the
-  session-handle API is wired.
+  preserving the durable session log and context revision history.
 
-Current alpha flat surface:
-
-- `createWorkspace({metadata?}) -> Workspace`
-- `listWorkspaces() -> {data}`
-- `createSession(workspaceId, {metadata?}) -> Session`
-- `create({workspaceId?, metadata?}) -> Session`
-- `get() -> {data}` lists sessions
-- `get(sessionId, {version?}) -> {id, context_id, data, version}`
-- `fork(sessionId, {version?, metadata?}) -> Session`
-- `append(sessionId, entry | entry[]) -> {context_id, data, version}`
-- `update(sessionId, patch | patch[], {metadata?}) -> {context_id, data, version}`
-- `delete(sessionId, target | target[], {metadata?}) -> {context_id, data, version}`
-- `delete(sessionId, {permanent: true}) -> {deleted, id}`
-- `contextHistory(sessionId)` / Python `context_history(session_id)`
-- `clearContext(sessionId, {metadata?})` / Python `clear_context(...)`
-- `restoreContext(sessionId, contextId, {metadata?})` / Python `restore_context(...)`
-- artifact verbs: `save`, `load`, `read`, `write`, `move`, `remove`, `glob`,
-  `grep`
-- sync verbs: `exportSnapshot`, `importSnapshot`, `exportChanges`,
-  `importChanges`
-
-Target handle SDK surface:
+Current handle SDK surface:
 
 - `uc.sessions.create({workspaceId?, metadata?}) -> Session`
 - `uc.sessions.get(id) -> Session`
-- `uc.sessions.list({workspaceId?, limit?, cursor?}) -> {data, cursor?}`
+- `uc.sessions.list() -> {data}`
 - `uc.sessions.delete(id) -> {deleted, id}`. Session deletion is permanent and
   removes the session, its log, its context snapshots, and its session-artifact
   attachments. It does not delete workspace artifacts.
+- `uc.sessions.fork(id, {version?, metadata?}) -> Session`
 - `uc.workspaces.create({metadata?}) -> Workspace`
-- `uc.workspaces.get(id) -> Workspace`
-- `uc.workspaces.list({limit?, cursor?}) -> {data, cursor?}`
-- `uc.workspaces.update(id, {metadata}) -> Workspace`
-- `uc.workspaces.delete(id, {permanent?}) -> {deleted, id}`
-- `uc.artifacts.create({workspaceId?, path?, content?, data?, mediaType?, kind?, metadata?}) -> Artifact`
-- `uc.artifacts.get(id, {version?}) -> Artifact`
-- `uc.artifacts.list({workspaceId?, pathPrefix?, limit?, cursor?}) -> {data, cursor?}`
-- `uc.artifacts.update(id, {path?, content?, data?, mediaType?, kind?, metadata?, ifVersion?}) -> Artifact`
-- `uc.artifacts.delete(id, {permanent?}) -> {deleted, id}`
-- `uc.fs.*` exposes the workspace path projection over artifacts.
-- `uc.search(query, {workspaceId?, sessionId?, kind?, limit?, cursor?}) -> {data, cursor?}`
+- `uc.workspaces.list() -> {data}`
+- `uc.artifacts.session(sessionId) -> session.artifacts`
+- `uc.fs.session(sessionId) -> session.fs`
+- `uc.search.query(query) -> {data}`
+- `uc.sync.exportSnapshot()`, `uc.sync.importSnapshot(snapshot)`,
+  `uc.sync.exportChanges({since?})`, `uc.sync.importChanges(changes)`
 
 Session handle surface:
 
 - `session.id`
-- `session.workspaceId`
+- `session.workspaceId` / `session.workspace_id`
 - `session.metadata`
-- `session.createdAt`
-- `session.updatedAt?`
-- `session.update({metadata}) -> Session`
+- `session.createdAt` / `session.created_at`
 - `session.delete() -> {deleted, id}`. Session deletion is permanent.
-- `session.fork({contextId?, at?, kind?, metadata?}) -> Session`
+- `session.fork({version?, metadata?}) -> Session`
 - `session.context.current() -> ContextSnapshot`
+- `session.context.list() -> {data, context_id, version}`
 - `session.context.append(entry | entry[]) -> ContextMutation`
-- `session.context.entries({contextId?}) -> {data, context}`
-- `session.context.update(entryId, patch) -> ContextMutation`
-- `session.context.remove(entryId | entryId[]) -> ContextMutation`
+- `session.context.update(patch | patch[], {metadata?}) -> ContextMutation`
+- `session.context.delete(entryId | entryId[], {metadata?}) -> ContextMutation`
 - `session.context.clear() -> ContextMutation`
-- `session.context.stats({model?}) -> ContextStats`
-- `session.context.history({limit?, cursor?}) -> {data, cursor?}`
+- `session.context.history() -> {data}`
 - `session.context.restore(contextId) -> ContextMutation`
-- `session.log.entries({limit?, cursor?}) -> {data, cursor?}` for advanced
-  audit/history use.
-- `session.artifacts.list({pathPrefix?, limit?, cursor?}) -> {data, cursor?}`
-- `session.artifacts.attach(artifactId, {version?}) -> Attachment`
-- `session.artifacts.detach(artifactId) -> {detached, id}`
+- `session.artifacts.list() -> {data}`
+- `session.artifacts.get(pathOrId, {version?}) -> Artifact`
+- `session.artifacts.update(pathOrId, data, {kind?, metadata?, ifVersion?}) -> Artifact`
+- `session.artifacts.delete(pathOrId, {ifVersion?}) -> {deleted, id}`
 - `session.artifacts.create(input) -> Artifact` creates a workspace artifact
-  and attaches it to this session.
+- `session.fs.list({prefix?})`, `read`, `write`, `move`, `remove`, `glob`,
+  and `grep` expose the workspace path projection.
 
 Context mutation rules:
 
@@ -300,7 +266,10 @@ External storage:
   "storage": {
     "type": "ref",
     "driver": "s3",
-    "key": "artifacts/art_.../v1"
+    "bucket": "ultracontext",
+    "endpoint": "https://<account>.r2.cloudflarestorage.com",
+    "region": "auto",
+    "key": "project-a/artifacts/art_.../v1"
   }
 }
 ```

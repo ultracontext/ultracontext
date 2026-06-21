@@ -11,8 +11,8 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 use ultracontext::{
-    ArtifactBytes, ArtifactMeta, ContentStore, ErrorCode, FileWrite, UcError, UltraContext,
-    UltraContextOptions,
+    ArtifactBytes, ArtifactMeta, ContentStore, ErrorCode, FileWrite, S3ContentStore, UcError,
+    UltraContext, UltraContextOptions,
 };
 
 use super::mount_utils::{
@@ -32,6 +32,7 @@ pub struct MountConfig {
     pub db: String,
     pub content_dir: Option<PathBuf>,
     pub inline_limit: usize,
+    pub s3: Option<S3ContentStore>,
     pub scope: MountScope,
     pub mountpoint: PathBuf,
     pub foreground: bool,
@@ -97,6 +98,20 @@ fn spawn_background(config: MountConfig) -> Result<(), UcError> {
         .arg(config.inline_limit.to_string());
     if let Some(content_dir) = &config.content_dir {
         command.arg("--content-dir").arg(content_dir);
+    }
+    if let Some(s3) = &config.s3 {
+        command.env("UC_STORAGE_DRIVER", "s3");
+        command.env("UC_S3_ENDPOINT", &s3.endpoint);
+        command.env("UC_S3_BUCKET", &s3.bucket);
+        command.env("UC_S3_REGION", &s3.region);
+        command.env("UC_S3_ACCESS_KEY_ID", &s3.access_key_id);
+        command.env("UC_S3_SECRET_ACCESS_KEY", &s3.secret_access_key);
+        if let Some(token) = &s3.session_token {
+            command.env("UC_S3_SESSION_TOKEN", token);
+        }
+        if let Some(prefix) = &s3.prefix {
+            command.env("UC_S3_PREFIX", prefix);
+        }
     }
     command.arg("mount");
     match &config.scope {
@@ -175,9 +190,14 @@ fn spawn_background(config: MountConfig) -> Result<(), UcError> {
 async fn mount_async(config: MountConfig) -> Result<(), UcError> {
     fs::create_dir_all(&config.mountpoint).map_err(io_error)?;
     let content_store = config
-        .content_dir
-        .as_ref()
-        .map(|root| ContentStore::local_dir(root, config.inline_limit))
+        .s3
+        .map(ContentStore::s3)
+        .or_else(|| {
+            config
+                .content_dir
+                .as_ref()
+                .map(|root| ContentStore::local_dir(root, config.inline_limit))
+        })
         .unwrap_or_else(|| ContentStore::inline_with_limit(config.inline_limit));
     let uc = UltraContext::open_with_options(&config.db, UltraContextOptions { content_store })?;
     let scope = resolve_mount_scope(&uc, config.scope)?;

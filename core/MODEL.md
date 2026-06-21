@@ -7,8 +7,8 @@ materialization, and an optional native NFS mount.
 
 The database is the source of truth for identity, history, metadata,
 provenance, paths, and content references. Small text can live inline in the
-database. Large bytes can live in a Rust core content store. Inline and
-local-dir are implemented today; S3, R2, and MinIO are future core adapters.
+database. Large bytes can live in a Rust core content store. Inline, local-dir,
+and S3-compatible object stores are implemented today.
 
 ```
 SDK / HTTP / local materialization / optional native mount
@@ -136,7 +136,7 @@ The model uses three structural pointers with separate meanings:
 
 A workspace is the project-like namespace for artifacts and future policy/sync
 scoping. The default API creates a hidden `ws_default` workspace so simple
-users can start with `create()` and never think about workspaces.
+users can start with `uc.sessions.create()` and never think about workspaces.
 
 A session is the stable handle for a conversation, run, or agent task. It owns
 an append-only log of what happened. Appending a user/assistant/tool message
@@ -160,11 +160,6 @@ Mutations through `session.context.*` advance the current context while
 preserving the durable session log and context revision history. This keeps the
 product language centered on context without making a context snapshot the
 root identity.
-
-The alpha SDKs currently expose these same operations as flat pass-through
-methods (`append`, `update`, `delete`, `contextHistory`/`context_history`,
-`clearContext`/`clear_context`, `restoreContext`/`restore_context`). Those
-methods are compatibility surface over the Rust core, not a separate model.
 
 - `append` adds messages to the session log. If the current context already has
   a materialized projected window, the new message is also projected into that
@@ -286,7 +281,7 @@ Content store:
 
 - inline database content for small text and markdown;
 - local directory for local cache or large local files;
-- future Rust core adapters for S3/R2/MinIO shared blobs.
+- S3-compatible object storage for S3, R2, MinIO, and shared remote blobs.
 
 The content store can be swapped. The node store remains the source of truth.
 

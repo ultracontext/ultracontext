@@ -47,31 +47,32 @@ test('remote client can sync snapshots and incremental changes through Rust-back
     const mirror = clientFor(mirrorRoot)
 
     try {
-        const ctx = await source.create({ metadata: { app: 'sync' } })
-        await source.append(ctx.id, { content: 'base' })
+        const ctx = await source.sessions.create({ metadata: { app: 'sync' } })
+        await ctx.context.append({ content: 'base' })
 
-        const snapshot = await source.exportSnapshot()
+        const snapshot = await source.sync.exportSnapshot()
         const cursor = snapshot.cursor
-        const snapshotImport = await mirror.importSnapshot(snapshot)
+        const snapshotImport = await mirror.sync.importSnapshot(snapshot)
         assert.ok(snapshotImport.imported > 0)
 
-        await source.append(ctx.id, { content: 'next' })
-        await source.write(ctx.id, 'sync.md', 'synced content', { kind: 'text/markdown' })
-        const changes = await source.exportChanges({ since: cursor })
-        const imported = await mirror.importChanges(changes)
+        await ctx.context.append({ content: 'next' })
+        await ctx.fs.write('sync.md', 'synced content', { kind: 'text/markdown' })
+        const changes = await source.sync.exportChanges({ since: cursor })
+        const imported = await mirror.sync.importChanges(changes)
 
         assert.ok(changes.cursor > cursor)
         assert.ok(imported.imported > 0)
         assert.equal(imported.conflicts.length, 0)
-        assert.equal((await mirror.get(ctx.id)).data[1].content, 'next')
-        assert.equal((await mirror.read(ctx.id, 'sync.md')).data, 'synced content')
+        const mirrored = await mirror.sessions.get(ctx.id)
+        assert.equal((await mirrored.context.current()).data[1].content, 'next')
+        assert.equal((await mirrored.fs.read('sync.md')).data, 'synced content')
 
-        const repeated = await mirror.importChanges(changes)
+        const repeated = await mirror.sync.importChanges(changes)
         assert.ok(repeated.skipped > 0)
         assert.equal(repeated.conflicts.length, 0)
 
         changes.nodes[0].public_id = 'ctx_conflicting'
-        const conflict = await mirror.importChanges(changes)
+        const conflict = await mirror.sync.importChanges(changes)
         assert.equal(conflict.conflicts.length, 1)
     } finally {
         rmSync(sourceRoot, { recursive: true, force: true })

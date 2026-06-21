@@ -19,9 +19,9 @@ class RemoteClientTests(unittest.TestCase):
             transport=transport,
         )
 
-        created = uc.create(metadata={"app": "demo"})
+        created = uc.sessions.create(metadata={"app": "demo"})
 
-        self.assertEqual(created["id"], "ses_abc")
+        self.assertEqual(created.id, "ses_abc")
         method, url, headers, payload = calls[0]
         self.assertEqual(method, "POST")
         self.assertEqual(url, "https://uc.example/v2/contexts")
@@ -41,9 +41,10 @@ class RemoteClientTests(unittest.TestCase):
 
         uc = UltraContext(mode="remote", base_url="https://uc.example", transport=transport)
 
-        uc.append("ses_abc", {"role": "user", "content": "hi"})
-        uc.save("ses_abc", {"path": "draft.md", "kind": "text/markdown", "data": "# Draft"})
-        artifact = uc.load("ses_abc", "draft.md")
+        session = uc.sessions.get("ses_abc")
+        session.context.append({"role": "user", "content": "hi"})
+        session.artifacts.create({"path": "draft.md", "kind": "text/markdown", "data": "# Draft"})
+        artifact = session.artifacts.get("draft.md")
 
         self.assertEqual(artifact["data"], "# Draft")
         self.assertEqual(calls[0][1], "https://uc.example/v2/contexts/ses_abc/messages")
@@ -76,9 +77,10 @@ class RemoteClientTests(unittest.TestCase):
 
         uc = UltraContext(mode="remote", base_url="https://uc.example", transport=transport)
 
-        history = uc.context_history("ses_abc")
-        uc.clear_context("ses_abc", metadata={"reason": "reset"})
-        uc.restore_context("ses_abc", "ctx_v1", metadata={"reason": "time travel"})
+        session = uc.sessions.get("ses_abc")
+        history = session.context.history()
+        session.context.clear(metadata={"reason": "reset"})
+        session.context.restore("ctx_v1", metadata={"reason": "time travel"})
 
         self.assertEqual(history["data"][0]["id"], "ctx_v1")
         self.assertEqual(calls[0][0], "GET")
@@ -101,7 +103,7 @@ class RemoteClientTests(unittest.TestCase):
         uc = UltraContext(mode="remote", base_url="https://uc.example", transport=transport)
 
         with self.assertRaises(UltraContextError) as error:
-            uc.get("ctx_missing")
+            uc.sessions.get("ctx_missing").context.current()
 
         self.assertEqual(error.exception.code, "not_found")
         self.assertEqual(error.exception.status, 404)

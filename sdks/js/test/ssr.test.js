@@ -14,9 +14,9 @@ test('createRouteHandler rewrites app route prefix to protocol route', async () 
     const calls = []
     const routes = createRouteHandler({
         engine: {
-            async create(input) {
-                calls.push(['create', input])
-                return { id: 'ses_route', metadata: input.metadata, created_at: 'now' }
+            async dispatch(operation, payload) {
+                calls.push([operation, payload])
+                return { id: 'ses_route', metadata: payload.metadata, created_at: 'now' }
             }
         }
     })
@@ -38,7 +38,7 @@ test('createRouteHandler rewrites app route prefix to protocol route', async () 
 test('createUltraContextNextHandler aliases the route handler for Next apps', async () => {
     const routes = createUltraContextNextHandler({
         engine: {
-            async listContexts() {
+            async dispatch() {
                 return { data: [] }
             }
         }

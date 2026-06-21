@@ -33,13 +33,23 @@ export async function loadProjectConfig(options = {}) {
             ?? DEFAULT_INLINE_LIMIT,
         'inlineLimit'
     )
+    const s3 = s3Config(options.s3 ?? raw.storage?.s3 ?? raw.storage?.S3)
+    const storageDriver = options.storageDriver
+        ?? options.storage_driver
+        ?? process.env.UC_STORAGE_DRIVER
+        ?? raw.storage?.driver
+        ?? (s3 ? 's3' : 'local-dir')
 
     return {
         projectRoot: root,
         configPath,
         db: resolveConfigPath(root, db),
-        contentDir: resolveConfigPath(root, contentDir),
+        contentDir: storageDriver === 's3' || storageDriver === 'inline'
+            ? undefined
+            : resolveConfigPath(root, contentDir),
         inlineLimit,
+        storageDriver,
+        s3,
         raw
     }
 }
@@ -69,4 +79,28 @@ function numberOption(value, name) {
         throw new Error(`UltraContext config ${name} must be a non-negative number`)
     }
     return parsed
+}
+
+function s3Config(input) {
+    const config = {
+        endpoint: process.env.UC_S3_ENDPOINT,
+        bucket: process.env.UC_S3_BUCKET,
+        region: process.env.UC_S3_REGION,
+        accessKeyId: process.env.UC_S3_ACCESS_KEY_ID,
+        secretAccessKey: process.env.UC_S3_SECRET_ACCESS_KEY,
+        sessionToken: process.env.UC_S3_SESSION_TOKEN,
+        prefix: process.env.UC_S3_PREFIX,
+        ...(input ?? {})
+    }
+    const hasConfig = Object.values(config).some(value => value !== undefined && value !== '')
+    if (!hasConfig) return undefined
+    return {
+        endpoint: config.endpoint,
+        bucket: config.bucket,
+        region: config.region ?? 'auto',
+        accessKeyId: config.accessKeyId ?? config.access_key_id,
+        secretAccessKey: config.secretAccessKey ?? config.secret_access_key,
+        sessionToken: config.sessionToken ?? config.session_token,
+        prefix: config.prefix
+    }
 }

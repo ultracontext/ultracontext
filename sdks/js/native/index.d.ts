@@ -8,4 +8,5 @@ export declare class UltraContextCore {
 export interface UltraContextCoreOptions {
   contentDir?: string
   inlineLimit?: number
+  s3?: string
 }

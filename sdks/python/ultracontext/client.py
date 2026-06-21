@@ -22,6 +22,7 @@ class UltraContext:
         path="ultracontext.db",
         content_dir=None,
         inline_limit=None,
+        s3=None,
         native=None,
     ):
         self.mode = mode or ("remote" if api_key else "local")
@@ -30,261 +31,20 @@ class UltraContext:
         self.transport = transport or self._default_transport
         self.content_dir = content_dir
         self.inline_limit = inline_limit
+        self.s3 = s3
         self.core = (
-            self._load_native(native, path, content_dir, inline_limit)
+            self._load_native(native, path, content_dir, inline_limit, s3)
             if self.mode == "local"
             else None
         )
+        self.workspaces = WorkspacesApi(self)
+        self.sessions = SessionsApi(self)
+        self.artifacts = WorkspaceArtifactsApi(self)
+        self.fs = FileSystemApi(self)
+        self.search = SearchApi(self)
+        self.sync = SyncApi(self)
 
-    def create_workspace(self, input=None, **kwargs):
-        metadata = kwargs.pop("metadata", None)
-        if input is None:
-            input = {}
-        if metadata is not None:
-            input = {"metadata": metadata}
-        elif "metadata" not in input:
-            input = {"metadata": input}
-        return self._call("create_workspace", input, "POST", "/v2/workspaces", input)
-
-    def list_workspaces(self):
-        return self._call("list_workspaces", {}, "GET", "/v2/workspaces")
-
-    def create_session(self, workspace_id, input=None, **kwargs):
-        metadata = kwargs.pop("metadata", None)
-        if input is None:
-            input = {}
-        if metadata is not None:
-            input = {"metadata": metadata}
-        elif "metadata" not in input:
-            input = {"metadata": input}
-        local = {"workspaceId": workspace_id, **input}
-        return self._call(
-            "create_session",
-            local,
-            "POST",
-            f"/v2/workspaces/{workspace_id}/sessions",
-            input,
-        )
-
-    def create(self, input=None, **kwargs):
-        metadata = kwargs.pop("metadata", None)
-        workspace_id = kwargs.pop("workspaceId", kwargs.pop("workspace_id", None))
-        if input is None:
-            input = {}
-        if isinstance(input, dict):
-            workspace_id = input.get("workspaceId", input.get("workspace_id", workspace_id))
-        if metadata is not None:
-            input = {"metadata": metadata}
-        elif "metadata" not in input:
-            input = {"metadata": input}
-        if workspace_id is not None:
-            input = {**input, "workspaceId": workspace_id}
-        return self._call("create", input, "POST", "/v2/contexts", input)
-
-    def fork(self, source_id, **options):
-        local = {"sourceId": source_id, **options}
-        return self._call("fork", local, "POST", f"/v2/contexts/{source_id}/fork", options)
-
-    def append(self, context_id, messages):
-        if not isinstance(messages, list):
-            messages = [messages]
-        body = {"messages": messages}
-        return self._call(
-            "append",
-            {"ctxId": context_id, **body},
-            "POST",
-            f"/v2/contexts/{context_id}/messages",
-            body,
-        )
-
-    def get(self, context_id=None, **options):
-        if context_id is None:
-            return self._call("list_contexts", {}, "GET", "/v2/contexts")
-        return self._call(
-            "get",
-            {"ctxId": context_id, **options},
-            "POST",
-            f"/v2/contexts/{context_id}/get",
-            options,
-        )
-
-    def context_history(self, context_id):
-        return self._call(
-            "context_history",
-            {"ctxId": context_id},
-            "GET",
-            f"/v2/contexts/{context_id}/history",
-        )
-
-    def clear_context(self, context_id, **options):
-        return self._call(
-            "context_clear",
-            {"ctxId": context_id, **options},
-            "POST",
-            f"/v2/contexts/{context_id}/clear",
-            options,
-        )
-
-    def restore_context(self, context_id, restore_context_id, **options):
-        body = {"contextId": restore_context_id, **options}
-        return self._call(
-            "context_restore",
-            {"ctxId": context_id, "restoreContextId": restore_context_id, **options},
-            "POST",
-            f"/v2/contexts/{context_id}/restore",
-            body,
-        )
-
-    def update(self, context_id, updates=None, **options):
-        body = {"updates": updates, **options}
-        return self._call(
-            "update",
-            {"ctxId": context_id, **body},
-            "POST",
-            f"/v2/contexts/{context_id}/update",
-            body,
-        )
-
-    def delete(self, context_id, target=None, **options):
-        body = {"target": target, **options}
-        return self._call(
-            "delete",
-            {"ctxId": context_id, **body},
-            "POST",
-            f"/v2/contexts/{context_id}/delete",
-            body,
-        )
-
-    def search(self, query, **options):
-        body = {"query": query, **options}
-        return self._call("search", body, "POST", "/v2/search", body)
-
-    def save(self, context_id, input):
-        return self._call(
-            "save",
-            {"ctxId": context_id, **input},
-            "POST",
-            f"/v2/contexts/{context_id}/artifacts",
-            input,
-        )
-
-    def load(self, context_id, path_or_id=None, **options):
-        if path_or_id is None:
-            return self._call(
-                "list_artifacts",
-                {"ctxId": context_id},
-                "GET",
-                f"/v2/contexts/{context_id}/artifacts",
-            )
-        body = {"pathOrId": path_or_id, **options}
-        return self._call(
-            "load",
-            {"ctxId": context_id, **body},
-            "POST",
-            f"/v2/contexts/{context_id}/artifacts/load",
-            body,
-        )
-
-    def read(self, context_id, path_or_id, **options):
-        body = {"pathOrId": path_or_id, **options}
-        return self._call(
-            "file_read",
-            {"ctxId": context_id, **body},
-            "POST",
-            f"/v2/contexts/{context_id}/files/read",
-            body,
-        )
-
-    def write(self, context_id, path, data, **options):
-        body = {"path": path, "data": data, **options}
-        return self._call(
-            "file_write",
-            {"ctxId": context_id, **body},
-            "POST",
-            f"/v2/contexts/{context_id}/files/write",
-            body,
-        )
-
-    def move(self, context_id, from_path_or_id, to_path, **options):
-        body = {"fromPathOrId": from_path_or_id, "toPath": to_path, **options}
-        return self._call(
-            "file_move",
-            {"ctxId": context_id, **body},
-            "POST",
-            f"/v2/contexts/{context_id}/files/move",
-            body,
-        )
-
-    def remove(self, context_id, path_or_id, **options):
-        body = {"pathOrId": path_or_id, **options}
-        return self._call(
-            "file_remove",
-            {"ctxId": context_id, **body},
-            "POST",
-            f"/v2/contexts/{context_id}/files/remove",
-            body,
-        )
-
-    def glob(self, context_id, pattern, **options):
-        body = {"pattern": pattern, **options}
-        return self._call(
-            "file_glob",
-            {"ctxId": context_id, **body},
-            "POST",
-            f"/v2/contexts/{context_id}/files/glob",
-            body,
-        )
-
-    def grep(self, context_id, query, **options):
-        body = {"query": query, **options}
-        return self._call(
-            "file_grep",
-            {"ctxId": context_id, **body},
-            "POST",
-            f"/v2/contexts/{context_id}/files/grep",
-            body,
-        )
-
-    def export_snapshot(self):
-        return self._call(
-            "export_snapshot",
-            {},
-            "POST",
-            "/v2/sync/export_snapshot",
-            {},
-        )
-
-    def import_snapshot(self, snapshot):
-        return self._call(
-            "import_snapshot",
-            snapshot,
-            "POST",
-            "/v2/sync/import_snapshot",
-            snapshot,
-        )
-
-    def export_changes(self, since=None):
-        body = {}
-        if since is not None:
-            body["since"] = since
-        return self._call(
-            "export_changes",
-            body,
-            "POST",
-            "/v2/sync/export_changes",
-            body,
-        )
-
-    def import_changes(self, changes):
-        return self._call(
-            "import_changes",
-            changes,
-            "POST",
-            "/v2/sync/import_changes",
-            changes,
-        )
-
-    def _call(self, operation, local_body, method, path, remote_body=None):
+    def _call(self, operation, local_body, method="POST", path="/", remote_body=None):
         if self.mode == "local":
             return self._call_local(operation, local_body)
         return self._request(method, path, remote_body)
@@ -325,7 +85,7 @@ class UltraContext:
 
         return response_body
 
-    def _load_native(self, native, path, content_dir, inline_limit):
+    def _load_native(self, native, path, content_dir, inline_limit, s3):
         if native is None:
             try:
                 from . import _native as native
@@ -336,7 +96,13 @@ class UltraContext:
                 ) from error
 
         try:
-            return native.UltraContextCore(path, content_dir, inline_limit)
+            s3_json = None if s3 is None else json.dumps(s3)
+            try:
+                return native.UltraContextCore(path, content_dir, inline_limit, s3_json)
+            except TypeError:
+                if s3_json is not None:
+                    raise
+                return native.UltraContextCore(path, content_dir, inline_limit)
         except Exception as error:
             raise UltraContextError(str(error), code="internal") from error
 
@@ -354,3 +120,362 @@ class UltraContext:
         except urllib.error.HTTPError as error:
             text = error.read().decode("utf-8")
             return error.code, json.loads(text) if text else None
+
+
+class WorkspacesApi:
+    def __init__(self, client):
+        self.client = client
+
+    def create(self, input=None, **kwargs):
+        body = metadata_body(input, kwargs)
+        return self.client._call("create_workspace", body, "POST", "/v2/workspaces", body)
+
+    def list(self):
+        return self.client._call("list_workspaces", {}, "GET", "/v2/workspaces")
+
+
+class SessionsApi:
+    def __init__(self, client):
+        self.client = client
+
+    def create(self, input=None, **kwargs):
+        input = dict(input or {})
+        input.update(kwargs)
+        workspace_id = input.pop("workspaceId", input.pop("workspace_id", None))
+        body = metadata_body(input, {})
+        if workspace_id:
+            summary = self.client._call(
+                "create_session",
+                {"workspaceId": workspace_id, **body},
+                "POST",
+                f"/v2/workspaces/{workspace_id}/sessions",
+                body,
+            )
+        else:
+            summary = self.client._call("create", body, "POST", "/v2/contexts", body)
+        return SessionHandle(self.client, summary)
+
+    def get(self, session_id):
+        if not session_id:
+            raise UltraContextError("Missing session id", code="invalid_input")
+        return SessionHandle(self.client, {"id": session_id})
+
+    def list(self):
+        return self.client._call("list_contexts", {}, "GET", "/v2/contexts")
+
+    def delete(self, session_id):
+        return self.client._call(
+            "delete_context",
+            {"ctxId": session_id},
+            "POST",
+            f"/v2/contexts/{session_id}/delete",
+            {"target": {"permanent": True}},
+        )
+
+    def fork(self, source_id, **options):
+        summary = self.client._call(
+            "fork",
+            {"sourceId": source_id, **options},
+            "POST",
+            f"/v2/contexts/{source_id}/fork",
+            options,
+        )
+        return SessionHandle(self.client, summary)
+
+
+class SessionHandle:
+    def __init__(self, client, summary):
+        self._client = client
+        self._summary = dict(summary)
+        for key, value in self._summary.items():
+            setattr(self, key, value)
+        self.context = SessionContextApi(client, self.id)
+        self.artifacts = SessionArtifactsApi(client, self.id)
+        self.fs = SessionFileSystemApi(client, self.id)
+
+    def delete(self):
+        return self._client.sessions.delete(self.id)
+
+    def fork(self, **options):
+        return self._client.sessions.fork(self.id, **options)
+
+    def to_dict(self):
+        return dict(self._summary)
+
+
+class SessionContextApi:
+    def __init__(self, client, session_id):
+        self.client = client
+        self.session_id = session_id
+
+    def current(self, **options):
+        return self.client._call(
+            "get",
+            {"ctxId": self.session_id, **options},
+            "POST",
+            f"/v2/contexts/{self.session_id}/get",
+            options,
+        )
+
+    def get(self, **options):
+        return self.current(**options)
+
+    def list(self, **options):
+        current = self.current(**options)
+        return {
+            "data": current.get("data", []),
+            "context_id": current.get("context_id"),
+            "version": current.get("version"),
+        }
+
+    def append(self, entries):
+        if not isinstance(entries, list):
+            entries = [entries]
+        body = {"messages": entries}
+        return self.client._call(
+            "append",
+            {"ctxId": self.session_id, **body},
+            "POST",
+            f"/v2/contexts/{self.session_id}/messages",
+            body,
+        )
+
+    def update(self, update, **options):
+        body = {"updates": update, **options}
+        return self.client._call(
+            "update",
+            {"ctxId": self.session_id, **body},
+            "POST",
+            f"/v2/contexts/{self.session_id}/update",
+            body,
+        )
+
+    def delete(self, target, **options):
+        body = {"target": target, **options}
+        return self.client._call(
+            "delete_messages",
+            {"ctxId": self.session_id, **body},
+            "POST",
+            f"/v2/contexts/{self.session_id}/delete",
+            body,
+        )
+
+    def clear(self, **options):
+        return self.client._call(
+            "context_clear",
+            {"ctxId": self.session_id, **options},
+            "POST",
+            f"/v2/contexts/{self.session_id}/clear",
+            options,
+        )
+
+    def history(self):
+        return self.client._call(
+            "context_history",
+            {"ctxId": self.session_id},
+            "GET",
+            f"/v2/contexts/{self.session_id}/history",
+        )
+
+    def restore(self, context_id, **options):
+        body = {"contextId": context_id, **options}
+        return self.client._call(
+            "context_restore",
+            {"ctxId": self.session_id, "restoreContextId": context_id, **options},
+            "POST",
+            f"/v2/contexts/{self.session_id}/restore",
+            body,
+        )
+
+
+class SessionArtifactsApi:
+    def __init__(self, client, session_id):
+        self.client = client
+        self.session_id = session_id
+
+    def create(self, input):
+        return self.client._call(
+            "save",
+            {"ctxId": self.session_id, **input},
+            "POST",
+            f"/v2/contexts/{self.session_id}/artifacts",
+            input,
+        )
+
+    def list(self):
+        return self.client._call(
+            "list_artifacts",
+            {"ctxId": self.session_id},
+            "GET",
+            f"/v2/contexts/{self.session_id}/artifacts",
+        )
+
+    def get(self, path_or_id, **options):
+        body = {"pathOrId": path_or_id, **options}
+        return self.client._call(
+            "load",
+            {"ctxId": self.session_id, **body},
+            "POST",
+            f"/v2/contexts/{self.session_id}/artifacts/load",
+            body,
+        )
+
+    def update(self, path_or_id, data, **options):
+        body = {"path": path_or_id, "data": data, **options}
+        return self.client._call(
+            "file_write",
+            {"ctxId": self.session_id, **body},
+            "POST",
+            f"/v2/contexts/{self.session_id}/files/write",
+            body,
+        )
+
+    def delete(self, path_or_id, **options):
+        body = {"pathOrId": path_or_id, **options}
+        return self.client._call(
+            "file_remove",
+            {"ctxId": self.session_id, **body},
+            "POST",
+            f"/v2/contexts/{self.session_id}/files/remove",
+            body,
+        )
+
+
+class WorkspaceArtifactsApi:
+    def __init__(self, client):
+        self.client = client
+
+    def session(self, session_id):
+        return SessionArtifactsApi(self.client, session_id)
+
+
+class FileSystemApi:
+    def __init__(self, client):
+        self.client = client
+
+    def session(self, session_id):
+        return SessionFileSystemApi(self.client, session_id)
+
+
+class SessionFileSystemApi:
+    def __init__(self, client, session_id):
+        self.client = client
+        self.session_id = session_id
+
+    def list(self, **options):
+        return self.client._call(
+            "file_list",
+            {"ctxId": self.session_id, **options},
+            "GET",
+            f"/v2/contexts/{self.session_id}/files",
+        )
+
+    def read(self, path_or_id, **options):
+        body = {"pathOrId": path_or_id, **options}
+        return self.client._call(
+            "file_read",
+            {"ctxId": self.session_id, **body},
+            "POST",
+            f"/v2/contexts/{self.session_id}/files/read",
+            body,
+        )
+
+    def write(self, path, data, **options):
+        body = {"path": path, "data": data, **options}
+        return self.client._call(
+            "file_write",
+            {"ctxId": self.session_id, **body},
+            "POST",
+            f"/v2/contexts/{self.session_id}/files/write",
+            body,
+        )
+
+    def move(self, from_path_or_id, to_path, **options):
+        body = {"fromPathOrId": from_path_or_id, "toPath": to_path, **options}
+        return self.client._call(
+            "file_move",
+            {"ctxId": self.session_id, **body},
+            "POST",
+            f"/v2/contexts/{self.session_id}/files/move",
+            body,
+        )
+
+    def remove(self, path_or_id, **options):
+        body = {"pathOrId": path_or_id, **options}
+        return self.client._call(
+            "file_remove",
+            {"ctxId": self.session_id, **body},
+            "POST",
+            f"/v2/contexts/{self.session_id}/files/remove",
+            body,
+        )
+
+    def glob(self, pattern, **options):
+        body = {"pattern": pattern, **options}
+        return self.client._call(
+            "file_glob",
+            {"ctxId": self.session_id, **body},
+            "POST",
+            f"/v2/contexts/{self.session_id}/files/glob",
+            body,
+        )
+
+    def grep(self, query, **options):
+        body = {"query": query, **options}
+        return self.client._call(
+            "file_grep",
+            {"ctxId": self.session_id, **body},
+            "POST",
+            f"/v2/contexts/{self.session_id}/files/grep",
+            body,
+        )
+
+
+class SyncApi:
+    def __init__(self, client):
+        self.client = client
+
+    def export_snapshot(self):
+        return self.client._call("export_snapshot", {}, "POST", "/v2/sync/export_snapshot", {})
+
+    def import_snapshot(self, snapshot):
+        return self.client._call(
+            "import_snapshot",
+            snapshot,
+            "POST",
+            "/v2/sync/import_snapshot",
+            snapshot,
+        )
+
+    def export_changes(self, since=None):
+        body = {}
+        if since is not None:
+            body["since"] = since
+        return self.client._call("export_changes", body, "POST", "/v2/sync/export_changes", body)
+
+    def import_changes(self, changes):
+        return self.client._call(
+            "import_changes",
+            changes,
+            "POST",
+            "/v2/sync/import_changes",
+            changes,
+        )
+
+
+class SearchApi:
+    def __init__(self, client):
+        self.client = client
+
+    def query(self, query, **options):
+        body = {"query": query, **options}
+        return self.client._call("search", body, "POST", "/v2/search", body)
+
+
+def metadata_body(input, kwargs):
+    input = dict(input or {})
+    input.update(kwargs)
+    metadata = input.pop("metadata", None)
+    if metadata is not None:
+        return {"metadata": metadata}
+    return {"metadata": input}

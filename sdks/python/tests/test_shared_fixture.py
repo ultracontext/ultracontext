@@ -124,41 +124,39 @@ class NativeHttpTransport:
 
 
 def run_shared_fixture(testcase, uc, legacy_context_id=False):
-    ctx = uc.create(metadata=FIXTURE["metadata"])
+    ctx = uc.sessions.create(metadata=FIXTURE["metadata"])
     prefixes = ("ses_", "ctx_") if legacy_context_id else ("ses_",)
-    testcase.assertTrue(ctx["id"].startswith(prefixes))
+    testcase.assertTrue(ctx.id.startswith(prefixes))
 
-    appended = uc.append(ctx["id"], FIXTURE["messages"])
+    appended = ctx.context.append(FIXTURE["messages"])
     testcase.assertEqual(appended["version"], 0)
     testcase.assertEqual(len(appended["data"]), 2)
 
-    updated = uc.update(ctx["id"], FIXTURE["message_update"])
+    updated = ctx.context.update(FIXTURE["message_update"])
     testcase.assertEqual(updated["version"], 1)
     testcase.assertEqual(updated["data"][1]["content"], "fixture draft ready!")
     updated_context_id = updated["context_id"]
 
-    history = uc.context_history(ctx["id"])
+    history = ctx.context.history()
     testcase.assertEqual([entry["operation"] for entry in history["data"]], ["create", "update"])
     testcase.assertEqual(history["data"][1]["id"], updated_context_id)
 
-    cleared = uc.clear_context(ctx["id"], metadata={"reason": "reset window"})
+    cleared = ctx.context.clear(metadata={"reason": "reset window"})
     testcase.assertEqual(cleared["version"], 2)
     testcase.assertEqual(len(cleared["data"]), 0)
 
-    restored = uc.restore_context(
-        ctx["id"],
+    restored = ctx.context.restore(
         updated_context_id,
         metadata={"reason": "time travel"},
     )
     testcase.assertEqual(restored["version"], 3)
     testcase.assertEqual(restored["data"][1]["content"], "fixture draft ready!")
 
-    fork = uc.fork(ctx["id"], version=0, metadata={"suite": "fork"})
-    forked = uc.get(fork["id"], version=0)
+    fork = ctx.fork(version=0, metadata={"suite": "fork"})
+    forked = fork.context.current(version=0)
     testcase.assertEqual(forked["data"][1]["content"], "fixture draft ready")
 
-    written = uc.write(
-        ctx["id"],
+    written = ctx.fs.write(
         FIXTURE["artifact"]["path"],
         FIXTURE["artifact"]["initial"],
         kind=FIXTURE["artifact"]["kind"],
@@ -166,8 +164,7 @@ def run_shared_fixture(testcase, uc, legacy_context_id=False):
     testcase.assertEqual(written["version"], 0)
 
     with testcase.assertRaises(UltraContextError) as conflict:
-        uc.write(
-            ctx["id"],
+        ctx.fs.write(
             FIXTURE["artifact"]["path"],
             FIXTURE["artifact"]["final"],
             kind=FIXTURE["artifact"]["kind"],
@@ -175,8 +172,7 @@ def run_shared_fixture(testcase, uc, legacy_context_id=False):
         )
     testcase.assertEqual(conflict.exception.code, "conflict")
 
-    saved = uc.save(
-        ctx["id"],
+    saved = ctx.artifacts.create(
         {
             "id": written["id"],
             "path": FIXTURE["artifact"]["renamed_path"],
@@ -188,29 +184,29 @@ def run_shared_fixture(testcase, uc, legacy_context_id=False):
     testcase.assertEqual(saved["id"], written["id"])
     testcase.assertEqual(saved["version"], 1)
 
-    old = uc.read(ctx["id"], written["id"], version=0)
+    old = ctx.fs.read(written["id"], version=0)
     testcase.assertEqual(old["path"], FIXTURE["artifact"]["path"])
     testcase.assertEqual(old["data"], FIXTURE["artifact"]["initial"])
 
-    files = uc.load(ctx["id"])
+    files = ctx.artifacts.list()
     testcase.assertEqual(files["data"][0]["path"], FIXTURE["artifact"]["renamed_path"])
 
-    listed = uc.glob(ctx["id"], "notes/*.md")
+    listed = ctx.fs.glob("notes/*.md")
     testcase.assertEqual(len(listed["data"]), 1)
 
-    grep = uc.grep(ctx["id"], FIXTURE["search_query"], prefix="notes")
+    grep = ctx.fs.grep(FIXTURE["search_query"], prefix="notes")
     testcase.assertEqual(grep["data"][0]["kind"], "artifact")
 
-    search = uc.search(FIXTURE["search_query"])
+    search = uc.search.query(FIXTURE["search_query"])
     testcase.assertTrue(any(hit["kind"] == "message" for hit in search["data"]))
 
-    uc.remove(ctx["id"], FIXTURE["artifact"]["renamed_path"], ifVersion=saved["version"])
+    ctx.fs.remove(FIXTURE["artifact"]["renamed_path"], ifVersion=saved["version"])
     with testcase.assertRaises(UltraContextError) as missing_artifact:
-        uc.read(ctx["id"], FIXTURE["artifact"]["renamed_path"])
+        ctx.fs.read(FIXTURE["artifact"]["renamed_path"])
     testcase.assertEqual(missing_artifact.exception.code, "not_found")
 
     with testcase.assertRaises(UltraContextError) as missing_context:
-        uc.get(FIXTURE["missing_context"])
+        uc.sessions.get(FIXTURE["missing_context"]).context.current()
     testcase.assertEqual(missing_context.exception.code, "not_found")
 
 
@@ -252,14 +248,13 @@ class SharedFixtureTests(unittest.TestCase):
                     content_dir=content_dir,
                     inline_limit=4,
                 )
-                ctx = uc.create(metadata={"app": "native-content-test"})
-                uc.write(
-                    ctx["id"],
+                ctx = uc.sessions.create(metadata={"app": "native-content-test"})
+                ctx.fs.write(
                     "large.md",
                     "larger than four bytes",
                     kind="text/markdown",
                 )
-                read = uc.read(ctx["id"], "large.md")
+                read = ctx.fs.read("large.md")
 
                 self.assertEqual(read["data"], "larger than four bytes")
                 self.assertEqual(read["storage"]["type"], "ref")
@@ -275,27 +270,27 @@ class SharedFixtureTests(unittest.TestCase):
             with tempfile.NamedTemporaryFile(suffix=".db") as mirror_db:
                 source = UltraContext(mode="local", path=source_db.name, native=native)
                 mirror = UltraContext(mode="local", path=mirror_db.name, native=native)
-                ctx = source.create(metadata={"app": "sync"})
-                source.append(ctx["id"], {"content": "base"})
+                ctx = source.sessions.create(metadata={"app": "sync"})
+                ctx.context.append({"content": "base"})
 
-                snapshot = source.export_snapshot()
+                snapshot = source.sync.export_snapshot()
                 cursor = snapshot["cursor"]
-                mirror.import_snapshot(snapshot)
+                mirror.sync.import_snapshot(snapshot)
 
-                source.append(ctx["id"], {"content": "next"})
-                source.write(
-                    ctx["id"],
+                ctx.context.append({"content": "next"})
+                ctx.fs.write(
                     "sync.md",
                     "synced content",
                     kind="text/markdown",
                 )
-                changes = source.export_changes(since=cursor)
-                report = mirror.import_changes(changes)
+                changes = source.sync.export_changes(since=cursor)
+                report = mirror.sync.import_changes(changes)
 
                 self.assertGreater(report["imported"], 0)
                 self.assertEqual(report["conflicts"], [])
-                self.assertEqual(mirror.get(ctx["id"])["data"][1]["content"], "next")
-                self.assertEqual(mirror.read(ctx["id"], "sync.md")["data"], "synced content")
+                mirrored = mirror.sessions.get(ctx.id)
+                self.assertEqual(mirrored.context.current()["data"][1]["content"], "next")
+                self.assertEqual(mirrored.fs.read("sync.md")["data"], "synced content")
 
 
 if __name__ == "__main__":

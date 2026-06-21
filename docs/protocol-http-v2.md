@@ -83,15 +83,14 @@ Returns:
 }
 ```
 
-## Context Handles
+## Session Handles
 
-Simple clients can keep using context-shaped routes as the main surface. Under
-the hood, `POST /v2/contexts` creates a session plus an initial context
-snapshot in the default workspace unless a `workspaceId` is supplied.
+Simple clients can use context-shaped routes as the wire protocol. Under the
+hood, `POST /v2/contexts` creates a session plus an initial context snapshot
+in the default workspace unless a `workspaceId` is supplied.
 
-The route parameter is named `:contextId` for compatibility, but it accepts
-either a `ses_...` session id or a `ctx_...` context snapshot id. New clients
-should treat the returned `id` as an opaque session/context handle.
+The route parameter is named `:contextId` for historical wire compatibility,
+but new SDKs treat the returned `id` as a session handle.
 
 ### Create Context
 
@@ -215,8 +214,8 @@ Returns:
 }
 ```
 
-`updates` may be a single object or an array; current alpha semantics apply
-the first update.
+`updates` may be a single object or an array. The current core operation
+applies the first update and returns the new context snapshot.
 
 ### Delete Messages Or Session
 
@@ -426,5 +425,5 @@ Request body is a changes object. Returns an import report:
 }
 ```
 
-The alpha conflict detector reports structural `node.id` collisions with
-different content. It does not perform CRDT merges.
+The conflict detector reports structural `node.id` collisions with different
+content. It does not perform CRDT merges.

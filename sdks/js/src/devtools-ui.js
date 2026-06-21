@@ -285,7 +285,8 @@ export function mountDevtools(uc, info, options = {}) {
         panel.replaceChildren(header('‹ Context', renderList, () => renderDetail(id)))
         placePanel()
         try {
-            const detail = await uc.get(id)
+            const session = await uc.sessions.get(id)
+            const detail = await session.context.current()
             const messages = detail.data ?? []
             panel.append(
                 el('div', 'uc-full-id', id),
@@ -363,7 +364,7 @@ export function mountDevtools(uc, info, options = {}) {
 }
 
 async function listContexts(uc) {
-    const result = await uc.get()
+    const result = await uc.sessions.list()
     return [...(result.data ?? [])].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))
 }
 

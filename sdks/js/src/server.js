@@ -41,29 +41,29 @@ async function dispatch(engine, method, segments, body) {
     }
 
     if (method === 'POST' && resource === 'search' && segments.length === 2) {
-        return engine.search(body.query, omit(body, ['query']))
+        return callEngine(engine, 'search', { query: body.query, ...omit(body, ['query']) })
     }
 
     if (resource === 'sync' && method === 'POST' && segments.length === 3) {
         const action = segments[2]
-        if (action === 'export_snapshot') return engine.exportSnapshot(body)
-        if (action === 'import_snapshot') return engine.importSnapshot(body)
-        if (action === 'export_changes') return engine.exportChanges(body)
-        if (action === 'import_changes') return engine.importChanges(body)
+        if (action === 'export_snapshot') return callEngine(engine, 'export_snapshot', body)
+        if (action === 'import_snapshot') return callEngine(engine, 'import_snapshot', body)
+        if (action === 'export_changes') return callEngine(engine, 'export_changes', body)
+        if (action === 'import_changes') return callEngine(engine, 'import_changes', body)
     }
 
     if (resource === 'workspaces') {
         if (method === 'GET' && segments.length === 2) {
-            return engine.listWorkspaces()
+            return callEngine(engine, 'list_workspaces', {})
         }
 
         if (method === 'POST' && segments.length === 2) {
-            return engine.createWorkspace(body)
+            return callEngine(engine, 'create_workspace', body)
         }
 
         const workspaceId = contextId
         if (method === 'POST' && action === 'sessions' && segments.length === 4) {
-            return engine.createSession(workspaceId, body)
+            return callEngine(engine, 'create_session', { workspaceId, ...body })
         }
 
         throw notFound()
@@ -74,11 +74,11 @@ async function dispatch(engine, method, segments, body) {
     }
 
     if (method === 'GET' && segments.length === 2) {
-        return engine.listContexts()
+        return callEngine(engine, 'list_contexts', {})
     }
 
     if (method === 'POST' && segments.length === 2) {
-        return engine.create(body)
+        return callEngine(engine, 'create', body)
     }
 
     if (!contextId) {
@@ -86,23 +86,23 @@ async function dispatch(engine, method, segments, body) {
     }
 
     if (method === 'POST' && action === 'fork' && segments.length === 4) {
-        return engine.fork(contextId, body)
+        return callEngine(engine, 'fork', { sourceId: contextId, ...body })
     }
 
     if (method === 'POST' && action === 'messages' && segments.length === 4) {
-        return engine.append(contextId, asArray(body.messages ?? body))
+        return callEngine(engine, 'append', { ctxId: contextId, messages: asArray(body.messages ?? body) })
     }
 
     if (method === 'POST' && action === 'get' && segments.length === 4) {
-        return engine.get(contextId, body)
+        return callEngine(engine, 'get', { ctxId: contextId, ...body })
     }
 
     if (method === 'GET' && action === 'history' && segments.length === 4) {
-        return engine.contextHistory(contextId)
+        return callEngine(engine, 'context_history', { ctxId: contextId })
     }
 
     if (method === 'POST' && action === 'clear' && segments.length === 4) {
-        return engine.clear(contextId, body)
+        return callEngine(engine, 'context_clear', { ctxId: contextId, ...body })
     }
 
     if (method === 'POST' && action === 'restore' && segments.length === 4) {
@@ -110,58 +110,65 @@ async function dispatch(engine, method, segments, body) {
         if (!restoreContextId) {
             throw invalidInput('restore requires contextId')
         }
-        return engine.restore(contextId, restoreContextId, body)
+        return callEngine(engine, 'context_restore', { ctxId: contextId, restoreContextId, ...body })
     }
 
     if (method === 'POST' && action === 'update' && segments.length === 4) {
-        return engine.update(contextId, body.updates, omit(body, ['updates']))
+        return callEngine(engine, 'update', { ctxId: contextId, updates: body.updates, ...omit(body, ['updates']) })
     }
 
     if (method === 'POST' && action === 'delete' && segments.length === 4) {
-        return engine.delete(contextId, body.target, omit(body, ['target']))
+        return callEngine(engine, 'delete', { ctxId: contextId, target: body.target, ...omit(body, ['target']) })
     }
 
     if (action === 'artifacts') {
         if (method === 'GET' && segments.length === 4) {
-            return engine.listArtifacts(contextId)
+            return callEngine(engine, 'list_artifacts', { ctxId: contextId })
         }
 
         if (method === 'POST' && segments.length === 4) {
-            return engine.save(contextId, body)
+            return callEngine(engine, 'save', { ctxId: contextId, ...body })
         }
 
         if (method === 'POST' && nested === 'load' && segments.length === 5) {
-            return engine.load(contextId, body.pathOrId, omit(body, ['pathOrId']))
+            return callEngine(engine, 'load', { ctxId: contextId, pathOrId: body.pathOrId, ...omit(body, ['pathOrId']) })
         }
     }
 
     if (action === 'files') {
         if (method === 'POST' && nested === 'read' && segments.length === 5) {
-            return engine.read(contextId, body.pathOrId, omit(body, ['pathOrId']))
+            return callEngine(engine, 'file_read', { ctxId: contextId, pathOrId: body.pathOrId, ...omit(body, ['pathOrId']) })
         }
 
         if (method === 'POST' && nested === 'write' && segments.length === 5) {
-            return engine.write(contextId, body.path, body.data, omit(body, ['path', 'data']))
+            return callEngine(engine, 'file_write', { ctxId: contextId, path: body.path, data: body.data, ...omit(body, ['path', 'data']) })
         }
 
         if (method === 'POST' && nested === 'move' && segments.length === 5) {
-            return engine.move(contextId, body.fromPathOrId, body.toPath, omit(body, ['fromPathOrId', 'toPath']))
+            return callEngine(engine, 'file_move', { ctxId: contextId, fromPathOrId: body.fromPathOrId, toPath: body.toPath, ...omit(body, ['fromPathOrId', 'toPath']) })
         }
 
         if (method === 'POST' && nested === 'remove' && segments.length === 5) {
-            return engine.remove(contextId, body.pathOrId, omit(body, ['pathOrId']))
+            return callEngine(engine, 'file_remove', { ctxId: contextId, pathOrId: body.pathOrId, ...omit(body, ['pathOrId']) })
         }
 
         if (method === 'POST' && nested === 'glob' && segments.length === 5) {
-            return engine.glob(contextId, body.pattern, omit(body, ['pattern']))
+            return callEngine(engine, 'file_glob', { ctxId: contextId, pattern: body.pattern, ...omit(body, ['pattern']) })
         }
 
         if (method === 'POST' && nested === 'grep' && segments.length === 5) {
-            return engine.grep(contextId, body.query, omit(body, ['query']))
+            return callEngine(engine, 'file_grep', { ctxId: contextId, query: body.query, ...omit(body, ['query']) })
         }
     }
 
     throw notFound()
+}
+
+function callEngine(engine, operation, payload) {
+    if (typeof engine.dispatch !== 'function') {
+        throw invalidInput('UltraContext engine must implement dispatch(operation, payload)')
+    }
+    return engine.dispatch(operation, payload)
 }
 
 async function readBody(request) {

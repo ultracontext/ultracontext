@@ -58,3 +58,56 @@ test('UltraContext.openProject creates a local client from project config', asyn
     assert.equal(uc.inlineLimit, 456)
     rmSync(root, { recursive: true, force: true })
 })
+
+test('UltraContext.openProject passes S3 content-store config to native core', async () => {
+    const root = join(tmpdir(), `uc-js-open-project-s3-${process.pid}-${Date.now()}`)
+    let nativeOptions
+    mkdirSync(root, { recursive: true })
+    writeFileSync(join(root, 'ultracontext.json'), JSON.stringify({
+        db: '.ultracontext/ultracontext.db',
+        storage: {
+            driver: 's3',
+            inlineLimit: 789,
+            s3: {
+                endpoint: 'https://r2.example',
+                bucket: 'uc',
+                region: 'auto',
+                accessKeyId: 'key',
+                secretAccessKey: 'secret',
+                prefix: 'project-a'
+            }
+        }
+    }))
+
+    const uc = await UltraContext.openProject({
+        projectRoot: root,
+        native: {
+            UltraContextCore: class {
+                constructor(_path, options) {
+                    nativeOptions = options
+                }
+
+                dispatchJson() {
+                    return JSON.stringify({ ok: { data: [] } })
+                }
+            }
+        }
+    })
+    await uc.sessions.list()
+
+    assert.equal(uc.storageDriver, 's3')
+    assert.equal(uc.contentDir, undefined)
+    assert.equal(uc.inlineLimit, 789)
+    assert.equal(nativeOptions.inlineLimit, 789)
+    assert.equal(nativeOptions.inline_limit, 789)
+    assert.equal(nativeOptions.contentDir, undefined)
+    assert.deepEqual(JSON.parse(nativeOptions.s3), {
+        endpoint: 'https://r2.example',
+        bucket: 'uc',
+        region: 'auto',
+        accessKeyId: 'key',
+        secretAccessKey: 'secret',
+        prefix: 'project-a'
+    })
+    rmSync(root, { recursive: true, force: true })
+})
