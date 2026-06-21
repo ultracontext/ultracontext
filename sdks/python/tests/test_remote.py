@@ -1,10 +1,29 @@
 import json
 import unittest
 
-from ultracontext import UltraContext, UltraContextError
+from ultracontext import UltraContext, UltraContextError, create_client
 
 
 class RemoteClientTests(unittest.TestCase):
+    def test_create_client_supports_remote_mode(self):
+        calls = []
+
+        def transport(method, url, headers, payload):
+            calls.append((method, url, headers, payload))
+            return 200, {"data": []}
+
+        uc = create_client(
+            "uc_test_key",
+            base_url="https://uc.example",
+            transport=transport,
+        )
+
+        uc.sessions.list()
+
+        self.assertEqual(uc.mode, "remote")
+        self.assertEqual(calls[0][1], "https://uc.example/v2/contexts")
+        self.assertEqual(calls[0][2]["authorization"], "Bearer uc_test_key")
+
     def test_remote_client_sends_context_requests(self):
         calls = []
 

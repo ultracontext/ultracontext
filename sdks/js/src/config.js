@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 
@@ -15,6 +15,23 @@ export async function loadProjectConfig(options = {}) {
     }
 
     const raw = JSON.parse(await readFile(configPath, 'utf8'))
+    return buildProjectConfig(configPath, raw, options)
+}
+
+export function loadProjectConfigSync(options = {}) {
+    const configPath = options.configPath
+        ? resolve(options.configPath)
+        : findProjectConfig(options.projectRoot ?? options.cwd ?? process.cwd())
+
+    if (!configPath) {
+        throw new Error(`UltraContext project config not found. Run 'uc init' first.`)
+    }
+
+    const raw = JSON.parse(readFileSync(configPath, 'utf8'))
+    return buildProjectConfig(configPath, raw, options)
+}
+
+function buildProjectConfig(configPath, raw, options) {
     const root = dirname(configPath)
     const db = options.db
         ?? process.env.UC_DB

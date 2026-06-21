@@ -1,19 +1,19 @@
-import { createClient, UltraContextError } from './index.js'
+import { createClient as createRemoteClient, UltraContextError } from './index.js'
 import { createUltraContextHandler } from './server.js'
 
 export { UltraContextError } from './index.js'
 
 export function createBrowserClient(config = {}, options = {}) {
-    return createClient(config, options)
+    return createRemoteClient(config, options)
 }
 
 export async function createServerClient(config = {}, options = {}) {
     if (isRemoteConfig(config)) {
-        return createClient(config, options)
+        return createRemoteClient(config, options)
     }
 
-    const { openProject } = await import('./local.js')
-    return openProject(config)
+    const { createClient } = await import('./local.js')
+    return createClient(config)
 }
 
 function isRemoteConfig(config) {
@@ -62,8 +62,8 @@ async function createHandler(options) {
         return createUltraContextHandler({ engine: options.engine })
     }
 
-    const { openProject } = await import('./local.js')
-    const client = await openProject(options)
+    const { createClient } = await import('./local.js')
+    const client = createClient(options)
     return createUltraContextHandler({ engine: coreBackedEngine(client) })
 }
 

@@ -45,9 +45,9 @@ Current status:
 Example:
 
 ```py
-from ultracontext import UltraContext
+from ultracontext import create_client
 
-uc = UltraContext(mode="local", path=".ultracontext/ultracontext.db")
+uc = create_client()
 session = uc.sessions.create(metadata={"app": "demo"})
 appended = session.context.append({"role": "user", "content": "hi"})
 
@@ -62,6 +62,8 @@ session.context.restore(
 S3/R2 local config:
 
 ```py
+from ultracontext import UltraContext
+
 uc = UltraContext(
     mode="local",
     path=".ultracontext/ultracontext.db",

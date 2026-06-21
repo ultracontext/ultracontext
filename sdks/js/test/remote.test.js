@@ -170,6 +170,7 @@ test('runtime entrypoint aliases resolve to the expected clients', async () => {
     assert.equal(browser.createClient, root.createClient)
     assert.equal(browser.createBrowserClient, ssr.createBrowserClient)
     assert.equal(node.UltraContext, local.UltraContext)
+    assert.equal(node.createClient, local.createClient)
     assert.equal(node.createLocalClient, local.createLocalClient)
     assert.equal(next.createUltraContextNextHandler, ssr.createRouteHandler)
 })

@@ -1,6 +1,11 @@
 import json
+import os
+from pathlib import Path
 import urllib.error
 import urllib.request
+
+PROJECT_CONFIG_FILE = "ultracontext.json"
+DEFAULT_INLINE_LIMIT = 64 * 1024
 
 
 class UltraContextError(Exception):
@@ -9,6 +14,150 @@ class UltraContextError(Exception):
         self.code = code
         self.status = status
         self.body = body
+
+
+def create_client(api_key=None, **options):
+    mode = options.pop("mode", None)
+    if mode == "remote" or api_key is not None:
+        return UltraContext(api_key, mode=mode or "remote", **options)
+
+    config = load_project_config(options)
+    return UltraContext(
+        mode="local",
+        path=config["db"],
+        content_dir=config.get("content_dir"),
+        inline_limit=config["inline_limit"],
+        s3=config.get("s3"),
+        native=options.get("native"),
+    )
+
+
+def open_project(**options):
+    return create_client(**options)
+
+
+def load_project_config(options=None):
+    options = dict(options or {})
+    config_path = (
+        Path(options["config_path"]).expanduser().resolve()
+        if options.get("config_path")
+        else find_project_config(
+            options.get("project_root") or options.get("cwd") or os.getcwd()
+        )
+    )
+    if config_path is None:
+        raise UltraContextError(
+            "UltraContext project config not found. Run 'uc init' first.",
+            code="invalid_input",
+        )
+
+    raw = json.loads(config_path.read_text(encoding="utf-8"))
+    root = config_path.parent
+    storage = raw.get("storage") or {}
+    db = (
+        options.get("db")
+        or os.environ.get("UC_DB")
+        or raw.get("db")
+        or ".ultracontext/ultracontext.db"
+    )
+    content_dir = (
+        options.get("content_dir")
+        or os.environ.get("UC_CONTENT_DIR")
+        or storage.get("contentDir")
+        or storage.get("content_dir")
+        or ".ultracontext/blobs"
+    )
+    inline_limit = _number_option(
+        options.get("inline_limit")
+        or os.environ.get("UC_INLINE_LIMIT")
+        or storage.get("inlineLimit")
+        or storage.get("inline_limit")
+        or DEFAULT_INLINE_LIMIT,
+        "inline_limit",
+    )
+    s3 = _s3_config(options.get("s3") or storage.get("s3") or storage.get("S3"))
+    storage_driver = (
+        options.get("storage_driver")
+        or os.environ.get("UC_STORAGE_DRIVER")
+        or storage.get("driver")
+        or ("s3" if s3 else "local-dir")
+    )
+    return {
+        "project_root": str(root),
+        "config_path": str(config_path),
+        "db": _resolve_config_path(root, db),
+        "content_dir": (
+            None
+            if storage_driver in ("s3", "inline")
+            else _resolve_config_path(root, content_dir)
+        ),
+        "inline_limit": inline_limit,
+        "storage_driver": storage_driver,
+        "s3": s3,
+        "raw": raw,
+    }
+
+
+def find_project_config(start=None):
+    current = Path(start or os.getcwd()).expanduser().resolve()
+    while True:
+        candidate = current / PROJECT_CONFIG_FILE
+        if candidate.exists():
+            return candidate
+        legacy = current / ".ultracontext" / "config.json"
+        if legacy.exists():
+            return legacy
+        if current.parent == current:
+            return None
+        current = current.parent
+
+
+def _resolve_config_path(root, value):
+    path = Path(value).expanduser()
+    return str(path if path.is_absolute() else root / path)
+
+
+def _number_option(value, name):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as error:
+        raise UltraContextError(
+            f"UltraContext config {name} must be a non-negative number",
+            code="invalid_input",
+        ) from error
+    if parsed < 0:
+        raise UltraContextError(
+            f"UltraContext config {name} must be a non-negative number",
+            code="invalid_input",
+        )
+    return parsed
+
+
+def _s3_config(input_config):
+    config = {
+        "endpoint": os.environ.get("UC_S3_ENDPOINT"),
+        "bucket": os.environ.get("UC_S3_BUCKET"),
+        "region": os.environ.get("UC_S3_REGION"),
+        "accessKeyId": os.environ.get("UC_S3_ACCESS_KEY_ID"),
+        "secretAccessKey": os.environ.get("UC_S3_SECRET_ACCESS_KEY"),
+        "sessionToken": os.environ.get("UC_S3_SESSION_TOKEN"),
+        "prefix": os.environ.get("UC_S3_PREFIX"),
+    }
+    config.update(input_config or {})
+    if not any(value for value in config.values()):
+        return None
+    normalized = {
+        "endpoint": config.get("endpoint"),
+        "bucket": config.get("bucket"),
+        "region": config.get("region") or "auto",
+        "accessKeyId": config.get("accessKeyId") or config.get("access_key_id"),
+        "secretAccessKey": (
+            config.get("secretAccessKey") or config.get("secret_access_key")
+        ),
+        "sessionToken": config.get("sessionToken") or config.get("session_token"),
+        "prefix": config.get("prefix"),
+    }
+    return {key: value for key, value in normalized.items() if value is not None}
 
 
 class UltraContext:

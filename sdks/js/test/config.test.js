@@ -3,8 +3,8 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { loadProjectConfig } from '../src/config.js'
-import { UltraContext } from '../src/local.js'
+import { loadProjectConfig, loadProjectConfigSync } from '../src/config.js'
+import { UltraContext, createClient } from '../src/local.js'
 
 test('loadProjectConfig resolves ultracontext.json relative paths', async () => {
     const root = join(tmpdir(), `uc-js-config-${process.pid}-${Date.now()}`)
@@ -23,6 +23,59 @@ test('loadProjectConfig resolves ultracontext.json relative paths', async () => 
     assert.equal(config.db, join(root, '.ultracontext/ultracontext.db'))
     assert.equal(config.contentDir, join(root, '.ultracontext/blobs'))
     assert.equal(config.inlineLimit, 123)
+    rmSync(root, { recursive: true, force: true })
+})
+
+test('loadProjectConfigSync resolves ultracontext.json relative paths', () => {
+    const root = join(tmpdir(), `uc-js-config-sync-${process.pid}-${Date.now()}`)
+    mkdirSync(root, { recursive: true })
+    writeFileSync(join(root, 'ultracontext.json'), JSON.stringify({
+        db: '.ultracontext/ultracontext.db',
+        storage: {
+            contentDir: '.ultracontext/blobs',
+            inlineLimit: 321
+        }
+    }))
+
+    const config = loadProjectConfigSync({ projectRoot: root })
+
+    assert.equal(config.projectRoot, root)
+    assert.equal(config.db, join(root, '.ultracontext/ultracontext.db'))
+    assert.equal(config.contentDir, join(root, '.ultracontext/blobs'))
+    assert.equal(config.inlineLimit, 321)
+    rmSync(root, { recursive: true, force: true })
+})
+
+test('local createClient creates a local client from project config synchronously', () => {
+    const root = join(tmpdir(), `uc-js-create-client-${process.pid}-${Date.now()}`)
+    mkdirSync(root, { recursive: true })
+    writeFileSync(join(root, 'ultracontext.json'), JSON.stringify({
+        db: '.ultracontext/ultracontext.db',
+        storage: {
+            contentDir: '.ultracontext/blobs',
+            inlineLimit: 654
+        }
+    }))
+
+    const uc = createClient({
+        projectRoot: root,
+        native: {
+            UltraContextCore: class {
+                constructor(path, options) {
+                    this.path = path
+                    this.options = options
+                }
+
+                dispatchJson() {
+                    return JSON.stringify({ ok: { data: [] } })
+                }
+            }
+        }
+    })
+
+    assert.equal(uc.path, join(root, '.ultracontext/ultracontext.db'))
+    assert.equal(uc.contentDir, join(root, '.ultracontext/blobs'))
+    assert.equal(uc.inlineLimit, 654)
     rmSync(root, { recursive: true, force: true })
 })
 

@@ -1,5 +1,5 @@
 import { UltraContextBase, UltraContextError } from './client.js'
-import { loadProjectConfig } from './config.js'
+import { loadProjectConfigSync } from './config.js'
 
 export { UltraContextError } from './client.js'
 
@@ -24,8 +24,8 @@ export function createLocalClient(config = {}) {
     return new UltraContext(config)
 }
 
-export async function openProject(options = {}) {
-    const config = await loadProjectConfig(options)
+export function createClient(options = {}) {
+    const config = loadProjectConfigSync(options)
     return new UltraContext({
         path: config.db,
         contentDir: config.contentDir,
@@ -35,6 +35,10 @@ export async function openProject(options = {}) {
         native: options.native,
         core: options.core
     })
+}
+
+export async function openProject(options = {}) {
+    return createClient(options)
 }
 
 function createLocalTransport(config) {

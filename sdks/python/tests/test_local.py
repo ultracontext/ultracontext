@@ -1,7 +1,9 @@
 import json
+import tempfile
+from pathlib import Path
 import unittest
 
-from ultracontext import UltraContext, UltraContextError
+from ultracontext import UltraContext, UltraContextError, create_client
 
 
 class FakeCore:
@@ -102,6 +104,71 @@ class LocalClientTests(unittest.TestCase):
                 "prefix": "project-a",
             },
         )
+
+    def test_create_client_reads_project_config(self):
+        with tempfile.TemporaryDirectory() as root:
+            Path(root, "ultracontext.json").write_text(
+                json.dumps(
+                    {
+                        "db": ".ultracontext/ultracontext.db",
+                        "storage": {
+                            "contentDir": ".ultracontext/blobs",
+                            "inlineLimit": 456,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            native = FakeNative(FakeCore())
+
+            uc = create_client(project_root=root, native=native)
+            resolved_root = Path(root).resolve()
+
+            self.assertEqual(native.path, str(resolved_root / ".ultracontext/ultracontext.db"))
+            self.assertEqual(native.content_dir, str(resolved_root / ".ultracontext/blobs"))
+            self.assertEqual(native.inline_limit, 456)
+            self.assertEqual(uc.mode, "local")
+
+    def test_create_client_reads_s3_project_config(self):
+        with tempfile.TemporaryDirectory() as root:
+            Path(root, "ultracontext.json").write_text(
+                json.dumps(
+                    {
+                        "db": ".ultracontext/ultracontext.db",
+                        "storage": {
+                            "driver": "s3",
+                            "inlineLimit": 789,
+                            "s3": {
+                                "endpoint": "https://r2.example",
+                                "bucket": "uc",
+                                "region": "auto",
+                                "accessKeyId": "key",
+                                "secretAccessKey": "secret",
+                                "prefix": "project-a",
+                            },
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            native = FakeNative(FakeCore())
+
+            uc = create_client(project_root=root, native=native)
+
+            self.assertEqual(uc.mode, "local")
+            self.assertEqual(native.content_dir, None)
+            self.assertEqual(native.inline_limit, 789)
+            self.assertEqual(
+                json.loads(native.s3),
+                {
+                    "endpoint": "https://r2.example",
+                    "bucket": "uc",
+                    "region": "auto",
+                    "accessKeyId": "key",
+                    "secretAccessKey": "secret",
+                    "prefix": "project-a",
+                },
+            )
 
 
 if __name__ == "__main__":

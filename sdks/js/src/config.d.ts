@@ -34,4 +34,5 @@ export interface S3ProjectConfig {
 }
 
 export function loadProjectConfig(options?: ProjectConfigOptions): Promise<ProjectConfig>
+export function loadProjectConfigSync(options?: ProjectConfigOptions): ProjectConfig
 export function findProjectConfig(start?: string): string | null

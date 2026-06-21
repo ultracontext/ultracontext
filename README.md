@@ -34,10 +34,10 @@ uc init
 Store a session and manage its context window:
 
 ```ts
-import { openProject } from 'ultracontext/local'
+import { createClient } from 'ultracontext/local'
 
-// Opens ultracontext.json from the current project.
-const uc = await openProject()
+// Reads ultracontext.json from the current project.
+const uc = createClient()
 const session = await uc.sessions.create()
 
 // Every context change is versioned automatically.

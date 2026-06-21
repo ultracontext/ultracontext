@@ -49,5 +49,6 @@ export class UltraContext {
 
 export interface UltraContext extends UltraContextClient {}
 
+export function createClient(options?: OpenProjectOptions): UltraContext
 export function createLocalClient(config?: LocalUltraContextOptions): UltraContext
 export function openProject(options?: OpenProjectOptions): Promise<UltraContext>

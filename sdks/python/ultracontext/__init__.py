@@ -1,3 +1,3 @@
-from .client import UltraContext, UltraContextError
+from .client import UltraContext, UltraContextError, create_client, open_project
 
-__all__ = ["UltraContext", "UltraContextError"]
+__all__ = ["UltraContext", "UltraContextError", "create_client", "open_project"]

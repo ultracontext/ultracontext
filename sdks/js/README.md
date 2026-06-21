@@ -59,10 +59,10 @@ export function createClient() {
 
 ```ts
 // lib/ultracontext/server.ts
-import { createServerClient } from 'ultracontext/ssr'
+import { createClient as createUltraContext } from 'ultracontext/local'
 
-export async function createClient() {
-    return createServerClient({ projectRoot: process.cwd() })
+export function createClient() {
+    return createUltraContext()
 }
 ```
 
@@ -92,12 +92,13 @@ translation layer.
 Use the local entrypoint in Node apps, CLIs, tests, and agents:
 
 ```js
-import { UltraContext } from 'ultracontext/local'
+import { createClient } from 'ultracontext/local'
 
-const uc = await UltraContext.openProject()
+const uc = createClient()
 ```
 
-Server-side app code can usually prefer the SSR helper:
+SSR apps can still use `createServerClient` when they want one helper that can
+open either a local project or a remote endpoint:
 
 ```js
 import { createServerClient } from 'ultracontext/ssr'
@@ -109,7 +110,9 @@ const uc = await createServerClient()
 name:
 
 ```js
-import { UltraContext } from 'ultracontext/node'
+import { createClient } from 'ultracontext/node'
+
+const uc = createClient()
 ```
 
 Direct local config is still available when needed:
