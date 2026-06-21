@@ -34,17 +34,19 @@ uc init
 Start storing sessions and managing context windows:
 
 ```ts
-import { createServerClient } from 'ultracontext/ssr'
+import { openProject } from 'ultracontext/local'
 
-const uc = await createServerClient({ projectRoot: process.cwd() })
+// Opens ultracontext.json from the current project.
+const uc = await openProject()
 const session = await uc.sessions.create()
 
+// Every context change is versioned automatically.
 await session.context.append({
   role: 'user',
   content: 'Draft a launch note'
 })
 
-const entries = await session.context.current()
+const context = await session.context.current()
 ```
 
 Mount the same workspace as files for local agents:
