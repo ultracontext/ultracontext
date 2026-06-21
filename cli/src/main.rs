@@ -620,6 +620,19 @@ fn resolve_store_config(
     if let Some(config) = find_local_config() {
         return apply_config_overrides(read_config_file(&config)?, content_dir, inline_limit);
     }
+    if require_existing && let Some(db) = find_current_dir_db() {
+        let s3 = s3_config_from_env()?;
+        return Ok(ResolvedStoreConfig {
+            db,
+            content_dir: if s3.is_some() {
+                None
+            } else {
+                content_dir.cloned()
+            },
+            inline_limit: inline_limit.unwrap_or(DEFAULT_INLINE_LIMIT),
+            s3,
+        });
+    }
     let global = global_config_path()?;
     if global.exists() {
         return apply_config_overrides(read_config_file(&global)?, content_dir, inline_limit);
@@ -631,6 +644,11 @@ fn resolve_store_config(
         "ultracontext is not initialized. Run `uc init` first, or pass --db <path>."
     };
     Err(UcError::new(ErrorCode::InvalidInput, message))
+}
+
+fn find_current_dir_db() -> Option<PathBuf> {
+    let candidate = env::current_dir().ok()?.join("ultracontext.db");
+    candidate.exists().then_some(candidate)
 }
 
 fn apply_config_overrides(
@@ -658,14 +676,17 @@ fn apply_config_overrides(
 
 fn find_local_config() -> Option<PathBuf> {
     let mut dir = env::current_dir().ok()?;
+    let home = env::var_os("HOME").map(PathBuf::from);
     loop {
         let candidate = dir.join(PROJECT_CONFIG_FILE);
         if candidate.exists() {
             return Some(candidate);
         }
-        let legacy = dir.join(".ultracontext").join("config.json");
-        if legacy.exists() {
-            return Some(legacy);
+        if home.as_ref() != Some(&dir) {
+            let legacy = dir.join(".ultracontext").join("config.json");
+            if legacy.exists() {
+                return Some(legacy);
+            }
         }
         if !dir.pop() {
             return None;
