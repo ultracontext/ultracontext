@@ -2,7 +2,8 @@
   <a href="https://github.com/ultracontext/ultracontext">
     <img alt="ultracontext: control what agents see" src=".github/assets/context-sdk.png" width="100%">
   </a>
-  <br>
+  <h1>ultracontext</h1>
+  <p><strong>The context SDK for AI</strong></p>
   <br>
 
   <a href="https://github.com/ultracontext/ultracontext"><img alt="Made by ultracontext" src="https://img.shields.io/badge/MADE%20BY-ultracontext-000000.svg?style=for-the-badge&labelColor=000000"></a>
