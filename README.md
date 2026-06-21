@@ -1,4 +1,17 @@
-# UltraContext
+<div align="center">
+  <a href="https://github.com/ultracontext/ultracontext">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset=".github/assets/ultracontext-dark.svg">
+      <img alt="UltraContext logo" src=".github/assets/ultracontext-light.svg" height="128">
+    </picture>
+  </a>
+  <h1>UltraContext</h1>
+
+  <a href="https://github.com/ultracontext/ultracontext"><img alt="Made by UltraContext" src="https://img.shields.io/badge/MADE%20BY-UltraContext-000000.svg?style=for-the-badge&labelColor=000000"></a>
+  <a href="https://www.npmjs.com/package/ultracontext"><img alt="NPM version" src="https://img.shields.io/npm/v/ultracontext.svg?style=for-the-badge&labelColor=000000"></a>
+  <a href="https://pypi.org/project/ultracontext/"><img alt="PyPI version" src="https://img.shields.io/pypi/v/ultracontext.svg?style=for-the-badge&labelColor=000000"></a>
+  <a href="https://github.com/ultracontext/ultracontext/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/ultracontext/ultracontext.svg?style=for-the-badge&labelColor=000000"></a>
+</div>
 
 UltraContext is a context SDK for AI applications. It gives apps and agents one
 place to manage sessions, model-facing context windows, artifacts, and
