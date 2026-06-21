@@ -163,16 +163,6 @@ snapshots, and its artifact links. It does not delete workspace artifacts.
 Compaction, provider-specific rendering, and formatting are intentionally out of
 the initial public surface. They can be added later as LEGO-block extensions.
 
-## Artifacts
-
-Artifacts are versioned, file-like objects owned by a workspace: markdown
-drafts, generated code, screenshots, images, audio, PDFs, zip files, or any
-other AI input/output.
-
-`session.artifacts.create(input)` is convenience sugar: it creates a workspace
-artifact and attaches it to the session. Artifacts do not belong to sessions and
-are not deleted when a session is deleted.
-
 ## Portable Filesystem
 
 UltraContext projects workspace artifacts into a portable filesystem model.
