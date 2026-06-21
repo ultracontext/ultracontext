@@ -25,7 +25,7 @@ curl -fsSL https://raw.githubusercontent.com/ultracontext/ultracontext/main/inst
 
 ## Getting Started
 
-Initialize a project:
+From your project folder:
 
 ```bash
 uc init
