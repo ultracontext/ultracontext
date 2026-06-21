@@ -214,6 +214,9 @@ The package does not ship JS implementations of the node store or content
 store. Domain and storage semantics live in the Rust core. Future backends
 should be added as Rust core adapters so every SDK keeps one source of truth.
 
+The N-API source crate lives at `../../core/bindings-js`. The `native/`
+directory in this package is only the npm runtime wrapper and prebuild output.
+
 ## Bundlers
 
 Do not import `ultracontext/node`, `ultracontext/local`, or server-side helpers

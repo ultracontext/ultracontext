@@ -9,8 +9,9 @@ bounded model windows, generated files, multimodal inputs, local agent
 workflows, and remote sync without forcing every app to invent its own context
 store.
 
-> Status: v2 active development. `core/MODEL.md` and `core/CONTRACT.md` are the
-> product sources of truth. SDKs are thin consumers of Rust core operations.
+> Status: v2 active development. `core/model/MODEL.md` and
+> `core/model/CONTRACT.md` are the product sources of truth. SDKs are thin
+> consumers of Rust core operations.
 
 ## Quickstart
 
@@ -224,11 +225,17 @@ targeted context, artifact, or filesystem call.
 
 | Dir | What |
 |---|---|
-| `core/` | Rust core, model, and product contract |
-| `cli/` | `uc` command-line interface and local NFS mount adapter |
+| `core/model` | Product model, contract, ids, invariants, and historical v1 input |
+| `core/engine` | Rust operations: workspaces, sessions, context windows, artifacts, filesystem projection, sync, search |
+| `core/adapters` | Adapter boundary documentation; SQLite/local-dir/S3 live in the engine today until they are split |
+| `core/bindings-js` | N-API binding that exposes Rust dispatch to JS |
+| `core/bindings-python` | PyO3 binding that exposes Rust dispatch to Python |
+| `core/cli` | `uc` command-line interface and local NFS mount adapter |
 | `docs/` | Protocol and implementation notes |
-| `sdks/js` | JS/TS SDK, remote edge client, local N-API binding, server engines |
-| `sdks/python` | Python SDK, remote client, local PyO3 binding |
+| `sdks/js` | JS/TS package: browser client, server helpers, config loader, package wrappers |
+| `sdks/python` | Python package: client surface, CLI launcher, package wrappers |
+| `fixtures/` | Shared behavior fixtures across Rust, JS, Python, local, and remote modes |
+| `scripts/` | Install, release, and dev automation |
 
 ## License
 

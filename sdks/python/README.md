@@ -3,7 +3,7 @@
 The Python SDK wraps the Rust core for local use and provides a remote HTTP
 client for parity with JS remote mode.
 
-The public surface follows `../../core/CONTRACT.md`; names may use Python
+The public surface follows `../../core/model/CONTRACT.md`; names may use Python
 idiom, but shapes and error codes must match.
 
 CLI:
@@ -30,7 +30,8 @@ Current status:
 - `ultracontext/cli.py` implements the Python package launcher for
   `uvx ultracontext init`, `pipx run ultracontext init`, and
   `python -m ultracontext`.
-- `native/` implements a PyO3 binding that calls the Rust core JSON dispatch.
+- `../../core/bindings-python/` implements the PyO3 binding that calls the Rust
+  core JSON dispatch.
 - local mode uses `ultracontext._native.UltraContextCore` when the extension is
   installed; otherwise it raises a coded `UltraContextError`.
 - local mode can use `content_dir` plus `inline_limit` to keep large artifacts
@@ -79,6 +80,8 @@ uc = UltraContext(
 Build notes:
 
 - `cargo check -p ultracontext-python-native` verifies the Rust binding crate.
+- The PyO3 source crate lives at `../../core/bindings-python`; this package
+  points maturin at that manifest.
 - Wheel builds should use maturin from this directory so Python extension
   linker flags are applied correctly.
 

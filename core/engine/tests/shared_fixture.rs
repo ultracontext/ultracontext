@@ -15,7 +15,7 @@ fn temp_db(name: &str) -> String {
 }
 
 fn fixture() -> Value {
-    serde_json::from_str(include_str!("../../fixtures/v2-alpha.json")).unwrap()
+    serde_json::from_str(include_str!("../../../fixtures/v2-alpha.json")).unwrap()
 }
 
 #[test]

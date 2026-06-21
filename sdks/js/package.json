@@ -52,7 +52,7 @@
         }
     },
     "scripts": {
-        "build:native": "napi build --manifest-path native/Cargo.toml --platform",
+        "build:native": "napi build --manifest-path ../../core/bindings-js/Cargo.toml --platform --output-dir native",
         "pack:check": "npm pack --dry-run",
         "test": "node --test"
     },

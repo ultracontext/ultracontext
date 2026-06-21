@@ -61,7 +61,7 @@ jobs:
           cd /tmp/uc-js-install
           npm init -y
           npm install /tmp/ultracontext-2.0.0-alpha.0.tgz
-          node --input-type=module -e "import { UltraContext } from 'ultracontext'; import { createLocalDirContentStore } from 'ultracontext/content-store'; import { materializeContext } from 'ultracontext/materialize'; console.log(typeof UltraContext, typeof createLocalDirContentStore, typeof materializeContext)"
+          node --input-type=module -e "import { UltraContext, createClient } from 'ultracontext'; console.log(typeof UltraContext, typeof createClient)"
 
   python-remote:
     runs-on: ubuntu-latest

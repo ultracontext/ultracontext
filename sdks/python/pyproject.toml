@@ -14,7 +14,7 @@ license = "Apache-2.0"
 ultracontext = "ultracontext.cli:main"
 
 [tool.maturin]
-manifest-path = "native/Cargo.toml"
+manifest-path = "../../core/bindings-python/Cargo.toml"
 module-name = "ultracontext._native"
 python-source = "."
 

@@ -519,7 +519,7 @@ fn init_store(
         .map(str::to_string)
         .unwrap_or_else(|| default_db_config_value(local));
     let content_dir_config_value = content_dir
-        .map(path_to_config_string)
+        .map(|path| path_to_config_string(path))
         .unwrap_or_else(|| default_content_dir_config_value(local));
     let inline_limit = inline_limit.unwrap_or(DEFAULT_INLINE_LIMIT);
     let db_path = resolve_config_relative_path(base_dir, &db_config_value);
@@ -871,7 +871,7 @@ fn default_content_dir_config_value(local: bool) -> String {
     }
 }
 
-fn path_to_config_string(path: &PathBuf) -> String {
+fn path_to_config_string(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 

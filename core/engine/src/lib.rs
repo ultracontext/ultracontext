@@ -1862,12 +1862,14 @@ fn migrate_orphan_context_roots(conn: &Connection) -> UcResult<()> {
             mark_context_head(
                 conn,
                 &head,
-                root.rowid,
-                None,
-                &workspace_id,
-                &root.public_id,
-                true,
-                "migrated",
+                ContextHeadMark {
+                    owner: root.rowid,
+                    prev: None,
+                    workspace_id: &workspace_id,
+                    session_id: &root.public_id,
+                    default_projection: true,
+                    default_operation: "migrated",
+                },
             )?;
         }
 
@@ -1933,12 +1935,14 @@ fn flatten_session_context_roots(conn: &Connection) -> UcResult<()> {
         mark_context_head(
             conn,
             &root,
-            session.rowid,
-            root.prev,
-            &workspace.public_id,
-            &session.public_id,
-            false,
-            "migrated-root",
+            ContextHeadMark {
+                owner: session.rowid,
+                prev: root.prev,
+                workspace_id: &workspace.public_id,
+                session_id: &session.public_id,
+                default_projection: false,
+                default_operation: "migrated-root",
+            },
         )?;
 
         let child_heads = ordered_children(conn, root.rowid, "context")?;
@@ -1947,12 +1951,14 @@ fn flatten_session_context_roots(conn: &Connection) -> UcResult<()> {
             mark_context_head(
                 conn,
                 &child,
-                session.rowid,
-                prev,
-                &workspace.public_id,
-                &session.public_id,
-                true,
-                "migrated",
+                ContextHeadMark {
+                    owner: session.rowid,
+                    prev,
+                    workspace_id: &workspace.public_id,
+                    session_id: &session.public_id,
+                    default_projection: true,
+                    default_operation: "migrated",
+                },
             )?;
         }
     }
@@ -1960,34 +1966,34 @@ fn flatten_session_context_roots(conn: &Connection) -> UcResult<()> {
     Ok(())
 }
 
-fn mark_context_head(
-    conn: &Connection,
-    head: &NodeRow,
+struct ContextHeadMark<'a> {
     owner: i64,
     prev: Option<i64>,
-    workspace_id: &str,
-    session_id: &str,
+    workspace_id: &'a str,
+    session_id: &'a str,
     default_projection: bool,
-    default_operation: &str,
-) -> UcResult<()> {
+    default_operation: &'a str,
+}
+
+fn mark_context_head(conn: &Connection, head: &NodeRow, mark: ContextHeadMark<'_>) -> UcResult<()> {
     let mut content = head.content.clone();
     if !content.is_object() {
         content = json!({});
     }
     if let Some(map) = content.as_object_mut() {
         map.insert("role".to_string(), json!("head"));
-        map.insert("workspace_id".to_string(), json!(workspace_id));
-        map.insert("session_id".to_string(), json!(session_id));
+        map.insert("workspace_id".to_string(), json!(mark.workspace_id));
+        map.insert("session_id".to_string(), json!(mark.session_id));
         map.entry("projection".to_string())
-            .or_insert(json!(default_projection));
+            .or_insert(json!(mark.default_projection));
         map.entry("operation".to_string())
-            .or_insert(json!(default_operation));
+            .or_insert(json!(mark.default_operation));
     }
     conn.execute(
         "UPDATE nodes
          SET owner = ?1, prev = ?2, content = ?3
          WHERE id = ?4",
-        params![owner, prev, content.to_string(), head.rowid],
+        params![mark.owner, mark.prev, content.to_string(), head.rowid],
     )?;
     Ok(())
 }

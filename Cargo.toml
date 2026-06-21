@@ -1,6 +1,11 @@
-# workspace root: components at top level, languages inside sdks/
+# workspace root: Rust implementation under core/, user-facing packages under sdks/
 [workspace]
-members = ["core", "cli", "sdks/js/native", "sdks/python/native"]
+members = [
+    "core/engine",
+    "core/cli",
+    "core/bindings-js",
+    "core/bindings-python",
+]
 resolver = "3"
 
 [profile.release]

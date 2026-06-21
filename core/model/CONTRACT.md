@@ -1,8 +1,8 @@
 # CONTRACT - v2 product contract
 
-This file is the current v2 source of truth. `core/contract/v1-extraction.json`
-is historical input only: useful for exact v1 behavior, not binding when it
-conflicts with this document.
+This file is the current v2 source of truth.
+`core/model/contract/v1-extraction.json` is historical input only: useful for
+exact v1 behavior, not binding when it conflicts with this document.
 
 UltraContext v2 is an SDK for managing context and artifacts in AI
 applications. It must work in three environments:

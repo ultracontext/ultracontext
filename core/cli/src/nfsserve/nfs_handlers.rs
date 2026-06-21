@@ -1731,11 +1731,34 @@ pub async fn nfsproc3_setattr(
 
     // For chown (changing uid): only root can change to a different user.
     // An owner can "chown" to themselves (no-op on uid).
-    if let Some(target_uid) = new_uid {
-        if context.auth.uid != 0 && target_uid != attr.uid {
+    if let Some(target_uid) = new_uid
+        && context.auth.uid != 0
+        && target_uid != attr.uid
+    {
+        debug!(
+            "setattr (chown uid) permission denied: only root can change file owner, caller uid={}",
+            context.auth.uid
+        );
+        make_success_reply(xid).serialize(output)?;
+        nfs::nfsstat3::NFS3ERR_PERM.serialize(output)?;
+        nfs::wcc_data {
+            before: pre_op_attr,
+            after: nfs::post_op_attr::attributes(attr),
+        }
+        .serialize(output)?;
+        return Ok(());
+    }
+
+    // For chgrp (changing gid): root can change to any group,
+    // owner can change to a group they belong to
+    if let Some(target_gid) = new_gid
+        && context.auth.uid != 0
+    {
+        // Must be owner
+        if !permissions::is_owner(&context.auth, &attr) {
             debug!(
-                "setattr (chown uid) permission denied: only root can change file owner, caller uid={}",
-                context.auth.uid
+                "setattr (chgrp) permission denied: not owner, uid={}, file owner={}",
+                context.auth.uid, attr.uid
             );
             make_success_reply(xid).serialize(output)?;
             nfs::nfsstat3::NFS3ERR_PERM.serialize(output)?;
@@ -1746,44 +1769,22 @@ pub async fn nfsproc3_setattr(
             .serialize(output)?;
             return Ok(());
         }
-    }
-
-    // For chgrp (changing gid): root can change to any group,
-    // owner can change to a group they belong to
-    if let Some(target_gid) = new_gid {
-        if context.auth.uid != 0 {
-            // Must be owner
-            if !permissions::is_owner(&context.auth, &attr) {
-                debug!(
-                    "setattr (chgrp) permission denied: not owner, uid={}, file owner={}",
-                    context.auth.uid, attr.uid
-                );
-                make_success_reply(xid).serialize(output)?;
-                nfs::nfsstat3::NFS3ERR_PERM.serialize(output)?;
-                nfs::wcc_data {
-                    before: pre_op_attr,
-                    after: nfs::post_op_attr::attributes(attr),
-                }
-                .serialize(output)?;
-                return Ok(());
+        // Owner can only change to a group they belong to
+        let in_target_group =
+            context.auth.gid == target_gid || context.auth.gids.contains(&target_gid);
+        if !in_target_group {
+            debug!(
+                "setattr (chgrp) permission denied: uid={} not member of target group {}",
+                context.auth.uid, target_gid
+            );
+            make_success_reply(xid).serialize(output)?;
+            nfs::nfsstat3::NFS3ERR_PERM.serialize(output)?;
+            nfs::wcc_data {
+                before: pre_op_attr,
+                after: nfs::post_op_attr::attributes(attr),
             }
-            // Owner can only change to a group they belong to
-            let in_target_group =
-                context.auth.gid == target_gid || context.auth.gids.contains(&target_gid);
-            if !in_target_group {
-                debug!(
-                    "setattr (chgrp) permission denied: uid={} not member of target group {}",
-                    context.auth.uid, target_gid
-                );
-                make_success_reply(xid).serialize(output)?;
-                nfs::nfsstat3::NFS3ERR_PERM.serialize(output)?;
-                nfs::wcc_data {
-                    before: pre_op_attr,
-                    after: nfs::post_op_attr::attributes(attr),
-                }
-                .serialize(output)?;
-                return Ok(());
-            }
+            .serialize(output)?;
+            return Ok(());
         }
     }
 
@@ -1816,16 +1817,15 @@ pub async fn nfsproc3_setattr(
 
     // POSIX: If a non-root user sets S_ISGID via chmod on a regular file and
     // the user is not a member of the file's group, silently clear S_ISGID.
-    if changing_mode && context.auth.uid != 0 {
-        if let nfs::set_mode3::mode(ref mut mode) = args.new_attribute.mode {
-            if *mode & 0o2000 != 0 {
-                let file_gid = new_gid.unwrap_or(attr.gid);
-                let in_group =
-                    context.auth.gid == file_gid || context.auth.gids.contains(&file_gid);
-                if !in_group {
-                    *mode &= !0o2000;
-                }
-            }
+    if changing_mode
+        && context.auth.uid != 0
+        && let nfs::set_mode3::mode(ref mut mode) = args.new_attribute.mode
+        && *mode & 0o2000 != 0
+    {
+        let file_gid = new_gid.unwrap_or(attr.gid);
+        let in_group = context.auth.gid == file_gid || context.auth.gids.contains(&file_gid);
+        if !in_group {
+            *mode &= !0o2000;
         }
     }
 
