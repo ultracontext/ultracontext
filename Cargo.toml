@@ -1,8 +1,8 @@
-# workspace root: Rust implementation under core/, user-facing packages under sdks/
+# workspace root: reusable Rust implementation under core/, product surfaces at top level
 [workspace]
 members = [
     "core/engine",
-    "core/cli",
+    "cli",
     "core/bindings-js",
     "core/bindings-python",
 ]

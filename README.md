@@ -225,7 +225,8 @@ targeted context, artifact, or filesystem call.
 
 | Dir | What |
 |---|---|
-| `core/` | Rust implementation: model, engine, adapters, bindings, and `uc` CLI |
+| `core/` | Rust core, model, adapters, and language bindings |
+| `cli/` | `uc` command-line interface and local NFS mount adapter |
 | `docs/` | Protocol and implementation notes |
 | `sdks/js` | JS/TS SDK, remote edge client, local N-API binding, server helpers |
 | `sdks/python` | Python SDK, remote client, local PyO3 binding |

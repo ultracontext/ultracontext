@@ -13,7 +13,8 @@ ultracontext/
     adapters/
     bindings-js/
     bindings-python/
-    cli/
+
+  cli/
 
   sdks/
     js/
@@ -44,7 +45,8 @@ shape.
 `core/bindings-js` and `core/bindings-python` expose the Rust dispatch API to
 language packages. They should stay thin.
 
-`core/cli` owns the `uc` command, project config UX, and local NFS mount.
+`cli/` owns the `uc` command, project config UX, and local NFS mount. It is a
+product surface over the core, not part of the reusable engine boundary.
 
 `sdks/js` and `sdks/python` are user-facing packages. They own naming,
 entrypoints, config loading, browser/server splits, and package launchers. They
@@ -52,5 +54,5 @@ call Rust locally or the official HTTP protocol remotely.
 
 ## Rule
 
-`core/` implements behavior. `sdks/` present behavior. `docs/`, `fixtures/`,
-and `scripts/` support behavior.
+`core/` implements reusable behavior. `cli/` and `sdks/` present behavior.
+`docs/`, `fixtures/`, and `scripts/` support behavior.
