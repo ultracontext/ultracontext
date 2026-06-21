@@ -13,9 +13,9 @@
   <a href="https://github.com/ultracontext/ultracontext/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/ultracontext/ultracontext.svg?style=for-the-badge&labelColor=000000"></a>
 </div>
 
-UltraContext gives AI apps SQL-backed storage for sessions and artifacts, plus
-an SDK to manage model-facing context windows across local, server, and edge
-environments.
+ultracontext is a context SDK for AI, with SQL-backed storage for sessions and
+artifacts, plus tools to manage model-facing context windows across local,
+server, and edge environments.
 
 ## Install
 
