@@ -28,18 +28,6 @@ store.
 
 ## Install
 
-Install the SDK for your app runtime:
-
-```bash
-npm install ultracontext
-```
-
-```bash
-pip install ultracontext
-```
-
-Install the local CLI when you want `uc` on your machine and filesystem mounts:
-
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ultracontext/ultracontext/main/install.sh | bash
 ```
@@ -49,8 +37,6 @@ curl -fsSL https://raw.githubusercontent.com/ultracontext/ultracontext/main/inst
 Initialize a project:
 
 ```bash
-npx ultracontext init
-# or, if the CLI is installed:
 uc init
 ```
 
