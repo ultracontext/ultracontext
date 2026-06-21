@@ -6,7 +6,9 @@
   <p>The context SDK for AI</p>
 </div>
 
----
+<p align="center">
+  <img alt="" src=".github/assets/divider.svg" width="100%" height="1">
+</p>
 
 <div align="center">
 

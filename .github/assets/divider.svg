@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1" preserveAspectRatio="none">
+  <style>
+    line { stroke: #d0d7de; }
+    @media (prefers-color-scheme: dark) {
+      line { stroke: #30363d; }
+    }
+  </style>
+  <line x1="0" y1="0.5" x2="1200" y2="0.5" stroke-width="1"/>
+</svg>
