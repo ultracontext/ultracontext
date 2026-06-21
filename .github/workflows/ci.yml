@@ -95,7 +95,7 @@ jobs:
         run: |
           python -m venv /tmp/uc-python-install
           /tmp/uc-python-install/bin/python -m pip install sdks/python/dist/*.whl
-          /tmp/uc-python-install/bin/python -c "from ultracontext import UltraContext; uc=UltraContext(mode='local', path='/tmp/uc-python-install/smoke.db'); ctx=uc.create(metadata={'app':'ci'}); assert uc.export_snapshot()['cursor']; print(UltraContext.__name__)"
+          /tmp/uc-python-install/bin/python -c "from ultracontext import UltraContext; uc=UltraContext(mode='local', path='/tmp/uc-python-install/smoke.db'); session=uc.sessions.create(metadata={'app':'ci'}); assert session.id; assert uc.sync.export_snapshot()['cursor']; print(UltraContext.__name__)"
 
   js-prebuilds:
     strategy:
