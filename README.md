@@ -31,7 +31,7 @@ From your project folder:
 uc init
 ```
 
-Start storing sessions and managing context windows:
+Store a session and manage its context window:
 
 ```ts
 import { openProject } from 'ultracontext/local'
