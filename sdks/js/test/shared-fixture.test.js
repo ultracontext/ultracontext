@@ -1,17 +1,43 @@
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { UltraContext, UltraContextError } from '../src/index.js'
 import { UltraContext as LocalUltraContext } from '../src/local.js'
-import { createUltraContextHandler } from '../src/server.js'
-import { createSqliteEngine } from '../src/sqlite-engine.js'
+import { createRouteHandler } from '../src/ssr.js'
 
 const fixture = JSON.parse(readFileSync(new URL('../../../fixtures/v2-alpha.json', import.meta.url), 'utf8'))
 
+const triple = {
+    'darwin:arm64': 'darwin-arm64',
+    'darwin:x64': 'darwin-x64',
+    'linux:x64': 'linux-x64-gnu',
+    'linux:arm64': 'linux-arm64-gnu',
+    'win32:x64': 'win32-x64-msvc'
+}[`${process.platform}:${process.arch}`]
+
+const nativePath = triple
+    ? new URL(`../native/index.${triple}.node`, import.meta.url)
+    : null
+
+const hasNative = Boolean(nativePath && existsSync(nativePath))
+
 function localFetch(handler) {
     return async (url, init = {}) => handler(new Request(url, init))
+}
+
+function createProjectRoot(name) {
+    const root = join(tmpdir(), `uc-js-${name}-${process.pid}-${Date.now()}`)
+    mkdirSync(join(root, '.ultracontext'), { recursive: true })
+    writeFileSync(join(root, 'ultracontext.json'), JSON.stringify({
+        db: '.ultracontext/ultracontext.db',
+        storage: {
+            contentDir: '.ultracontext/blobs',
+            inlineLimit: 64 * 1024
+        }
+    }))
+    return root
 }
 
 async function runSharedFixture(uc, { legacyContextId = false } = {}) {
@@ -97,31 +123,23 @@ async function runSharedFixture(uc, { legacyContextId = false } = {}) {
     )
 }
 
-test('shared v2 alpha fixture passes through JS remote handler', async () => {
-    const engine = createSqliteEngine({ path: ':memory:' })
-    const handler = createUltraContextHandler({ engine })
+test('shared v2 alpha fixture passes through JS remote handler backed by Rust core', { skip: !hasNative }, async () => {
+    const root = createProjectRoot('shared-remote')
+    const routes = createRouteHandler({ projectRoot: root })
     const uc = new UltraContext({
         mode: 'remote',
         baseUrl: 'https://uc.local',
-        fetch: localFetch(handler)
+        fetch: localFetch(routes.POST)
     })
 
-    await runSharedFixture(uc)
+    try {
+        await runSharedFixture(uc)
+    } finally {
+        rmSync(root, { recursive: true, force: true })
+    }
 })
 
-const triple = {
-    'darwin:arm64': 'darwin-arm64',
-    'darwin:x64': 'darwin-x64',
-    'linux:x64': 'linux-x64-gnu',
-    'linux:arm64': 'linux-arm64-gnu',
-    'win32:x64': 'win32-x64-msvc'
-}[`${process.platform}:${process.arch}`]
-
-const nativePath = triple
-    ? new URL(`../native/index.${triple}.node`, import.meta.url)
-    : null
-
-test('shared v2 alpha fixture passes through JS local native', { skip: !nativePath || !existsSync(nativePath) }, async () => {
+test('shared v2 alpha fixture passes through JS local native', { skip: !hasNative }, async () => {
     const dbPath = join(tmpdir(), `uc-js-shared-${process.pid}-${Date.now()}.db`)
     const uc = new LocalUltraContext({ path: dbPath })
 

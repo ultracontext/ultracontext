@@ -196,8 +196,9 @@ official HTTP protocol with `createUltraContextNextHandler`.
 
 The node store owns truth: identity, history, metadata, paths, provenance, and
 content references. Content stores hold bytes behind artifact versions. Inline
-text, local directories, S3, R2, MinIO, and future stores are replaceable
-blocks behind the same domain model.
+text and local directories are implemented in the Rust core today. S3, R2,
+MinIO, and future stores should be added as Rust core adapters behind the same
+domain model.
 
 ## Search
 

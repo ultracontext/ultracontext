@@ -49,18 +49,6 @@
         "./server": {
             "types": "./src/server.d.ts",
             "default": "./src/server.js"
-        },
-        "./sqlite": {
-            "types": "./src/sqlite-engine.d.ts",
-            "default": "./src/sqlite-engine.js"
-        },
-        "./postgres": {
-            "types": "./src/postgres-engine.d.ts",
-            "default": "./src/postgres-engine.js"
-        },
-        "./content-store": {
-            "types": "./src/content-store.d.ts",
-            "default": "./src/content-store.js"
         }
     },
     "scripts": {

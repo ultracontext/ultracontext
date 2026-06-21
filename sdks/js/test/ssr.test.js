@@ -61,7 +61,22 @@ test('createRouteHandler opens a project from ultracontext.json', async () => {
         }
     }))
 
-    const routes = createRouteHandler({ projectRoot: root })
+    const routes = createRouteHandler({
+        projectRoot: root,
+        core: {
+            dispatchJson(operation, payload) {
+                assert.equal(operation, 'create')
+                assert.deepEqual(JSON.parse(payload), { metadata: { app: 'route-project' } })
+                return JSON.stringify({
+                    ok: {
+                        id: 'ses_route_project',
+                        metadata: { app: 'route-project' },
+                        created_at: 'now'
+                    }
+                })
+            }
+        }
+    })
     const response = await routes.POST(new Request('https://app.test/api/ultracontext/v2/contexts', {
         method: 'POST',
         body: JSON.stringify({ metadata: { app: 'route-project' } })
@@ -69,7 +84,7 @@ test('createRouteHandler opens a project from ultracontext.json', async () => {
     const body = await readJson(response)
 
     assert.equal(response.status, 200)
-    assert.match(body.id, /^ses_/)
+    assert.equal(body.id, 'ses_route_project')
     assert.deepEqual(body.metadata, { app: 'route-project' })
     rmSync(root, { recursive: true, force: true })
 })

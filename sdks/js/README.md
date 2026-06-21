@@ -83,8 +83,9 @@ export const { GET, POST, PATCH, DELETE } =
 ```
 
 This server-framework adapter loads `ultracontext.json`, opens the SQLite
-store, wires the local content store, and exposes the official UltraContext
-HTTP protocol. Apps do not need their own REST translation layer.
+store through the Rust core, wires the Rust local content store, and exposes
+the official UltraContext HTTP protocol. Apps do not need their own REST
+translation layer.
 
 ## Node Local
 
@@ -157,55 +158,26 @@ The modal lists contexts and lets you inspect the current message window. It is
 disabled in production unless explicitly enabled with `devtools: true`. Pass
 `devtools: false` to disable it in development.
 
-## Lower-Level Server APIs
+## Lower-Level Server API
 
-Self-hosted fetch handler:
+Self-hosted fetch handler with an explicit engine:
 
 ```js
 import { createUltraContextHandler } from 'ultracontext/server'
-import { createSqliteEngine } from 'ultracontext/sqlite'
-import { createLocalDirContentStore } from 'ultracontext/content-store'
 
 const handler = createUltraContextHandler({
-    engine: createSqliteEngine({
-        path: './uc.sqlite',
-        contentStore: createLocalDirContentStore({ root: './uc-blobs' }),
-        inlineLimit: 64 * 1024
-    })
+    engine: coreBackedEngine
 })
 ```
 
-Postgres + S3-compatible blobs:
-
-```js
-import { Pool } from 'pg'
-import { createUltraContextHandler } from 'ultracontext/server'
-import { createHybridContentStore, createLocalDirContentStore, createS3ContentStore } from 'ultracontext/content-store'
-import { createPostgresEngine } from 'ultracontext/postgres'
-
-const remoteStore = createS3ContentStore({
-    client: s3CompatibleClient,
-    bucket: 'uc-artifacts'
-})
-
-const engine = createPostgresEngine({
-    pool: new Pool({ connectionString: process.env.DATABASE_URL }),
-    contentStore: createHybridContentStore({
-        cache: createLocalDirContentStore({ root: './uc-cache' }),
-        remote: remoteStore
-    }),
-    inlineLimit: 64 * 1024
-})
-
-await engine.install()
-
-const handler = createUltraContextHandler({ engine })
-```
+The package no longer ships JS implementations of the node store. Domain
+semantics live in the Rust core. Postgres, S3/R2, and other storage backends
+should be added as Rust core adapters so every SDK keeps one source of truth.
 
 ## Bundlers
 
-Do not import `ultracontext/node`, `ultracontext/local`, `ultracontext/sqlite`,
-or server-side helpers from `ultracontext/ssr` in browser or edge bundles. Those entrypoints are
+Do not import `ultracontext/node`, `ultracontext/local`, or server-side helpers
+from `ultracontext/ssr` in browser or edge bundles. Those entrypoints are
 server-only and may load Node APIs or the native binding. Browser code should
 use `ultracontext` or `ultracontext/browser`.
 

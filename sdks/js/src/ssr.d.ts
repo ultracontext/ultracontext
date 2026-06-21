@@ -1,6 +1,6 @@
 import type { LocalUltraContextOptions, OpenProjectOptions, UltraContext as LocalUltraContext } from './local'
 import type { UltraContext as BrowserUltraContext, UltraContextRemoteOptions } from './index'
-import type { ContentStore, UltraContextEngine } from './types'
+import type { UltraContextEngine } from './types'
 import type { ProjectConfigOptions } from './config'
 
 export { UltraContextError } from './index'
@@ -18,7 +18,6 @@ export function createServerClient(config: BrowserClientOptions & { mode: 'remot
 export interface UltraContextHandlerOptions extends ProjectConfigOptions {
     basePath?: string
     engine?: UltraContextEngine
-    contentStore?: ContentStore
 }
 
 export type UltraContextFetchHandler = (request: Request) => Response | Promise<Response>

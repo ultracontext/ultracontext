@@ -28,7 +28,7 @@ Path/artifact verbs
   |
 Node store                Content store
   |                       |
-workspaces/sessions       inline text | local-dir | S3/R2/MinIO
+workspaces/sessions       inline text | local-dir | future S3/R2/MinIO
 contexts/messages
 artifacts/versions
 ```
@@ -37,8 +37,9 @@ Blocks must be replaceable without changing domain objects:
 
 - **Node store**: workspace/session/context/message/artifact graph, versions,
   paths, metadata, conflict checks, search index.
-- **Content store**: bytes behind an artifact version. Inline data is one
-  content-store implementation.
+- **Content store**: bytes behind an artifact version. Inline and local-dir are
+  current Rust core implementations; S3/R2/MinIO should be Rust core adapters,
+  not SDK-only node-store implementations.
 - **Path projection**: maps relative paths to artifact ids.
 - **Agent surface**: SDK verbs, local materialization, and optional native
   mounts over the same path projection.
@@ -54,7 +55,8 @@ Requirements:
 
 - one inspectable database file by default;
 - small text artifacts inline by default;
-- optional local directory or S3/R2 content store for large bytes;
+- optional local directory content store for large bytes today; S3/R2 should
+  be added as Rust core adapters;
 - same public behavior as remote mode.
 
 ### Remote Edge

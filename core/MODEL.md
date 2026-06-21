@@ -7,8 +7,8 @@ materialization, and an optional native NFS mount.
 
 The database is the source of truth for identity, history, metadata,
 provenance, paths, and content references. Small text can live inline in the
-database. Large bytes can live in a content store such as S3, R2, MinIO, or a
-local directory, but those stores are never authoritative by themselves.
+database. Large bytes can live in a Rust core content store. Inline and
+local-dir are implemented today; S3, R2, and MinIO are future core adapters.
 
 ```
 SDK / HTTP / local materialization / optional native mount
@@ -286,8 +286,7 @@ Content store:
 
 - inline database content for small text and markdown;
 - local directory for local cache or large local files;
-- S3/R2/MinIO for shared blobs;
-- cached hybrid local plus remote.
+- future Rust core adapters for S3/R2/MinIO shared blobs.
 
 The content store can be swapped. The node store remains the source of truth.
 
