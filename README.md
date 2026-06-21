@@ -17,15 +17,6 @@ UltraContext is a context SDK for AI applications. It gives apps and agents one
 place to manage sessions, model-facing context windows, artifacts, and
 filesystem-like project files across local, server, and edge environments.
 
-Why: AI apps outgrow a single prompt string quickly. They need durable history,
-bounded model windows, generated files, multimodal inputs, local agent
-workflows, and remote sync without forcing every app to invent its own context
-store.
-
-> Status: v2 active development. `core/model/MODEL.md` and
-> `core/model/CONTRACT.md` are the product sources of truth. SDKs are thin
-> consumers of Rust core operations.
-
 ## Install
 
 ```bash
