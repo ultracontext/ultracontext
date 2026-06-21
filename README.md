@@ -2,8 +2,10 @@
   <a href="https://github.com/ultracontext/ultracontext">
     <img alt="ultracontext: control what agents see" src=".github/assets/context-sdk.png" width="100%">
   </a>
-  <h3>ultracontext</h3>
-  <p>The context SDK for AI</p>
+  <p>
+    <strong>ultracontext</strong><br>
+    The context SDK for AI
+  </p>
 </div>
 
 <p align="center">
