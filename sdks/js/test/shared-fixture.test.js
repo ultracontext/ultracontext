@@ -25,6 +25,19 @@ async function runSharedFixture(uc, { legacyContextId = false } = {}) {
     const updated = await uc.update(ctx.id, fixture.message_update)
     assert.equal(updated.version, 1)
     assert.equal(updated.data[1].content, 'fixture draft ready!')
+    const updatedContextId = updated.context_id
+
+    const history = await uc.contextHistory(ctx.id)
+    assert.deepEqual(history.data.map(entry => entry.operation), ['create', 'update'])
+    assert.equal(history.data[1].id, updatedContextId)
+
+    const cleared = await uc.clearContext(ctx.id, { metadata: { reason: 'reset window' } })
+    assert.equal(cleared.version, 2)
+    assert.equal(cleared.data.length, 0)
+
+    const restored = await uc.restoreContext(ctx.id, updatedContextId, { metadata: { reason: 'time travel' } })
+    assert.equal(restored.version, 3)
+    assert.equal(restored.data[1].content, 'fixture draft ready!')
 
     const fork = await uc.fork(ctx.id, { version: 0, metadata: { suite: 'fork' } })
     const forked = await uc.get(fork.id, { version: 0 })

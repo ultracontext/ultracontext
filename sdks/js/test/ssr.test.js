@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { createRouteHandler } from '../src/ssr.js'
+import { createUltraContextNextHandler } from '../src/next.js'
 
 async function readJson(response) {
     return JSON.parse(await response.text())
@@ -32,6 +33,21 @@ test('createRouteHandler rewrites app route prefix to protocol route', async () 
         created_at: 'now'
     })
     assert.deepEqual(calls, [['create', { metadata: { app: 'route' } }]])
+})
+
+test('createUltraContextNextHandler aliases the route handler for Next apps', async () => {
+    const routes = createUltraContextNextHandler({
+        engine: {
+            async listContexts() {
+                return { data: [] }
+            }
+        }
+    })
+
+    const response = await routes.GET(new Request('https://app.test/api/ultracontext/v2/contexts'))
+
+    assert.equal(response.status, 200)
+    assert.deepEqual(await readJson(response), { data: [] })
 })
 
 test('createRouteHandler opens a project from ultracontext.json', async () => {

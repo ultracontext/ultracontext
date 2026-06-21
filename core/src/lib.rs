@@ -135,14 +135,31 @@ pub struct MessageView {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ContextData {
     pub id: String,
+    pub context_id: String,
     pub data: Vec<MessageView>,
     pub version: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MutationResult {
+    pub context_id: String,
     pub data: Vec<MessageView>,
     pub version: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ContextHistoryEntry {
+    pub id: String,
+    pub session_id: String,
+    pub version: usize,
+    pub operation: String,
+    pub created_at: String,
+    pub current: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ContextHistory {
+    pub data: Vec<ContextHistoryEntry>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -569,6 +586,7 @@ impl UltraContext {
 
         let data = context_message_views(&conn, &session, &head)?;
         Ok(MutationResult {
+            context_id: head.public_id,
             data,
             version: context_version(&conn, head.rowid)?,
         })
@@ -587,8 +605,35 @@ impl UltraContext {
 
         Ok(ContextData {
             id: ctx_id.to_string(),
+            context_id: head.public_id.clone(),
             data: context_message_views(&conn, &session, head)?,
             version,
+        })
+    }
+
+    pub fn context_history(&self, ctx_id: &str) -> UcResult<ContextHistory> {
+        let conn = self.lock_conn()?;
+        let session = resolve_session_handle(&conn, ctx_id)?;
+        let heads = context_heads(&conn, session.rowid)?;
+        let current_id = heads.last().map(|head| head.public_id.clone());
+        Ok(ContextHistory {
+            data: heads
+                .into_iter()
+                .enumerate()
+                .map(|(version, head)| ContextHistoryEntry {
+                    id: head.public_id.clone(),
+                    session_id: session.public_id.clone(),
+                    version,
+                    operation: head
+                        .content
+                        .get("operation")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown")
+                        .to_string(),
+                    created_at: head.created_at,
+                    current: current_id.as_deref() == Some(head.public_id.as_str()),
+                })
+                .collect(),
         })
     }
 
@@ -603,13 +648,14 @@ impl UltraContext {
         let current_head = current_context_head(&conn, session.rowid)?;
         let messages = context_message_rows(&conn, &session, &current_head)?;
         let target_index = resolve_update_target(&messages, &patch.target)?;
+        let new_context_id = public_id("ctx");
 
         conn.execute(
             "INSERT INTO nodes
              (public_id, kind, content, metadata, prev, owner, created_at)
-             VALUES (?1, 'context', ?2, ?3, ?4, ?5, ?6)",
+            VALUES (?1, 'context', ?2, ?3, ?4, ?5, ?6)",
             params![
-                public_id("ctx"),
+                &new_context_id,
                 json!({"role": "head", "operation": "update", "projection": true}).to_string(),
                 version_metadata.to_string(),
                 current_head.rowid,
@@ -655,6 +701,7 @@ impl UltraContext {
 
         let data = message_views_for_owner(&conn, new_head)?;
         Ok(MutationResult {
+            context_id: new_context_id,
             data,
             version: context_version(&conn, new_head)?,
         })
@@ -677,6 +724,7 @@ impl UltraContext {
         let session = resolve_session_handle(&conn, ctx_id)?;
         let current_head = current_context_head(&conn, session.rowid)?;
         let messages = context_message_rows(&conn, &session, &current_head)?;
+        let new_context_id = public_id("ctx");
         let mut delete_indices = Vec::new();
         for target in targets {
             delete_indices.push(resolve_delete_target(&messages, &target)?);
@@ -687,9 +735,9 @@ impl UltraContext {
         conn.execute(
             "INSERT INTO nodes
              (public_id, kind, content, metadata, prev, owner, created_at)
-             VALUES (?1, 'context', ?2, ?3, ?4, ?5, ?6)",
+            VALUES (?1, 'context', ?2, ?3, ?4, ?5, ?6)",
             params![
-                public_id("ctx"),
+                &new_context_id,
                 json!({"role": "head", "operation": "delete", "projection": true}).to_string(),
                 version_metadata.to_string(),
                 current_head.rowid,
@@ -725,7 +773,99 @@ impl UltraContext {
 
         let data = message_views_for_owner(&conn, new_head)?;
         Ok(MutationResult {
+            context_id: new_context_id,
             data,
+            version: context_version(&conn, new_head)?,
+        })
+    }
+
+    pub fn clear_context(&self, ctx_id: &str, version_metadata: Value) -> UcResult<MutationResult> {
+        let conn = self.lock_conn()?;
+        let session = resolve_session_handle(&conn, ctx_id)?;
+        let current_head = current_context_head(&conn, session.rowid)?;
+        let new_context_id = public_id("ctx");
+
+        conn.execute(
+            "INSERT INTO nodes
+             (public_id, kind, content, metadata, prev, owner, created_at)
+             VALUES (?1, 'context', ?2, ?3, ?4, ?5, ?6)",
+            params![
+                &new_context_id,
+                json!({"role": "head", "operation": "clear", "projection": true}).to_string(),
+                version_metadata.to_string(),
+                current_head.rowid,
+                session.rowid,
+                now_iso()
+            ],
+        )?;
+        let new_head = conn.last_insert_rowid();
+
+        Ok(MutationResult {
+            context_id: new_context_id,
+            data: vec![],
+            version: context_version(&conn, new_head)?,
+        })
+    }
+
+    pub fn restore_context(
+        &self,
+        ctx_id: &str,
+        context_id: &str,
+        version_metadata: Value,
+    ) -> UcResult<MutationResult> {
+        let conn = self.lock_conn()?;
+        let session = resolve_session_handle(&conn, ctx_id)?;
+        let current_head = current_context_head(&conn, session.rowid)?;
+        let source = context_head_by_public_id(&conn, session.rowid, context_id)?;
+        let messages = context_message_rows(&conn, &session, &source)?;
+        let new_context_id = public_id("ctx");
+
+        conn.execute(
+            "INSERT INTO nodes
+             (public_id, kind, content, metadata, prev, parent, owner, created_at)
+             VALUES (?1, 'context', ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                &new_context_id,
+                json!({
+                    "role": "head",
+                    "operation": "restore",
+                    "projection": true,
+                    "restored_from": context_id
+                })
+                .to_string(),
+                version_metadata.to_string(),
+                current_head.rowid,
+                source.rowid,
+                session.rowid,
+                now_iso()
+            ],
+        )?;
+        let new_head = conn.last_insert_rowid();
+
+        let mut prev = None;
+        for message in messages {
+            conn.execute(
+                "INSERT INTO nodes
+                 (public_id, kind, content, metadata, prev, parent, owner, created_at)
+                 VALUES (?1, 'message', ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    &message.public_id,
+                    message.content.to_string(),
+                    message.metadata.to_string(),
+                    prev,
+                    message.rowid,
+                    new_head,
+                    now_iso()
+                ],
+            )?;
+            let rowid = conn.last_insert_rowid();
+            index_search(&conn, rowid, &text_from_value(&message.content))?;
+            prev = Some(rowid);
+        }
+
+        Ok(MutationResult {
+            context_id: new_context_id,
+            data: message_views_for_owner(&conn, new_head)?,
             version: context_version(&conn, new_head)?,
         })
     }
@@ -1226,6 +1366,26 @@ impl UltraContext {
                 GetOptions {
                     version: optional_usize(&input, &["version"])?,
                 },
+            )?)),
+            "context_history" => Ok(context_history_json(
+                &self.context_history(required_str(&input, &["ctxId", "contextId", "ctx_id"])?)?,
+            )),
+            "context_clear" => Ok(mutation_result_json(&self.clear_context(
+                required_str(&input, &["ctxId", "contextId", "ctx_id"])?,
+                input.get("metadata").cloned().unwrap_or_else(|| json!({})),
+            )?)),
+            "context_restore" => Ok(mutation_result_json(&self.restore_context(
+                required_str(&input, &["ctxId", "contextId", "ctx_id"])?,
+                required_str(
+                    &input,
+                    &[
+                        "restoreContextId",
+                        "restore_context_id",
+                        "targetContextId",
+                        "target_context_id",
+                    ],
+                )?,
+                input.get("metadata").cloned().unwrap_or_else(|| json!({})),
             )?)),
             "list_contexts" => Ok(json!({
                 "data": self
@@ -1820,6 +1980,7 @@ fn session_view_json(view: &SessionView) -> Value {
 fn context_data_json(view: &ContextData) -> Value {
     json!({
         "id": view.id,
+        "context_id": view.context_id,
         "data": view.data.iter().map(message_view_json).collect::<Vec<_>>(),
         "version": view.version
     })
@@ -1827,8 +1988,28 @@ fn context_data_json(view: &ContextData) -> Value {
 
 fn mutation_result_json(view: &MutationResult) -> Value {
     json!({
+        "context_id": view.context_id,
         "data": view.data.iter().map(message_view_json).collect::<Vec<_>>(),
         "version": view.version
+    })
+}
+
+fn context_history_json(view: &ContextHistory) -> Value {
+    json!({
+        "data": view
+            .data
+            .iter()
+            .map(|entry| {
+                json!({
+                    "id": entry.id,
+                    "session_id": entry.session_id,
+                    "version": entry.version,
+                    "operation": entry.operation,
+                    "created_at": entry.created_at,
+                    "current": entry.current,
+                })
+            })
+            .collect::<Vec<_>>()
     })
 }
 
@@ -2287,6 +2468,24 @@ fn current_context_head(conn: &Connection, session_rowid: i64) -> UcResult<NodeR
 fn context_heads(conn: &Connection, session_rowid: i64) -> UcResult<Vec<NodeRow>> {
     let current = current_context_head(conn, session_rowid)?;
     walk_prev_chain(conn, current.rowid)
+}
+
+fn context_head_by_public_id(
+    conn: &Connection,
+    session_rowid: i64,
+    public_id: &str,
+) -> UcResult<NodeRow> {
+    query_node(
+        conn,
+        "SELECT id, public_id, content, metadata, data, prev, created_at
+         FROM nodes
+         WHERE kind = 'context'
+           AND owner = ?1
+           AND public_id = ?2
+         LIMIT 1",
+        params![session_rowid, public_id],
+    )?
+    .ok_or_else(|| UcError::new(ErrorCode::NotFound, "Context snapshot not found"))
 }
 
 fn context_version(conn: &Connection, head_rowid: i64) -> UcResult<usize> {

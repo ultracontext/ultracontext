@@ -184,7 +184,7 @@ class PostgresEngine {
             }
         }
 
-        return { data: await this.contextMessageViews(session, head), version: await this.version(head.id) }
+        return { context_id: head.public_id, data: await this.contextMessageViews(session, head), version: await this.version(head.id) }
     }
 
     async get(contextId, options = {}) {
@@ -195,7 +195,22 @@ class PostgresEngine {
         if (!head) {
             throw domainError('not_found', 'Version not found')
         }
-        return { id: contextId, data: await this.contextMessageViews(session, head), version }
+        return { id: contextId, context_id: head.public_id, data: await this.contextMessageViews(session, head), version }
+    }
+
+    async contextHistory(contextId) {
+        const session = await this.resolveSession(contextId)
+        const heads = await this.heads(session.id)
+        return {
+            data: heads.map((head, version) => ({
+                id: head.public_id,
+                session_id: session.public_id,
+                version,
+                operation: head.content.operation ?? 'unknown',
+                created_at: head.created_at,
+                current: version === heads.length - 1
+            }))
+        }
     }
 
     async listContexts() {
@@ -218,8 +233,9 @@ class PostgresEngine {
             throw domainError('invalid_input', `Index out of range: ${targetIndex}`)
         }
 
+        const newContextId = this.id('ctx')
         const newHead = await this.insertNode({
-            publicId: this.id('ctx'),
+            publicId: newContextId,
             kind: 'context',
             content: { role: 'head', operation: 'update', projection: true },
             metadata: options.metadata ?? {},
@@ -246,7 +262,7 @@ class PostgresEngine {
             prev = row.id
         }
 
-        return { data: await this.messageViews(newHead.id), version: await this.version(newHead.id) }
+        return { context_id: newContextId, data: await this.messageViews(newHead.id), version: await this.version(newHead.id) }
     }
 
     async delete(contextId, target, options = {}) {
@@ -272,8 +288,9 @@ class PostgresEngine {
             return messages.findIndex(message => message.public_id === target)
         }))
 
+        const newContextId = this.id('ctx')
         const newHead = await this.insertNode({
-            publicId: this.id('ctx'),
+            publicId: newContextId,
             kind: 'context',
             content: { role: 'head', operation: 'delete', projection: true },
             metadata: options.metadata ?? {},
@@ -297,7 +314,63 @@ class PostgresEngine {
             prev = row.id
         }
 
-        return { data: await this.messageViews(newHead.id), version: await this.version(newHead.id) }
+        return { context_id: newContextId, data: await this.messageViews(newHead.id), version: await this.version(newHead.id) }
+    }
+
+    async clear(contextId, options = {}) {
+        const session = await this.resolveSession(contextId)
+        const current = await this.currentHead(session.id)
+        const newContextId = this.id('ctx')
+        const newHead = await this.insertNode({
+            publicId: newContextId,
+            kind: 'context',
+            content: { role: 'head', operation: 'clear', projection: true },
+            metadata: options.metadata ?? {},
+            prev: current.id,
+            owner: session.id,
+            createdAt: this.now()
+        })
+        return { context_id: newContextId, data: [], version: await this.version(newHead.id) }
+    }
+
+    async restore(contextId, restoreContextId, options = {}) {
+        const session = await this.resolveSession(contextId)
+        const current = await this.currentHead(session.id)
+        const source = await this.contextHeadByPublicId(session.id, restoreContextId)
+        const messages = await this.contextMessages(session, source)
+        const newContextId = this.id('ctx')
+        const newHead = await this.insertNode({
+            publicId: newContextId,
+            kind: 'context',
+            content: {
+                role: 'head',
+                operation: 'restore',
+                projection: true,
+                restored_from: restoreContextId
+            },
+            metadata: options.metadata ?? {},
+            prev: current.id,
+            parent: source.id,
+            owner: session.id,
+            createdAt: this.now()
+        })
+
+        let prev = null
+        for (const message of messages) {
+            const row = await this.insertNode({
+                publicId: message.public_id,
+                kind: 'message',
+                content: message.content,
+                metadata: message.metadata,
+                prev,
+                parent: message.id,
+                owner: newHead.id,
+                createdAt: this.now()
+            })
+            prev = row.id
+        }
+
+        return { context_id: newContextId, data: await this.messageViews(newHead.id), version: await this.version(newHead.id) }
     }
 
     async save(contextId, input) {
@@ -626,6 +699,17 @@ class PostgresEngine {
 
     async heads(sessionRowId) {
         return this.chain((await this.currentHead(sessionRowId)).id)
+    }
+
+    async contextHeadByPublicId(sessionRowId, publicId) {
+        const result = await this.query(`
+            SELECT * FROM nodes
+            WHERE kind = 'context' AND owner = $1 AND public_id = $2
+            LIMIT 1
+        `, [sessionRowId, publicId])
+        const row = result.rows[0]
+        if (!row) throw domainError('not_found', 'Context snapshot not found')
+        return decode(row)
     }
 
     async children(owner, kind) {

@@ -229,6 +229,62 @@ fn context_messages_are_appendable_and_versioned() {
 }
 
 #[test]
+fn context_history_clear_and_restore_are_core_operations() {
+    let uc = UltraContext::open(temp_db("context-history")).unwrap();
+
+    let created = uc.create(json!({"project": "demo"})).unwrap();
+    let appended = uc
+        .append(
+            &created.id,
+            vec![
+                AppendInput::new(json!({"role": "user", "content": "draft"})),
+                AppendInput::new(json!({"role": "assistant", "content": "ready"})),
+            ],
+        )
+        .unwrap();
+    assert_eq!(appended.version, 0);
+
+    let updated = uc
+        .update_message(
+            &created.id,
+            UpdatePatch::by_index(1, json!({"content": "ready!"})),
+            json!({"reason": "punctuation"}),
+        )
+        .unwrap();
+    let updated_context_id = updated.context_id.clone();
+
+    let cleared = uc
+        .clear_context(&created.id, json!({"reason": "new model window"}))
+        .unwrap();
+    assert_eq!(cleared.version, 2);
+    assert!(cleared.data.is_empty());
+
+    let restored = uc
+        .restore_context(
+            &created.id,
+            &updated_context_id,
+            json!({"reason": "time travel"}),
+        )
+        .unwrap();
+    assert_eq!(restored.version, 3);
+    assert_eq!(restored.data.len(), 2);
+    assert_eq!(restored.data[1].content["content"], "ready!");
+
+    let current = uc.get(&created.id, GetOptions::default()).unwrap();
+    assert_eq!(current.context_id, restored.context_id);
+    assert_eq!(current.data[1].content["content"], "ready!");
+
+    let history = uc.context_history(&created.id).unwrap();
+    assert_eq!(history.data.len(), 4);
+    assert_eq!(history.data[0].operation, "create");
+    assert_eq!(history.data[1].operation, "update");
+    assert_eq!(history.data[2].operation, "clear");
+    assert_eq!(history.data[3].operation, "restore");
+    assert_eq!(history.data[3].id, restored.context_id);
+    assert!(history.data[3].current);
+}
+
+#[test]
 fn workspace_owns_artifacts_across_sessions() {
     let uc = UltraContext::open(temp_db("workspace-artifacts")).unwrap();
     let workspace = uc.create_workspace(json!({"name": "project"})).unwrap();

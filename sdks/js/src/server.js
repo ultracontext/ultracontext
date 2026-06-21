@@ -97,6 +97,22 @@ async function dispatch(engine, method, segments, body) {
         return engine.get(contextId, body)
     }
 
+    if (method === 'GET' && action === 'history' && segments.length === 4) {
+        return engine.contextHistory(contextId)
+    }
+
+    if (method === 'POST' && action === 'clear' && segments.length === 4) {
+        return engine.clear(contextId, body)
+    }
+
+    if (method === 'POST' && action === 'restore' && segments.length === 4) {
+        const restoreContextId = body.contextId ?? body.context_id
+        if (!restoreContextId) {
+            throw invalidInput('restore requires contextId')
+        }
+        return engine.restore(contextId, restoreContextId, body)
+    }
+
     if (method === 'POST' && action === 'update' && segments.length === 4) {
         return engine.update(contextId, body.updates, omit(body, ['updates']))
     }
@@ -197,5 +213,11 @@ function asArray(value) {
 function notFound() {
     const error = new Error('Route not found')
     error.code = 'not_found'
+    return error
+}
+
+function invalidInput(message) {
+    const error = new Error(message)
+    error.code = 'invalid_input'
     return error
 }

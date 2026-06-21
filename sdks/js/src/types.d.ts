@@ -81,8 +81,22 @@ export interface ContextReadOptions {
 
 export interface ContextResult {
     id?: string
+    context_id?: string
     data: Message[]
     version: number
+}
+
+export interface ContextHistoryEntry {
+    id: string
+    session_id: string
+    version: number
+    operation: string
+    created_at: string
+    current: boolean
+}
+
+export interface ContextHistory {
+    data: ContextHistoryEntry[]
 }
 
 export interface ContextUpdate {
@@ -234,6 +248,9 @@ export interface UltraContextClient {
     append(contextId: string, messages: Message | Message[]): Promise<ContextResult>
     get(): Promise<ContextList>
     get(contextId: string, options?: ContextReadOptions): Promise<ContextResult>
+    contextHistory(contextId: string): Promise<ContextHistory>
+    clearContext(contextId: string, options?: ContextUpdateOptions): Promise<ContextResult>
+    restoreContext(contextId: string, restoreContextId: string, options?: ContextUpdateOptions): Promise<ContextResult>
     update(contextId: string, updates: ContextUpdate | ContextUpdate[], options?: ContextUpdateOptions): Promise<ContextResult>
     delete(contextId: string, target: ContextDeleteTarget | ContextDeleteTarget[], options?: ContextUpdateOptions): Promise<DeleteResult | ContextResult>
     search(query: string, options?: SearchOptions): Promise<SearchResult>
@@ -262,6 +279,9 @@ export interface UltraContextEngine {
     append(contextId: string, messages: Message | Message[]): Awaitable<ContextResult>
     get(contextId: string, options?: ContextReadOptions): Awaitable<ContextResult>
     listContexts(): Awaitable<ContextList>
+    contextHistory(contextId: string): Awaitable<ContextHistory>
+    clear(contextId: string, options?: ContextUpdateOptions): Awaitable<ContextResult>
+    restore(contextId: string, restoreContextId: string, options?: ContextUpdateOptions): Awaitable<ContextResult>
     update(contextId: string, updates: ContextUpdate | ContextUpdate[], options?: ContextUpdateOptions): Awaitable<ContextResult>
     delete(contextId: string, target: ContextDeleteTarget | ContextDeleteTarget[], options?: ContextUpdateOptions): Awaitable<DeleteResult | ContextResult>
     search(query: string, options?: SearchOptions): Awaitable<SearchResult>

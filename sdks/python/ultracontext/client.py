@@ -108,6 +108,33 @@ class UltraContext:
             options,
         )
 
+    def context_history(self, context_id):
+        return self._call(
+            "context_history",
+            {"ctxId": context_id},
+            "GET",
+            f"/v2/contexts/{context_id}/history",
+        )
+
+    def clear_context(self, context_id, **options):
+        return self._call(
+            "context_clear",
+            {"ctxId": context_id, **options},
+            "POST",
+            f"/v2/contexts/{context_id}/clear",
+            options,
+        )
+
+    def restore_context(self, context_id, restore_context_id, **options):
+        body = {"contextId": restore_context_id, **options}
+        return self._call(
+            "context_restore",
+            {"ctxId": context_id, "restoreContextId": restore_context_id, **options},
+            "POST",
+            f"/v2/contexts/{context_id}/restore",
+            body,
+        )
+
     def update(self, context_id, updates=None, **options):
         body = {"updates": updates, **options}
         return self._call(

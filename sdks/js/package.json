@@ -34,6 +34,10 @@
             "types": "./src/ssr.d.ts",
             "default": "./src/ssr.js"
         },
+        "./next": {
+            "types": "./src/next.d.ts",
+            "default": "./src/next.js"
+        },
         "./local": {
             "types": "./src/local.d.ts",
             "default": "./src/local.js"

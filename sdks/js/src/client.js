@@ -67,6 +67,31 @@ export class UltraContextBase {
         })
     }
 
+    async contextHistory(contextId) {
+        return this.#call('context_history', { ctxId: contextId }, `/v2/contexts/${encodeURIComponent(contextId)}/history`, {
+            method: 'GET'
+        })
+    }
+
+    async clearContext(contextId, options = {}) {
+        return this.#call('context_clear', { ctxId: contextId, ...options }, `/v2/contexts/${encodeURIComponent(contextId)}/clear`, {
+            method: 'POST',
+            body: options
+        })
+    }
+
+    async restoreContext(contextId, restoreContextId, options = {}) {
+        return this.#call(
+            'context_restore',
+            { ctxId: contextId, restoreContextId, ...options },
+            `/v2/contexts/${encodeURIComponent(contextId)}/restore`,
+            {
+                method: 'POST',
+                body: { contextId: restoreContextId, ...options }
+            }
+        )
+    }
+
     async update(contextId, updates, options = {}) {
         return this.#call('update', { ctxId: contextId, updates, ...options }, `/v2/contexts/${encodeURIComponent(contextId)}/update`, {
             method: 'POST',

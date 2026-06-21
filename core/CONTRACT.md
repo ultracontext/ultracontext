@@ -99,7 +99,9 @@ session. Advanced callers may target a workspace directly.
 ## SDK Surface
 
 The language SDKs should expose a session-first handle API. Names may use
-language idiom, but behavior and shapes must match.
+language idiom, but behavior and shapes must match. The current alpha ships a
+flat compatibility client first; handle APIs should be added only as thin
+wrappers over Rust core/protocol operations.
 
 Progressive disclosure rule:
 
@@ -112,10 +114,31 @@ Progressive disclosure rule:
 - mutations through `session.context.*` advance the current context while
   preserving the durable session log and context revision history;
 - compatibility flat verbs such as `create`, `append`, `get`, `update`,
-  `delete`, `save`, and `load` may remain as legacy aliases, but they are not
-  the primary documented v2 surface.
+  `delete`, `save`, and `load` remain part of the alpha surface while the
+  session-handle API is wired.
 
-Top-level SDK surface:
+Current alpha flat surface:
+
+- `createWorkspace({metadata?}) -> Workspace`
+- `listWorkspaces() -> {data}`
+- `createSession(workspaceId, {metadata?}) -> Session`
+- `create({workspaceId?, metadata?}) -> Session`
+- `get() -> {data}` lists sessions
+- `get(sessionId, {version?}) -> {id, context_id, data, version}`
+- `fork(sessionId, {version?, metadata?}) -> Session`
+- `append(sessionId, entry | entry[]) -> {context_id, data, version}`
+- `update(sessionId, patch | patch[], {metadata?}) -> {context_id, data, version}`
+- `delete(sessionId, target | target[], {metadata?}) -> {context_id, data, version}`
+- `delete(sessionId, {permanent: true}) -> {deleted, id}`
+- `contextHistory(sessionId)` / Python `context_history(session_id)`
+- `clearContext(sessionId, {metadata?})` / Python `clear_context(...)`
+- `restoreContext(sessionId, contextId, {metadata?})` / Python `restore_context(...)`
+- artifact verbs: `save`, `load`, `read`, `write`, `move`, `remove`, `glob`,
+  `grep`
+- sync verbs: `exportSnapshot`, `importSnapshot`, `exportChanges`,
+  `importChanges`
+
+Target handle SDK surface:
 
 - `uc.sessions.create({workspaceId?, metadata?}) -> Session`
 - `uc.sessions.get(id) -> Session`

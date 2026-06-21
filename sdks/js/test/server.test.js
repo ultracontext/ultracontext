@@ -17,6 +17,18 @@ test('handler dispatches remote protocol calls to the engine', async () => {
             calls.push(['append', contextId, messages])
             return { data: messages, version: 0 }
         },
+        async contextHistory(contextId) {
+            calls.push(['contextHistory', contextId])
+            return { data: [{ id: 'ctx_v1', session_id: contextId, version: 1, operation: 'update', created_at: 'now', current: true }] }
+        },
+        async clear(contextId, options) {
+            calls.push(['clear', contextId, options])
+            return { context_id: 'ctx_v2', data: [], version: 2 }
+        },
+        async restore(contextId, restoreContextId, options) {
+            calls.push(['restore', contextId, restoreContextId, options])
+            return { context_id: 'ctx_v3', data: [], version: 3 }
+        },
         async load(contextId, pathOrId, options) {
             calls.push(['load', contextId, pathOrId, options])
             return { id: 'art_abc', path: pathOrId, data: '# Draft' }
@@ -36,15 +48,30 @@ test('handler dispatches remote protocol calls to the engine', async () => {
         method: 'POST',
         body: JSON.stringify({ pathOrId: 'draft.md', version: 0 })
     }))
+    const historyResponse = await handler(new Request('https://app.test/v2/contexts/ses_abc/history'))
+    const clearResponse = await handler(new Request('https://app.test/v2/contexts/ses_abc/clear', {
+        method: 'POST',
+        body: JSON.stringify({ metadata: { reason: 'reset' } })
+    }))
+    const restoreResponse = await handler(new Request('https://app.test/v2/contexts/ses_abc/restore', {
+        method: 'POST',
+        body: JSON.stringify({ contextId: 'ctx_v1', metadata: { reason: 'time travel' } })
+    }))
 
     assert.equal(createResponse.status, 200)
     assert.equal(appendResponse.status, 200)
     assert.equal(loadResponse.status, 200)
+    assert.equal(historyResponse.status, 200)
+    assert.equal(clearResponse.status, 200)
+    assert.equal(restoreResponse.status, 200)
     assert.deepEqual(await readJson(loadResponse), { id: 'art_abc', path: 'draft.md', data: '# Draft' })
     assert.deepEqual(calls, [
         ['create', { metadata: { app: 'demo' } }],
         ['append', 'ses_abc', [{ role: 'user', content: 'hi' }]],
-        ['load', 'ses_abc', 'draft.md', { version: 0 }]
+        ['load', 'ses_abc', 'draft.md', { version: 0 }],
+        ['contextHistory', 'ses_abc'],
+        ['clear', 'ses_abc', { metadata: { reason: 'reset' } }],
+        ['restore', 'ses_abc', 'ctx_v1', { contextId: 'ctx_v1', metadata: { reason: 'time travel' } }]
     ])
 })
 

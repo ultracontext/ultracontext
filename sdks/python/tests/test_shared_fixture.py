@@ -67,6 +67,18 @@ class NativeHttpTransport:
             return self.call("append", {"ctxId": context_id, "messages": messages})
         if method == "POST" and action == "get":
             return self.call("get", {"ctxId": context_id, **body})
+        if method == "GET" and action == "history":
+            return self.call("context_history", {"ctxId": context_id})
+        if method == "POST" and action == "clear":
+            return self.call("context_clear", {"ctxId": context_id, **body})
+        if method == "POST" and action == "restore":
+            restore_context_id = body.get("contextId") or body.get("context_id")
+            if not restore_context_id:
+                raise UltraContextError("restore requires contextId", code="invalid_input")
+            return self.call(
+                "context_restore",
+                {"ctxId": context_id, "restoreContextId": restore_context_id, **body},
+            )
         if method == "POST" and action == "update":
             return self.call("update", {"ctxId": context_id, **body})
         if method == "POST" and action == "delete":
@@ -123,6 +135,23 @@ def run_shared_fixture(testcase, uc, legacy_context_id=False):
     updated = uc.update(ctx["id"], FIXTURE["message_update"])
     testcase.assertEqual(updated["version"], 1)
     testcase.assertEqual(updated["data"][1]["content"], "fixture draft ready!")
+    updated_context_id = updated["context_id"]
+
+    history = uc.context_history(ctx["id"])
+    testcase.assertEqual([entry["operation"] for entry in history["data"]], ["create", "update"])
+    testcase.assertEqual(history["data"][1]["id"], updated_context_id)
+
+    cleared = uc.clear_context(ctx["id"], metadata={"reason": "reset window"})
+    testcase.assertEqual(cleared["version"], 2)
+    testcase.assertEqual(len(cleared["data"]), 0)
+
+    restored = uc.restore_context(
+        ctx["id"],
+        updated_context_id,
+        metadata={"reason": "time travel"},
+    )
+    testcase.assertEqual(restored["version"], 3)
+    testcase.assertEqual(restored["data"][1]["content"], "fixture draft ready!")
 
     fork = uc.fork(ctx["id"], version=0, metadata={"suite": "fork"})
     forked = uc.get(fork["id"], version=0)

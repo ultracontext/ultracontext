@@ -161,6 +161,11 @@ preserving the durable session log and context revision history. This keeps the
 product language centered on context without making a context snapshot the
 root identity.
 
+The alpha SDKs currently expose these same operations as flat pass-through
+methods (`append`, `update`, `delete`, `contextHistory`/`context_history`,
+`clearContext`/`clear_context`, `restoreContext`/`restore_context`). Those
+methods are compatibility surface over the Rust core, not a separate model.
+
 - `append` adds messages to the session log. If the current context already has
   a materialized projected window, the new message is also projected into that
   window without mutating older session messages. In the public SDK this is

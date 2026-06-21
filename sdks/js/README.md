@@ -5,6 +5,7 @@ UltraContext's JS package has one client API with separate runtime entrypoints:
 - `ultracontext`: normal browser/edge-safe remote client. No native imports.
 - `ultracontext/ssr`: SSR helpers, with `createBrowserClient` and
   `createServerClient`, plus route/HTTP handlers for server frameworks.
+- `ultracontext/next`: Next/App Router route handler alias.
 - `ultracontext/server`: server-side exports, including `createServerClient`
   and the fetch-compatible HTTP handler.
 - `ultracontext/browser`: explicit browser client alias.
@@ -75,10 +76,10 @@ remote UltraContext endpoint instead.
 Create `app/api/ultracontext/[...path]/route.ts`:
 
 ```ts
-import { createRouteHandler } from 'ultracontext/ssr'
+import { createUltraContextNextHandler } from 'ultracontext/next'
 
 export const { GET, POST, PATCH, DELETE } =
-    createRouteHandler({ projectRoot: process.cwd() })
+    createUltraContextNextHandler({ projectRoot: process.cwd() })
 ```
 
 This server-framework adapter loads `ultracontext.json`, opens the SQLite
@@ -121,6 +122,26 @@ const uc = new UltraContext({
     inlineLimit: 64 * 1024
 })
 ```
+
+## Context Windows
+
+The alpha JS surface is flat and backed by Rust core operations:
+
+```js
+const session = await uc.create({ metadata: { app: 'demo' } })
+const appended = await uc.append(session.id, { role: 'user', content: 'hi' })
+
+const history = await uc.contextHistory(session.id)
+const cleared = await uc.clearContext(session.id, {
+    metadata: { reason: 'reset window' }
+})
+const restored = await uc.restoreContext(session.id, appended.context_id, {
+    metadata: { reason: 'time travel' }
+})
+```
+
+The planned `uc.sessions.*` / `session.context.*` API should remain a thin
+wrapper over these same protocol operations.
 
 ## Devtools
 

@@ -47,12 +47,41 @@ fn json_dispatch_exposes_sdk_shapes_over_core_logic() {
         .unwrap();
     assert_eq!(updated["version"], 1);
     assert_eq!(updated["data"][0]["content"], "draft that");
+    let updated_context_id = updated["context_id"].as_str().unwrap().to_string();
 
     let deleted = uc
         .dispatch_json("delete", json!({"ctxId": ctx_id, "target": {"index": 0}}))
         .unwrap();
     assert_eq!(deleted["version"], 2);
     assert_eq!(deleted["data"].as_array().unwrap().len(), 0);
+
+    let history = uc
+        .dispatch_json("context_history", json!({"ctxId": ctx_id}))
+        .unwrap();
+    assert_eq!(history["data"].as_array().unwrap().len(), 3);
+    assert_eq!(history["data"][2]["operation"], "delete");
+
+    let cleared = uc
+        .dispatch_json(
+            "context_clear",
+            json!({"ctxId": ctx_id, "metadata": {"reason": "reset"}}),
+        )
+        .unwrap();
+    assert_eq!(cleared["version"], 3);
+    assert_eq!(cleared["data"].as_array().unwrap().len(), 0);
+
+    let restored = uc
+        .dispatch_json(
+            "context_restore",
+            json!({
+                "ctxId": ctx_id,
+                "restoreContextId": updated_context_id,
+                "metadata": {"reason": "time travel"}
+            }),
+        )
+        .unwrap();
+    assert_eq!(restored["version"], 4);
+    assert_eq!(restored["data"][0]["content"], "draft that");
 
     let written = uc
         .dispatch_json(

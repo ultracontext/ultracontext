@@ -10,8 +10,9 @@ workflows, and remote sync without forcing every app to invent its own context
 store.
 
 > Status: v2 alpha. `core/MODEL.md` and `core/CONTRACT.md` are the product
-> sources of truth. Compatibility flat verbs may remain while SDKs move to the
-> session-handle API below.
+> sources of truth. The shipped alpha client surface is intentionally flat;
+> the session-handle API is the product direction and must stay backed by core
+> operations, not SDK-only semantics.
 
 ## Quickstart
 
@@ -37,14 +38,14 @@ Use it from a local/server runtime:
 import { createServerClient } from 'ultracontext/ssr'
 
 const uc = await createServerClient({ projectRoot: process.cwd() })
-const session = await uc.sessions.create()
+const session = await uc.create()
 
-await session.context.append({
+await uc.append(session.id, {
   role: 'user',
   content: 'Draft a launch note'
 })
 
-const entries = await session.context.entries()
+const entries = await uc.get(session.id)
 ```
 
 Expose it to a browser or edge app through HTTP:
@@ -71,59 +72,48 @@ uc mount ./UltraContext
 
 ## Top-Level Overview
 
-```ts
-uc.sessions.create({ workspaceId?, metadata? })
-uc.sessions.get(id)
-uc.sessions.list({ workspaceId?, limit?, cursor? })
-uc.sessions.delete(id)
-
-uc.workspaces.create({ metadata? })
-uc.workspaces.get(id)
-uc.workspaces.list({ limit?, cursor? })
-uc.workspaces.update(id, { metadata })
-uc.workspaces.delete(id, { permanent? })
-
-uc.artifacts.create({ workspaceId?, path?, content?, data?, mediaType?, kind?, metadata? })
-uc.artifacts.get(id, { version? })
-uc.artifacts.list({ workspaceId?, pathPrefix?, limit?, cursor? })
-uc.artifacts.update(id, { path?, content?, data?, mediaType?, kind?, metadata?, ifVersion? })
-uc.artifacts.delete(id, { permanent? })
-
-uc.fs.list({ workspaceId?, prefix? })
-uc.fs.read(path, { workspaceId?, version? })
-uc.fs.write(path, content, { workspaceId?, mediaType?, kind?, metadata?, ifVersion? })
-uc.fs.move(from, to, { workspaceId?, ifVersion? })
-uc.fs.remove(path, { workspaceId?, ifVersion? })
-uc.fs.glob(pattern, { workspaceId? })
-uc.fs.grep(query, { workspaceId?, prefix? })
-
-uc.search(query, { workspaceId?, sessionId?, kind?, limit?, cursor? })
-```
-
-Session handles expose the context workflow:
+Current alpha client methods:
 
 ```ts
-session.update({ metadata })
-session.delete()
-session.fork({ contextId?, at?, kind?, metadata? })
+uc.createWorkspace({ metadata? })
+uc.listWorkspaces()
+uc.createSession(workspaceId, { metadata? })
 
-session.context.current()
-session.context.entries({ contextId? })
-session.context.append(entry | entry[])
-session.context.update(entryId, patch)
-session.context.remove(entryId | entryId[])
-session.context.clear()
-session.context.stats({ model? })
-session.context.history({ limit?, cursor? })
-session.context.restore(contextId)
+uc.create({ workspaceId?, metadata? })
+uc.get()
+uc.get(sessionId, { version? })
+uc.fork(sessionId, { version?, metadata? })
 
-session.log.entries({ limit?, cursor? })
+uc.append(sessionId, entry | entry[])
+uc.update(sessionId, patch | patch[], { metadata? })
+uc.delete(sessionId, target | target[], { metadata? })
+uc.delete(sessionId, { permanent: true })
 
-session.artifacts.list({ pathPrefix?, limit?, cursor? })
-session.artifacts.attach(artifactId, { version? })
-session.artifacts.detach(artifactId)
-session.artifacts.create(input)
+uc.contextHistory(sessionId)
+uc.clearContext(sessionId, { metadata? })
+uc.restoreContext(sessionId, contextId, { metadata? })
+
+uc.save(sessionId, artifact)
+uc.load(sessionId)
+uc.load(sessionId, pathOrId, { version? })
+
+uc.read(sessionId, pathOrId, { version? })
+uc.write(sessionId, path, content, { kind?, metadata?, ifVersion? })
+uc.move(sessionId, from, to, { ifVersion? })
+uc.remove(sessionId, pathOrId, { ifVersion? })
+uc.glob(sessionId, pattern)
+uc.grep(sessionId, query, { prefix? })
+
+uc.search(query)
+uc.exportSnapshot()
+uc.importSnapshot(snapshot)
+uc.exportChanges({ since? })
+uc.importChanges(changes)
 ```
+
+The product-level handle API remains the intended ergonomic layer:
+`uc.sessions.*`, `session.context.*`, `uc.artifacts.*`, and `uc.fs.*`. Those
+helpers should be added only as thin wrappers over core/protocol operations.
 
 ## Sessions
 
@@ -137,13 +127,14 @@ artifacts.
 
 ## Context Windows
 
-`session.context` is the current model-facing window for that session.
-Mutations through `session.context.*` advance the current context while
-preserving the durable session log and context revision history.
+The context window is the model-facing window for a session. In the alpha
+surface, `append`, `update`, `delete`, `clearContext`, and `restoreContext`
+advance that window while preserving the durable session log and context
+revision history.
 
-`clear()` creates a new empty current window. `history()` lists context-window
-snapshots. `restore(contextId)` creates a new current snapshot based on an older
-snapshot; it does not move time backward in place.
+`clearContext()` creates a new empty current window. `contextHistory()` lists
+context-window snapshots. `restoreContext(contextId)` creates a new current
+snapshot based on an older snapshot; it does not move time backward in place.
 
 Compaction, provider-specific rendering, and formatting are intentionally out of
 the initial public surface. They can be added later as LEGO-block extensions.
@@ -155,7 +146,7 @@ but entries can also represent system instructions, tool calls/results,
 summaries, artifact references, media references, and multimodal content.
 
 ```ts
-await session.context.append({
+await uc.append(session.id, {
   role: 'user',
   content: [
     { type: 'text', text: 'What is wrong with this UI?' },

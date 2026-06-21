@@ -181,7 +181,7 @@ class SqliteEngine {
             }
         }
 
-        return { data: this.contextMessageViews(session, head), version: this.version(head.id) }
+        return { context_id: head.public_id, data: this.contextMessageViews(session, head), version: this.version(head.id) }
     }
 
     get(contextId, options = {}) {
@@ -192,7 +192,22 @@ class SqliteEngine {
         if (!head) {
             throw domainError('not_found', 'Version not found')
         }
-        return { id: contextId, data: this.contextMessageViews(session, head), version }
+        return { id: contextId, context_id: head.public_id, data: this.contextMessageViews(session, head), version }
+    }
+
+    contextHistory(contextId) {
+        const session = this.resolveSession(contextId)
+        const heads = this.heads(session.id)
+        return {
+            data: heads.map((head, version) => ({
+                id: head.public_id,
+                session_id: session.public_id,
+                version,
+                operation: head.content.operation ?? 'unknown',
+                created_at: head.created_at,
+                current: version === heads.length - 1
+            }))
+        }
     }
 
     listContexts() {
@@ -215,8 +230,9 @@ class SqliteEngine {
             throw domainError('invalid_input', `Index out of range: ${targetIndex}`)
         }
 
+        const newContextId = id('ctx')
         this.insertNode({
-            publicId: id('ctx'),
+            publicId: newContextId,
             kind: 'context',
             content: { role: 'head', operation: 'update', projection: true },
             metadata: options.metadata ?? {},
@@ -244,7 +260,7 @@ class SqliteEngine {
             prev = this.db.prepare('SELECT last_insert_rowid() AS id').get().id
         }
 
-        return { data: this.messageViews(newHead), version: this.version(newHead) }
+        return { context_id: newContextId, data: this.messageViews(newHead), version: this.version(newHead) }
     }
 
     delete(contextId, target, options = {}) {
@@ -270,8 +286,9 @@ class SqliteEngine {
             return messages.findIndex(message => message.public_id === target)
         }))
 
+        const newContextId = id('ctx')
         this.insertNode({
-            publicId: id('ctx'),
+            publicId: newContextId,
             kind: 'context',
             content: { role: 'head', operation: 'delete', projection: true },
             metadata: options.metadata ?? {},
@@ -296,7 +313,65 @@ class SqliteEngine {
             prev = this.db.prepare('SELECT last_insert_rowid() AS id').get().id
         }
 
-        return { data: this.messageViews(newHead), version: this.version(newHead) }
+        return { context_id: newContextId, data: this.messageViews(newHead), version: this.version(newHead) }
+    }
+
+    clear(contextId, options = {}) {
+        const session = this.resolveSession(contextId)
+        const current = this.currentHead(session.id)
+        const newContextId = id('ctx')
+        this.insertNode({
+            publicId: newContextId,
+            kind: 'context',
+            content: { role: 'head', operation: 'clear', projection: true },
+            metadata: options.metadata ?? {},
+            prev: current.id,
+            owner: session.id,
+            createdAt: now()
+        })
+        const newHead = this.db.prepare('SELECT last_insert_rowid() AS id').get().id
+        return { context_id: newContextId, data: [], version: this.version(newHead) }
+    }
+
+    restore(contextId, restoreContextId, options = {}) {
+        const session = this.resolveSession(contextId)
+        const current = this.currentHead(session.id)
+        const source = this.contextHeadByPublicId(session.id, restoreContextId)
+        const messages = this.contextMessages(session, source)
+        const newContextId = id('ctx')
+        this.insertNode({
+            publicId: newContextId,
+            kind: 'context',
+            content: {
+                role: 'head',
+                operation: 'restore',
+                projection: true,
+                restored_from: restoreContextId
+            },
+            metadata: options.metadata ?? {},
+            prev: current.id,
+            parent: source.id,
+            owner: session.id,
+            createdAt: now()
+        })
+        const newHead = this.db.prepare('SELECT last_insert_rowid() AS id').get().id
+
+        let prev = null
+        for (const message of messages) {
+            this.insertNode({
+                publicId: message.public_id,
+                kind: 'message',
+                content: message.content,
+                metadata: message.metadata,
+                prev,
+                parent: message.id,
+                owner: newHead,
+                createdAt: now()
+            })
+            prev = this.db.prepare('SELECT last_insert_rowid() AS id').get().id
+        }
+
+        return { context_id: newContextId, data: this.messageViews(newHead), version: this.version(newHead) }
     }
 
     save(contextId, input) {
@@ -607,6 +682,16 @@ class SqliteEngine {
 
     heads(sessionRowId) {
         return this.chain(this.currentHead(sessionRowId).id)
+    }
+
+    contextHeadByPublicId(sessionRowId, publicId) {
+        const row = this.db.prepare(`
+            SELECT * FROM nodes
+            WHERE kind = 'context' AND owner = ? AND public_id = ?
+            LIMIT 1
+        `).get(sessionRowId, publicId)
+        if (!row) throw domainError('not_found', 'Context snapshot not found')
+        return decode(row)
     }
 
     children(owner, kind) {

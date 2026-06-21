@@ -35,8 +35,29 @@ Current status:
   installed; otherwise it raises a coded `UltraContextError`.
 - local mode can use `content_dir` plus `inline_limit` to keep large artifacts
   outside the SQLite database.
+- context-window operations are available as flat core-backed methods:
+  `context_history(session_id)`, `clear_context(session_id, metadata={...})`,
+  and `restore_context(session_id, context_id, metadata={...})`.
 - `export_snapshot()` / `export_changes()` and matching import calls provide a
   first sync/mirror path.
+
+Example:
+
+```py
+from ultracontext import UltraContext
+
+uc = UltraContext(mode="local", path=".ultracontext/ultracontext.db")
+session = uc.create(metadata={"app": "demo"})
+appended = uc.append(session["id"], {"role": "user", "content": "hi"})
+
+history = uc.context_history(session["id"])
+uc.clear_context(session["id"], metadata={"reason": "reset window"})
+uc.restore_context(
+    session["id"],
+    appended["context_id"],
+    metadata={"reason": "time travel"},
+)
+```
 
 Build notes:
 

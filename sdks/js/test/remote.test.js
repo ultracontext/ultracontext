@@ -76,6 +76,35 @@ test('remote client supports messages and artifacts', async () => {
     assert.equal(calls[2].url, 'https://uc.example/v2/contexts/ses_abc/artifacts/load')
 })
 
+test('remote client supports context window operations', async () => {
+    const calls = []
+    const fetch = async (url, init) => {
+        calls.push({ url, init })
+        if (url.endsWith('/history')) {
+            return jsonResponse({
+                data: [{ id: 'ctx_v1', session_id: 'ses_abc', version: 1, operation: 'update', created_at: 'now', current: true }]
+            })
+        }
+        return jsonResponse({ context_id: 'ctx_v2', data: [], version: 2 })
+    }
+    const uc = new UltraContext({ mode: 'remote', baseUrl: 'https://uc.example', fetch })
+
+    const history = await uc.contextHistory('ses_abc')
+    await uc.clearContext('ses_abc', { metadata: { reason: 'reset' } })
+    await uc.restoreContext('ses_abc', 'ctx_v1', { metadata: { reason: 'time travel' } })
+
+    assert.equal(history.data[0].id, 'ctx_v1')
+    assert.equal(calls[0].url, 'https://uc.example/v2/contexts/ses_abc/history')
+    assert.equal(calls[0].init.method, 'GET')
+    assert.equal(calls[1].url, 'https://uc.example/v2/contexts/ses_abc/clear')
+    assert.deepEqual(JSON.parse(calls[1].init.body), { metadata: { reason: 'reset' } })
+    assert.equal(calls[2].url, 'https://uc.example/v2/contexts/ses_abc/restore')
+    assert.deepEqual(JSON.parse(calls[2].init.body), {
+        contextId: 'ctx_v1',
+        metadata: { reason: 'time travel' }
+    })
+})
+
 test('remote errors preserve UltraContext code', async () => {
     const fetch = async () => jsonResponse(
         { error: { code: 'not_found', message: 'Context not found' } },
@@ -130,12 +159,14 @@ test('runtime entrypoint aliases resolve to the expected clients', async () => {
     const local = await import('ultracontext/local')
     const node = await import('ultracontext/node')
     const ssr = await import('ultracontext/ssr')
+    const next = await import('ultracontext/next')
 
     assert.equal(browser.UltraContext, root.UltraContext)
     assert.equal(browser.createClient, root.createClient)
     assert.equal(browser.createBrowserClient, ssr.createBrowserClient)
     assert.equal(node.UltraContext, local.UltraContext)
     assert.equal(node.createLocalClient, local.createLocalClient)
+    assert.equal(next.createUltraContextNextHandler, ssr.createRouteHandler)
 })
 
 test('createBrowserClient returns a browser remote client', async () => {
