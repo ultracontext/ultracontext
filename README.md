@@ -2,15 +2,9 @@
   <a href="https://github.com/ultracontext/ultracontext">
     <img alt="ultracontext: control what agents see" src=".github/assets/context-sdk.png" width="100%">
   </a>
-  <p>
-    <strong>ultracontext</strong><br>
-    The context SDK for AI
-  </p>
 </div>
 
-<p align="center">
-  <img alt="" src=".github/assets/divider.svg" width="100%" height="1">
-</p>
+# ultracontext
 
 <div align="center">
 
