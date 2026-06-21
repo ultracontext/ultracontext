@@ -146,27 +146,54 @@ uc.sync.exportChanges({ since? })
 uc.sync.importChanges(changes)
 ```
 
-## Sessions
+## Sessions And Context Windows
+
+```text
+                      ┌──────────────────────┐
+                      │ session  ses_4f2e... │  the permanent id - what you hold
+                      └──────────────────────┘
+                                 ▲
+                ┌────────────────┼────────────────┐  owner = session membership
+                │                │                │
+          ┌──────────┐     ┌──────────┐     ┌──────────┐
+          │ ctx   v0 │◄────│ ctx   v1 │◄────│ ctx   v2 │ ◄── CURRENT
+          │ {create} │ prev│ {update} │ prev│ {delete} │     (nothing points at it)
+          └──────────┘     └──────────┘     └──────────┘
+               ▲                ▲                ▲
+               │                │                │   owner = context snapshot
+          ┌──────────┐     ┌──────────┐     ┌──────────┐
+          │  msg_a   │     │  msg_a   │     │  msg_b'  │
+          │   "hi"   │     │   "hi"   │     │  "hbu!"  │
+          └──────────┘     └──────────┘     └──────────┘
+               ▲                ▲
+               │ prev           │ prev
+          ┌──────────┐     ┌──────────┐
+          │  msg_b   │     │  msg_b'  │──── parent -> msg_b
+          │  "hbu?"  │     │  "hbu!"  │     ("I came from b")
+          └──────────┘     └──────────┘
+
+  v0: created from the session log · v1: patched b -> b' (a keeps its id) ·
+  v2: soft-deleted a (b' carries over, same id)
+```
 
 A session is the durable container for one conversation, run, or agent task. It
-owns lifecycle metadata, an append-only log, context snapshots, subagent links,
-and session-artifact attachments.
+is the permanent handle you keep in app code. It owns lifecycle metadata, an
+append-only log, context snapshots, subagent links, and session-artifact
+attachments.
+
+A context window is the model-facing view for that session. The current context
+is the terminal snapshot in the `prev` chain. Reads use the current context by
+default. Use `session.context.history()` or `session.context.current({ version })`
+to inspect older windows.
+
+`session.context.append`, `update`, `delete`, `clear`, and `restore` advance
+the current context without rewriting older snapshots. `clear()` creates a new
+empty current window. `restore(contextId)` creates a new current snapshot from
+an older one; it does not move time backward in place.
 
 Session deletion is permanent. It removes the session, its log, its context
 snapshots, and its session-artifact attachments. It does not delete workspace
 artifacts.
-
-## Context Windows
-
-The context window is the model-facing window for a session.
-`session.context.append`, `update`, `delete`, `clear`, and `restore` advance
-that window while preserving the durable session log and context revision
-history.
-
-`session.context.clear()` creates a new empty current window.
-`session.context.history()` lists context-window snapshots.
-`session.context.restore(contextId)` creates a new current snapshot based on an
-older snapshot; it does not move time backward in place.
 
 Compaction, provider-specific rendering, and formatting are intentionally out of
 the initial public surface. They can be added later as LEGO-block extensions.
