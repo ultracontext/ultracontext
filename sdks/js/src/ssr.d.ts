@@ -1,4 +1,4 @@
-import type { LocalUltraContextOptions, OpenProjectOptions, UltraContext as LocalUltraContext } from './local'
+import type { CreateClientOptions, LocalUltraContextOptions, UltraContext as LocalUltraContext } from './local'
 import type { UltraContext as BrowserUltraContext, UltraContextRemoteOptions } from './index'
 import type { UltraContextEngine } from './types'
 import type { ProjectConfigOptions } from './config'
@@ -6,7 +6,7 @@ import type { ProjectConfigOptions } from './config'
 export { UltraContextError } from './index'
 
 export type BrowserClientOptions = UltraContextRemoteOptions
-export type ServerClientOptions = OpenProjectOptions | LocalUltraContextOptions
+export type ServerClientOptions = CreateClientOptions | LocalUltraContextOptions
 
 export function createBrowserClient(config?: BrowserClientOptions): BrowserUltraContext
 export function createBrowserClient(baseUrl: string | URL, options?: Omit<BrowserClientOptions, 'baseUrl'>): BrowserUltraContext

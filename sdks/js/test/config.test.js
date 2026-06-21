@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { loadProjectConfig, loadProjectConfigSync } from '../src/config.js'
-import { UltraContext, createClient } from '../src/local.js'
+import { createClient } from '../src/local.js'
 
 test('loadProjectConfig resolves ultracontext.json relative paths', async () => {
     const root = join(tmpdir(), `uc-js-config-${process.pid}-${Date.now()}`)
@@ -79,41 +79,8 @@ test('local createClient creates a local client from project config synchronousl
     rmSync(root, { recursive: true, force: true })
 })
 
-test('UltraContext.openProject creates a local client from project config', async () => {
-    const root = join(tmpdir(), `uc-js-open-project-${process.pid}-${Date.now()}`)
-    mkdirSync(root, { recursive: true })
-    writeFileSync(join(root, 'ultracontext.json'), JSON.stringify({
-        db: '.ultracontext/ultracontext.db',
-        storage: {
-            contentDir: '.ultracontext/blobs',
-            inlineLimit: 456
-        }
-    }))
-
-    const uc = await UltraContext.openProject({
-        projectRoot: root,
-        native: {
-            UltraContextCore: class {
-                constructor(path, options) {
-                    this.path = path
-                    this.options = options
-                }
-
-                dispatchJson() {
-                    return JSON.stringify({ ok: { data: [] } })
-                }
-            }
-        }
-    })
-
-    assert.equal(uc.path, join(root, '.ultracontext/ultracontext.db'))
-    assert.equal(uc.contentDir, join(root, '.ultracontext/blobs'))
-    assert.equal(uc.inlineLimit, 456)
-    rmSync(root, { recursive: true, force: true })
-})
-
-test('UltraContext.openProject passes S3 content-store config to native core', async () => {
-    const root = join(tmpdir(), `uc-js-open-project-s3-${process.pid}-${Date.now()}`)
+test('local createClient passes S3 content-store config to native core', async () => {
+    const root = join(tmpdir(), `uc-js-create-client-s3-${process.pid}-${Date.now()}`)
     let nativeOptions
     mkdirSync(root, { recursive: true })
     writeFileSync(join(root, 'ultracontext.json'), JSON.stringify({
@@ -132,7 +99,7 @@ test('UltraContext.openProject passes S3 content-store config to native core', a
         }
     }))
 
-    const uc = await UltraContext.openProject({
+    const uc = createClient({
         projectRoot: root,
         native: {
             UltraContextCore: class {

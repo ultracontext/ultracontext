@@ -15,9 +15,6 @@ export class UltraContext extends UltraContextBase {
         this.s3 = transport.s3
     }
 
-    static async openProject(options = {}) {
-        return openProject(options)
-    }
 }
 
 export function createLocalClient(config = {}) {
@@ -35,10 +32,6 @@ export function createClient(options = {}) {
         native: options.native,
         core: options.core
     })
-}
-
-export async function openProject(options = {}) {
-    return createClient(options)
 }
 
 function createLocalTransport(config) {

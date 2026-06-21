@@ -29,7 +29,7 @@ export interface LocalUltraContextOptions {
     }
 }
 
-export interface OpenProjectOptions extends ProjectConfigOptions {
+export interface CreateClientOptions extends ProjectConfigOptions {
     native?: UltraContextNativeBinding
     core?: {
         dispatchJson(operation: string, payload: string): string
@@ -44,11 +44,9 @@ export class UltraContext {
     storageDriver?: string
     s3?: S3ProjectConfig
     constructor(config?: LocalUltraContextOptions)
-    static openProject(options?: OpenProjectOptions): Promise<UltraContext>
 }
 
 export interface UltraContext extends UltraContextClient {}
 
-export function createClient(options?: OpenProjectOptions): UltraContext
+export function createClient(options?: CreateClientOptions): UltraContext
 export function createLocalClient(config?: LocalUltraContextOptions): UltraContext
-export function openProject(options?: OpenProjectOptions): Promise<UltraContext>

@@ -32,10 +32,6 @@ def create_client(api_key=None, **options):
     )
 
 
-def open_project(**options):
-    return create_client(**options)
-
-
 def load_project_config(options=None):
     options = dict(options or {})
     config_path = (
