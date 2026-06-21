@@ -146,7 +146,7 @@ uc.sync.exportChanges({ since? })
 uc.sync.importChanges(changes)
 ```
 
-## Sessions And Context Windows
+## Auto-Versioned Context
 
 ```text
                       ┌──────────────────────┐
@@ -175,6 +175,9 @@ uc.sync.importChanges(changes)
   v0: created from the session log · v1: patched b -> b' (a keeps its id) ·
   v2: soft-deleted a (b' carries over, same id)
 ```
+
+Every context update creates a new snapshot automatically, so agents can edit,
+clear, restore, and time-travel without losing history.
 
 A session is the durable container for one conversation, run, or agent task. It
 is the permanent handle you keep in app code. It owns lifecycle metadata, an
