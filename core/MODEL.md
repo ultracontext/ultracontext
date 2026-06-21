@@ -140,25 +140,37 @@ users can start with `create()` and never think about workspaces.
 
 A session is the stable handle for a conversation, run, or agent task. It owns
 an append-only log of what happened. Appending a user/assistant/tool message
-adds to the session log. Session log entries are not mutated by compaction,
-trimming, summarization, or context-window optimization.
+adds to the session log. Session log entries are not mutated by trimming,
+summarization, clearing, restore, or context-window optimization.
 
 A context is one model-facing window for a session. A context can start as
-"the whole session so far", then diverge as the app compacts, deletes,
-summarizes, or otherwise optimizes the prompt sent to the model. Reads choose a
-context snapshot: latest by default, or an older snapshot for time travel.
-Writes never edit an existing context snapshot.
+"the whole session so far", then diverge as the app removes entries, clears the
+window, restores an older window, or otherwise changes the prompt sent to the
+model. Reads choose a context snapshot: latest by default, or an older snapshot
+for time travel. Writes never edit an existing context snapshot.
 
 There is no separate "context root" node. The session is the root. The current
 context is the terminal `context` node owned by the session in the `prev`
 chain. `content.initial_context_id` is a creation-time reference, not the
 source of truth for the active window.
 
+The public SDK should expose this as a session-first context surface:
+`session.context` is the current model-facing window for that session.
+Mutations through `session.context.*` advance the current context while
+preserving the durable session log and context revision history. This keeps the
+product language centered on context without making a context snapshot the
+root identity.
+
 - `append` adds messages to the session log. If the current context already has
   a materialized projected window, the new message is also projected into that
-  window without mutating older session messages.
-- `update`, compaction, and soft `delete` create a new context snapshot. Old
-  snapshots remain readable.
+  window without mutating older session messages. In the public SDK this is
+  `session.context.append(...)`.
+- `update`, soft removal, clearing, and restore create a new context snapshot.
+  Old snapshots remain readable. In the public SDK these are
+  `session.context.update(...)`, `session.context.remove(...)`,
+  `session.context.clear(...)`, and `session.context.restore(...)`.
+- `restore` creates a new current snapshot from an older snapshot; it does not
+  move the current pointer backward in place.
 - `fork` creates a new session in the same workspace and copies the chosen
   context window into the new session log, preserving provenance through
   `parent`.

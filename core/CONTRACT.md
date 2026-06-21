@@ -98,31 +98,98 @@ session. Advanced callers may target a workspace directly.
 
 ## SDK Surface
 
-The language SDKs should expose a small flat class. Names may use language
-idiom, but behavior and shapes must match.
+The language SDKs should expose a session-first handle API. Names may use
+language idiom, but behavior and shapes must match.
 
 Progressive disclosure rule:
 
-- simple apps call `create()` and receive a stable handle. In v2 this is the
-  session id, but `ctxId` remains accepted as a compatibility parameter name;
+- simple apps create or load a session and operate on `session.context`;
 - project-aware apps create workspaces explicitly and create sessions inside
   them;
-- sessions are append-only logs;
-- contexts are immutable model-window snapshots owned directly by a session;
-  the current context is the latest snapshot in the session's context chain.
+- a session is the durable container for lifecycle, metadata, artifacts,
+  subagents, a session log, and context snapshots;
+- `session.context` is the current model-facing window for that session;
+- mutations through `session.context.*` advance the current context while
+  preserving the durable session log and context revision history;
+- compatibility flat verbs such as `create`, `append`, `get`, `update`,
+  `delete`, `save`, and `load` may remain as legacy aliases, but they are not
+  the primary documented v2 surface.
 
-Core context verbs:
+Top-level SDK surface:
 
-- `createWorkspace({metadata?}) -> {id, metadata, created_at}`
-- `createSession(workspaceId, {metadata?}) -> {id, workspace_id, context_id, metadata, created_at}`
-- `create({metadata?}) -> {id, metadata, created_at}`
-- `fork(sourceId, {version?, metadata?}) -> {id, metadata, created_at}`
-- `append(handle, message | message[]) -> {data, version}`
-- `get()` lists sessions through the compatibility context-list shape
-- `get(handle, options?)` reads one session's current or versioned context
-- `update(handle, updates, options?) -> {data, version}`
-- `delete(handle, ids | {permanent: true}, options?)`
-- `search(query, options?) -> {data}`
+- `uc.sessions.create({workspaceId?, metadata?}) -> Session`
+- `uc.sessions.get(id) -> Session`
+- `uc.sessions.list({workspaceId?, limit?, cursor?}) -> {data, cursor?}`
+- `uc.sessions.delete(id) -> {deleted, id}`. Session deletion is permanent and
+  removes the session, its log, its context snapshots, and its session-artifact
+  attachments. It does not delete workspace artifacts.
+- `uc.workspaces.create({metadata?}) -> Workspace`
+- `uc.workspaces.get(id) -> Workspace`
+- `uc.workspaces.list({limit?, cursor?}) -> {data, cursor?}`
+- `uc.workspaces.update(id, {metadata}) -> Workspace`
+- `uc.workspaces.delete(id, {permanent?}) -> {deleted, id}`
+- `uc.artifacts.create({workspaceId?, path?, content?, data?, mediaType?, kind?, metadata?}) -> Artifact`
+- `uc.artifacts.get(id, {version?}) -> Artifact`
+- `uc.artifacts.list({workspaceId?, pathPrefix?, limit?, cursor?}) -> {data, cursor?}`
+- `uc.artifacts.update(id, {path?, content?, data?, mediaType?, kind?, metadata?, ifVersion?}) -> Artifact`
+- `uc.artifacts.delete(id, {permanent?}) -> {deleted, id}`
+- `uc.fs.*` exposes the workspace path projection over artifacts.
+- `uc.search(query, {workspaceId?, sessionId?, kind?, limit?, cursor?}) -> {data, cursor?}`
+
+Session handle surface:
+
+- `session.id`
+- `session.workspaceId`
+- `session.metadata`
+- `session.createdAt`
+- `session.updatedAt?`
+- `session.update({metadata}) -> Session`
+- `session.delete() -> {deleted, id}`. Session deletion is permanent.
+- `session.fork({contextId?, at?, kind?, metadata?}) -> Session`
+- `session.context.current() -> ContextSnapshot`
+- `session.context.append(entry | entry[]) -> ContextMutation`
+- `session.context.entries({contextId?}) -> {data, context}`
+- `session.context.update(entryId, patch) -> ContextMutation`
+- `session.context.remove(entryId | entryId[]) -> ContextMutation`
+- `session.context.clear() -> ContextMutation`
+- `session.context.stats({model?}) -> ContextStats`
+- `session.context.history({limit?, cursor?}) -> {data, cursor?}`
+- `session.context.restore(contextId) -> ContextMutation`
+- `session.log.entries({limit?, cursor?}) -> {data, cursor?}` for advanced
+  audit/history use.
+- `session.artifacts.list({pathPrefix?, limit?, cursor?}) -> {data, cursor?}`
+- `session.artifacts.attach(artifactId, {version?}) -> Attachment`
+- `session.artifacts.detach(artifactId) -> {detached, id}`
+- `session.artifacts.create(input) -> Artifact` creates a workspace artifact
+  and attaches it to this session.
+
+Context mutation rules:
+
+- `session.context.append` appends entries to the durable session log and
+  advances the current context window.
+- `session.context.current` returns the current context snapshot, including its
+  context id, version, creation time, operation, and entry count.
+- `session.context.entries({contextId})` reads entries from the current window
+  by default, or from a specific context snapshot when `contextId` is supplied.
+- `session.context.update`, `remove`, `clear`, and `restore` create a new
+  context snapshot. They never mutate an old snapshot in place.
+- `session.context.remove` removes entries from the current model-facing
+  window; it does not purge the session log.
+- `session.context.clear` creates a new empty current context window while
+  preserving the session log.
+- `session.context.restore` creates a new current snapshot based on an older
+  snapshot; it does not move time backward by repointing current.
+- `session.context.history` is the history of context-window snapshots only.
+  The session log and artifact versions have separate history surfaces.
+- Compaction, provider-specific rendering, and formatting are intentionally out
+  of the initial public surface. They can be added later as LEGO-block
+  extensions once provider adapters and custom compaction strategies are
+  designed.
+
+Context entries are provider-neutral records. `message` is the common case,
+but the entry model must allow system instructions, tool calls/results,
+summaries, artifact references, media references, and provider-neutral
+multimodal content.
 
 Artifact verbs:
 
