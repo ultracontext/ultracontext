@@ -99,6 +99,27 @@ uc.sync.exportChanges({ since? })
 uc.sync.importChanges(changes)
 ```
 
+## Storage
+
+UltraContext is backed by a SQL-backed node store. By default, local projects use
+SQLite; remote deployments can expose the same model behind an HTTP endpoint.
+The SQL store owns the durable truth: sessions, context history, artifact
+metadata, paths, versions, provenance, and search indexes.
+
+Artifact bytes are stored separately when they get large. Small text can stay
+inline, while images, PDFs, audio, generated files, and other blobs can live in
+a local directory or an S3-compatible object store such as S3, R2, or MinIO.
+
+The same workspace can also be mounted as a filesystem:
+
+```bash
+uc mount ./UltraContext
+```
+
+That mount is a projection over the same storage, not a second source of truth.
+Agents can use normal file workflows (`read`, `write`, `grep`, `glob`,
+editors), while apps use the SDK against the same sessions and artifacts.
+
 ## Auto-Versioned Context
 
 ```text
@@ -162,20 +183,6 @@ other AI input/output.
 artifact and attaches it to the session. Artifacts do not belong to sessions and
 are not deleted when a session is deleted.
 
-## Filesystem API
-
-`uc.fs.*` is a path projection over workspace artifacts. It gives agents and
-edge apps familiar file verbs even when there is no real filesystem.
-
-The same path grammar backs SDK calls and `uc mount`. Paths are relative POSIX
-paths inside a workspace.
-
-## Local Mount
-
-`uc mount <dir>` projects a workspace into a local filesystem using the native
-NFS adapter. This is for local agents, laptops, workstations, and servers that
-benefit from real `read`, `write`, `grep`, `glob`, and editor workflows.
-
 ## Remote And Edge
 
 The default JS client is fetch-only and works in browser and edge runtimes:
@@ -189,12 +196,10 @@ const uc = createClient('/api/ultracontext')
 Server runtimes use `createServerClient`. Next/App Router can expose the
 official HTTP protocol with `createUltraContextNextHandler`.
 
-## Storage Blocks
+## S3-Compatible Blobs
 
-The node store owns truth: identity, history, metadata, paths, provenance, and
-content references. Content stores hold bytes behind artifact versions. Inline
-text, local directories, and S3-compatible object stores are implemented in the
-Rust core today.
+Configure S3-compatible storage when generated artifacts can become too large
+for inline SQL storage:
 
 ```json
 {
