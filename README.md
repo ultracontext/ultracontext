@@ -189,56 +189,11 @@ uc mount ./UltraContext
 Agents and editors can work with real files. Changes go back into UltraContext
 storage as versioned artifacts.
 
-## Remote And Edge
-
-The default JS client is fetch-only and works in browser and edge runtimes:
-
-```ts
-import { createClient } from 'ultracontext'
-
-const uc = createClient('/api/ultracontext')
-```
-
-Server runtimes use `createServerClient`. Next/App Router can expose the
-official HTTP protocol with `createUltraContextNextHandler`.
-
-## S3-Compatible Blobs
-
-Configure S3-compatible storage when generated artifacts can become too large
-for inline SQL storage:
-
-```json
-{
-  "storage": {
-    "driver": "s3",
-    "inlineLimit": 65536,
-    "s3": {
-      "endpoint": "https://<account>.r2.cloudflarestorage.com",
-      "bucket": "ultracontext",
-      "region": "auto",
-      "accessKeyId": "...",
-      "secretAccessKey": "...",
-      "prefix": "project-a"
-    }
-  }
-}
-```
-
 ## Search
 
 Search is a recall operation over current context entries and current text
 artifact versions. It returns snippets and ids; full content is read through a
 targeted context, artifact, or filesystem call.
-
-## Layout
-
-| Dir | What |
-|---|---|
-| `core/` | Rust core, model, adapters, and language bindings |
-| `cli/` | `uc` command-line interface and local NFS mount adapter |
-| `docs/` | Protocol and implementation notes |
-| `sdks/js` | JS/TS SDK, remote edge client, local N-API binding, server helpers |
-| `sdks/python` | Python SDK, remote client, local PyO3 binding |
 
 ## License
 
