@@ -53,17 +53,25 @@ pub fn mount(config: MountConfig) -> Result<(), UcError> {
 
 pub fn unmount(mountpoint: PathBuf) -> Result<(), UcError> {
     let mountpoint = canonical_mountpoint(&mountpoint);
-    let state_file = state_file_for_mountpoint(&mountpoint)?;
-    let pid = read_mount_state(&state_file).and_then(|state| state.pid);
+    let state_files = state_files_for_mountpoint(&mountpoint);
 
-    unmount_nfs(&mountpoint)?;
-
-    if let Some(pid) = pid {
-        terminate_process(pid);
+    if mountpoint_is_mounted(&mountpoint) {
+        if let Err(error) = unmount_nfs(&mountpoint)
+            && mountpoint_is_mounted(&mountpoint)
+        {
+            return Err(error);
+        }
     }
 
-    let _ = fs::remove_file(&state_file);
-    let _ = fs::remove_file(log_file_for_state(&state_file));
+    for state_file in state_files {
+        let state = read_mount_state(&state_file);
+        cleanup_mount_state(
+            &state_file,
+            &log_file_for_state(&state_file),
+            state.as_ref(),
+            &mountpoint,
+        );
+    }
     Ok(())
 }
 
@@ -75,9 +83,18 @@ fn spawn_background(config: MountConfig) -> Result<(), UcError> {
     let log_file = log_file_for_state(&state_file);
     fs::create_dir_all(state_file.parent().unwrap_or_else(|| Path::new("."))).map_err(io_error)?;
 
-    if let Some(state) = read_mount_state(&state_file)
-        && state.pid.is_some_and(process_running)
-    {
+    let states = state_files_for_mountpoint(&mountpoint)
+        .into_iter()
+        .map(|state_file| {
+            let state = read_mount_state(&state_file);
+            (state_file, state)
+        })
+        .collect::<Vec<_>>();
+    if states.iter().any(|(_, state)| {
+        state
+            .as_ref()
+            .is_some_and(|state| mount_state_is_active(state, &mountpoint))
+    }) {
         return Err(UcError::new(
             ErrorCode::Busy,
             format!(
@@ -86,8 +103,14 @@ fn spawn_background(config: MountConfig) -> Result<(), UcError> {
             ),
         ));
     }
-    let _ = fs::remove_file(&state_file);
-    let _ = fs::remove_file(&log_file);
+    for (candidate_state_file, state) in &states {
+        cleanup_mount_state(
+            candidate_state_file,
+            &log_file_for_state(candidate_state_file),
+            state.as_ref(),
+            &mountpoint,
+        );
+    }
 
     let exe = env::current_exe().map_err(io_error)?;
     let mut command = Command::new(exe);
@@ -283,6 +306,7 @@ fn detach_command(_command: &mut Command) {}
 #[derive(Debug, Clone)]
 struct MountState {
     pid: Option<u32>,
+    mountpoint: Option<PathBuf>,
 }
 
 fn write_mount_state(
@@ -319,7 +343,38 @@ fn read_mount_state(path: &Path) -> Option<MountState> {
             .get("pid")
             .and_then(Value::as_u64)
             .and_then(|pid| u32::try_from(pid).ok()),
+        mountpoint: value
+            .get("mountpoint")
+            .and_then(Value::as_str)
+            .map(PathBuf::from),
     })
+}
+
+fn mount_state_is_active(state: &MountState, mountpoint: &Path) -> bool {
+    let Some(pid) = state.pid else {
+        return false;
+    };
+
+    process_running(pid) && mountpoint_is_mounted(mountpoint)
+}
+
+fn cleanup_mount_state(
+    state_file: &Path,
+    log_file: &Path,
+    state: Option<&MountState>,
+    mountpoint: &Path,
+) {
+    if let Some(state) = state
+        && let Some(pid) = state.pid
+        && process_running(pid)
+        && !mountpoint_is_mounted(mountpoint)
+        && process_matches_mount_state(pid, state, state_file, mountpoint)
+    {
+        terminate_process(pid);
+    }
+
+    let _ = fs::remove_file(state_file);
+    let _ = fs::remove_file(log_file);
 }
 
 fn canonical_mountpoint(path: &Path) -> PathBuf {
@@ -341,9 +396,51 @@ fn state_dir() -> PathBuf {
 }
 
 fn state_file_for_mountpoint(mountpoint: &Path) -> Result<PathBuf, UcError> {
+    Ok(state_file_for_mountpoint_in_dir(mountpoint, &state_dir()))
+}
+
+fn state_file_for_mountpoint_in_dir(mountpoint: &Path, state_dir: &Path) -> PathBuf {
     let mut hasher = DefaultHasher::new();
     mountpoint.to_string_lossy().hash(&mut hasher);
-    Ok(state_dir().join(format!("{:016x}.json", hasher.finish())))
+    state_dir.join(format!("{:016x}.json", hasher.finish()))
+}
+
+fn state_files_for_mountpoint(mountpoint: &Path) -> Vec<PathBuf> {
+    state_files_for_mountpoint_in_dir(mountpoint, &state_dir())
+}
+
+fn state_files_for_mountpoint_in_dir(mountpoint: &Path, state_dir: &Path) -> Vec<PathBuf> {
+    let primary = state_file_for_mountpoint_in_dir(mountpoint, state_dir);
+    let mut files = vec![primary.clone()];
+
+    let Ok(entries) = fs::read_dir(&state_dir) else {
+        return files;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path == primary
+            || path.extension().and_then(|extension| extension.to_str()) != Some("json")
+        {
+            continue;
+        }
+        if state_file_matches_mountpoint(&path, mountpoint) {
+            files.push(path);
+        }
+    }
+
+    files
+}
+
+fn state_file_matches_mountpoint(state_file: &Path, mountpoint: &Path) -> bool {
+    let Some(state) = read_mount_state(state_file) else {
+        return false;
+    };
+    let Some(state_mountpoint) = state.mountpoint.as_deref() else {
+        return false;
+    };
+
+    canonical_mountpoint(state_mountpoint) == canonical_mountpoint(mountpoint)
 }
 
 fn log_file_for_state(state_file: &Path) -> PathBuf {
@@ -358,6 +455,137 @@ fn process_running(pid: u32) -> bool {
 #[cfg(not(unix))]
 fn process_running(_pid: u32) -> bool {
     false
+}
+
+#[cfg(target_os = "linux")]
+fn mountpoint_is_mounted(mountpoint: &Path) -> bool {
+    let mountpoint = canonical_mountpoint(mountpoint);
+    let Ok(data) = fs::read_to_string("/proc/self/mountinfo") else {
+        return false;
+    };
+
+    data.lines().any(|line| {
+        let fields: Vec<&str> = line.split(' ').collect();
+        fields
+            .get(4)
+            .map(|field| decode_mountinfo_path(field) == mountpoint.to_string_lossy())
+            .unwrap_or(false)
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn decode_mountinfo_path(value: &str) -> String {
+    value
+        .replace("\\040", " ")
+        .replace("\\011", "\t")
+        .replace("\\012", "\n")
+        .replace("\\134", "\\")
+}
+
+#[cfg(target_os = "macos")]
+fn mountpoint_is_mounted(mountpoint: &Path) -> bool {
+    let mountpoint = canonical_mountpoint(mountpoint);
+    let output = Command::new("/sbin/mount")
+        .output()
+        .or_else(|_| Command::new("mount").output());
+    let Ok(output) = output else {
+        return false;
+    };
+
+    mount_output_has_mountpoint(&String::from_utf8_lossy(&output.stdout), &mountpoint)
+}
+
+#[cfg(target_os = "macos")]
+fn mount_output_has_mountpoint(output: &str, mountpoint: &Path) -> bool {
+    let needle = format!(" on {} ", mountpoint.display());
+    output.lines().any(|line| line.contains(&needle))
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn mountpoint_is_mounted(_mountpoint: &Path) -> bool {
+    false
+}
+
+#[cfg(target_os = "linux")]
+fn process_matches_mount_state(
+    pid: u32,
+    state: &MountState,
+    state_file: &Path,
+    mountpoint: &Path,
+) -> bool {
+    let path = PathBuf::from(format!("/proc/{pid}/cmdline"));
+    let Ok(data) = fs::read(path) else {
+        return false;
+    };
+    let command = data
+        .split(|byte| *byte == 0)
+        .filter(|part| !part.is_empty())
+        .map(|part| String::from_utf8_lossy(part))
+        .collect::<Vec<_>>()
+        .join(" ");
+    mount_command_matches_state(&command, state, state_file, mountpoint)
+}
+
+#[cfg(target_os = "macos")]
+fn process_matches_mount_state(
+    pid: u32,
+    state: &MountState,
+    state_file: &Path,
+    mountpoint: &Path,
+) -> bool {
+    let Ok(output) = Command::new("/bin/ps")
+        .args(["-p", &pid.to_string(), "-o", "command="])
+        .output()
+    else {
+        return false;
+    };
+
+    mount_command_matches_state(
+        &String::from_utf8_lossy(&output.stdout),
+        state,
+        state_file,
+        mountpoint,
+    )
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn process_matches_mount_state(
+    _pid: u32,
+    _state: &MountState,
+    _state_file: &Path,
+    _mountpoint: &Path,
+) -> bool {
+    false
+}
+
+fn mount_command_matches_state(
+    command: &str,
+    state: &MountState,
+    state_file: &Path,
+    mountpoint: &Path,
+) -> bool {
+    if command.trim().is_empty() {
+        return false;
+    }
+
+    let command = command.replace('\\', "/");
+    let state_file = state_file.to_string_lossy().replace('\\', "/");
+    let mountpoint = state
+        .mountpoint
+        .as_deref()
+        .unwrap_or(mountpoint)
+        .to_string_lossy()
+        .replace('\\', "/");
+
+    (command.starts_with("uc ")
+        || command.contains("/uc ")
+        || command.contains(" uc ")
+        || command.starts_with("ultracontext ")
+        || command.contains("/ultracontext ")
+        || command.contains(" ultracontext "))
+        && command.contains(" mount ")
+        && command.contains("--foreground")
+        && (command.contains(&state_file) || command.contains(&mountpoint))
 }
 
 #[cfg(unix)]
@@ -503,6 +731,136 @@ fn unmount_nfs(mountpoint: &Path) -> Result<(), UcError> {
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn unmount_nfs(_mountpoint: &Path) -> Result<(), UcError> {
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn live_pid_without_mountpoint_is_not_active() {
+        let mountpoint = env::temp_dir().join(format!(
+            "uc-inactive-mount-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&mountpoint).unwrap();
+
+        let state = MountState {
+            pid: Some(std::process::id()),
+            mountpoint: Some(mountpoint.clone()),
+        };
+
+        assert!(!mount_state_is_active(&state, &mountpoint));
+
+        let _ = fs::remove_dir_all(mountpoint);
+    }
+
+    #[test]
+    fn mount_command_must_match_state_file_or_mountpoint() {
+        let state_file = Path::new("/tmp/ultracontext-mounts/state.json");
+        let mountpoint = Path::new("/tmp/uctx/ctx");
+        let state = MountState {
+            pid: Some(123),
+            mountpoint: Some(mountpoint.to_path_buf()),
+        };
+
+        assert!(mount_command_matches_state(
+            "uc --db /tmp/db mount /tmp/uctx/ctx --foreground --mount-state-file /tmp/ultracontext-mounts/state.json",
+            &state,
+            state_file,
+            mountpoint,
+        ));
+        assert!(mount_command_matches_state(
+            "/Users/me/.cargo/bin/uc --db /tmp/db mount /tmp/uctx/ctx --foreground --mount-state-file /tmp/other.json",
+            &state,
+            state_file,
+            mountpoint,
+        ));
+        assert!(!mount_command_matches_state(
+            "uc --db /tmp/db mount /tmp/other --foreground --mount-state-file /tmp/other.json",
+            &state,
+            state_file,
+            mountpoint,
+        ));
+    }
+
+    #[test]
+    fn state_file_lookup_includes_legacy_hash_with_matching_mountpoint() {
+        let root = env::temp_dir().join(format!(
+            "uc-state-lookup-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let state_dir = root.join("state");
+        let mountpoint = root.join("ctx");
+        fs::create_dir_all(&state_dir).unwrap();
+        fs::create_dir_all(&mountpoint).unwrap();
+
+        let legacy_state = state_dir.join("legacy.json");
+        let unrelated_state = state_dir.join("unrelated.json");
+        fs::write(
+            &legacy_state,
+            json!({
+                "pid": 123,
+                "mountpoint": &mountpoint,
+                "port": 11111,
+            })
+            .to_string(),
+        )
+        .unwrap();
+        fs::write(
+            &unrelated_state,
+            json!({
+                "pid": 456,
+                "mountpoint": root.join("other"),
+                "port": 11112,
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let files = state_files_for_mountpoint_in_dir(&mountpoint, &state_dir);
+
+        assert!(files.contains(&state_file_for_mountpoint_in_dir(&mountpoint, &state_dir)));
+        assert!(files.contains(&legacy_state));
+        assert!(!files.contains(&unrelated_state));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mount_output_matches_exact_mountpoint() {
+        let output = "\
+127.0.0.1:/ on /tmp/uctx/ctx (nfs, nodev, nosuid)\n\
+127.0.0.1:/ on /tmp/uctx/ctx-child (nfs, nodev, nosuid)\n";
+
+        assert!(mount_output_has_mountpoint(
+            output,
+            Path::new("/tmp/uctx/ctx")
+        ));
+        assert!(!mount_output_has_mountpoint(output, Path::new("/tmp/uctx")));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn decodes_mountinfo_escaped_path() {
+        assert_eq!(
+            decode_mountinfo_path("/tmp/with\\040space"),
+            "/tmp/with space"
+        );
+        assert_eq!(
+            decode_mountinfo_path("/tmp/backslash\\134x"),
+            "/tmp/backslash\\x"
+        );
+    }
 }
 
 struct UcNfs {
