@@ -1,12 +1,9 @@
 <div align="center">
   <a href="https://github.com/ultracontext/ultracontext">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset=".github/assets/ultracontext-dark.svg">
-      <img alt="ultracontext logo" src=".github/assets/ultracontext-light.svg" height="128">
-    </picture>
+    <img alt="ultracontext: control what agents see" src=".github/assets/context-sdk.png" width="100%">
   </a>
-  <h1>ultracontext</h1>
-  <p><strong>control what agents see</strong></p>
+  <br>
+  <br>
 
   <a href="https://github.com/ultracontext/ultracontext"><img alt="Made by ultracontext" src="https://img.shields.io/badge/MADE%20BY-ultracontext-000000.svg?style=for-the-badge&labelColor=000000"></a>
   <a href="https://www.npmjs.com/package/ultracontext"><img alt="NPM version" src="https://img.shields.io/npm/v/ultracontext.svg?style=for-the-badge&labelColor=000000"></a>
