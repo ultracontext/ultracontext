@@ -150,30 +150,30 @@ uc.sync.importChanges(changes)
 
 ```text
                       ┌──────────────────────┐
-                      │ session  ses_4f2e... │  the permanent id - what you hold
+                      │ session  ses_4f2e... │  stable conversation handle
                       └──────────────────────┘
                                  ▲
-                ┌────────────────┼────────────────┐  owner = session membership
+                ┌────────────────┼────────────────┐
                 │                │                │
-          ┌──────────┐     ┌──────────┐     ┌──────────┐
-          │ ctx   v0 │◄────│ ctx   v1 │◄────│ ctx   v2 │ ◄── CURRENT
-          │ {create} │ prev│ {update} │ prev│ {delete} │     (nothing points at it)
-          └──────────┘     └──────────┘     └──────────┘
+          ┌────────────┐     ┌────────────┐     ┌────────────┐
+          │ context v0 │◄────│ context v1 │◄────│ context v2 │ ◄── current model view
+          │ created    │     │ edited     │     │ trimmed    │
+          └────────────┘     └────────────┘     └────────────┘
                ▲                ▲                ▲
-               │                │                │   owner = context snapshot
+               │                │                │
           ┌──────────┐     ┌──────────┐     ┌──────────┐
           │  msg_a   │     │  msg_a   │     │  msg_b'  │
           │   "hi"   │     │   "hi"   │     │  "hbu!"  │
           └──────────┘     └──────────┘     └──────────┘
                ▲                ▲
-               │ prev           │ prev
+               │                │
           ┌──────────┐     ┌──────────┐
-          │  msg_b   │     │  msg_b'  │──── parent -> msg_b
-          │  "hbu?"  │     │  "hbu!"  │     ("I came from b")
+          │  msg_b   │     │  msg_b'  │
+          │  "hbu?"  │     │  "hbu!"  │
           └──────────┘     └──────────┘
 
-  v0: created from the session log · v1: patched b -> b' (a keeps its id) ·
-  v2: soft-deleted a (b' carries over, same id)
+  v0: first model context · v1: edited b -> b' ·
+  v2: trimmed a out of the context, without deleting history
 ```
 
 Every context update creates a new snapshot automatically, so agents can edit,
@@ -181,22 +181,20 @@ clear, restore, and time-travel without losing history.
 
 A session is the durable container for one conversation, run, or agent task. It
 is the permanent handle you keep in app code. It owns lifecycle metadata, an
-append-only log, context snapshots, subagent links, and session-artifact
-attachments.
+append-only log, context snapshots, subagent links, and artifact links.
 
-A context window is the model-facing view for that session. The current context
-is the terminal snapshot in the `prev` chain. Reads use the current context by
+A context is the model-facing view for that session. The current context
+is the latest saved context for the session. Reads use the current context by
 default. Use `session.context.history()` or `session.context.current({ version })`
-to inspect older windows.
+to inspect older contexts.
 
 `session.context.append`, `update`, `delete`, `clear`, and `restore` advance
 the current context without rewriting older snapshots. `clear()` creates a new
-empty current window. `restore(contextId)` creates a new current snapshot from
+empty current context. `restore(contextId)` creates a new current snapshot from
 an older one; it does not move time backward in place.
 
 Session deletion is permanent. It removes the session, its log, its context
-snapshots, and its session-artifact attachments. It does not delete workspace
-artifacts.
+snapshots, and its artifact links. It does not delete workspace artifacts.
 
 Compaction, provider-specific rendering, and formatting are intentionally out of
 the initial public surface. They can be added later as LEGO-block extensions.
