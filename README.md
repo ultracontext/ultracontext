@@ -110,16 +110,6 @@ Artifact bytes are stored separately when they get large. Small text can stay
 inline, while images, PDFs, audio, generated files, and other blobs can live in
 a local directory or an S3-compatible object store such as S3, R2, or MinIO.
 
-The same workspace can also be mounted as a filesystem:
-
-```bash
-uc mount ./UltraContext
-```
-
-That mount is a projection over the same storage, not a second source of truth.
-Agents can use normal file workflows (`read`, `write`, `grep`, `glob`,
-editors), while apps use the SDK against the same sessions and artifacts.
-
 ## Auto-Versioned Context
 
 ```text
@@ -182,6 +172,22 @@ other AI input/output.
 `session.artifacts.create(input)` is convenience sugar: it creates a workspace
 artifact and attaches it to the session. Artifacts do not belong to sessions and
 are not deleted when a session is deleted.
+
+## Portable Filesystem
+
+UltraContext projects workspace artifacts into a portable filesystem model.
+
+In apps, use `session.fs.*` for file verbs like `read`, `write`, `grep`, and
+`glob` even when there is no real filesystem.
+
+Locally, mount the same workspace as a folder:
+
+```bash
+uc mount ./UltraContext
+```
+
+Agents and editors can work with real files. Changes go back into UltraContext
+storage as versioned artifacts.
 
 ## Remote And Edge
 
