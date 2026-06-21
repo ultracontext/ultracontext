@@ -225,17 +225,10 @@ targeted context, artifact, or filesystem call.
 
 | Dir | What |
 |---|---|
-| `core/model` | Product model, contract, ids, invariants, and historical v1 input |
-| `core/engine` | Rust operations: workspaces, sessions, context windows, artifacts, filesystem projection, sync, search |
-| `core/adapters` | Adapter boundary documentation; SQLite/local-dir/S3 live in the engine today until they are split |
-| `core/bindings-js` | N-API binding that exposes Rust dispatch to JS |
-| `core/bindings-python` | PyO3 binding that exposes Rust dispatch to Python |
-| `core/cli` | `uc` command-line interface and local NFS mount adapter |
+| `core/` | Rust implementation: model, engine, adapters, bindings, and `uc` CLI |
 | `docs/` | Protocol and implementation notes |
-| `sdks/js` | JS/TS package: browser client, server helpers, config loader, package wrappers |
-| `sdks/python` | Python package: client surface, CLI launcher, package wrappers |
-| `fixtures/` | Shared behavior fixtures across Rust, JS, Python, local, and remote modes |
-| `scripts/` | Install, release, and dev automation |
+| `sdks/js` | JS/TS SDK, remote edge client, local N-API binding, server helpers |
+| `sdks/python` | Python SDK, remote client, local PyO3 binding |
 
 ## License
 
