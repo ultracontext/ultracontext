@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 use std::process;
 use toml_edit::{Array, DocumentMut, value};
 use ultracontext::{
-    ContentStore, ErrorCode, FileWrite, S3ContentStore, UcError, UltraContext, UltraContextOptions,
+    ContentStore, ErrorCode, FileWrite, S3ContentStore, SearchKind, UcError, UltraContext,
+    UltraContextOptions,
 };
 
 mod mount_utils;
@@ -84,6 +85,10 @@ fn run(
             write_fs_help(out)?;
             Ok(())
         }
+        Command::SearchHelp => {
+            write_search_help(out)?;
+            Ok(())
+        }
         Command::ConfigHelp => {
             write_config_help(out)?;
             Ok(())
@@ -152,6 +157,16 @@ fn run(
                         "created_at": ctx.created_at
                     })
                 })
+                .collect::<Vec<_>>();
+            print_json(out, json!({ "data": data }))
+        }
+        Command::Search { query } => {
+            let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
+            let data = uc
+                .search(&query)?
+                .data
+                .into_iter()
+                .map(search_hit_json)
                 .collect::<Vec<_>>();
             print_json(out, json!({ "data": data }))
         }
@@ -280,6 +295,7 @@ enum Command {
     UnmountHelp,
     ContextHelp,
     FsHelp,
+    SearchHelp,
     ConfigHelp,
     ConfigList,
     ConfigPath,
@@ -299,6 +315,9 @@ enum Command {
         metadata: Value,
     },
     Contexts,
+    Search {
+        query: String,
+    },
     FileList {
         ctx_id: String,
         prefix: Option<String>,
@@ -1453,6 +1472,12 @@ impl Args {
         self.next()
     }
 
+    fn rest(&mut self) -> Vec<String> {
+        let rest = self.args[self.index..].to_vec();
+        self.index = self.args.len();
+        rest
+    }
+
     fn finish(&self) -> Result<(), UcError> {
         if self.index == self.args.len() {
             Ok(())
@@ -1504,6 +1529,17 @@ fn parse_command(args: &mut Args) -> Result<Command, UcError> {
         "contexts" | "ls-contexts" => {
             args.finish()?;
             Ok(Command::Contexts)
+        }
+        "search" => {
+            if matches!(args.peek(), None | Some("--help" | "-h" | "help")) {
+                if args.peek().is_some() {
+                    args.next();
+                    args.finish()?;
+                }
+                return Ok(Command::SearchHelp);
+            }
+            let query = args.rest().join(" ");
+            Ok(Command::Search { query })
         }
         "fs" => parse_fs_command(args),
         "unmount" | "umount" => {
@@ -1825,6 +1861,22 @@ fn artifact_data_json(data: ultracontext::ArtifactData) -> Value {
     })
 }
 
+fn search_hit_json(hit: ultracontext::SearchHit) -> Value {
+    let kind = match hit.kind {
+        SearchKind::Message => "message",
+        SearchKind::Artifact => "artifact",
+    };
+    json!({
+        "kind": kind,
+        "id": hit.id,
+        "context_id": hit.context_id,
+        "path": hit.path,
+        "snippet": hit.snippet,
+        "metadata": hit.metadata,
+        "created_at": hit.created_at
+    })
+}
+
 fn print_json(out: &mut dyn Write, value: Value) -> Result<(), UcError> {
     serde_json::to_writer_pretty(&mut *out, &value)
         .map_err(|error| UcError::new(ErrorCode::Internal, error.to_string()))?;
@@ -1847,6 +1899,7 @@ Basics:
   uc mount <dir>                              Mount directly when one workspace exists; otherwise workspaces/<ws_id>/...
   uc unmount <dir>                            Stop a mounted workspace
   uc context <command>                        Manage contexts
+  uc search <query>                           Search contexts and files
   uc fs <command>                             Use the virtual filesystem API
   uc config <command>                         Manage project config
 
@@ -1957,6 +2010,17 @@ fn write_context_help(out: &mut dyn Write) -> Result<(), UcError> {
 Commands:
   create [json]   Create a context
   list            List contexts
+"#,
+    )
+    .map_err(io_error)
+}
+
+fn write_search_help(out: &mut dyn Write) -> Result<(), UcError> {
+    out.write_all(
+        br#"Usage:
+  uc search <query>
+
+Searches current context entries and current text file versions.
 "#,
     )
     .map_err(io_error)
@@ -2093,6 +2157,19 @@ mod tests {
     }
 
     #[test]
+    fn parses_search_command() {
+        let parsed =
+            Invocation::parse(vec!["search".into(), "launch".into(), "notes".into()]).unwrap();
+
+        assert_eq!(
+            parsed.command,
+            Command::Search {
+                query: "launch notes".into(),
+            }
+        );
+    }
+
+    #[test]
     fn parses_config_namespace_commands() {
         let listed = Invocation::parse(vec!["config".into(), "list".into()]).unwrap();
         let path = Invocation::parse(vec!["config".into(), "path".into()]).unwrap();
@@ -2146,6 +2223,7 @@ mod tests {
         let unmount = Invocation::parse(vec!["unmount".into(), "--help".into()]).unwrap();
         let context = Invocation::parse(vec!["context".into(), "--help".into()]).unwrap();
         let fs = Invocation::parse(vec!["fs".into(), "--help".into()]).unwrap();
+        let search = Invocation::parse(vec!["search".into(), "--help".into()]).unwrap();
         let config = Invocation::parse(vec!["config".into(), "--help".into()]).unwrap();
 
         assert_eq!(init.command, Command::InitHelp);
@@ -2154,6 +2232,7 @@ mod tests {
         assert_eq!(unmount.command, Command::UnmountHelp);
         assert_eq!(context.command, Command::ContextHelp);
         assert_eq!(fs.command, Command::FsHelp);
+        assert_eq!(search.command, Command::SearchHelp);
         assert_eq!(config.command, Command::ConfigHelp);
     }
 
