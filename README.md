@@ -31,17 +31,7 @@ Initialize a project:
 uc init
 ```
 
-This creates project-local state:
-
-```text
-ultracontext.json
-.ultracontext/
-  ultracontext.db
-  blobs/
-  .gitignore
-```
-
-Use it from a local/server runtime:
+Start storing sessions and managing context windows:
 
 ```ts
 import { createServerClient } from 'ultracontext/ssr'
