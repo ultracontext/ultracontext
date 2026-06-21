@@ -1,3 +1,10 @@
+const SIZE = 40
+const PADDING = 20
+const PANEL_W = 340
+const DRAG_THRESHOLD = 4
+
+const LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 384" fill="currentColor" aria-hidden="true"><g transform="translate(0, 57)"><g transform="translate(-6.826197, 216.610709)"><path d="M 41.3125 24.296875 L 41.3125 -183.359375 L 103.171875 -183.359375 L 103.171875 -157.953125 L 68.921875 -157.953125 L 68.921875 -1.109375 L 103.171875 -1.109375 L 103.171875 24.296875 Z M 41.3125 24.296875"/></g><g transform="translate(125.723537, 216.610709)"><path d="M 36.671875 -78.421875 C 36.671875 -82.691406 37.40625 -86.59375 38.875 -90.125 C 40.351562 -93.664062 42.414062 -96.722656 45.0625 -99.296875 C 47.71875 -101.878906 50.847656 -103.90625 54.453125 -105.375 C 58.066406 -106.851562 62.007812 -107.59375 66.28125 -107.59375 C 70.550781 -107.59375 74.488281 -106.851562 78.09375 -105.375 C 81.707031 -103.90625 84.835938 -101.878906 87.484375 -99.296875 C 90.140625 -96.722656 92.203125 -93.664062 93.671875 -90.125 C 95.140625 -86.59375 95.875 -82.691406 95.875 -78.421875 C 95.875 -74.296875 95.140625 -70.46875 93.671875 -66.9375 C 92.203125 -63.40625 90.140625 -60.347656 87.484375 -57.765625 C 84.835938 -55.191406 81.707031 -53.203125 78.09375 -51.796875 C 74.488281 -50.398438 70.550781 -49.703125 66.28125 -49.703125 C 62.007812 -49.703125 58.066406 -50.398438 54.453125 -51.796875 C 50.847656 -53.203125 47.71875 -55.191406 45.0625 -57.765625 C 42.414062 -60.347656 40.351562 -63.40625 38.875 -66.9375 C 37.40625 -70.46875 36.671875 -74.296875 36.671875 -78.421875 Z M 36.671875 -78.421875"/></g><g transform="translate(258.273272, 216.610709)"><path d="M 29.828125 24.296875 L 29.828125 -1.109375 L 64.0625 -1.109375 L 64.0625 -157.953125 L 29.828125 -157.953125 L 29.828125 -183.359375 L 91.90625 -183.359375 L 91.90625 24.296875 Z M 29.828125 24.296875"/></g></g></svg>`
+
 const STYLE = `
 :host { all: initial; }
 * { box-sizing: border-box; }
@@ -6,13 +13,16 @@ const STYLE = `
   font-size: 13px;
   color: #ededed;
 }
-.uc-bubble {
+.uc-wrap {
   position: fixed;
-  right: 20px;
-  top: 20px;
+  left: 0;
+  top: 0;
   z-index: 2147483647;
-  width: 40px;
-  height: 40px;
+  will-change: transform;
+}
+.uc-bubble {
+  width: ${SIZE}px;
+  height: ${SIZE}px;
   border-radius: 999px;
   border: 1px solid #333;
   background: rgba(10,10,10,.82);
@@ -20,18 +30,25 @@ const STYLE = `
   box-shadow: 0 8px 26px rgba(0,0,0,.35);
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
-  cursor: pointer;
+  cursor: grab;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 .uc-bubble:hover { border-color: #666; }
+.uc-bubble:active { cursor: grabbing; }
 .uc-logo {
-  font: 700 16px ui-monospace, SFMono-Regular, Menlo, monospace;
+  width: 18px;
+  height: 18px;
+  display: block;
 }
 .uc-panel {
   position: fixed;
-  right: 20px;
-  top: 68px;
   z-index: 2147483647;
-  width: 340px;
+  width: ${PANEL_W}px;
   max-height: min(620px, calc(100vh - 92px));
   overflow: auto;
   border-radius: 12px;
@@ -136,22 +153,114 @@ export function mountDevtools(uc, info, options = {}) {
     shadow.append(style)
 
     const layer = el('div', 'uc-layer')
+    const wrap = el('div', 'uc-wrap')
     const bubble = el('button', 'uc-bubble')
     bubble.setAttribute('aria-label', 'UltraContext devtools')
-    bubble.append(el('span', 'uc-logo', '[•]'))
+    bubble.innerHTML = LOGO_SVG
+    bubble.firstElementChild?.classList.add('uc-logo')
     const panel = el('div', 'uc-panel')
     panel.hidden = true
-    layer.append(bubble, panel)
+    wrap.append(bubble)
+    layer.append(wrap, panel)
     shadow.append(layer)
     document.body.append(host)
 
-    bubble.addEventListener('click', () => {
-        panel.hidden = !panel.hidden
-        if (!panel.hidden) void renderList()
+    const position = {
+        x: window.innerWidth - SIZE - PADDING,
+        y: PADDING
+    }
+    let press = null
+    let dragging = false
+
+    applyPosition()
+
+    bubble.addEventListener('pointerdown', event => {
+        if (event.button !== 0) return
+        bubble.setPointerCapture(event.pointerId)
+        press = {
+            pointerId: event.pointerId,
+            x: event.clientX,
+            y: event.clientY,
+            startX: position.x,
+            startY: position.y
+        }
+        dragging = false
     })
+
+    bubble.addEventListener('pointermove', event => {
+        if (!press || !bubble.hasPointerCapture(event.pointerId)) return
+        const dx = event.clientX - press.x
+        const dy = event.clientY - press.y
+        if (!dragging && Math.hypot(dx, dy) > DRAG_THRESHOLD) {
+            dragging = true
+            panel.hidden = true
+        }
+        if (!dragging) return
+        position.x = clamp(press.startX + dx, PADDING, window.innerWidth - SIZE - PADDING)
+        position.y = clamp(press.startY + dy, PADDING, window.innerHeight - SIZE - PADDING)
+        applyPosition()
+    })
+
+    bubble.addEventListener('pointerup', event => {
+        if (!press || !bubble.hasPointerCapture(event.pointerId)) return
+        bubble.releasePointerCapture(event.pointerId)
+        press = null
+
+        if (!dragging) {
+            panel.hidden = !panel.hidden
+            if (!panel.hidden) {
+                placePanel()
+                void renderList()
+            }
+            return
+        }
+
+        dragging = false
+        position.x = nearestEdgeX(position.x)
+        applyPosition()
+        if (!panel.hidden) placePanel()
+    })
+
+    bubble.addEventListener('pointercancel', event => {
+        if (bubble.hasPointerCapture(event.pointerId)) {
+            bubble.releasePointerCapture(event.pointerId)
+        }
+        press = null
+        dragging = false
+    })
+
+    window.addEventListener('resize', onResize)
+
+    function applyPosition() {
+        wrap.style.transform = `translate3d(${position.x}px, ${position.y}px, 0)`
+    }
+
+    function placePanel() {
+        const rightSide = position.x + SIZE / 2 > window.innerWidth / 2
+        const left = rightSide
+            ? position.x - PANEL_W - 12
+            : position.x + SIZE + 12
+        panel.style.left = `${clamp(left, PADDING, window.innerWidth - PANEL_W - PADDING)}px`
+        panel.style.top = `${clamp(position.y, PADDING, window.innerHeight - PADDING)}px`
+        panel.style.transformOrigin = rightSide ? 'top right' : 'top left'
+        requestAnimationFrame(() => {
+            const overflow = position.y + panel.offsetHeight + PADDING - window.innerHeight
+            if (overflow > 0) {
+                panel.style.top = `${Math.max(PADDING, position.y - overflow)}px`
+            }
+        })
+    }
+
+    function onResize() {
+        position.x = clamp(position.x, PADDING, window.innerWidth - SIZE - PADDING)
+        position.y = clamp(position.y, PADDING, window.innerHeight - SIZE - PADDING)
+        applyPosition()
+        if (!panel.hidden) placePanel()
+    }
 
     async function renderList() {
         panel.replaceChildren(header('UltraContext', renderList))
+        placePanel()
         try {
             const rows = await listContexts(uc)
             panel.append(
@@ -174,6 +283,7 @@ export function mountDevtools(uc, info, options = {}) {
 
     async function renderDetail(id) {
         panel.replaceChildren(header('‹ Context', renderList, () => renderDetail(id)))
+        placePanel()
         try {
             const detail = await uc.get(id)
             const messages = detail.data ?? []
@@ -247,6 +357,7 @@ export function mountDevtools(uc, info, options = {}) {
     return {
         destroy() {
             host.remove()
+            window.removeEventListener('resize', onResize)
         }
     }
 }
@@ -289,4 +400,15 @@ function el(tag, className, text) {
     if (className) node.className = className
     if (text !== undefined) node.textContent = text
     return node
+}
+
+function nearestEdgeX(x) {
+    const min = PADDING
+    const max = window.innerWidth - SIZE - PADDING
+    return Math.abs(x - min) <= Math.abs(x - max) ? min : max
+}
+
+function clamp(value, min, max) {
+    if (max < min) return min
+    return Math.min(Math.max(value, min), max)
 }
