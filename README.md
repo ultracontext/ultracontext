@@ -57,22 +57,6 @@ await session.context.append({
 const entries = await session.context.current()
 ```
 
-Expose it to a browser or edge app through HTTP:
-
-```ts
-// app/api/ultracontext/[...path]/route.ts
-import { createUltraContextNextHandler } from 'ultracontext/next'
-
-export const { GET, POST, PATCH, DELETE } =
-  createUltraContextNextHandler({ projectRoot: process.cwd() })
-```
-
-```ts
-import { createClient } from 'ultracontext'
-
-const uc = createClient('/api/ultracontext')
-```
-
 Mount the same workspace as files for local agents:
 
 ```bash
