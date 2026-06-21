@@ -201,22 +201,6 @@ artifacts.
 Compaction, provider-specific rendering, and formatting are intentionally out of
 the initial public surface. They can be added later as LEGO-block extensions.
 
-## Entries
-
-Context entries are provider-neutral records. The common case is a chat message,
-but entries can also represent system instructions, tool calls/results,
-summaries, artifact references, media references, and multimodal content.
-
-```ts
-await session.context.append({
-  role: 'user',
-  content: [
-    { type: 'text', text: 'What is wrong with this UI?' },
-    { type: 'image', artifactId: 'art_...' }
-  ]
-})
-```
-
 ## Artifacts
 
 Artifacts are versioned, file-like objects owned by a workspace: markdown
