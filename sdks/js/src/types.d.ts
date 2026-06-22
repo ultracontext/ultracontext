@@ -273,9 +273,7 @@ export interface SessionHandle extends SessionSummary {
 }
 
 export interface SessionContextApi {
-    current(options?: ContextReadOptions): Promise<ContextResult>
     get(options?: ContextReadOptions): Promise<ContextResult>
-    list(options?: ContextReadOptions): Promise<ContextResult>
     append(entries: Message | Message[]): Promise<ContextResult>
     update(update: ContextUpdate | ContextUpdate[], options?: ContextUpdateOptions): Promise<ContextResult>
     delete(target: ContextDeleteTarget | ContextDeleteTarget[], options?: ContextUpdateOptions): Promise<ContextResult>

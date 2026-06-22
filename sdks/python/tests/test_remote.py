@@ -122,7 +122,7 @@ class RemoteClientTests(unittest.TestCase):
         uc = UltraContext(mode="remote", base_url="https://uc.example", transport=transport)
 
         with self.assertRaises(UltraContextError) as error:
-            uc.sessions.get("ctx_missing").context.current()
+            uc.sessions.get("ctx_missing").context.get()
 
         self.assertEqual(error.exception.code, "not_found")
         self.assertEqual(error.exception.status, 404)

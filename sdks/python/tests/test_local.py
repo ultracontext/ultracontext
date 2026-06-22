@@ -70,7 +70,7 @@ class LocalClientTests(unittest.TestCase):
         uc = UltraContext(mode="local", native=FakeNative(FakeCore()))
 
         with self.assertRaises(UltraContextError) as error:
-            uc.sessions.get("ctx_missing").context.current()
+            uc.sessions.get("ctx_missing").context.get()
 
         self.assertEqual(error.exception.code, "not_found")
         self.assertEqual(str(error.exception), "missing")

@@ -117,7 +117,7 @@ test('remote errors preserve UltraContext code', async () => {
     await assert.rejects(
         async () => {
             const session = await uc.sessions.get('ctx_missing')
-            await session.context.current()
+            await session.context.get()
         },
         error => {
             assert.ok(error instanceof UltraContextError)

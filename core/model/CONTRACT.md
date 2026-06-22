@@ -138,8 +138,7 @@ Session handle surface:
 - `session.createdAt` / `session.created_at`
 - `session.delete() -> {deleted, id}`. Session deletion is permanent.
 - `session.fork({version?, metadata?}) -> Session`
-- `session.context.current() -> ContextSnapshot`
-- `session.context.list() -> {data, context_id, version}`
+- `session.context.get({version?}) -> {data, context_id, version}`
 - `session.context.append(entry | entry[]) -> ContextMutation`
 - `session.context.update(patch | patch[], {metadata?}) -> ContextMutation`
 - `session.context.delete(entryId | entryId[], {metadata?}) -> ContextMutation`
@@ -158,8 +157,9 @@ Context mutation rules:
 
 - `session.context.append` appends entries to the durable session log and
   advances the current context window.
-- `session.context.current` returns the current context snapshot, including its
-  context id, version, creation time, operation, and entry count.
+- `session.context.get` returns the context at the latest version by default,
+  or a specific version when `version` is supplied, including its context id,
+  version, and entries.
 - `session.context.entries({contextId})` reads entries from the current window
   by default, or from a specific context snapshot when `contextId` is supplied.
 - `session.context.update`, `remove`, `clear`, and `restore` create a new

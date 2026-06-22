@@ -64,7 +64,7 @@ test('remote client can sync snapshots and incremental changes through Rust-back
         assert.ok(imported.imported > 0)
         assert.equal(imported.conflicts.length, 0)
         const mirrored = await mirror.sessions.get(ctx.id)
-        assert.equal((await mirrored.context.current()).data[1].content, 'next')
+        assert.equal((await mirrored.context.get()).data[1].content, 'next')
         assert.equal((await mirrored.fs.read('sync.md')).data, 'synced content')
 
         const repeated = await mirror.sync.importChanges(changes)

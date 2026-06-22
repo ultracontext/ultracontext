@@ -286,7 +286,7 @@ export function mountDevtools(uc, info, options = {}) {
         placePanel()
         try {
             const session = await uc.sessions.get(id)
-            const detail = await session.context.current()
+            const detail = await session.context.get()
             const messages = detail.data ?? []
             panel.append(
                 el('div', 'uc-full-id', id),

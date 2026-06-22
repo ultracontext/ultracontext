@@ -122,20 +122,12 @@ class SessionContextApi {
         this.sessionId = sessionId
     }
 
-    async current(options = {}) {
+    // Read the context: latest snapshot by default, or a specific version.
+    async get(options = {}) {
         return this.client._call('get', { ctxId: this.sessionId, ...options }, `/v2/contexts/${encodeURIComponent(this.sessionId)}/get`, {
             method: 'POST',
             body: options
         })
-    }
-
-    async get(options = {}) {
-        return this.current(options)
-    }
-
-    async list(options = {}) {
-        const current = await this.current(options)
-        return { data: current.data ?? [], context_id: current.context_id, version: current.version }
     }
 
     async append(entries) {

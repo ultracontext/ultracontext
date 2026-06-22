@@ -66,7 +66,7 @@ async function runSharedFixture(uc, { legacyContextId = false } = {}) {
     assert.equal(restored.data[1].content, 'fixture draft ready!')
 
     const fork = await ctx.fork({ version: 0, metadata: { suite: 'fork' } })
-    const forked = await fork.context.current({ version: 0 })
+    const forked = await fork.context.get({ version: 0 })
     assert.equal(forked.data[1].content, 'fixture draft ready')
 
     const written = await ctx.fs.write(
@@ -119,7 +119,7 @@ async function runSharedFixture(uc, { legacyContextId = false } = {}) {
     await assert.rejects(
         async () => {
             const missing = await uc.sessions.get(fixture.missing_context)
-            await missing.context.current()
+            await missing.context.get()
         },
         error => error instanceof UltraContextError && error.code === 'not_found'
     )

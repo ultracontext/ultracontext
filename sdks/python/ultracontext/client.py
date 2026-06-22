@@ -353,7 +353,8 @@ class SessionContextApi:
         self.client = client
         self.session_id = session_id
 
-    def current(self, **options):
+    # Read the context: latest snapshot by default, or a specific version.
+    def get(self, **options):
         return self.client._call(
             "get",
             {"ctxId": self.session_id, **options},
@@ -361,17 +362,6 @@ class SessionContextApi:
             f"/v2/contexts/{self.session_id}/get",
             options,
         )
-
-    def get(self, **options):
-        return self.current(**options)
-
-    def list(self, **options):
-        current = self.current(**options)
-        return {
-            "data": current.get("data", []),
-            "context_id": current.get("context_id"),
-            "version": current.get("version"),
-        }
 
     def append(self, entries):
         if not isinstance(entries, list):

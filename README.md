@@ -64,7 +64,7 @@ await session.context.append({ role: 'assistant', content: '...' })
 await session.context.update({ index: 0, content: 'New system prompt' })  // version 1
 
 // Read any past version, or fork a branch from one
-const { data } = await session.context.current({ version: 0 })  // the original
+const { data } = await session.context.get({ version: 0 })  // the original
 const branch = await session.fork({ version: 1 })
 
 // Use with any LLM framework
@@ -82,7 +82,7 @@ Since all the context lives on the same place, you query context on demand anywh
   const session = await uc.sessions.get('ses_main')
 
   // Grab the full context from before compaction — still fully readable.
-  const { data: full } = await session.context.current({ version: 7 })
+  const { data: full } = await session.context.get({ version: 7 })
 
   // Start a clean session and hand it that context for a subagent to investigate.
   const subagent = await uc.sessions.create({ metadata: { parent: session.id } })
@@ -90,7 +90,7 @@ Since all the context lives on the same place, you query context on demand anywh
     ...full,
     { role: 'user', content: 'What caused the regression?' }
   ])
-  const finding = await generateText({ model, messages: (await subagent.context.current()).data })
+  const finding = await generateText({ model, messages: (await subagent.context.get()).data })
 ```
 
 ## Working with Artifacts

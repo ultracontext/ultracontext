@@ -153,7 +153,7 @@ def run_shared_fixture(testcase, uc, legacy_context_id=False):
     testcase.assertEqual(restored["data"][1]["content"], "fixture draft ready!")
 
     fork = ctx.fork(version=0, metadata={"suite": "fork"})
-    forked = fork.context.current(version=0)
+    forked = fork.context.get(version=0)
     testcase.assertEqual(forked["data"][1]["content"], "fixture draft ready")
 
     written = ctx.fs.write(
@@ -206,7 +206,7 @@ def run_shared_fixture(testcase, uc, legacy_context_id=False):
     testcase.assertEqual(missing_artifact.exception.code, "not_found")
 
     with testcase.assertRaises(UltraContextError) as missing_context:
-        uc.sessions.get(FIXTURE["missing_context"]).context.current()
+        uc.sessions.get(FIXTURE["missing_context"]).context.get()
     testcase.assertEqual(missing_context.exception.code, "not_found")
 
 
@@ -289,7 +289,7 @@ class SharedFixtureTests(unittest.TestCase):
                 self.assertGreater(report["imported"], 0)
                 self.assertEqual(report["conflicts"], [])
                 mirrored = mirror.sessions.get(ctx.id)
-                self.assertEqual(mirrored.context.current()["data"][1]["content"], "next")
+                self.assertEqual(mirrored.context.get()["data"][1]["content"], "next")
                 self.assertEqual(mirrored.fs.read("sync.md")["data"], "synced content")
 
 
