@@ -17,7 +17,7 @@ ultracontext is a context SDK for AI agents and apps. It gives you SQL-backed st
 
 ## Why
 
-Databases and storage weren’t built for AI. We need to treat sessions, artifacts and context windows as first class citizens if we truly wanna get the most out of AI.
+Databases and storage weren’t built for AI. if we wanna truly get the most out of those systems, we need to start treating context windows, sessions and artifacts as first-class citizens, not as side effects.
 
 ## Install
 
