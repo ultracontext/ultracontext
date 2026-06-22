@@ -13,7 +13,8 @@
   <a href="https://github.com/ultracontext/ultracontext/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/ultracontext/ultracontext.svg?style=for-the-badge&labelColor=000000"></a>
 </div>
 
-ultracontext is a context SDK for AI, with SQL-backed storage for sessions, context windows, and artifacts you can version, search, and manage across local, server, and edge.
+ultracontext is a context SDK for AI. You get SQL-backed storage for sessions, context windows, and artifacts. Everything is auto-versioned, searchable, and mountable as a filesystem, across local, server, and edge. A Rust core with thin JavaScript and Python SDKs.
+
 
 ## Why
 
@@ -25,7 +26,7 @@ Databases and storage weren't built for AI. If we want to keep pushing the bound
 curl -fsSL https://raw.githubusercontent.com/ultracontext/ultracontext/main/install.sh | bash
 ```
 
-## Getting Started
+## Getting started
 
 From your project folder:
 
@@ -33,144 +34,103 @@ From your project folder:
 uc init
 ```
 
-Store a session and manage its context window:
+Store a session and build context:
 
 ```ts
 import { createClient } from 'ultracontext/local'
-
-// Reads ultracontext.json from the current project.
 const uc = createClient()
-const session = await uc.sessions.create()
 
-// Every context change is versioned automatically.
-await session.context.append({
-  role: 'user',
-  content: 'Draft a launch note'
-})
+// Create a session
+const session = await uc.sessions.create() // v0
 
-const context = await session.context.current()
+// Append messages (schemaless)
+await session.context.append({ role: 'user', content: '...' }) // Still v0
+await session.context.append({ role: 'assistant', content: '...' }) // Still v0
 ```
 
-Mount the same workspace as files for local agents:
 
-```bash
-uc mount ./UltraContext
-```
-
-## Top-Level Overview
-
-Public client surface:
+## Manage context windows
 
 ```ts
-uc.workspaces.create({ metadata? })
-uc.workspaces.list()
+import { createClient } from 'ultracontext/local'
+const uc = createClient()
 
-const session = await uc.sessions.create({ workspaceId?, metadata? })
-uc.sessions.get(sessionId)
-uc.sessions.list()
-uc.sessions.delete(sessionId)
-uc.sessions.fork(sessionId, { version?, metadata? })
+// Create a session and build context
+const session = await uc.sessions.create() // v0
+await session.context.append({ role: 'user', content: '...' })
+await session.context.append({ role: 'assistant', content: '...' })
 
-session.context.current({ version? })
-session.context.list({ version? })
-session.context.append(entry | entry[])
-session.context.update(patch | patch[], { metadata? })
-session.context.delete(target | target[], { metadata? })
-session.context.clear({ metadata? })
-session.context.history()
-session.context.restore(contextId, { metadata? })
+// Editing a message auto-creates a new context version (v1)
+await session.context.update({ index: 0, content: 'New system prompt' })  // version 1
 
-session.artifacts.create({ path, data, kind?, metadata?, ifVersion? })
-session.artifacts.list()
-session.artifacts.get(pathOrId, { version? })
-session.artifacts.update(pathOrId, data, { kind?, metadata?, ifVersion? })
-session.artifacts.delete(pathOrId, { ifVersion? })
+// Read any past version, or fork a branch from one
+const { data } = await session.context.current({ version: 0 })  // the original
+const branch = await session.fork({ version: 1 })
 
-session.fs.list({ prefix? })
-session.fs.read(pathOrId, { version? })
-session.fs.write(path, data, { kind?, metadata?, ifVersion? })
-session.fs.move(from, to, { ifVersion? })
-session.fs.remove(pathOrId, { ifVersion? })
-session.fs.glob(pattern)
-session.fs.grep(query, { prefix? })
-
-uc.search.query(query)
-uc.sync.exportSnapshot()
-uc.sync.importSnapshot(snapshot)
-uc.sync.exportChanges({ since? })
-uc.sync.importChanges(changes)
+// Use with any LLM framework
+const response = await generateText({ model, messages: data })
 ```
 
-## Storage
+## Single source of truth
 
-UltraContext is backed by a SQL-backed node store. By default, local projects use
-SQLite; remote deployments can expose the same model behind an HTTP endpoint.
-The SQL store owns the durable truth: sessions, context history, artifact
-metadata, paths, versions, provenance, and search indexes.
+Since all the context lives on the same place, you query context on demand anywhere you need. For example: Parallel subagents can query each other's context in realtime. append its status to its parent/orchestrator without overhead
 
-Artifact bytes are stored separately when they get large. Small text can stay
-inline, while images, PDFs, audio, generated files, and other blobs can live in
-a local directory or an S3-compatible object store such as S3, R2, or MinIO.
+```ts
+  import { createClient } from 'ultracontext/local'
+  const uc = createClient()
 
-### Auto-Versioning
+  const session = await uc.sessions.get('ses_main')
 
-```text
-                      ┌──────────────────────┐
-                      │ session  ses_4f2e... │  stable conversation handle
-                      └──────────────────────┘
-                                 ▲
-                ┌────────────────┼────────────────┐
-                │                │                │
-          ┌────────────┐     ┌────────────┐     ┌────────────┐
-          │ context v0 │◄────│ context v1 │◄────│ context v2 │ ◄── current model view
-          │ created    │     │ edited     │     │ trimmed    │
-          └────────────┘     └────────────┘     └────────────┘
-               ▲                ▲                ▲
-               │                │                │
-          ┌──────────┐     ┌──────────┐     ┌──────────┐
-          │  msg_a   │     │  msg_a   │     │  msg_b'  │
-          │   "hi"   │     │   "hi"   │     │  "hbu!"  │
-          └──────────┘     └──────────┘     └──────────┘
-               ▲                ▲
-               │                │
-          ┌──────────┐     ┌──────────┐
-          │  msg_b   │     │  msg_b'  │
-          │  "hbu?"  │     │  "hbu!"  │
-          └──────────┘     └──────────┘
+  // Grab the full context from before compaction — still fully readable.
+  const { data: full } = await session.context.current({ version: 7 })
 
-  v0: first model context · v1: edited b -> b' ·
-  v2: trimmed a out of the context, without deleting history
+  // Start a clean session and hand it that context for a subagent to investigate.
+  const subagent = await uc.sessions.create({ metadata: { parent: session.id } })
+  await subagent.context.append([
+    ...full,
+    { role: 'user', content: 'What caused the regression?' }
+  ])
+  const finding = await generateText({ model, messages: (await subagent.context.current()).data })
 ```
 
-Every context update creates a new snapshot automatically, so agents can edit,
-clear, restore, and time-travel without losing history.
+## Working with Artifacts
 
-A session is the durable container for one conversation, run, or agent task. It
-is the permanent handle you keep in app code. It owns lifecycle metadata, an
-append-only log, context snapshots, subagent links, and artifact links.
+Artifacts are outputs (files, images, code, or markdown, for example) that models creates during a conversation. They are usually saved to external files. Artifacts belong to the workspace, but can associated to a specific session (although not required). Offloading larger context to artifacts is a great strategy to maintain persistence while still keeping models smart with lean context windows.
 
-A context is the model-facing view for that session. The current context
-is the latest saved context for the session. Reads use the current context by
-default. Use `session.context.history()` or `session.context.current({ version })`
-to inspect older contexts.
+We recommend mounting your workspace as a filesystem with `uc mount` as agents are great using filesystens (Read ## Portable filesystem)
 
-`session.context.append`, `update`, `delete`, `clear`, and `restore` advance
-the current context without rewriting older snapshots. `clear()` creates a new
-empty current context. `restore(contextId)` creates a new current snapshot from
-an older one; it does not move time backward in place.
+```ts
 
-Session deletion is permanent. It removes the session, its log, its context
-snapshots, and its artifact links. It does not delete workspace artifacts.
+// Agent loop start running
+const turn = await agent.run()
+// Calls tool to write a plan.md to filesystem
+// An artifact is automatically created for you (v0).
+// Agent finish the first part of the plan
+// Plan.md gets updated by the agent
+// Everything is auto-versioned (plan.md is now v1)
+// Time-travel iterations with .history()
 
-Compaction, provider-specific rendering, and formatting are intentionally out of
-the initial public surface. They can be added later as LEGO-block extensions.
 
-## Portable Filesystem
+// For AI applications / non agentic loops
+import { createClient } from 'ultracontext/local'
+const uc = createClient()
 
-UltraContext projects workspace artifacts into a portable filesystem model.
+const session = await uc.sessions.create()
+await session.context.append({ role: 'user', content: 'Generate a plan for the full implementation' })
 
-In apps, use `session.fs.*` for file verbs like `read`, `write`, `grep`, and
-`glob` even when there is no real filesystem.
+// Either give tools that models can interact with artifacts (See artifacts API)
+
+// Or create artifact manually after LLM call
+const response = await generateText({ model, messages: data })
+const artiact = await session.artifacts.create({ '/plans', response })
+
+```
+
+Tip: For AI applications, although can interact with artifacts manually, its better to give the model tools so it can do its job and interact with the artifacts though `session.artifacts.*` with `create`, `update`
+
+## Portable filesystem
+
+UltraContext projects workspace artifacts into a portable filesystem. Agents and editors can work with real files. Changes go back into ultracontext storage auto-versioned for you.
 
 Locally, mount the same workspace as a folder:
 
@@ -178,14 +138,24 @@ Locally, mount the same workspace as a folder:
 uc mount ./UltraContext
 ```
 
-Agents and editors can work with real files. Changes go back into UltraContext
-storage as versioned artifacts.
+In apps or edge, use `session.fs.*` for file verbs like `read`, `write`, `grep`, and
+`glob` even when there is no real filesystem. Dive deeper on the [fs API docs](https://todo.docs).
+
 
 ## Search
 
-Search is a recall operation over current context entries and current text
-artifact versions. It returns snippets and ids; full content is read through a
-targeted context, artifact, or filesystem call.
+Full-text search across your sessions and text files, in one query.
+
+Give your agents the CLI:
+
+```bash
+uc search "launch notes"
+```
+
+Or from the SDK: `uc.search.query('launch notes')` 
+
+You get back snippet plus an id: a message in a context, or a file path. Read the full content with a targeted `session.context` or `session.fs` read.
+
 
 ## License
 
