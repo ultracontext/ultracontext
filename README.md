@@ -64,7 +64,7 @@ await session.context.update({ index: 0, content: 'New system prompt' })
 const { data } = await session.context.get({ version: 0 })
 const branch = await session.fork({ version: 1 })
 
-// Use the messages with any LLM framework.
+// Use the messages with any LLM framework or agent SDK.
 const response = await generateText({ model, messages: data })
 ```
 
