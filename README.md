@@ -13,9 +13,9 @@
   <a href="https://github.com/ultracontext/ultracontext/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/ultracontext/ultracontext.svg?style=for-the-badge&labelColor=000000"></a>
 </div>
 
-ultracontext is a context SDK for AI agents and apps. It gives you SQL-backed storage for sessions and artifacts, with auto-versioning, full-text search, and a portable filesystem you can mount locally or access through an API. 
+ultracontext is a context SDK for AI agents and apps. It gives you SQL-backed storage with superpowers. Manage context windows, sessions and artifacts with auto-versioning, full-text search, and a portable filesystem you can mount locally or access through an API. 
 
-One Rust core with thin SDKs. You get the you same context, everywhere: Local, server, or edge.
+One Rust core with thin SDKs. Same context, everywhere:. Either local, server, or edge.
 
 ## Why
 
