@@ -141,15 +141,15 @@ await uc.search.query('launch notes')
 
 You get back a snippet plus an id — a message in a context, or a file path. Read the full content with a targeted `session.context` or `session.fs` read.
 
-## It's yours
+## It belongs to you
 
-Your context is a plain SQLite file. No lock-in, no black box — open it with anything.
+Your context is a plain SQLite file. No lock-in, no black box. Its yours.
 
 ```bash
 sqlite3 .ultracontext/ultracontext.db .tables
 ```
 
-Host it on Supabase, S3, R2, MinIO, or any Postgres- or S3-compatible provider, and serve the same model over HTTP for server and edge.
+Host it on Supabase, S3, R2, MinIO, or any Postgres- or S3-compatible provider, and serve the same model over HTTP for server and edge. We plan to eventually build a plug-n-play managed cloud to simplify the deploying experience for this, but that’s not the priority right now.
 
 ## License
 
