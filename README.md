@@ -73,7 +73,7 @@ const response = await generateText({ model, messages: data })
 
 ## Single source of truth
 
-Since all the context lives on the same place, you query context on demand anywhere you need. For example: Parallel subagents can query each other's context in realtime. append its status to its parent/orchestrator without overhead
+Since all the context lives in the same place, you can query it on demand anywhere you need. For example, parallel subagents can query each other's context in real time, or append status to a parent or orchestrator without overhead.
 
 ```ts
   import { createClient } from 'ultracontext/local'
@@ -95,9 +95,9 @@ Since all the context lives on the same place, you query context on demand anywh
 
 ## Working with Artifacts
 
-Artifacts are outputs (files, images, code, or markdown, for example) that models creates during a conversation. They are usually saved to external files. Artifacts belong to the workspace, but can associated to a specific session (although not required). Offloading larger context to artifacts is a great strategy to maintain persistence while still keeping models smart with lean context windows.
+Artifacts are outputs (files, images, code, or markdown, for example) that models create during a conversation. They are usually saved to external files. Artifacts belong to the workspace, but can be associated with a specific session (although not required). Offloading larger context to artifacts is a great strategy to maintain persistence while still keeping models smart with lean context windows.
 
-We recommend mounting your workspace as a filesystem with `uc mount` as agents are great using filesystens (Read ## Portable filesystem)
+We recommend mounting your workspace as a filesystem with `uc mount` — agents are great at using filesystems (see Portable filesystem below).
 
 ```ts
 
@@ -122,11 +122,11 @@ await session.context.append({ role: 'user', content: 'Generate a plan for the f
 
 // Or create artifact manually after LLM call
 const response = await generateText({ model, messages: data })
-const artiact = await session.artifacts.create({ '/plans', response })
+const artifact = await session.artifacts.create({ path: 'plans/launch.md', data: response.text })
 
 ```
 
-Tip: For AI applications, although can interact with artifacts manually, its better to give the model tools so it can do its job and interact with the artifacts though `session.artifacts.*` with `create`, `update`
+Tip: For AI applications, although you can interact with artifacts manually, it's better to give the model tools so it can do its job and interact with the artifacts through `session.artifacts.*` with `create`, `update`
 
 ## Portable filesystem
 
@@ -154,7 +154,7 @@ uc search "launch notes"
 
 Or from the SDK: `uc.search.query('launch notes')` 
 
-You get back snippet plus an id: a message in a context, or a file path. Read the full content with a targeted `session.context` or `session.fs` read.
+You get back a snippet plus an id: a message in a context, or a file path. Read the full content with a targeted `session.context` or `session.fs` read.
 
 
 ## License
