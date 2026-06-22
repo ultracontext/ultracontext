@@ -13,9 +13,33 @@
   <a href="https://github.com/ultracontext/ultracontext/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/ultracontext/ultracontext.svg?style=for-the-badge&labelColor=000000"></a>
 </div>
 
-ultracontext is a context SDK for AI, with SQL-backed storage for sessions and
-artifacts, plus tools to manage model-facing context windows across local,
-server, and edge environments.
+Databases and storage weren’t made for AI. So we fixed it.
+
+Ultracontext is a context SDK that treats sessions, artifacts and context as
+first class citizens.
+
+You get a SQL-backed storage with superpowers. Invisible auto-versioning, do
+full-text search on sessions and artifacts and a mount your portable filesystem
+you can mount anywhere.
+
+So if:
+
+- Your agent f*** the plan.md that is not yet commited
+- Context window is getting bigger, but there still important stuff on the chat
+  and your agent is about to get retarded
+- You wish you’d forked a session back then when context was still great.
+- Your multi-agent spagetti works, you barely understand it and now you needs to
+  maintain it.
+- You wanna iterate the system prompt on your AI product for normies, wanna
+  iterate the system prompt and see how they use it
+- Need to own your context, bring it with you and have the flexibility to tweak
+  it on specific ways that only your stack requires you to
+
+You’re not cooked. We got your back.
+
+Host it on supabase, S3 or any Postgres/S3 compatible provider you want. We plan
+to eventually build a plug-n-play managed cloud for this, but that’s not the
+priority now.
 
 ## Install
 
