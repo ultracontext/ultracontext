@@ -134,7 +134,7 @@ Artifact bytes are stored separately when they get large. Small text can stay
 inline, while images, PDFs, audio, generated files, and other blobs can live in
 a local directory or an S3-compatible object store such as S3, R2, or MinIO.
 
-## Auto-Versioning
+### Auto-Versioning
 
 ```text
                       ┌──────────────────────┐
