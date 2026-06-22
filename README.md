@@ -15,7 +15,6 @@
 
 ultracontext is a context SDK for AI. You get SQL-backed storage for sessions, context windows, and artifacts. Everything is auto-versioned, searchable, and mountable as a filesystem, across local, server, and edge. A Rust core with thin JavaScript and Python SDKs.
 
-
 ## Why
 
 Databases and storage weren't built for AI. If we want to keep pushing the boundaries, we have to treat sessions, context windows, and artifacts as first-class citizens, not afterthoughts.
@@ -40,107 +39,89 @@ Store a session and build context:
 import { createClient } from 'ultracontext/local'
 const uc = createClient()
 
-// Create a session
+// Open a session
 const session = await uc.sessions.create() // v0
 
-// Append messages (schemaless)
-await session.context.append({ role: 'user', content: '...' }) // Still v0
-await session.context.append({ role: 'assistant', content: '...' }) // Still v0
+// Append messages (schemaless). Appending doesn't fork the window — still v0.
+await session.context.append({ role: 'user', content: '...' })
+await session.context.append({ role: 'assistant', content: '...' })
 ```
 
-
-## Manage context windows
+## Edit anything, lose nothing
 
 ```ts
 import { createClient } from 'ultracontext/local'
 const uc = createClient()
 
-// Create a session and build context
 const session = await uc.sessions.create() // v0
 await session.context.append({ role: 'user', content: '...' })
 await session.context.append({ role: 'assistant', content: '...' })
 
-// Editing a message auto-creates a new context version (v1)
-await session.context.update({ index: 0, content: 'New system prompt' })  // version 1
+// You edit a message. The old window doesn't vanish — it's saved as v1.
+await session.context.update({ index: 0, content: 'New system prompt' })
 
-// Read any past version, or fork a branch from one
-const { data } = await session.context.get({ version: 0 })  // the original
+// Go back to the prompt before you touched it, or fork a branch from any point.
+const { data } = await session.context.get({ version: 0 })
 const branch = await session.fork({ version: 1 })
 
-// Use with any LLM framework
+// Use the messages with any LLM framework.
 const response = await generateText({ model, messages: data })
 ```
 
-## Single source of truth
+## Recover context an agent threw away
 
-Since all the context lives in the same place, you can query it on demand anywhere you need. For example, parallel subagents can query each other's context in real time, or append status to a parent or orchestrator without overhead.
+Everything lives in one place, so you can read any session's context on demand — from anywhere. A window the agent compacted, a sibling subagent's progress, last week's run: still there, still queryable.
 
 ```ts
-  import { createClient } from 'ultracontext/local'
-  const uc = createClient()
+import { createClient } from 'ultracontext/local'
+const uc = createClient()
 
-  const session = await uc.sessions.get('ses_main')
+const session = await uc.sessions.get('ses_main')
 
-  // Grab the full context from before compaction — still fully readable.
-  const { data: full } = await session.context.get({ version: 7 })
+// The agent compacted its window. The full context is still here — pull it back.
+const { data: full } = await session.context.get({ version: 7 })
 
-  // Start a clean session and hand it that context for a subagent to investigate.
-  const subagent = await uc.sessions.create({ metadata: { parent: session.id } })
-  await subagent.context.append([
-    ...full,
-    { role: 'user', content: 'What caused the regression?' }
-  ])
-  const finding = await generateText({ model, messages: (await subagent.context.get()).data })
+// Hand it to a fresh subagent to investigate, without touching the main session.
+const subagent = await uc.sessions.create({ metadata: { parent: session.id } })
+await subagent.context.append([
+  ...full,
+  { role: 'user', content: 'What caused the regression?' }
+])
+const finding = await generateText({ model, messages: (await subagent.context.get()).data })
 ```
 
-## Working with Artifacts
+## Offload heavy work to versioned files
 
-Artifacts are outputs (files, images, code, or markdown, for example) that models create during a conversation. They are usually saved to external files. Artifacts belong to the workspace, but can be associated with a specific session (although not required). Offloading larger context to artifacts is a great strategy to maintain persistence while still keeping models smart with lean context windows.
-
-We recommend mounting your workspace as a filesystem with `uc mount` — agents are great at using filesystems (see Portable filesystem below).
+Artifacts are the files models produce — plans, code, images, markdown. They live in the workspace and version themselves, so an overwritten file is never lost. Offloading bulky output to artifacts keeps context windows lean and models sharp.
 
 ```ts
-
-// Agent loop start running
-const turn = await agent.run()
-// Calls tool to write a plan.md to filesystem
-// An artifact is automatically created for you (v0).
-// Agent finish the first part of the plan
-// Plan.md gets updated by the agent
-// Everything is auto-versioned (plan.md is now v1)
-// Time-travel iterations with .history()
-
-
-// For AI applications / non agentic loops
 import { createClient } from 'ultracontext/local'
 const uc = createClient()
 
 const session = await uc.sessions.create()
-await session.context.append({ role: 'user', content: 'Generate a plan for the full implementation' })
+await session.context.append({ role: 'user', content: 'Generate a launch plan' })
 
-// Either give tools that models can interact with artifacts (See artifacts API)
-
-// Or create artifact manually after LLM call
+// Save the model's output as an artifact. Edit it later and it versions itself.
 const response = await generateText({ model, messages: data })
 const artifact = await session.artifacts.create({ path: 'plans/launch.md', data: response.text })
-
 ```
 
-Tip: For AI applications, although you can interact with artifacts manually, it's better to give the model tools so it can do its job and interact with the artifacts through `session.artifacts.*` with `create`, `update`
+Better still, give the model the tools and let it read and write artifacts itself through `session.artifacts.*` (`create`, `update`, ...) — or mount the workspace and let it use real files.
 
 ## Portable filesystem
 
-UltraContext projects workspace artifacts into a portable filesystem. Agents and editors can work with real files. Changes go back into ultracontext storage auto-versioned for you.
-
-Locally, mount the same workspace as a folder:
+ultracontext projects workspace artifacts into a portable filesystem. Mount it, and agents or editors work with real files — every change flows back into storage, auto-versioned.
 
 ```bash
 uc mount ./UltraContext
 ```
 
-In apps or edge, use `session.fs.*` for file verbs like `read`, `write`, `grep`, and
-`glob` even when there is no real filesystem. Dive deeper on the [fs API docs](https://todo.docs).
+No disk? Reach the same files over the API — `read`, `write`, `grep`, `glob` — anywhere, including the edge.
 
+```ts
+await session.fs.write('plans/launch.md', '# Launch')
+const plan = await session.fs.read('plans/launch.md')
+```
 
 ## Search
 
@@ -152,10 +133,23 @@ Give your agents the CLI:
 uc search "launch notes"
 ```
 
-Or from the SDK: `uc.search.query('launch notes')` 
+Or from the SDK:
 
-You get back a snippet plus an id: a message in a context, or a file path. Read the full content with a targeted `session.context` or `session.fs` read.
+```ts
+await uc.search.query('launch notes')
+```
 
+You get back a snippet plus an id — a message in a context, or a file path. Read the full content with a targeted `session.context` or `session.fs` read.
+
+## It's yours
+
+Your context is a plain SQLite file. No lock-in, no black box — open it with anything.
+
+```bash
+sqlite3 .ultracontext/ultracontext.db .tables
+```
+
+Host it on Supabase, S3, R2, MinIO, or any Postgres- or S3-compatible provider, and serve the same model over HTTP for server and edge.
 
 ## License
 
