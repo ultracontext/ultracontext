@@ -6,8 +6,9 @@ use std::path::{Path, PathBuf};
 use std::process;
 use toml_edit::{Array, DocumentMut, value};
 use ultracontext::{
-    ContentStore, ErrorCode, FileWrite, S3ContentStore, SearchKind, UcError, UltraContext,
-    UltraContextOptions,
+    AppendInput, ContentStore, DeleteTarget, ErrorCode, FileWrite, ForkOptions, GetOptions,
+    S3ContentStore, SearchKind, UcError, UltraContext, UltraContextOptions, UpdatePatch,
+    UpdateTarget,
 };
 
 mod mount_utils;
@@ -77,6 +78,10 @@ fn run(
             write_unmount_help(out)?;
             Ok(())
         }
+        Command::SessionHelp => {
+            write_session_help(out)?;
+            Ok(())
+        }
         Command::ContextHelp => {
             write_context_help(out)?;
             Ok(())
@@ -133,32 +138,123 @@ fn run(
             )?;
             print_json(out, result)
         }
-        Command::Create { metadata } => {
+        Command::SessionCreate { metadata } => {
             let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, false)?;
-            let ctx = uc.create(metadata)?;
+            let session = uc.create(metadata)?;
             print_json(
                 out,
                 json!({
-                    "id": ctx.id,
-                    "metadata": ctx.metadata,
-                    "created_at": ctx.created_at
+                    "id": session.id,
+                    "metadata": session.metadata,
+                    "created_at": session.created_at
                 }),
             )
         }
-        Command::Contexts => {
+        Command::SessionList => {
             let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
             let data = uc
                 .list_contexts()?
                 .into_iter()
-                .map(|ctx| {
+                .map(|session| {
                     json!({
-                        "id": ctx.id,
-                        "metadata": ctx.metadata,
-                        "created_at": ctx.created_at
+                        "id": session.id,
+                        "metadata": session.metadata,
+                        "created_at": session.created_at
                     })
                 })
                 .collect::<Vec<_>>();
             print_json(out, json!({ "data": data }))
+        }
+        Command::SessionFork {
+            session_id,
+            version,
+        } => {
+            let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
+            let forked = uc.fork(
+                &session_id,
+                ForkOptions {
+                    version,
+                    metadata: json!({}),
+                },
+            )?;
+            print_json(
+                out,
+                json!({
+                    "id": forked.id,
+                    "metadata": forked.metadata,
+                    "created_at": forked.created_at
+                }),
+            )
+        }
+        Command::SessionDelete { session_id } => {
+            let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
+            uc.delete_context_permanently(&session_id)?;
+            print_json(out, json!({ "deleted": true, "id": session_id }))
+        }
+        Command::ContextGet {
+            session_id,
+            version,
+        } => {
+            let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
+            let context = uc.get(&session_id, GetOptions { version })?;
+            print_json(out, context_data_json(context))
+        }
+        Command::ContextHistory { session_id } => {
+            let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
+            let data = uc
+                .context_history(&session_id)?
+                .data
+                .into_iter()
+                .map(|entry| {
+                    json!({
+                        "id": entry.id,
+                        "session_id": entry.session_id,
+                        "version": entry.version,
+                        "operation": entry.operation,
+                        "current": entry.current,
+                        "created_at": entry.created_at
+                    })
+                })
+                .collect::<Vec<_>>();
+            print_json(out, json!({ "data": data }))
+        }
+        Command::ContextAppend {
+            session_id,
+            content,
+        } => {
+            let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
+            let result = uc.append(&session_id, vec![AppendInput::new(content)])?;
+            print_json(out, mutation_result_json(result))
+        }
+        Command::ContextUpdate {
+            session_id,
+            target,
+            content,
+        } => {
+            let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
+            let result = uc.update_message(&session_id, UpdatePatch { target, content }, json!({}))?;
+            print_json(out, mutation_result_json(result))
+        }
+        Command::ContextDelete {
+            session_id,
+            targets,
+        } => {
+            let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
+            let result = uc.delete_messages(&session_id, targets, json!({}))?;
+            print_json(out, mutation_result_json(result))
+        }
+        Command::ContextClear { session_id } => {
+            let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
+            let result = uc.clear_context(&session_id, json!({}))?;
+            print_json(out, mutation_result_json(result))
+        }
+        Command::ContextRestore {
+            session_id,
+            context_id,
+        } => {
+            let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
+            let result = uc.restore_context(&session_id, &context_id, json!({}))?;
+            print_json(out, mutation_result_json(result))
         }
         Command::Search { query } => {
             let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
@@ -293,6 +389,7 @@ enum Command {
     InitHelp,
     MountHelp,
     UnmountHelp,
+    SessionHelp,
     ContextHelp,
     FsHelp,
     SearchHelp,
@@ -311,10 +408,44 @@ enum Command {
         force: bool,
         install_sdk: bool,
     },
-    Create {
+    SessionCreate {
         metadata: Value,
     },
-    Contexts,
+    SessionList,
+    SessionFork {
+        session_id: String,
+        version: Option<usize>,
+    },
+    SessionDelete {
+        session_id: String,
+    },
+    ContextGet {
+        session_id: String,
+        version: Option<usize>,
+    },
+    ContextHistory {
+        session_id: String,
+    },
+    ContextAppend {
+        session_id: String,
+        content: Value,
+    },
+    ContextUpdate {
+        session_id: String,
+        target: UpdateTarget,
+        content: Value,
+    },
+    ContextDelete {
+        session_id: String,
+        targets: Vec<DeleteTarget>,
+    },
+    ContextClear {
+        session_id: String,
+    },
+    ContextRestore {
+        session_id: String,
+        context_id: String,
+    },
     Search {
         query: String,
     },
@@ -1540,17 +1671,9 @@ fn parse_command(args: &mut Args) -> Result<Command, UcError> {
                 install_sdk,
             })
         }
+        "session" | "ses" => parse_session_command(args),
         "context" | "ctx" => parse_context_command(args),
         "config" => parse_config_command(args),
-        "create" => {
-            let metadata = parse_metadata_arg(args.optional())?;
-            args.finish()?;
-            Ok(Command::Create { metadata })
-        }
-        "contexts" | "ls-contexts" => {
-            args.finish()?;
-            Ok(Command::Contexts)
-        }
         "search" => {
             if matches!(args.peek(), None | Some("--help" | "-h" | "help")) {
                 if args.peek().is_some() {
@@ -1661,30 +1784,189 @@ fn parse_config_command(args: &mut Args) -> Result<Command, UcError> {
     }
 }
 
+fn parse_session_command(args: &mut Args) -> Result<Command, UcError> {
+    let Some(command) = args.optional() else {
+        return Ok(Command::SessionHelp);
+    };
+
+    match command.as_str() {
+        // help
+        "help" | "--help" | "-h" => {
+            args.finish()?;
+            Ok(Command::SessionHelp)
+        }
+
+        // create a session (optional metadata JSON)
+        "create" => {
+            let metadata = parse_metadata_arg(args.optional())?;
+            args.finish()?;
+            Ok(Command::SessionCreate { metadata })
+        }
+
+        // list every session in the workspace
+        "list" | "ls" => {
+            args.finish()?;
+            Ok(Command::SessionList)
+        }
+
+        // fork a session, optionally from a specific version
+        "fork" => {
+            let session_id = args.required("session id")?;
+            let version = parse_version_flag(args)?;
+            args.finish()?;
+            Ok(Command::SessionFork {
+                session_id,
+                version,
+            })
+        }
+
+        // delete a session permanently
+        "delete" | "rm" => {
+            let session_id = args.required("session id")?;
+            args.finish()?;
+            Ok(Command::SessionDelete { session_id })
+        }
+
+        _ => Err(UcError::new(
+            ErrorCode::InvalidInput,
+            format!("Unknown session command: {command}"),
+        )),
+    }
+}
+
 fn parse_context_command(args: &mut Args) -> Result<Command, UcError> {
     let Some(command) = args.optional() else {
         return Ok(Command::ContextHelp);
     };
 
     match command.as_str() {
+        // help
         "help" | "--help" | "-h" => {
             args.finish()?;
             Ok(Command::ContextHelp)
         }
-        "create" | "new" => {
-            let metadata = parse_metadata_arg(args.optional())?;
+
+        // read one context version for a session
+        "get" => {
+            let session_id = args.required("session id")?;
+            let version = parse_version_flag(args)?;
             args.finish()?;
-            Ok(Command::Create { metadata })
+            Ok(Command::ContextGet {
+                session_id,
+                version,
+            })
         }
-        "list" | "ls" => {
+
+        // list a session's context versions
+        "history" => {
+            let session_id = args.required("session id")?;
             args.finish()?;
-            Ok(Command::Contexts)
+            Ok(Command::ContextHistory { session_id })
         }
+
+        // append a message to a session's context
+        "append" => {
+            let session_id = args.required("session id")?;
+            let content = parse_content_arg(args.required("content")?)?;
+            args.finish()?;
+            Ok(Command::ContextAppend {
+                session_id,
+                content,
+            })
+        }
+
+        // update a message by index or id
+        "update" => {
+            let session_id = args.required("session id")?;
+            let target = parse_update_target(&args.required("target")?);
+            let content = parse_content_arg(args.required("content")?)?;
+            args.finish()?;
+            Ok(Command::ContextUpdate {
+                session_id,
+                target,
+                content,
+            })
+        }
+
+        // delete one or more messages by index or id
+        "delete" | "rm" => {
+            let session_id = args.required("session id")?;
+            let targets = args
+                .rest()
+                .into_iter()
+                .map(|raw| parse_delete_target(&raw))
+                .collect::<Vec<_>>();
+            if targets.is_empty() {
+                return Err(UcError::new(
+                    ErrorCode::InvalidInput,
+                    "Pass at least one message id or index",
+                ));
+            }
+            Ok(Command::ContextDelete {
+                session_id,
+                targets,
+            })
+        }
+
+        // clear all messages in a session's context
+        "clear" => {
+            let session_id = args.required("session id")?;
+            args.finish()?;
+            Ok(Command::ContextClear { session_id })
+        }
+
+        // restore an older context snapshot by id
+        "restore" => {
+            let session_id = args.required("session id")?;
+            let context_id = args.required("context id")?;
+            args.finish()?;
+            Ok(Command::ContextRestore {
+                session_id,
+                context_id,
+            })
+        }
+
         _ => Err(UcError::new(
             ErrorCode::InvalidInput,
             format!("Unknown context command: {command}"),
         )),
     }
+}
+
+fn parse_version_flag(args: &mut Args) -> Result<Option<usize>, UcError> {
+    let mut version = None;
+    while let Some(flag) = args.optional() {
+        match flag.as_str() {
+            "--version" => {
+                version = Some(args.required("--version value")?.parse().map_err(|_| {
+                    UcError::new(ErrorCode::InvalidInput, "--version must be a number")
+                })?);
+            }
+            _ => {
+                return Err(UcError::new(
+                    ErrorCode::InvalidInput,
+                    format!("Unexpected argument: {flag}"),
+                ));
+            }
+        }
+    }
+    Ok(version)
+}
+
+fn parse_content_arg(input: String) -> Result<Value, UcError> {
+    Ok(serde_json::from_str(&input).unwrap_or(Value::String(input)))
+}
+
+fn parse_update_target(raw: &str) -> UpdateTarget {
+    raw.parse::<isize>()
+        .map(UpdateTarget::Index)
+        .unwrap_or_else(|_| UpdateTarget::Id(raw.to_string()))
+}
+
+fn parse_delete_target(raw: &str) -> DeleteTarget {
+    raw.parse::<isize>()
+        .map(DeleteTarget::Index)
+        .unwrap_or_else(|_| DeleteTarget::Id(raw.to_string()))
 }
 
 fn parse_fs_command(args: &mut Args) -> Result<Command, UcError> {
@@ -1882,6 +2164,33 @@ fn artifact_data_json(data: ultracontext::ArtifactData) -> Value {
     })
 }
 
+fn message_view_json(view: ultracontext::MessageView) -> Value {
+    json!({
+        "id": view.id,
+        "index": view.index,
+        "content": view.content,
+        "metadata": view.metadata,
+        "created_at": view.created_at
+    })
+}
+
+fn context_data_json(data: ultracontext::ContextData) -> Value {
+    json!({
+        "id": data.id,
+        "context_id": data.context_id,
+        "version": data.version,
+        "data": data.data.into_iter().map(message_view_json).collect::<Vec<_>>()
+    })
+}
+
+fn mutation_result_json(result: ultracontext::MutationResult) -> Value {
+    json!({
+        "context_id": result.context_id,
+        "version": result.version,
+        "data": result.data.into_iter().map(message_view_json).collect::<Vec<_>>()
+    })
+}
+
 fn search_hit_json(hit: ultracontext::SearchHit) -> Value {
     let kind = match hit.kind {
         SearchKind::Message => "message",
@@ -1919,7 +2228,8 @@ Basics:
   uc init                                      Create a local project DB/config
   uc mount <dir>                              Mount directly when one workspace exists; otherwise workspaces/<ws_id>/...
   uc unmount <dir>                            Stop a mounted workspace
-  uc context <command>                        Manage contexts
+  uc session <command>                        Manage sessions
+  uc context <command>                        Operate on a session's context window
   uc search <query>                           Search contexts and files
   uc fs <command>                             Use the virtual filesystem API
   uc config <command>                         Manage project config
@@ -2023,14 +2333,36 @@ Stops a mounted workspace.
     .map_err(io_error)
 }
 
+fn write_session_help(out: &mut dyn Write) -> Result<(), UcError> {
+    out.write_all(
+        br#"Usage:
+  uc session <command>
+
+Commands:
+  create [json]              Create a session
+  list                       List sessions
+  fork <session> [--version N]
+                              Fork a session
+  delete <session>           Delete a session
+"#,
+    )
+    .map_err(io_error)
+}
+
 fn write_context_help(out: &mut dyn Write) -> Result<(), UcError> {
     out.write_all(
         br#"Usage:
   uc context <command>
 
 Commands:
-  create [json]   Create a context
-  list            List contexts
+  get <session> [--version N]   Read a context version
+  history <session>             List a session's context versions
+  append <session> <content>    Append a message
+  update <session> <target> <content>
+                                Update a message by index or id
+  delete <session> <target>...  Delete messages by index or id
+  clear <session>               Clear all messages
+  restore <session> <context>   Restore an older context snapshot
 "#,
     )
     .map_err(io_error)
@@ -2159,22 +2491,155 @@ mod tests {
     }
 
     #[test]
-    fn parses_context_namespace_commands() {
+    fn parses_session_namespace_commands() {
         let created = Invocation::parse(vec![
-            "context".into(),
+            "session".into(),
             "create".into(),
             "{\"name\":\"demo\"}".into(),
         ])
         .unwrap();
-        let listed = Invocation::parse(vec!["context".into(), "list".into()]).unwrap();
+        let listed = Invocation::parse(vec!["session".into(), "list".into()]).unwrap();
+        let forked = Invocation::parse(vec![
+            "session".into(),
+            "fork".into(),
+            "ses_1".into(),
+            "--version".into(),
+            "2".into(),
+        ])
+        .unwrap();
+        let deleted = Invocation::parse(vec!["session".into(), "delete".into(), "ses_1".into()])
+            .unwrap();
 
         assert_eq!(
             created.command,
-            Command::Create {
+            Command::SessionCreate {
                 metadata: json!({"name": "demo"}),
             }
         );
-        assert_eq!(listed.command, Command::Contexts);
+        assert_eq!(listed.command, Command::SessionList);
+        assert_eq!(
+            forked.command,
+            Command::SessionFork {
+                session_id: "ses_1".into(),
+                version: Some(2),
+            }
+        );
+        assert_eq!(
+            deleted.command,
+            Command::SessionDelete {
+                session_id: "ses_1".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn parses_context_namespace_commands() {
+        let got = Invocation::parse(vec![
+            "context".into(),
+            "get".into(),
+            "ses_1".into(),
+            "--version".into(),
+            "0".into(),
+        ])
+        .unwrap();
+        let history = Invocation::parse(vec!["context".into(), "history".into(), "ses_1".into()])
+            .unwrap();
+        let appended = Invocation::parse(vec![
+            "context".into(),
+            "append".into(),
+            "ses_1".into(),
+            "{\"role\":\"user\",\"content\":\"hi\"}".into(),
+        ])
+        .unwrap();
+        let updated = Invocation::parse(vec![
+            "context".into(),
+            "update".into(),
+            "ses_1".into(),
+            "0".into(),
+            "{\"content\":\"edit\"}".into(),
+        ])
+        .unwrap();
+        let deleted = Invocation::parse(vec![
+            "context".into(),
+            "delete".into(),
+            "ses_1".into(),
+            "0".into(),
+            "msg_2".into(),
+        ])
+        .unwrap();
+        let cleared = Invocation::parse(vec!["context".into(), "clear".into(), "ses_1".into()])
+            .unwrap();
+        let restored = Invocation::parse(vec![
+            "context".into(),
+            "restore".into(),
+            "ses_1".into(),
+            "ctx_3".into(),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            got.command,
+            Command::ContextGet {
+                session_id: "ses_1".into(),
+                version: Some(0),
+            }
+        );
+        assert_eq!(
+            history.command,
+            Command::ContextHistory {
+                session_id: "ses_1".into(),
+            }
+        );
+        assert_eq!(
+            appended.command,
+            Command::ContextAppend {
+                session_id: "ses_1".into(),
+                content: json!({"role": "user", "content": "hi"}),
+            }
+        );
+        assert_eq!(
+            updated.command,
+            Command::ContextUpdate {
+                session_id: "ses_1".into(),
+                target: UpdateTarget::Index(0),
+                content: json!({"content": "edit"}),
+            }
+        );
+        assert_eq!(
+            deleted.command,
+            Command::ContextDelete {
+                session_id: "ses_1".into(),
+                targets: vec![DeleteTarget::Index(0), DeleteTarget::Id("msg_2".into())],
+            }
+        );
+        assert_eq!(
+            cleared.command,
+            Command::ContextClear {
+                session_id: "ses_1".into(),
+            }
+        );
+        assert_eq!(
+            restored.command,
+            Command::ContextRestore {
+                session_id: "ses_1".into(),
+                context_id: "ctx_3".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_removed_legacy_commands() {
+        for argv in [
+            vec!["create".to_string()],
+            vec!["contexts".to_string()],
+            vec!["ls-contexts".to_string()],
+            vec!["context".to_string(), "list".to_string()],
+            vec!["context".to_string(), "create".to_string()],
+            vec!["context".to_string(), "fork".to_string(), "ses_1".to_string()],
+        ] {
+            let err = Invocation::parse(argv.clone()).unwrap_err();
+            assert_eq!(err.code_str(), "invalid_input", "argv: {argv:?}");
+        }
     }
 
     #[test]
@@ -2227,10 +2692,12 @@ mod tests {
 
     #[test]
     fn shows_namespace_help_without_subcommand() {
+        let session = Invocation::parse(vec!["session".into()]).unwrap();
         let context = Invocation::parse(vec!["context".into()]).unwrap();
         let fs = Invocation::parse(vec!["fs".into()]).unwrap();
         let config = Invocation::parse(vec!["config".into()]).unwrap();
 
+        assert_eq!(session.command, Command::SessionHelp);
         assert_eq!(context.command, Command::ContextHelp);
         assert_eq!(fs.command, Command::FsHelp);
         assert_eq!(config.command, Command::ConfigHelp);
@@ -2242,6 +2709,7 @@ mod tests {
         let mount = Invocation::parse(vec!["mount".into(), "--help".into()]).unwrap();
         let mount_without_args = Invocation::parse(vec!["mount".into()]).unwrap();
         let unmount = Invocation::parse(vec!["unmount".into(), "--help".into()]).unwrap();
+        let session = Invocation::parse(vec!["session".into(), "--help".into()]).unwrap();
         let context = Invocation::parse(vec!["context".into(), "--help".into()]).unwrap();
         let fs = Invocation::parse(vec!["fs".into(), "--help".into()]).unwrap();
         let search = Invocation::parse(vec!["search".into(), "--help".into()]).unwrap();
@@ -2251,6 +2719,7 @@ mod tests {
         assert_eq!(mount.command, Command::MountHelp);
         assert_eq!(mount_without_args.command, Command::MountHelp);
         assert_eq!(unmount.command, Command::UnmountHelp);
+        assert_eq!(session.command, Command::SessionHelp);
         assert_eq!(context.command, Command::ContextHelp);
         assert_eq!(fs.command, Command::FsHelp);
         assert_eq!(search.command, Command::SearchHelp);
