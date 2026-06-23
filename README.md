@@ -118,24 +118,22 @@ You get back a snippet plus an id — a message in a context, or a file path. Re
 
 ## Advanced context engineering
 
-ultracontext makes context programmable — every version of every session, queryable on demand. Time-travel to the window before an agent compacted it, fan it out to subagents that investigate in parallel, and let them read each other's context live as they work.
+ultracontext makes context programmable — every version of every session, queryable on demand. Time-travel to a window before an agent compacted it, or let parallel subagents read each other's context live as they work.
 
 ```ts
-const session = await uc.sessions.get('ses_main')
+// Two subagents on the same task, each in its own session.
+const a = await uc.sessions.create({ metadata: { role: 'subagent' } })
+const b = await uc.sessions.create({ metadata: { role: 'subagent' } })
+await a.context.append({ role: 'user', content: 'Investigate the regression.' })
 
-// The agent compacted its window — the full context before compaction is still here. Pull it back.
-const { data: full } = await session.context.get({ version: 7 })
+// A works and records what it found.
+const { text } = await generateText({ model, messages: (await a.context.get()).data })
+await a.context.append({ role: 'assistant', content: text })
 
-// Seed two subagents with that recovered context, each chasing a different angle, in parallel.
-const a = await uc.sessions.create({ metadata: { parent: session.id } })
-const b = await uc.sessions.create({ metadata: { parent: session.id } })
-await a.context.append([...full, { role: 'user', content: 'What caused the regression?' }])
-await b.context.append([...full, { role: 'user', content: 'Which change introduced it?' }])
-
-// Mid-flight, B reads what A has worked out so far — live, straight from the store — and builds on it.
+// Mid-flight, B reads A's finding — live, straight from the store — and builds on it.
 const { data: fromA } = await a.context.get()
-await b.context.append([...fromA, { role: 'user', content: 'Continue from what A already found.' }])
-const finding = await generateText({ model, messages: (await b.context.get()).data })
+await b.context.append([...fromA, { role: 'user', content: 'Continue from what A found.' }])
+const response = await generateText({ model, messages: (await b.context.get()).data })
 ```
 
 The [docs](https://github.com/ultracontext/ultracontext/tree/main/docs) have more patterns.
