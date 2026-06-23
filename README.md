@@ -92,24 +92,24 @@ const finding = await generateText({ model, messages: (await subagent.context.ge
 
 ## Same context, everywhere
 
-Everything lives in one place, so you can query any session's context on demand from single source of truth anywhere you need. For example, parallel subagents can get each others context in realtime as they work.
+Every agent and tool reads from the same store, so context is never trapped in one session, one tool, or one machine. One agent picks up exactly where another left off — live, no copy-paste, no re-explaining.
 
 ```ts
 import { createClient } from 'ultracontext/local'
 const uc = createClient()
 
-const session = await uc.sessions.get('ses_main')
+// Codex has been scaffolding the API in its own session.
+// Claude Code reads that context straight from the shared store — live.
+const codex = await uc.sessions.get('ses_codex')
+const { data: codexWork } = await codex.context.get()
 
-// The agent compacted its window. The full context is still here — pull it back.
-const { data: full } = await session.context.get({ version: 7 })
-
-// Hand it to a fresh subagent to investigate, without touching the main session.
-const subagent = await uc.sessions.create({ metadata: { parent: session.id } })
-await subagent.context.append([
-  ...full,
-  { role: 'user', content: 'What caused the regression?' }
+// Claude Code picks up where Codex left off, in its own session.
+const claude = await uc.sessions.get('ses_claude')
+await claude.context.append([
+  ...codexWork,
+  { role: 'user', content: 'Codex scaffolded the API — now wire up the auth middleware.' }
 ])
-const finding = await generateText({ model, messages: (await subagent.context.get()).data })
+const response = await generateText({ model, messages: (await claude.context.get()).data })
 ```
 
 ## Offload to artifacts
