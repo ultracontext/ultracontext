@@ -68,9 +68,9 @@ const branch = await session.fork({ version: 1 })
 const response = await generateText({ model, messages: data })
 ```
 
-## Recover context an agent threw away
+## Recover context pre-compaction
 
-Everything lives in one place, so you can read any session's context on demand — from anywhere. A window the agent compacted, a sibling subagent's progress, last week's run: still there, still queryable.
+Time-travel and Spin off a subagent to inspecto the context window before compaction to get specific implementation details you had layed out before compaction. 
 
 ```ts
 import { createClient } from 'ultracontext/local'
@@ -90,7 +90,29 @@ await subagent.context.append([
 const finding = await generateText({ model, messages: (await subagent.context.get()).data })
 ```
 
-## Offload heavy work to versioned files
+## Same context, everywhere
+
+Everything lives in one place, so you can query any session's context on demand from single source of truth anywhere you need. For example, parallel subagents can get each others context in realtime as they work.
+
+```ts
+import { createClient } from 'ultracontext/local'
+const uc = createClient()
+
+const session = await uc.sessions.get('ses_main')
+
+// The agent compacted its window. The full context is still here — pull it back.
+const { data: full } = await session.context.get({ version: 7 })
+
+// Hand it to a fresh subagent to investigate, without touching the main session.
+const subagent = await uc.sessions.create({ metadata: { parent: session.id } })
+await subagent.context.append([
+  ...full,
+  { role: 'user', content: 'What caused the regression?' }
+])
+const finding = await generateText({ model, messages: (await subagent.context.get()).data })
+```
+
+## Offload to artifacts
 
 Artifacts are the files models produce — plans, code, images, markdown. They live in the workspace and version themselves, so an overwritten file is never lost. Offloading bulky output to artifacts keeps context windows lean and models sharp.
 
