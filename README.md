@@ -68,7 +68,7 @@ const branch = await session.fork({ version: 1 })
 const response = await generateText({ model, messages: data })
 ```
 
-## Recover context pre-compaction
+## Recover context before AI gets idiot
 
 Time-travel and Spin off a subagent to inspecto the context window before compaction to get specific implementation details you had layed out before compaction. 
 
@@ -78,7 +78,7 @@ const uc = createClient()
 
 const session = await uc.sessions.get('ses_main')
 
-// The agent compacted its window. The full context is still here — pull it back.
+// The agent compacted its window. The full context before compaction is still here — pull it back.
 const { data: full } = await session.context.get({ version: 7 })
 
 // Hand it to a fresh subagent to investigate, without touching the main session.
