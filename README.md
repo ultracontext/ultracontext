@@ -68,6 +68,25 @@ const branch = await session.fork({ version: 1 })
 const response = await generateText({ model, messages: data })
 ```
 
+## Under the hood
+
+Everything is a node. Edit one and you get a new version that points back to the last — nothing is overwritten. The newest is the HEAD, what the model sees.
+
+```text
+session  ses_4f2e···                  the handle you keep
+│
+├─ context v0                         older versions, still readable
+├─ context v1
+└─ context v2  ◄── HEAD                the current window → sent to the model
+      ├─ user       "summarize the spec"
+      ├─ assistant  "here's a summary…"
+      └─ user       "now draft the PR"
+```
+
+Workspaces, sessions, contexts, messages, and artifacts — all the same node.
+
+That's the whole engine. It's entirely written in Rust. The full graph is in the [docs](https://github.com/ultracontext/ultracontext/tree/main/docs).
+
 ## Mount as a filesystem
 
 ultracontext projects workspace artifacts into a portable filesystem. Mount it, and agents or editors work with real files — every change flows back into storage, auto-versioned.
@@ -188,25 +207,6 @@ await b.context.append([
 ])
 const response = await generateText({ model, messages: (await b.context.get()).data })
 ```
-
-## Under the hood
-
-Everything is a node. Edit one and you get a new version that points back to the last — nothing is overwritten. The newest is the HEAD, what the model sees.
-
-```text
-session  ses_4f2e···                  the handle you keep
-│
-├─ context v0                         older versions, still readable
-├─ context v1
-└─ context v2  ◄── HEAD                the current window → sent to the model
-      ├─ user       "summarize the spec"
-      ├─ assistant  "here's a summary…"
-      └─ user       "now draft the PR"
-```
-
-Workspaces, sessions, contexts, messages, and artifacts — all the same node.
-
-That's the whole engine. It's entirely written in Rust. The full graph is in the [docs](https://github.com/ultracontext/ultracontext/tree/main/docs).
 
 ## It belongs to you
 
