@@ -27,19 +27,12 @@ curl -fsSL https://raw.githubusercontent.com/ultracontext/ultracontext/main/inst
 
 ## Getting started
 
-From your project folder:
-
-```bash
-uc init
-```
-
-Store a session and build context:
+From your project folder, `uc init`, then open a session and build context:
 
 ```ts
 import { createClient } from 'ultracontext/local'
 const uc = createClient()
 
-// Open a session
 const session = await uc.sessions.create() // v0
 
 // Append messages (schemaless). Appending doesn't fork the window — still v0.
@@ -49,18 +42,13 @@ await session.context.append({ role: 'assistant', content: '...' })
 
 ## Edit anything, lose nothing
 
+Edit a message and the old window doesn't vanish — it's saved as a new version. Go back to any point, or fork a branch from it.
+
 ```ts
-import { createClient } from 'ultracontext/local'
-const uc = createClient()
-
-const session = await uc.sessions.create() // v0
-await session.context.append({ role: 'user', content: '...' })
-await session.context.append({ role: 'assistant', content: '...' })
-
-// You edit a message. The old window doesn't vanish — it's saved as v1.
+// Edit message 0. The previous window is kept as v1.
 await session.context.update({ index: 0, content: 'New system prompt' })
 
-// Go back to the prompt before you touched it, or fork a branch from any point.
+// Read an old version, or fork a branch from any point.
 const { data } = await session.context.get({ version: 0 })
 const branch = await session.fork({ version: 1 })
 
@@ -101,93 +89,36 @@ await session.fs.write('plans/launch.md', '# Launch')
 const plan = await session.fs.read('plans/launch.md')
 ```
 
-Edit those files however you like — an editor, an agent, or the API. Every change is versioned automatically, and storage and mount stay in sync.
+Every change is versioned automatically, and storage and mount stay in sync.
 
 ## Offload to artifacts
 
-Artifacts are the files models produce — plans, code, images, markdown. They live in the workspace and version themselves, so an overwritten file is never lost. Offloading bulky output to artifacts keeps context windows lean and models sharp.
+Artifacts are the files models produce — plans, code, images, markdown. They live in the workspace and version themselves, so an overwritten file is never lost. Offloading bulky output keeps context windows lean and models sharp.
 
 ```ts
-import { createClient } from 'ultracontext/local'
-const uc = createClient()
-
-const session = await uc.sessions.create()
-await session.context.append({ role: 'user', content: 'Generate a launch plan' })
-
 // Save the model's output as an artifact. Edit it later and it versions itself.
-const { data } = await session.context.get()
-const response = await generateText({ model, messages: data })
 const artifact = await session.artifacts.create({ path: 'plans/launch.md', data: response.text })
 ```
 
-Better still, give the model the tools and let it read and write artifacts itself through `session.artifacts.*` (`create`, `update`, ...) — or mount the workspace and let it use real files.
+Better still, give the model the tools and let it read and write artifacts itself through `session.artifacts.*` — or mount the workspace and let it use real files.
 
 ## Search
 
 Full-text search across your sessions and text files, in one query.
 
-Give your agents the CLI:
-
 ```bash
-uc search "launch notes"
+uc search "launch notes"      # give your agents the CLI
 ```
 
-Or from the SDK:
-
 ```ts
-await uc.search.query('launch notes')
+await uc.search.query('launch notes')   // or the SDK
 ```
 
 You get back a snippet plus an id — a message in a context, or a file path. Read the full content with a targeted `session.context` or `session.fs` read.
 
 ## Advanced context engineering
 
-ultracontext makes context programmable — every version of every session, queryable on demand. Two patterns it unlocks; the [docs](https://github.com/ultracontext/ultracontext/tree/main/docs) have more.
-
-### Recover context before compaction
-
-Time-travel to the window before the agent compacted it, then spin off a subagent to dig into the implementation details you'd laid out.
-
-```ts
-import { createClient } from 'ultracontext/local'
-const uc = createClient()
-
-const session = await uc.sessions.get('ses_main')
-
-// The agent compacted its window. The full context before compaction is still here — pull it back.
-const { data: full } = await session.context.get({ version: 7 })
-
-// Hand it to a fresh subagent to investigate, without touching the main session.
-const subagent = await uc.sessions.create({ metadata: { parent: session.id } })
-await subagent.context.append([
-  ...full,
-  { role: 'user', content: 'What caused the regression?' }
-])
-const finding = await generateText({ model, messages: (await subagent.context.get()).data })
-```
-
-### Same context, everywhere
-
-Everything lives in one place, so any session's context is queryable on demand. Parallel subagents can read each other's context in real time as they work.
-
-```ts
-import { createClient } from 'ultracontext/local'
-const uc = createClient()
-
-// Two subagents work the same task in parallel, each in its own session.
-const a = await uc.sessions.create({ metadata: { role: 'subagent' } })
-const b = await uc.sessions.create({ metadata: { role: 'subagent' } })
-
-// Mid-flight, B reads what A has figured out so far — live, straight from the store.
-const { data: fromA } = await a.context.get()
-
-// B builds on it instead of redoing the work.
-await b.context.append([
-  ...fromA,
-  { role: 'user', content: 'Continue from what the other agent already found.' }
-])
-const response = await generateText({ model, messages: (await b.context.get()).data })
-```
+Because every version of every session is queryable on demand, context becomes programmable. Recover a window the agent compacted and hand it to a fresh subagent; let parallel subagents read each other's context live as they work. The [docs](https://github.com/ultracontext/ultracontext/tree/main/docs) have working examples.
 
 ## Under the hood
 
@@ -210,13 +141,13 @@ That's the whole engine. It's entirely written in Rust. The full graph is in the
 
 ## It belongs to you
 
-Your context is a plain SQLite file. No lock-in, no black box. Its yours.
+Your context is a plain SQLite file. No lock-in, no black box. It's yours.
 
 ```bash
 sqlite3 .ultracontext/ultracontext.db .tables
 ```
 
-Host it on Supabase, S3, R2, MinIO, or any Postgres- or S3-compatible provider, and serve the same model over HTTP for server and edge. We plan to eventually build a plug-n-play managed cloud to simplify the deploying experience for this, but that’s not the priority right now.
+Host it on Supabase, S3, R2, MinIO, or any Postgres- or S3-compatible provider, and serve the same model over HTTP for server and edge. We plan to eventually offer a managed cloud, but that's not the priority right now.
 
 ## License
 
