@@ -55,12 +55,11 @@ pub fn unmount(mountpoint: PathBuf) -> Result<(), UcError> {
     let mountpoint = canonical_mountpoint(&mountpoint);
     let state_files = state_files_for_mountpoint(&mountpoint);
 
-    if mountpoint_is_mounted(&mountpoint) {
-        if let Err(error) = unmount_nfs(&mountpoint)
-            && mountpoint_is_mounted(&mountpoint)
-        {
-            return Err(error);
-        }
+    if mountpoint_is_mounted(&mountpoint)
+        && let Err(error) = unmount_nfs(&mountpoint)
+        && mountpoint_is_mounted(&mountpoint)
+    {
+        return Err(error);
     }
 
     for state_file in state_files {
@@ -413,7 +412,7 @@ fn state_files_for_mountpoint_in_dir(mountpoint: &Path, state_dir: &Path) -> Vec
     let primary = state_file_for_mountpoint_in_dir(mountpoint, state_dir);
     let mut files = vec![primary.clone()];
 
-    let Ok(entries) = fs::read_dir(&state_dir) else {
+    let Ok(entries) = fs::read_dir(state_dir) else {
         return files;
     };
 

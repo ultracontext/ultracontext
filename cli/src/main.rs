@@ -232,7 +232,8 @@ fn run(
             content,
         } => {
             let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
-            let result = uc.update_message(&session_id, UpdatePatch { target, content }, json!({}))?;
+            let result =
+                uc.update_message(&session_id, UpdatePatch { target, content }, json!({}))?;
             print_json(out, mutation_result_json(result))
         }
         Command::ContextDelete {
@@ -2507,8 +2508,8 @@ mod tests {
             "2".into(),
         ])
         .unwrap();
-        let deleted = Invocation::parse(vec!["session".into(), "delete".into(), "ses_1".into()])
-            .unwrap();
+        let deleted =
+            Invocation::parse(vec!["session".into(), "delete".into(), "ses_1".into()]).unwrap();
 
         assert_eq!(
             created.command,
@@ -2542,8 +2543,8 @@ mod tests {
             "0".into(),
         ])
         .unwrap();
-        let history = Invocation::parse(vec!["context".into(), "history".into(), "ses_1".into()])
-            .unwrap();
+        let history =
+            Invocation::parse(vec!["context".into(), "history".into(), "ses_1".into()]).unwrap();
         let appended = Invocation::parse(vec![
             "context".into(),
             "append".into(),
@@ -2567,8 +2568,8 @@ mod tests {
             "msg_2".into(),
         ])
         .unwrap();
-        let cleared = Invocation::parse(vec!["context".into(), "clear".into(), "ses_1".into()])
-            .unwrap();
+        let cleared =
+            Invocation::parse(vec!["context".into(), "clear".into(), "ses_1".into()]).unwrap();
         let restored = Invocation::parse(vec![
             "context".into(),
             "restore".into(),
@@ -2635,7 +2636,11 @@ mod tests {
             vec!["ls-contexts".to_string()],
             vec!["context".to_string(), "list".to_string()],
             vec!["context".to_string(), "create".to_string()],
-            vec!["context".to_string(), "fork".to_string(), "ses_1".to_string()],
+            vec![
+                "context".to_string(),
+                "fork".to_string(),
+                "ses_1".to_string(),
+            ],
         ] {
             let err = Invocation::parse(argv.clone()).unwrap_err();
             assert_eq!(err.code_str(), "invalid_input", "argv: {argv:?}");
