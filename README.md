@@ -184,6 +184,19 @@ await uc.search.query('launch notes')
 
 You get back a snippet plus an id — a message in a context, or a file path. Read the full content with a targeted `session.context` or `session.fs` read.
 
+## Under the hood
+
+Just one idea: **everything is a node** — workspaces, sessions, context windows, and artifacts all share the same shape. Appending messages grows the current window; editing or deleting one snapshots a new version that points back to the last, so nothing is ever overwritten. The newest is what you read by default — time-travel is just reading an older one.
+
+```text
+workspace
+├── session                       ← the stable handle you keep
+│   └── context  v0 ◄── v1 ◄── v2   ← versioned window (v2 = current)
+└── artifact     v0 ◄── v1
+```
+
+That's the whole engine. It's entirely written in Rust. The full graph is in the [docs](https://github.com/ultracontext/ultracontext/tree/main/docs).
+
 ## It belongs to you
 
 Your context is a plain SQLite file. No lock-in, no black box. Its yours.
