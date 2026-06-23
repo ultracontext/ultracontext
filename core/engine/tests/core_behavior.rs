@@ -683,7 +683,9 @@ fn snapshots_can_mirror_nodes_and_blob_content_into_a_new_store() {
         mirrored_artifact.data.as_deref(),
         Some("mirrored blob content")
     );
-    assert_eq!(mirrored_artifact.storage["type"], "inline");
+    // Import preserves the source storage descriptor; blob bytes still round-trip inline.
+    assert_eq!(mirrored_artifact.storage["type"], "ref");
+    assert_eq!(mirrored_artifact.storage["driver"], "local-dir");
 }
 
 #[test]
@@ -710,7 +712,7 @@ fn incremental_changes_can_sync_from_a_shared_cursor_and_report_conflicts() {
         .unwrap();
 
     let changes = source.export_changes(Some(cursor)).unwrap();
-    assert_eq!(changes["schema"], "ultracontext.changes.v1");
+    assert_eq!(changes["schema"], "ultracontext.changes.v2");
     assert!(changes["cursor"].as_i64().unwrap() > cursor);
 
     let imported = mirror.import_changes(changes.clone()).unwrap();
@@ -921,4 +923,95 @@ fn file_verbs_project_paths_over_artifacts() {
         .unwrap();
     let err = uc.file_read(&ctx.id, "archive/today.md").unwrap_err();
     assert_eq!(err.code, ErrorCode::NotFound);
+}
+
+#[test]
+fn a_failed_mutation_leaves_no_partial_head_or_orphan_messages() {
+    let db = temp_db("atomic-mutation");
+    let uc = UltraContext::open(&db).unwrap();
+    let ctx = uc.create(json!({"name": "atomic"})).unwrap();
+
+    // Seed two messages so the mutation has a multi-row body to materialize.
+    uc.append(
+        &ctx.id,
+        vec![
+            AppendInput::new(json!({"content": "keep one"})),
+            AppendInput::new(json!({"content": "keep two"})),
+        ],
+    )
+    .unwrap();
+
+    // Baseline node counts before the doomed mutation.
+    let probe = Connection::open(&db).unwrap();
+    let context_nodes = |conn: &Connection| -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM nodes WHERE kind = 'context'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap()
+    };
+    let message_nodes = |conn: &Connection| -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM nodes WHERE kind = 'message'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap()
+    };
+    let contexts_before = context_nodes(&probe);
+    let messages_before = message_nodes(&probe);
+
+    // Abort the engine's INSERT mid-mutation, after the new head row is written.
+    probe
+        .execute_batch(
+            "CREATE TRIGGER boom BEFORE INSERT ON nodes
+             WHEN NEW.kind = 'message' AND NEW.content LIKE '%BOOM%'
+             BEGIN SELECT RAISE(ABORT, 'boom'); END;",
+        )
+        .unwrap();
+
+    // update_message inserts the head first, then the patched message that trips the trigger.
+    let result = uc.update_message(
+        &ctx.id,
+        UpdatePatch::by_index(0, json!({"content": "BOOM"})),
+        json!({}),
+    );
+    assert!(result.is_err(), "doomed mutation must fail");
+
+    // The whole version rolled back: no new head, no orphan/partial messages.
+    assert_eq!(context_nodes(&probe), contexts_before);
+    assert_eq!(message_nodes(&probe), messages_before);
+
+    // The context is still readable at its pre-mutation version.
+    let current = uc.get(&ctx.id, GetOptions::default()).unwrap();
+    assert_eq!(current.version, 0);
+    assert_eq!(current.data.len(), 2);
+    assert_eq!(current.data[0].content["content"], "keep one");
+}
+
+#[test]
+fn binary_artifacts_round_trip_byte_exact_through_a_snapshot() {
+    let source = UltraContext::open(temp_db("binary-snapshot-source")).unwrap();
+    let ctx = source.create(json!({"name": "binary"})).unwrap();
+
+    // Non-UTF8 bytes that utf8-lossy encoding would corrupt.
+    let raw: Vec<u8> = vec![0x00, 0xff, 0xfe, 0x01, 0x80, 0x7f, 0xc3, 0x28];
+    source
+        .save_artifact(
+            &ctx.id,
+            ArtifactSave::new("blob.bin", "application/octet-stream", &raw),
+        )
+        .unwrap();
+
+    // Export then import into a fresh store.
+    let snapshot = source.export_snapshot().unwrap();
+    let mirror = UltraContext::open(temp_db("binary-snapshot-mirror")).unwrap();
+    mirror.import_snapshot(snapshot).unwrap();
+
+    // Bytes survive the round trip exactly.
+    let loaded = mirror
+        .load_artifact_bytes(&ctx.id, "blob.bin", None)
+        .unwrap();
+    assert_eq!(loaded.data, raw);
 }
