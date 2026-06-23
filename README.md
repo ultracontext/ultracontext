@@ -68,9 +68,11 @@ const branch = await session.fork({ version: 1 })
 const response = await generateText({ model, messages: data })
 ```
 
-## Recover context before AI gets idiot
+## Context engineering
 
-Time-travel and Spin off a subagent to inspecto the context window before compaction to get specific implementation details you had layed out before compaction. 
+Every version of every session is on tap, so you decide exactly what each model sees — not whatever happened to be in the window.
+
+Pull back context an agent compacted away and hand it to a subagent to investigate:
 
 ```ts
 import { createClient } from 'ultracontext/local'
@@ -90,9 +92,7 @@ await subagent.context.append([
 const finding = await generateText({ model, messages: (await subagent.context.get()).data })
 ```
 
-## Same context, everywhere
-
-Everything lives in one place, so you can query any session's context on demand from single source of truth anywhere you need. For example, parallel subagents can get each others context in realtime as they work.
+Or let parallel agents read each other's context live — no copy-paste, no waiting:
 
 ```ts
 import { createClient } from 'ultracontext/local'
@@ -131,7 +131,7 @@ const artifact = await session.artifacts.create({ path: 'plans/launch.md', data:
 
 Better still, give the model the tools and let it read and write artifacts itself through `session.artifacts.*` (`create`, `update`, ...) — or mount the workspace and let it use real files.
 
-## Portable filesystem
+## Mount as a filesystem
 
 ultracontext projects workspace artifacts into a portable filesystem. Mount it, and agents or editors work with real files — every change flows back into storage, auto-versioned.
 
