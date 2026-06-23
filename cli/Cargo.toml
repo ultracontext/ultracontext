@@ -6,6 +6,11 @@ license = "Apache-2.0"
 description = "Command-line interface for UltraContext"
 repository = "https://github.com/ultracontext/ultracontext"
 
+# Shared implementation; both binaries are thin wrappers over `entry()`.
+[lib]
+name = "ultracontext_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "uc"
 path = "src/main.rs"

@@ -1,6 +1,4 @@
-#[path = "../main.rs"]
-mod uc;
-
+// `ultracontext` binary: delegate everything to the shared library entry point.
 fn main() {
-    uc::entry();
+    ultracontext_cli::entry();
 }

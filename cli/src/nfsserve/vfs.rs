@@ -131,6 +131,13 @@ pub trait NFSFileSystem: Sync {
     /// this should return Err(nfsstat3::NFS3ERR_ROFS)
     async fn write(&self, id: fileid3, offset: u64, data: &[u8]) -> Result<fattr3, nfsstat3>;
 
+    /// Commits previously written (possibly buffered) data for a file to stable storage.
+    /// Implementations that buffer writes should flush here. The default is a no-op for
+    /// implementations that already persist on each write.
+    async fn commit(&self, _id: fileid3, _offset: u64, _count: u32) -> Result<(), nfsstat3> {
+        Ok(())
+    }
+
     /// Creates a file with the following attributes.
     /// If not supported due to readonly file system
     /// this should return Err(nfsstat3::NFS3ERR_ROFS)

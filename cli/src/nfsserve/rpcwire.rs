@@ -47,9 +47,12 @@ async fn handle_rpc(
             return Ok(true);
         }
 
+        // Stable per-client verifier so replays survive a reconnect from a new socket (G3).
+        let verifier = retransmission_verifier(&call, &context.client_addr);
+
         if context
             .transaction_tracker
-            .is_retransmission(xid, &context.client_addr)
+            .is_retransmission(xid, &verifier)
         {
             // This is a retransmission
             // Drop the message and return
@@ -85,14 +88,30 @@ async fn handle_rpc(
             }
         }
         .map(|_| true);
-        context
-            .transaction_tracker
-            .mark_processed(xid, &context.client_addr);
+        context.transaction_tracker.mark_processed(xid, &verifier);
         res
     } else {
         error!("Unexpectedly received a Reply instead of a Call");
         Err(anyhow!("Bad RPC Call format"))
     }
+}
+
+/// Derives a stable per-client verifier for retransmission detection (G3).
+///
+/// The AUTH_UNIX credential body embeds the client's stamp + machine name, which is
+/// stable across reconnects, so it identifies the client instance independently of the
+/// ephemeral source socket. When no usable credential is present we fall back to the
+/// client address so distinct clients still get distinct keys.
+fn retransmission_verifier(call: &call_body, client_addr: &str) -> Vec<u8> {
+    // Prefer the credential body, then the verifier body, else the client address.
+    let source = if !call.cred.body.is_empty() {
+        &call.cred.body
+    } else if !call.verf.body.is_empty() {
+        &call.verf.body
+    } else {
+        return client_addr.as_bytes().to_vec();
+    };
+    source.clone()
 }
 
 /// RFC 1057 Section 10

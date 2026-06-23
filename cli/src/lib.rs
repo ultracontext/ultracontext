@@ -7,8 +7,9 @@ use std::process;
 use toml_edit::{Array, DocumentMut, value};
 use ultracontext::{
     AppendInput, ContentStore, DeleteTarget, ErrorCode, FileWrite, ForkOptions, GetOptions,
-    S3ContentStore, SearchKind, UcError, UltraContext, UltraContextOptions, UpdatePatch,
-    UpdateTarget,
+    S3ContentStore, UcError, UltraContext, UltraContextOptions, UpdatePatch, UpdateTarget,
+    artifact_data_json, artifact_meta_json, context_data_json, context_history_json,
+    context_view_json, mutation_result_json, search_result_json,
 };
 
 mod mount_utils;
@@ -28,12 +29,8 @@ use mount_utils::{MountScope, infer_kind, io_error};
 const DEFAULT_INLINE_LIMIT: usize = 64 * 1024;
 const PROJECT_CONFIG_FILE: &str = "ultracontext.json";
 
-#[allow(dead_code)]
-fn main() {
-    entry();
-}
-
-pub(crate) fn entry() {
+// Shared entry point for both binaries: parse argv, run, map errors to exit codes.
+pub fn entry() {
     let color = io::stdout().is_terminal() && env::var_os("NO_COLOR").is_none();
     if let Err(error) = run(
         env::args().skip(1).collect(),
@@ -141,27 +138,14 @@ fn run(
         Command::SessionCreate { metadata } => {
             let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, false)?;
             let session = uc.create(metadata)?;
-            print_json(
-                out,
-                json!({
-                    "id": session.id,
-                    "metadata": session.metadata,
-                    "created_at": session.created_at
-                }),
-            )
+            print_json(out, context_view_json(&session))
         }
         Command::SessionList => {
             let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
             let data = uc
                 .list_contexts()?
-                .into_iter()
-                .map(|session| {
-                    json!({
-                        "id": session.id,
-                        "metadata": session.metadata,
-                        "created_at": session.created_at
-                    })
-                })
+                .iter()
+                .map(context_view_json)
                 .collect::<Vec<_>>();
             print_json(out, json!({ "data": data }))
         }
@@ -177,14 +161,7 @@ fn run(
                     metadata: json!({}),
                 },
             )?;
-            print_json(
-                out,
-                json!({
-                    "id": forked.id,
-                    "metadata": forked.metadata,
-                    "created_at": forked.created_at
-                }),
-            )
+            print_json(out, context_view_json(&forked))
         }
         Command::SessionDelete { session_id } => {
             let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
@@ -197,26 +174,12 @@ fn run(
         } => {
             let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
             let context = uc.get(&session_id, GetOptions { version })?;
-            print_json(out, context_data_json(context))
+            print_json(out, context_data_json(&context))
         }
         Command::ContextHistory { session_id } => {
             let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
-            let data = uc
-                .context_history(&session_id)?
-                .data
-                .into_iter()
-                .map(|entry| {
-                    json!({
-                        "id": entry.id,
-                        "session_id": entry.session_id,
-                        "version": entry.version,
-                        "operation": entry.operation,
-                        "current": entry.current,
-                        "created_at": entry.created_at
-                    })
-                })
-                .collect::<Vec<_>>();
-            print_json(out, json!({ "data": data }))
+            let history = uc.context_history(&session_id)?;
+            print_json(out, context_history_json(&history))
         }
         Command::ContextAppend {
             session_id,
@@ -224,7 +187,7 @@ fn run(
         } => {
             let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
             let result = uc.append(&session_id, vec![AppendInput::new(content)])?;
-            print_json(out, mutation_result_json(result))
+            print_json(out, mutation_result_json(&result))
         }
         Command::ContextUpdate {
             session_id,
@@ -234,7 +197,7 @@ fn run(
             let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
             let result =
                 uc.update_message(&session_id, UpdatePatch { target, content }, json!({}))?;
-            print_json(out, mutation_result_json(result))
+            print_json(out, mutation_result_json(&result))
         }
         Command::ContextDelete {
             session_id,
@@ -242,12 +205,12 @@ fn run(
         } => {
             let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
             let result = uc.delete_messages(&session_id, targets, json!({}))?;
-            print_json(out, mutation_result_json(result))
+            print_json(out, mutation_result_json(&result))
         }
         Command::ContextClear { session_id } => {
             let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
             let result = uc.clear_context(&session_id, json!({}))?;
-            print_json(out, mutation_result_json(result))
+            print_json(out, mutation_result_json(&result))
         }
         Command::ContextRestore {
             session_id,
@@ -255,23 +218,18 @@ fn run(
         } => {
             let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
             let result = uc.restore_context(&session_id, &context_id, json!({}))?;
-            print_json(out, mutation_result_json(result))
+            print_json(out, mutation_result_json(&result))
         }
         Command::Search { query } => {
             let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
-            let data = uc
-                .search(&query)?
-                .data
-                .into_iter()
-                .map(search_hit_json)
-                .collect::<Vec<_>>();
-            print_json(out, json!({ "data": data }))
+            let result = uc.search(&query)?;
+            print_json(out, search_result_json(&result))
         }
         Command::FileList { ctx_id, prefix } => {
             let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
             let data = uc
                 .file_list(&ctx_id, prefix.as_deref())?
-                .into_iter()
+                .iter()
                 .map(artifact_meta_json)
                 .collect::<Vec<_>>();
             print_json(out, json!({ "data": data }))
@@ -280,7 +238,7 @@ fn run(
             let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
             if json {
                 let artifact = uc.file_read(&ctx_id, &path)?;
-                print_json(out, artifact_data_json(artifact))
+                print_json(out, artifact_data_json(&artifact))
             } else {
                 let artifact = uc.load_artifact_bytes(&ctx_id, &path, None)?;
                 out.write_all(&artifact.data).map_err(io_error)?;
@@ -301,12 +259,12 @@ fn run(
                     .with_kind(kind)
                     .with_metadata(json!({"source": "uc-cli"})),
             )?;
-            print_json(out, artifact_meta_json(saved))
+            print_json(out, artifact_meta_json(&saved))
         }
         Command::FileMove { ctx_id, from, to } => {
             let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
             let moved = uc.file_move(&ctx_id, &from, &to, None)?;
-            print_json(out, artifact_meta_json(moved))
+            print_json(out, artifact_meta_json(&moved))
         }
         Command::FileRemove { ctx_id, path } => {
             let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
@@ -317,7 +275,7 @@ fn run(
             let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
             let data = uc
                 .file_glob(&ctx_id, &pattern)?
-                .into_iter()
+                .iter()
                 .map(artifact_meta_json)
                 .collect::<Vec<_>>();
             print_json(out, json!({ "data": data }))
@@ -328,23 +286,8 @@ fn run(
             prefix,
         } => {
             let uc = open_store(db.as_deref(), content_dir.as_ref(), inline_limit, true)?;
-            let data = uc
-                .file_grep(&ctx_id, &query, prefix.as_deref())?
-                .data
-                .into_iter()
-                .map(|hit| {
-                    json!({
-                        "kind": "artifact",
-                        "id": hit.id,
-                        "context_id": hit.context_id,
-                        "path": hit.path,
-                        "snippet": hit.snippet,
-                        "metadata": hit.metadata,
-                        "created_at": hit.created_at
-                    })
-                })
-                .collect::<Vec<_>>();
-            print_json(out, json!({ "data": data }))
+            let result = uc.file_grep(&ctx_id, &query, prefix.as_deref())?;
+            print_json(out, search_result_json(&result))
         }
         Command::Mount {
             scope,
@@ -354,6 +297,8 @@ fn run(
         } => {
             let resolved =
                 resolve_store_config(db.as_deref(), content_dir.as_ref(), inline_limit, false)?;
+            // No scope flag: honor mount.defaultScope / mount.defaultWorkspace from config.
+            let scope = resolve_default_mount_scope(scope)?;
             mount_context(
                 StoreConfig {
                     db: db_path_string(&resolved.db)?,
@@ -557,11 +502,13 @@ impl Invocation {
     }
 }
 
+// S3 is carried as its merged settings JSON; the engine's `from_json` is the one decoder,
+// with `inline_limit` threaded in at the point of use.
 struct StoreConfig {
     db: String,
     content_dir: Option<PathBuf>,
     inline_limit: usize,
-    s3: Option<S3StoreConfig>,
+    s3: Option<Value>,
 }
 
 #[derive(Debug)]
@@ -569,7 +516,7 @@ struct ResolvedStoreConfig {
     db: PathBuf,
     content_dir: Option<PathBuf>,
     inline_limit: usize,
-    s3: Option<S3StoreConfig>,
+    s3: Option<Value>,
 }
 
 #[derive(Debug)]
@@ -579,33 +526,7 @@ struct ConfigFile {
     db: PathBuf,
     content_dir: Option<PathBuf>,
     inline_limit: Option<usize>,
-    s3: Option<S3StoreConfig>,
-}
-
-#[derive(Debug, Clone)]
-struct S3StoreConfig {
-    endpoint: String,
-    bucket: String,
-    region: String,
-    access_key_id: String,
-    secret_access_key: String,
-    session_token: Option<String>,
-    prefix: Option<String>,
-}
-
-impl S3StoreConfig {
-    fn to_core(&self, inline_limit: usize) -> S3ContentStore {
-        S3ContentStore {
-            endpoint: self.endpoint.clone(),
-            bucket: self.bucket.clone(),
-            region: self.region.clone(),
-            access_key_id: self.access_key_id.clone(),
-            secret_access_key: self.secret_access_key.clone(),
-            session_token: self.session_token.clone(),
-            prefix: self.prefix.clone(),
-            inline_limit,
-        }
-    }
+    s3: Option<Value>,
 }
 
 fn open_store(
@@ -641,12 +562,14 @@ fn open_store_at(
     db: &Path,
     content_dir: Option<&PathBuf>,
     inline_limit: usize,
-    s3: Option<&S3StoreConfig>,
+    s3: Option<&Value>,
 ) -> Result<UltraContext, UcError> {
-    let content_store = s3
-        .map(|config| ContentStore::s3(config.to_core(inline_limit)))
-        .or_else(|| content_dir.map(|root| ContentStore::local_dir(root, inline_limit)))
-        .unwrap_or_else(|| ContentStore::inline_with_limit(inline_limit));
+    let content_store = match s3 {
+        Some(settings) => ContentStore::s3(build_s3_store(settings, inline_limit)?),
+        None => content_dir
+            .map(|root| ContentStore::local_dir(root, inline_limit))
+            .unwrap_or_else(|| ContentStore::inline_with_limit(inline_limit)),
+    };
     let db = db_path_string(db)?;
     UltraContext::open_with_options(&db, UltraContextOptions { content_store })
 }
@@ -737,7 +660,7 @@ fn resolve_store_config(
     require_existing: bool,
 ) -> Result<ResolvedStoreConfig, UcError> {
     if let Some(db) = db {
-        let s3 = s3_config_from_env()?;
+        let s3 = s3_settings_from_env();
         return Ok(ResolvedStoreConfig {
             db: absolute_path(db)?,
             content_dir: if s3.is_some() {
@@ -753,7 +676,7 @@ fn resolve_store_config(
         return apply_config_overrides(read_config_file(&config)?, content_dir, inline_limit);
     }
     if require_existing && let Some(db) = find_current_dir_db() {
-        let s3 = s3_config_from_env()?;
+        let s3 = s3_settings_from_env();
         return Ok(ResolvedStoreConfig {
             db,
             content_dir: if s3.is_some() {
@@ -870,7 +793,7 @@ fn read_config_file(config_path: &Path) -> Result<ConfigFile, UcError> {
         .map(|path| resolve_config_relative_path(base_dir, path));
     let inline_limit = config_usize(&value, "storage.inlineLimit")
         .or_else(|| config_usize(&value, "storage.inline_limit"));
-    let s3 = s3_config_from_value(&value)?;
+    let s3 = s3_settings_from_value(&value);
     Ok(ConfigFile {
         path: config_path.to_path_buf(),
         value,
@@ -885,7 +808,19 @@ fn read_config_file(config_path: &Path) -> Result<ConfigFile, UcError> {
     })
 }
 
-fn s3_config_from_value(value: &Value) -> Result<Option<S3StoreConfig>, UcError> {
+// Each S3 setting: canonical JSON key + its env override. One list feeds the env overlay.
+const S3_SETTINGS: &[(&str, &str)] = &[
+    ("endpoint", "UC_S3_ENDPOINT"),
+    ("bucket", "UC_S3_BUCKET"),
+    ("region", "UC_S3_REGION"),
+    ("accessKeyId", "UC_S3_ACCESS_KEY_ID"),
+    ("secretAccessKey", "UC_S3_SECRET_ACCESS_KEY"),
+    ("sessionToken", "UC_S3_SESSION_TOKEN"),
+    ("prefix", "UC_S3_PREFIX"),
+];
+
+// Merge env overrides onto the config's `storage.s3` object; None when S3 is not selected.
+fn s3_settings_from_value(value: &Value) -> Option<Value> {
     let storage = value.get("storage").and_then(Value::as_object);
     let driver = env::var("UC_STORAGE_DRIVER")
         .ok()
@@ -898,110 +833,53 @@ fn s3_config_from_value(value: &Value) -> Result<Option<S3StoreConfig>, UcError>
         .unwrap_or_default();
     let s3_value = storage.and_then(|storage| storage.get("s3"));
     if driver != "s3" && s3_value.is_none() && env::var_os("UC_S3_BUCKET").is_none() {
-        return Ok(None);
+        return None;
     }
-
-    s3_config_from_parts(
-        config_str_env("UC_S3_ENDPOINT").or_else(|| {
-            s3_value
-                .and_then(|value| value.get("endpoint"))
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
-        }),
-        config_str_env("UC_S3_BUCKET").or_else(|| {
-            s3_value
-                .and_then(|value| value.get("bucket"))
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
-        }),
-        config_str_env("UC_S3_REGION").or_else(|| {
-            s3_value
-                .and_then(|value| value.get("region"))
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
-        }),
-        config_str_env("UC_S3_ACCESS_KEY_ID").or_else(|| {
-            s3_value
-                .and_then(|value| {
-                    value
-                        .get("accessKeyId")
-                        .or_else(|| value.get("access_key_id"))
-                })
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
-        }),
-        config_str_env("UC_S3_SECRET_ACCESS_KEY").or_else(|| {
-            s3_value
-                .and_then(|value| {
-                    value
-                        .get("secretAccessKey")
-                        .or_else(|| value.get("secret_access_key"))
-                })
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
-        }),
-        config_str_env("UC_S3_SESSION_TOKEN").or_else(|| {
-            s3_value
-                .and_then(|value| {
-                    value
-                        .get("sessionToken")
-                        .or_else(|| value.get("session_token"))
-                })
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
-        }),
-        config_str_env("UC_S3_PREFIX").or_else(|| {
-            s3_value
-                .and_then(|value| value.get("prefix"))
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
-        }),
-    )
-    .map(Some)
+    Some(overlay_s3_env(s3_value))
 }
 
-fn s3_config_from_env() -> Result<Option<S3StoreConfig>, UcError> {
+// Env-only S3 settings, used when there is no config file (--db / current-dir db).
+fn s3_settings_from_env() -> Option<Value> {
     if env::var("UC_STORAGE_DRIVER").ok().as_deref() != Some("s3")
         && env::var_os("UC_S3_BUCKET").is_none()
     {
-        return Ok(None);
+        return None;
     }
-    s3_config_from_parts(
-        config_str_env("UC_S3_ENDPOINT"),
-        config_str_env("UC_S3_BUCKET"),
-        config_str_env("UC_S3_REGION"),
-        config_str_env("UC_S3_ACCESS_KEY_ID"),
-        config_str_env("UC_S3_SECRET_ACCESS_KEY"),
-        config_str_env("UC_S3_SESSION_TOKEN"),
-        config_str_env("UC_S3_PREFIX"),
-    )
-    .map(Some)
+    Some(overlay_s3_env(None))
 }
 
-fn s3_config_from_parts(
-    endpoint: Option<String>,
-    bucket: Option<String>,
-    region: Option<String>,
-    access_key_id: Option<String>,
-    secret_access_key: Option<String>,
-    session_token: Option<String>,
-    prefix: Option<String>,
-) -> Result<S3StoreConfig, UcError> {
-    Ok(S3StoreConfig {
-        endpoint: required_config_part(endpoint, "storage.s3.endpoint")?,
-        bucket: required_config_part(bucket, "storage.s3.bucket")?,
-        region: region.unwrap_or_else(|| "auto".to_string()),
-        access_key_id: required_config_part(access_key_id, "storage.s3.accessKeyId")?,
-        secret_access_key: required_config_part(secret_access_key, "storage.s3.secretAccessKey")?,
-        session_token: empty_to_none(session_token),
-        prefix: empty_to_none(prefix),
-    })
+// Start from the config object (camelCase keys preferred), then let env vars win.
+fn overlay_s3_env(base: Option<&Value>) -> Value {
+    let mut settings = base
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    for &(key, env_var) in S3_SETTINGS {
+        if let Some(value) = config_str_env(env_var) {
+            settings.insert(key.to_string(), Value::String(value));
+        }
+    }
+    Value::Object(settings)
 }
 
-fn required_config_part(value: Option<String>, name: &str) -> Result<String, UcError> {
-    value
-        .and_then(|value| empty_to_none(Some(value)))
-        .ok_or_else(|| UcError::new(ErrorCode::InvalidInput, format!("Missing config: {name}")))
+// Decode via the engine (single source of truth), then reject blank required fields.
+fn build_s3_store(settings: &Value, inline_limit: usize) -> Result<S3ContentStore, UcError> {
+    let store = S3ContentStore::from_json(settings, inline_limit);
+    require_s3_field(&store.endpoint, "storage.s3.endpoint")?;
+    require_s3_field(&store.bucket, "storage.s3.bucket")?;
+    require_s3_field(&store.access_key_id, "storage.s3.accessKeyId")?;
+    require_s3_field(&store.secret_access_key, "storage.s3.secretAccessKey")?;
+    Ok(store)
+}
+
+fn require_s3_field(value: &str, name: &str) -> Result<(), UcError> {
+    if value.trim().is_empty() {
+        return Err(UcError::new(
+            ErrorCode::InvalidInput,
+            format!("Missing config: {name}"),
+        ));
+    }
+    Ok(())
 }
 
 fn empty_to_none(value: Option<String>) -> Option<String> {
@@ -1333,164 +1211,172 @@ fn normalize_python_package_name(name: &str) -> String {
         .collect()
 }
 
+// The one config-key schema: canonical key -> {aliases, JSON path, read fallbacks, type}.
+// Everything (read/write/normalize/help) is driven off this single table.
+enum ConfigType {
+    String,
+    Usize,
+}
+
+struct ConfigKey {
+    canonical: &'static str,
+    aliases: &'static [&'static str],
+    path: &'static [&'static str],
+    read_aliases: &'static [&'static [&'static str]],
+    ty: ConfigType,
+}
+
+const CONFIG_KEYS: &[ConfigKey] = &[
+    ConfigKey {
+        canonical: "db",
+        aliases: &["db", "db.path"],
+        path: &["db"],
+        read_aliases: &[],
+        ty: ConfigType::String,
+    },
+    ConfigKey {
+        canonical: "storage.contentDir",
+        aliases: &["storage.contentDir", "storage.content_dir"],
+        path: &["storage", "contentDir"],
+        read_aliases: &[&["storage", "content_dir"]],
+        ty: ConfigType::String,
+    },
+    ConfigKey {
+        canonical: "storage.inlineLimit",
+        aliases: &["storage.inlineLimit", "storage.inline_limit"],
+        path: &["storage", "inlineLimit"],
+        read_aliases: &[&["storage", "inline_limit"]],
+        ty: ConfigType::Usize,
+    },
+    ConfigKey {
+        canonical: "storage.driver",
+        aliases: &["storage.driver"],
+        path: &["storage", "driver"],
+        read_aliases: &[],
+        ty: ConfigType::String,
+    },
+    ConfigKey {
+        canonical: "storage.s3.endpoint",
+        aliases: &["storage.s3.endpoint"],
+        path: &["storage", "s3", "endpoint"],
+        read_aliases: &[],
+        ty: ConfigType::String,
+    },
+    ConfigKey {
+        canonical: "storage.s3.bucket",
+        aliases: &["storage.s3.bucket"],
+        path: &["storage", "s3", "bucket"],
+        read_aliases: &[],
+        ty: ConfigType::String,
+    },
+    ConfigKey {
+        canonical: "storage.s3.region",
+        aliases: &["storage.s3.region"],
+        path: &["storage", "s3", "region"],
+        read_aliases: &[],
+        ty: ConfigType::String,
+    },
+    ConfigKey {
+        canonical: "storage.s3.accessKeyId",
+        aliases: &["storage.s3.accessKeyId", "storage.s3.access_key_id"],
+        path: &["storage", "s3", "accessKeyId"],
+        read_aliases: &[&["storage", "s3", "access_key_id"]],
+        ty: ConfigType::String,
+    },
+    ConfigKey {
+        canonical: "storage.s3.secretAccessKey",
+        aliases: &["storage.s3.secretAccessKey", "storage.s3.secret_access_key"],
+        path: &["storage", "s3", "secretAccessKey"],
+        read_aliases: &[&["storage", "s3", "secret_access_key"]],
+        ty: ConfigType::String,
+    },
+    ConfigKey {
+        canonical: "storage.s3.sessionToken",
+        aliases: &["storage.s3.sessionToken", "storage.s3.session_token"],
+        path: &["storage", "s3", "sessionToken"],
+        read_aliases: &[&["storage", "s3", "session_token"]],
+        ty: ConfigType::String,
+    },
+    ConfigKey {
+        canonical: "storage.s3.prefix",
+        aliases: &["storage.s3.prefix"],
+        path: &["storage", "s3", "prefix"],
+        read_aliases: &[],
+        ty: ConfigType::String,
+    },
+    ConfigKey {
+        canonical: "mount.defaultScope",
+        aliases: &["mount.defaultScope", "mount.default_scope"],
+        path: &["mount", "defaultScope"],
+        read_aliases: &[],
+        ty: ConfigType::String,
+    },
+    ConfigKey {
+        canonical: "mount.defaultWorkspace",
+        aliases: &["mount.defaultWorkspace", "mount.default_workspace"],
+        path: &["mount", "defaultWorkspace"],
+        read_aliases: &[],
+        ty: ConfigType::String,
+    },
+];
+
+// Resolve an input key (canonical or alias) to its schema entry.
+fn lookup_config_key(key: &str) -> Option<&'static ConfigKey> {
+    CONFIG_KEYS
+        .iter()
+        .find(|entry| entry.aliases.contains(&key))
+}
+
+// Walk the canonical path, then any read-fallback paths, returning the first hit.
+fn read_config_node<'a>(value: &'a Value, entry: &ConfigKey) -> Option<&'a Value> {
+    std::iter::once(entry.path)
+        .chain(entry.read_aliases.iter().copied())
+        .find_map(|path| nested_config_node(value, path))
+}
+
 fn config_string<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
-    match normalize_config_key(key) {
-        Some("db") => value.get("db").and_then(Value::as_str),
-        Some("storage.contentDir") => value
-            .get("storage")
-            .and_then(|storage| {
-                storage
-                    .get("contentDir")
-                    .or_else(|| storage.get("content_dir"))
-            })
-            .and_then(Value::as_str),
-        Some("storage.driver") => value
-            .get("storage")
-            .and_then(|storage| storage.get("driver"))
-            .and_then(Value::as_str),
-        Some("storage.s3.endpoint") => nested_config_string(value, &["storage", "s3", "endpoint"]),
-        Some("storage.s3.bucket") => nested_config_string(value, &["storage", "s3", "bucket"]),
-        Some("storage.s3.region") => nested_config_string(value, &["storage", "s3", "region"]),
-        Some("storage.s3.accessKeyId") => {
-            nested_config_string(value, &["storage", "s3", "accessKeyId"])
-        }
-        Some("storage.s3.secretAccessKey") => {
-            nested_config_string(value, &["storage", "s3", "secretAccessKey"])
-        }
-        Some("storage.s3.sessionToken") => {
-            nested_config_string(value, &["storage", "s3", "sessionToken"])
-        }
-        Some("storage.s3.prefix") => nested_config_string(value, &["storage", "s3", "prefix"]),
-        Some("mount.defaultScope") => value
-            .get("mount")
-            .and_then(|mount| mount.get("defaultScope"))
-            .and_then(Value::as_str),
-        Some("mount.defaultWorkspace") => value
-            .get("mount")
-            .and_then(|mount| mount.get("defaultWorkspace"))
-            .and_then(Value::as_str),
-        _ => None,
-    }
+    read_config_node(value, lookup_config_key(key)?)?.as_str()
 }
 
 fn config_usize(value: &Value, key: &str) -> Option<usize> {
-    match normalize_config_key(key) {
-        Some("storage.inlineLimit") => value
-            .get("storage")
-            .and_then(|storage| {
-                storage
-                    .get("inlineLimit")
-                    .or_else(|| storage.get("inline_limit"))
-            })
-            .and_then(Value::as_u64)
-            .and_then(|value| usize::try_from(value).ok()),
-        _ => None,
-    }
+    let entry = lookup_config_key(key)?;
+    read_config_node(value, entry)?
+        .as_u64()
+        .and_then(|value| usize::try_from(value).ok())
 }
 
 fn get_config_value(value: &Value, key: &str) -> Result<Value, UcError> {
-    let normalized = normalize_config_key(key).ok_or_else(|| unknown_config_key(key))?;
-    match normalized {
-        "db" => value.get("db").cloned(),
-        "storage.contentDir" => value
-            .get("storage")
-            .and_then(|storage| storage.get("contentDir"))
-            .cloned(),
-        "storage.inlineLimit" => value
-            .get("storage")
-            .and_then(|storage| storage.get("inlineLimit"))
-            .cloned(),
-        "storage.driver" => value
-            .get("storage")
-            .and_then(|storage| storage.get("driver"))
-            .cloned(),
-        "storage.s3.endpoint" => nested_config_value(value, &["storage", "s3", "endpoint"]),
-        "storage.s3.bucket" => nested_config_value(value, &["storage", "s3", "bucket"]),
-        "storage.s3.region" => nested_config_value(value, &["storage", "s3", "region"]),
-        "storage.s3.accessKeyId" => nested_config_value(value, &["storage", "s3", "accessKeyId"]),
-        "storage.s3.secretAccessKey" => {
-            nested_config_value(value, &["storage", "s3", "secretAccessKey"])
-        }
-        "storage.s3.sessionToken" => nested_config_value(value, &["storage", "s3", "sessionToken"]),
-        "storage.s3.prefix" => nested_config_value(value, &["storage", "s3", "prefix"]),
-        "mount.defaultScope" => value
-            .get("mount")
-            .and_then(|mount| mount.get("defaultScope"))
-            .cloned(),
-        "mount.defaultWorkspace" => value
-            .get("mount")
-            .and_then(|mount| mount.get("defaultWorkspace"))
-            .cloned(),
-        _ => None,
-    }
-    .ok_or_else(|| {
+    let entry = lookup_config_key(key).ok_or_else(|| unknown_config_key(key))?;
+    read_config_node(value, entry).cloned().ok_or_else(|| {
         UcError::new(
             ErrorCode::NotFound,
-            format!("Config key not found: {normalized}"),
+            format!("Config key not found: {}", entry.canonical),
         )
     })
 }
 
 fn set_config_value(config: &mut Value, key: &str, raw: &str) -> Result<&'static str, UcError> {
-    let normalized = normalize_config_key(key).ok_or_else(|| unknown_config_key(key))?;
+    let entry = lookup_config_key(key).ok_or_else(|| unknown_config_key(key))?;
+    let value = match entry.ty {
+        ConfigType::String => Value::String(raw.to_string()),
+        ConfigType::Usize => {
+            let parsed = raw.parse::<usize>().map_err(|_| {
+                UcError::new(
+                    ErrorCode::InvalidInput,
+                    format!("{} must be a number", entry.canonical),
+                )
+            })?;
+            json!(parsed)
+        }
+    };
     let root = config.as_object_mut().ok_or_else(|| {
         UcError::new(
             ErrorCode::InvalidInput,
             "ultracontext config must be a JSON object",
         )
     })?;
-
-    match normalized {
-        "db" => {
-            root.insert("db".to_string(), Value::String(raw.to_string()));
-        }
-        "storage.contentDir" => {
-            let storage = ensure_config_section(root, "storage")?;
-            storage.insert("contentDir".to_string(), Value::String(raw.to_string()));
-        }
-        "storage.inlineLimit" => {
-            let value = raw.parse::<usize>().map_err(|_| {
-                UcError::new(
-                    ErrorCode::InvalidInput,
-                    "storage.inlineLimit must be a number",
-                )
-            })?;
-            let storage = ensure_config_section(root, "storage")?;
-            storage.insert("inlineLimit".to_string(), json!(value));
-        }
-        "storage.driver" => {
-            let storage = ensure_config_section(root, "storage")?;
-            storage.insert("driver".to_string(), Value::String(raw.to_string()));
-        }
-        "storage.s3.endpoint" => {
-            set_nested_config_string(root, &["storage", "s3", "endpoint"], raw)?
-        }
-        "storage.s3.bucket" => set_nested_config_string(root, &["storage", "s3", "bucket"], raw)?,
-        "storage.s3.region" => set_nested_config_string(root, &["storage", "s3", "region"], raw)?,
-        "storage.s3.accessKeyId" => {
-            set_nested_config_string(root, &["storage", "s3", "accessKeyId"], raw)?
-        }
-        "storage.s3.secretAccessKey" => {
-            set_nested_config_string(root, &["storage", "s3", "secretAccessKey"], raw)?
-        }
-        "storage.s3.sessionToken" => {
-            set_nested_config_string(root, &["storage", "s3", "sessionToken"], raw)?
-        }
-        "storage.s3.prefix" => set_nested_config_string(root, &["storage", "s3", "prefix"], raw)?,
-        "mount.defaultScope" => {
-            let mount = ensure_config_section(root, "mount")?;
-            mount.insert("defaultScope".to_string(), Value::String(raw.to_string()));
-        }
-        "mount.defaultWorkspace" => {
-            let mount = ensure_config_section(root, "mount")?;
-            mount.insert(
-                "defaultWorkspace".to_string(),
-                Value::String(raw.to_string()),
-            );
-        }
-        _ => return Err(unknown_config_key(key)),
-    }
-    Ok(normalized)
+    set_nested_config_value(root, entry.path, value)?;
+    Ok(entry.canonical)
 }
 
 fn ensure_config_section<'a>(
@@ -1506,57 +1392,25 @@ fn ensure_config_section<'a>(
     })
 }
 
-fn set_nested_config_string(
+fn set_nested_config_value(
     root: &mut serde_json::Map<String, Value>,
     path: &[&str],
-    raw: &str,
+    value: Value,
 ) -> Result<(), UcError> {
     let mut cursor = root;
     for section in &path[..path.len() - 1] {
         cursor = ensure_config_section(cursor, section)?;
     }
-    cursor.insert(
-        path[path.len() - 1].to_string(),
-        Value::String(raw.to_string()),
-    );
+    cursor.insert(path[path.len() - 1].to_string(), value);
     Ok(())
 }
 
-fn nested_config_value(value: &Value, path: &[&str]) -> Option<Value> {
+fn nested_config_node<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
     let mut cursor = value;
     for part in path {
         cursor = cursor.get(*part)?;
     }
-    Some(cursor.clone())
-}
-
-fn nested_config_string<'a>(value: &'a Value, path: &[&str]) -> Option<&'a str> {
-    let mut cursor = value;
-    for part in path {
-        cursor = cursor.get(*part)?;
-    }
-    cursor.as_str()
-}
-
-fn normalize_config_key(key: &str) -> Option<&'static str> {
-    match key {
-        "db" | "db.path" => Some("db"),
-        "storage.contentDir" | "storage.content_dir" => Some("storage.contentDir"),
-        "storage.inlineLimit" | "storage.inline_limit" => Some("storage.inlineLimit"),
-        "storage.driver" => Some("storage.driver"),
-        "storage.s3.endpoint" => Some("storage.s3.endpoint"),
-        "storage.s3.bucket" => Some("storage.s3.bucket"),
-        "storage.s3.region" => Some("storage.s3.region"),
-        "storage.s3.accessKeyId" | "storage.s3.access_key_id" => Some("storage.s3.accessKeyId"),
-        "storage.s3.secretAccessKey" | "storage.s3.secret_access_key" => {
-            Some("storage.s3.secretAccessKey")
-        }
-        "storage.s3.sessionToken" | "storage.s3.session_token" => Some("storage.s3.sessionToken"),
-        "storage.s3.prefix" => Some("storage.s3.prefix"),
-        "mount.defaultScope" | "mount.default_scope" => Some("mount.defaultScope"),
-        "mount.defaultWorkspace" | "mount.default_workspace" => Some("mount.defaultWorkspace"),
-        _ => None,
-    }
+    Some(cursor)
 }
 
 fn unknown_config_key(key: &str) -> UcError {
@@ -1619,6 +1473,17 @@ impl Args {
     fn required(&mut self, name: &str) -> Result<String, UcError> {
         self.next()
             .ok_or_else(|| UcError::new(ErrorCode::InvalidInput, format!("Missing {name}")))
+    }
+
+    // Like `required`, but a leading-`--` token means the positional was omitted (a flag came first).
+    fn required_value(&mut self, name: &str) -> Result<String, UcError> {
+        match self.peek() {
+            Some(value) if !value.starts_with("--") => Ok(self.next().unwrap()),
+            _ => Err(UcError::new(
+                ErrorCode::InvalidInput,
+                format!("Missing {name}"),
+            )),
+        }
     }
 
     fn optional(&mut self) -> Option<String> {
@@ -1812,7 +1677,7 @@ fn parse_session_command(args: &mut Args) -> Result<Command, UcError> {
 
         // fork a session, optionally from a specific version
         "fork" => {
-            let session_id = args.required("session id")?;
+            let session_id = args.required_value("session id")?;
             let version = parse_version_flag(args)?;
             args.finish()?;
             Ok(Command::SessionFork {
@@ -1849,7 +1714,7 @@ fn parse_context_command(args: &mut Args) -> Result<Command, UcError> {
 
         // read one context version for a session
         "get" => {
-            let session_id = args.required("session id")?;
+            let session_id = args.required_value("session id")?;
             let version = parse_version_flag(args)?;
             args.finish()?;
             Ok(Command::ContextGet {
@@ -1939,6 +1804,13 @@ fn parse_version_flag(args: &mut Args) -> Result<Option<usize>, UcError> {
     while let Some(flag) = args.optional() {
         match flag.as_str() {
             "--version" => {
+                // Repeated --version is an explicit error, not silent last-wins.
+                if version.is_some() {
+                    return Err(UcError::new(
+                        ErrorCode::InvalidInput,
+                        "--version was passed more than once",
+                    ));
+                }
                 version = Some(args.required("--version value")?.parse().map_err(|_| {
                     UcError::new(ErrorCode::InvalidInput, "--version must be a number")
                 })?);
@@ -1954,8 +1826,10 @@ fn parse_version_flag(args: &mut Args) -> Result<Option<usize>, UcError> {
     Ok(version)
 }
 
+// Strict like metadata: malformed JSON is rejected, never coerced to a raw string.
 fn parse_content_arg(input: String) -> Result<Value, UcError> {
-    Ok(serde_json::from_str(&input).unwrap_or(Value::String(input)))
+    serde_json::from_str(&input)
+        .map_err(|_| UcError::new(ErrorCode::InvalidInput, "content must be JSON"))
 }
 
 fn parse_update_target(raw: &str) -> UpdateTarget {
@@ -2127,11 +2001,17 @@ fn mount_context(
         MountMode::Background | MountMode::Default => false,
     };
 
+    // Decode S3 settings into the engine store, threading the resolved inline limit.
+    let s3 = store
+        .s3
+        .map(|settings| build_s3_store(&settings, store.inline_limit))
+        .transpose()?;
+
     let options = nfs_mount::MountConfig {
         db: store.db,
         content_dir: store.content_dir,
         inline_limit: store.inline_limit,
-        s3: store.s3.map(|config| config.to_core(store.inline_limit)),
+        s3,
         scope,
         mountpoint: PathBuf::from(mountpoint),
         foreground,
@@ -2140,72 +2020,36 @@ fn mount_context(
     nfs_mount::mount(options)
 }
 
-fn artifact_meta_json(meta: ultracontext::ArtifactMeta) -> Value {
-    json!({
-        "id": meta.id,
-        "path": meta.path,
-        "kind": meta.kind,
-        "size": meta.size,
-        "version": meta.version,
-        "created_at": meta.created_at
-    })
-}
-
-fn artifact_data_json(data: ultracontext::ArtifactData) -> Value {
-    json!({
-        "id": data.id,
-        "path": data.path,
-        "kind": data.kind,
-        "size": data.size,
-        "version": data.version,
-        "metadata": data.metadata,
-        "storage": data.storage,
-        "data": data.data,
-        "created_at": data.created_at
-    })
-}
-
-fn message_view_json(view: ultracontext::MessageView) -> Value {
-    json!({
-        "id": view.id,
-        "index": view.index,
-        "content": view.content,
-        "metadata": view.metadata,
-        "created_at": view.created_at
-    })
-}
-
-fn context_data_json(data: ultracontext::ContextData) -> Value {
-    json!({
-        "id": data.id,
-        "context_id": data.context_id,
-        "version": data.version,
-        "data": data.data.into_iter().map(message_view_json).collect::<Vec<_>>()
-    })
-}
-
-fn mutation_result_json(result: ultracontext::MutationResult) -> Value {
-    json!({
-        "context_id": result.context_id,
-        "version": result.version,
-        "data": result.data.into_iter().map(message_view_json).collect::<Vec<_>>()
-    })
-}
-
-fn search_hit_json(hit: ultracontext::SearchHit) -> Value {
-    let kind = match hit.kind {
-        SearchKind::Message => "message",
-        SearchKind::Artifact => "artifact",
+// A mount with no scope flag falls back to config's mount.defaultScope/defaultWorkspace.
+fn resolve_default_mount_scope(scope: MountScope) -> Result<MountScope, UcError> {
+    if scope != MountScope::Auto {
+        return Ok(scope);
+    }
+    let Some(config) = active_config_value() else {
+        return Ok(MountScope::Auto);
     };
-    json!({
-        "kind": kind,
-        "id": hit.id,
-        "context_id": hit.context_id,
-        "path": hit.path,
-        "snippet": hit.snippet,
-        "metadata": hit.metadata,
-        "created_at": hit.created_at
-    })
+    let workspace = config_string(&config, "mount.defaultWorkspace").map(str::to_string);
+    match config_string(&config, "mount.defaultScope") {
+        None | Some("auto") => Ok(MountScope::Auto),
+        Some("database") | Some("all-workspaces") | Some("all") => Ok(MountScope::Database),
+        Some("workspace") => workspace.map(MountScope::Workspace).ok_or_else(|| {
+            UcError::new(
+                ErrorCode::InvalidInput,
+                "mount.defaultScope is \"workspace\" but mount.defaultWorkspace is not set",
+            )
+        }),
+        Some(other) => Err(UcError::new(
+            ErrorCode::InvalidInput,
+            format!("Unknown mount.defaultScope: {other}"),
+        )),
+    }
+}
+
+// Lenient active-config read: returns the parsed JSON when a config file exists, else None.
+fn active_config_value() -> Option<Value> {
+    let path = active_config_path().ok()?;
+    let data = fs::read_to_string(path).ok()?;
+    serde_json::from_str(&data).ok()
 }
 
 fn print_json(out: &mut dyn Write, value: Value) -> Result<(), UcError> {
@@ -2280,6 +2124,7 @@ Options:
 }
 
 fn write_config_help(out: &mut dyn Write) -> Result<(), UcError> {
+    // Static header.
     out.write_all(
         br#"Usage:
   uc config <command>
@@ -2291,20 +2136,15 @@ Commands:
   set <key> <val>  Update one config value
 
 Common keys:
-  db
-  storage.contentDir
-  storage.inlineLimit
-  storage.driver
-  storage.s3.endpoint
-  storage.s3.bucket
-  storage.s3.region
-  storage.s3.accessKeyId
-  storage.s3.secretAccessKey
-  storage.s3.prefix
-  mount.defaultScope
 "#,
     )
-    .map_err(io_error)
+    .map_err(io_error)?;
+
+    // Keys generated from the one config-key schema, so help can never drift.
+    for entry in CONFIG_KEYS {
+        writeln!(out, "  {}", entry.canonical).map_err(io_error)?;
+    }
+    Ok(())
 }
 
 fn write_mount_help(out: &mut dyn Write) -> Result<(), UcError> {
