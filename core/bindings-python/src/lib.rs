@@ -1,6 +1,11 @@
+use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use serde_json::{Value, json};
 use ultracontext::{ContentStore, S3ContentStore, UcError, UltraContext, UltraContextOptions};
+
+// Single documented inline-blob default (64 KiB), shared with the CLI; payloads at or
+// below this size stay inline, larger ones spill to the configured backing store.
+const DEFAULT_INLINE_LIMIT: usize = 64 * 1024;
 
 #[pyclass(name = "UltraContextCore")]
 struct PyUltraContext {
@@ -9,21 +14,21 @@ struct PyUltraContext {
 
 #[pymethods]
 impl PyUltraContext {
+    // `inline_limit` is usize here (vs u32 in the JS binding): PyO3 maps Python ints to
+    // native usize directly, so no boundary widening is needed on this side.
     #[new]
     #[pyo3(signature = (path, content_dir = None, inline_limit = None, s3 = None))]
     fn new(
+        py: Python<'_>,
         path: &str,
         content_dir: Option<&str>,
         inline_limit: Option<usize>,
         s3: Option<&str>,
     ) -> PyResult<Self> {
-        Ok(Self {
-            inner: UltraContext::open_with_options(
-                path,
-                core_options(content_dir, inline_limit, s3),
-            )
-            .map_err(py_init_error)?,
-        })
+        match UltraContext::open_with_options(path, core_options(content_dir, inline_limit, s3)) {
+            Ok(inner) => Ok(Self { inner }),
+            Err(error) => Err(py_init_error(py, error)),
+        }
     }
 
     fn dispatch_json(&self, operation: &str, input: &str) -> String {
@@ -52,39 +57,19 @@ fn core_options(
     inline_limit: Option<usize>,
     s3: Option<&str>,
 ) -> UltraContextOptions {
+    // One default inline limit everywhere; never the usize::MAX of bare `inline()`.
+    let inline_limit = inline_limit.unwrap_or(DEFAULT_INLINE_LIMIT);
+
     let content_store = if let Some(s3) = s3 {
-        ContentStore::s3(parse_s3_config(s3, inline_limit.unwrap_or(64 * 1024)))
+        let config = serde_json::from_str::<Value>(s3).unwrap_or_else(|_| json!({}));
+        ContentStore::s3(S3ContentStore::from_json(&config, inline_limit))
     } else if let Some(content_dir) = content_dir {
-        ContentStore::local_dir(content_dir, inline_limit.unwrap_or(64 * 1024))
-    } else if let Some(inline_limit) = inline_limit {
-        ContentStore::inline_with_limit(inline_limit)
+        ContentStore::local_dir(content_dir, inline_limit)
     } else {
-        ContentStore::inline()
+        ContentStore::inline_with_limit(inline_limit)
     };
+
     UltraContextOptions { content_store }
-}
-
-fn parse_s3_config(input: &str, inline_limit: usize) -> S3ContentStore {
-    let value = serde_json::from_str::<Value>(input).unwrap_or_else(|_| json!({}));
-    S3ContentStore {
-        endpoint: string_field(&value, "endpoint").unwrap_or_default(),
-        bucket: string_field(&value, "bucket").unwrap_or_default(),
-        region: string_field(&value, "region").unwrap_or_else(|| "auto".to_string()),
-        access_key_id: string_field(&value, "accessKeyId")
-            .or_else(|| string_field(&value, "access_key_id"))
-            .unwrap_or_default(),
-        secret_access_key: string_field(&value, "secretAccessKey")
-            .or_else(|| string_field(&value, "secret_access_key"))
-            .unwrap_or_default(),
-        session_token: string_field(&value, "sessionToken")
-            .or_else(|| string_field(&value, "session_token")),
-        prefix: string_field(&value, "prefix"),
-        inline_limit,
-    }
-}
-
-fn string_field(value: &Value, key: &str) -> Option<String> {
-    value.get(key)?.as_str().map(ToOwned::to_owned)
 }
 
 #[pymodule]
@@ -93,6 +78,11 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-fn py_init_error(error: UcError) -> PyErr {
-    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", error.code_str(), error.message))
+// Raise a RuntimeError whose instance carries `.code` = the structured ErrorCode,
+// so the Python SDK reads the real code off the exception instead of parsing a string.
+fn py_init_error(py: Python<'_>, error: UcError) -> PyErr {
+    let code = error.code_str();
+    let err = PyRuntimeError::new_err(error.message);
+    let _ = err.value(py).setattr("code", code);
+    err
 }
