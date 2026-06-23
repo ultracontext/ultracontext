@@ -143,14 +143,16 @@ Now your workspace is just folders and files:
 
 ```text
 UltraContext/
-├── artifacts/   # files the model produced
+├── artifacts/
 │   ├── launch.md
 │   ├── architecture.png
 │   └── benchmarks.csv
-├── skills/      # reusable instructions you give agents
-│   ├── summarize.md
-│   └── code-review.md
-└── plans/       # working docs, versioned as they change
+├── skills/
+│   ├── code-review/
+│   │   └── SKILL.md
+│   └── summarize/
+│       └── SKILL.md
+└── plans/
     ├── roadmap.md
     └── auth-migration.md
 ```
@@ -161,6 +163,8 @@ No disk? Reach the same files over the API — `read`, `write`, `grep`, `glob` �
 await session.fs.write('plans/launch.md', '# Launch')
 const plan = await session.fs.read('plans/launch.md')
 ```
+
+Edit those files however you like — an editor, an agent, or the API. Every change is versioned automatically, and storage and mount stay in sync.
 
 ## Search
 
