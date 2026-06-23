@@ -186,14 +186,20 @@ You get back a snippet plus an id — a message in a context, or a file path. Re
 
 ## Under the hood
 
-Just one idea: **everything is a node** — workspaces, sessions, context windows, and artifacts all share the same shape. Appending messages grows the current window; editing or deleting one snapshots a new version that points back to the last, so nothing is ever overwritten. The newest is what you read by default — time-travel is just reading an older one.
+Everything is a node. Edit one and you get a new version that points back to the last — nothing is overwritten. The newest is the HEAD, what the model sees.
 
 ```text
-workspace
-├── session                       ← the stable handle you keep
-│   └── context  v0 ◄── v1 ◄── v2   ← versioned window (v2 = current)
-└── artifact     v0 ◄── v1
+session  ses_4f2e···                  the handle you keep
+│
+├─ context v0                         older versions, still readable
+├─ context v1
+└─ context v2  ◄── HEAD                the current window → sent to the model
+      ├─ user       "summarize the spec"
+      ├─ assistant  "here's a summary…"
+      └─ user       "now draft the PR"
 ```
+
+Workspaces, sessions, contexts, messages, and artifacts — all the same node.
 
 That's the whole engine. It's entirely written in Rust. The full graph is in the [docs](https://github.com/ultracontext/ultracontext/tree/main/docs).
 
