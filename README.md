@@ -139,6 +139,22 @@ ultracontext projects workspace artifacts into a portable filesystem. Mount it, 
 uc mount ./UltraContext
 ```
 
+Now your workspace is just folders and files:
+
+```text
+UltraContext/
+├── artifacts/   # files the model produced
+│   ├── launch.md
+│   ├── architecture.png
+│   └── benchmarks.csv
+├── skills/      # reusable instructions you give agents
+│   ├── summarize.md
+│   └── code-review.md
+└── plans/       # working docs, versioned as they change
+    ├── roadmap.md
+    └── auth-migration.md
+```
+
 No disk? Reach the same files over the API — `read`, `write`, `grep`, `glob` — anywhere, including the edge.
 
 ```ts
