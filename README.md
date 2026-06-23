@@ -100,7 +100,7 @@ Artifacts are the files models produce — plans, code, images, markdown. They l
 const artifact = await session.artifacts.create({ path: 'plans/launch.md', data: response.text })
 ```
 
-Better still, give the model the tools and let it read and write artifacts itself through `session.artifacts.*` — or mount the workspace and let it use real files.
+Better still, give the model the tools and let it read and write artifacts itself through `session.artifacts.*` (`create`, `update`, ...) — or mount the workspace and let it use real files.
 
 ## Search
 
@@ -111,14 +111,28 @@ uc search "launch notes"      # give your agents the CLI
 ```
 
 ```ts
-await uc.search.query('launch notes')   // or the SDK
+await uc.search.query('launch notes')   // or from the SDK
 ```
 
 You get back a snippet plus an id — a message in a context, or a file path. Read the full content with a targeted `session.context` or `session.fs` read.
 
 ## Advanced context engineering
 
-Because every version of every session is queryable on demand, context becomes programmable. Recover a window the agent compacted and hand it to a fresh subagent; let parallel subagents read each other's context live as they work. The [docs](https://github.com/ultracontext/ultracontext/tree/main/docs) have working examples.
+ultracontext makes context programmable — every version of every session, queryable on demand. Time-travel to the window before an agent compacted it, then spin off a subagent to dig into the details you'd laid out.
+
+```ts
+const session = await uc.sessions.get('ses_main')
+
+// The agent compacted its window. The full context before compaction is still here — pull it back.
+const { data: full } = await session.context.get({ version: 7 })
+
+// Hand it to a fresh subagent to investigate, without touching the main session.
+const subagent = await uc.sessions.create({ metadata: { parent: session.id } })
+await subagent.context.append([...full, { role: 'user', content: 'What caused the regression?' }])
+const finding = await generateText({ model, messages: (await subagent.context.get()).data })
+```
+
+The same query-anything property lets parallel subagents read each other's context live as they work. The [docs](https://github.com/ultracontext/ultracontext/tree/main/docs) have more patterns.
 
 ## Under the hood
 
