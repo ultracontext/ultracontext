@@ -1,4 +1,4 @@
-# [CLAUDE.md](http://CLAUDE.md)
+# CLAUDE.md
 
 Guidance for Claude Code working in this repo.
 
@@ -6,7 +6,7 @@ Guidance for Claude Code working in this repo.
 
 UltraContext is the context SDK to build AI applications. You get local-first SDKs backed by a single Rust core to manage workspaces, append-only sessions, context windows, workspace artifacts, and file-like agent workflows in a simple way.
 
-Layout: `core/` (Rust implementation) · `sdks/js` (JS/TS package) · `sdks/python` (Python package). Rust crates live under `core/`; language packages are thin consumers.
+Layout: `core/` (Rust engine + bindings) · `cli/` (top-level `uc` crate) · `sdks/js` (JS/TS package) · `sdks/python` (Python package). Engine crates live under `core/`; the `cli/` crate sits at the repo root; language packages are thin consumers.
 
 ## Philosophy (load-bearing for every decision)
 

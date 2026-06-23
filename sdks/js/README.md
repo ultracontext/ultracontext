@@ -239,7 +239,7 @@ export default {
     outputFileTracingIncludes: {
         '/api/ultracontext/**/*': [
             './node_modules/ultracontext/native/**/*',
-            './node_modules/ultracontext/ultracontext.*.node'
+            './node_modules/ultracontext/native/index.*.node'
         ]
     }
 }

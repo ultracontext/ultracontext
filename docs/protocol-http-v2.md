@@ -172,6 +172,7 @@ Returns:
 
 ```json
 {
+  "context_id": "ctx_...",
   "data": [
     {
       "id": "msg_...",
@@ -186,6 +187,10 @@ Returns:
 }
 ```
 
+`append`, `update`, `delete`, `clear`, and `restore` all return this same
+mutation shape: `{ context_id, data, version }`, where `context_id` is the new
+current context snapshot.
+
 ### Read Context
 
 `POST /v2/contexts/:contextId/get`
@@ -197,6 +202,17 @@ Returns:
 ```
 
 `version` is optional. Omit it to read the latest context snapshot.
+
+Returns:
+
+```json
+{
+  "id": "ses_...",
+  "context_id": "ctx_...",
+  "data": [],
+  "version": 0
+}
+```
 
 ### Update Message
 
@@ -243,6 +259,69 @@ Delete a whole session permanently:
   }
 }
 ```
+
+Message deletes return the mutation shape `{ context_id, data, version }`.
+
+### Clear Context
+
+`POST /v2/contexts/:contextId/clear`
+
+```json
+{
+  "metadata": {
+    "reason": "reset window"
+  }
+}
+```
+
+Creates a new empty current context snapshot while preserving the session log.
+Returns the mutation shape:
+
+```json
+{
+  "context_id": "ctx_...",
+  "data": [],
+  "version": 1
+}
+```
+
+### Context History
+
+`GET /v2/contexts/:contextId/history`
+
+Returns the chain of context-window snapshots for the session:
+
+```json
+{
+  "data": [
+    {
+      "id": "ctx_...",
+      "session_id": "ses_...",
+      "version": 0,
+      "operation": "create",
+      "created_at": "2026-06-17T00:00:00.000Z",
+      "current": false
+    }
+  ]
+}
+```
+
+### Restore Context
+
+`POST /v2/contexts/:contextId/restore`
+
+```json
+{
+  "contextId": "ctx_...",
+  "metadata": {
+    "reason": "time travel"
+  }
+}
+```
+
+`contextId` (the snapshot to restore) is required. Restore creates a new
+current snapshot from that older snapshot; it does not repoint current backward.
+Returns the mutation shape `{ context_id, data, version }`.
 
 ## Artifacts
 
@@ -323,6 +402,15 @@ versions.
 ## File Verbs
 
 File verbs are path projections over artifacts.
+
+### List Files
+
+`GET /v2/contexts/:contextId/files`
+
+Lists the workspace path projection. Pass an optional `?prefix=` query to scope
+the listing. Returns `{ "data": [...] }`.
+
+### File Operations
 
 | Method | Route | Body |
 |---|---|---|

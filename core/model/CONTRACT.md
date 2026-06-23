@@ -75,8 +75,9 @@ Requirements:
 
 Agents should be able to operate on artifacts with file verbs even when there
 is no real filesystem. The canonical surface is path-based verbs over the
-artifact store. The native NFS mount adapter exposes the same verbs for
-laptops, workstations, and servers that can mount filesystems.
+artifact store. The native NFS mount adapter ships as `uc mount` / `uc unmount`
+and exposes the same verbs for laptops, workstations, and servers that can
+mount filesystems.
 
 Required path verbs for the agent surface:
 
@@ -139,12 +140,12 @@ Session handle surface:
 - `session.delete() -> {deleted, id}`. Session deletion is permanent.
 - `session.fork({version?, metadata?}) -> Session`
 - `session.context.get({version?}) -> {data, context_id, version}`
-- `session.context.append(entry | entry[]) -> ContextMutation`
-- `session.context.update(patch | patch[], {metadata?}) -> ContextMutation`
-- `session.context.delete(entryId | entryId[], {metadata?}) -> ContextMutation`
-- `session.context.clear() -> ContextMutation`
+- `session.context.append(entry | entry[]) -> {data, context_id, version}`
+- `session.context.update(patch | patch[], {metadata?}) -> {data, context_id, version}`
+- `session.context.delete(entryId | entryId[], {metadata?}) -> {data, context_id, version}`
+- `session.context.clear() -> {data, context_id, version}`
 - `session.context.history() -> {data}`
-- `session.context.restore(contextId) -> ContextMutation`
+- `session.context.restore(contextId) -> {data, context_id, version}`
 - `session.artifacts.list() -> {data}`
 - `session.artifacts.get(pathOrId, {version?}) -> Artifact`
 - `session.artifacts.update(pathOrId, data, {kind?, metadata?, ifVersion?}) -> Artifact`
@@ -160,11 +161,12 @@ Context mutation rules:
 - `session.context.get` returns the context at the latest version by default,
   or a specific version when `version` is supplied, including its context id,
   version, and entries.
-- `session.context.entries({contextId})` reads entries from the current window
-  by default, or from a specific context snapshot when `contextId` is supplied.
-- `session.context.update`, `remove`, `clear`, and `restore` create a new
+- `session.context.get({version})` reads the current window by default, or a
+  specific context snapshot when `version` is supplied, returning its data,
+  context id, and version.
+- `session.context.update`, `delete`, `clear`, and `restore` create a new
   context snapshot. They never mutate an old snapshot in place.
-- `session.context.remove` removes entries from the current model-facing
+- `session.context.delete` removes entries from the current model-facing
   window; it does not purge the session log.
 - `session.context.clear` creates a new empty current context window while
   preserving the session log.
@@ -185,10 +187,10 @@ multimodal content.
 Artifact verbs:
 
 - `save(handle, input) -> {id, path, kind, size, version, created_at}`
-- `load(handle, options?) -> {data}` lists artifact metadata
+- `list_artifacts(handle) -> {data}` lists artifact metadata
 - `load(handle, pathOrId, options?) -> artifact version with inline data or a storage descriptor`
-- artifact removal uses `delete(artId, {permanent: true})` or the file-surface
-  `remove` helper
+- artifact removal uses the file-surface `remove`/`file_remove` helper (which
+  drops the current artifact head); it is not the session `delete` op
 
 `save` accepts either path identity or artifact identity:
 
@@ -242,6 +244,8 @@ The artifact reference should pin a version whenever reproducibility matters.
 ## Artifact Storage
 
 Artifact metadata lives in nodes. Artifact bytes can be inline or external.
+`sha256` is the real hex SHA-256 digest of the stored bytes, computed by the
+core on every save.
 
 Inline storage:
 
@@ -311,7 +315,7 @@ Core codes:
 | `invalid_input` | bad params caught before a write |
 | `conflict` | version precondition failed or concurrent write would lose data |
 | `busy` | local store locked past timeout |
-| `incompatible_db` | local file has an unsupported schema |
+| `incompatible_db` | local db file's schema version is newer than this build supports (checked on open) |
 | `internal` | invariant broken or unexpected failure |
 
 Remote transport can add HTTP/auth details around these errors, but the
@@ -361,7 +365,6 @@ application policy.
 
 These are important, but not required for the first shippable v2 core:
 
-- native NFS mount adapter over the same path projection;
 - managed hosted service;
 - local mirror daemon;
 - event stream/watch for live propagation;

@@ -135,8 +135,10 @@ The model uses three structural pointers with separate meanings:
 ## Workspaces, Sessions, Contexts, And Messages
 
 A workspace is the project-like namespace for artifacts and future policy/sync
-scoping. The default API creates a hidden `ws_default` workspace so simple
+scoping. The default API auto-creates a default `ws_default` workspace so simple
 users can start with `uc.sessions.create()` and never think about workspaces.
+It is a real, listable workspace (`uc.workspaces.list()` returns it), not a
+hidden one.
 
 A session is the stable handle for a conversation, run, or agent task. It owns
 an append-only log of what happened. Appending a user/assistant/tool message
@@ -167,7 +169,7 @@ root identity.
   `session.context.append(...)`.
 - `update`, soft removal, clearing, and restore create a new context snapshot.
   Old snapshots remain readable. In the public SDK these are
-  `session.context.update(...)`, `session.context.remove(...)`,
+  `session.context.update(...)`, `session.context.delete(...)`,
   `session.context.clear(...)`, and `session.context.restore(...)`.
 - `restore` creates a new current snapshot from an older snapshot; it does not
   move the current pointer backward in place.
@@ -228,6 +230,9 @@ For larger or binary content:
   }
 }
 ```
+
+`sha256` is the real hex SHA-256 digest of the stored bytes, computed by the
+core on every save. It is content integrity, not a stub.
 
 `art_` is the identity. `path` is a mutable label used by SDK file verbs,
 agent tools, and filesystem projections. This matters:

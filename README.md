@@ -115,6 +115,7 @@ const session = await uc.sessions.create()
 await session.context.append({ role: 'user', content: 'Generate a launch plan' })
 
 // Save the model's output as an artifact. Edit it later and it versions itself.
+const { data } = await session.context.get()
 const response = await generateText({ model, messages: data })
 const artifact = await session.artifacts.create({ path: 'plans/launch.md', data: response.text })
 ```

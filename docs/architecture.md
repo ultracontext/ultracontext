@@ -22,7 +22,6 @@ ultracontext/
 
   docs/
   fixtures/
-  scripts/
   README.md
   Cargo.toml
   Cargo.lock
@@ -55,4 +54,4 @@ call Rust locally or the official HTTP protocol remotely.
 ## Rule
 
 `core/` implements reusable behavior. `cli/` and `sdks/` present behavior.
-`docs/`, `fixtures/`, and `scripts/` support behavior.
+`docs/` and `fixtures/` support behavior.

@@ -119,3 +119,22 @@ For debugging logs in the current terminal, pass `--foreground`:
 The adapter links to the Rust core and calls the same operations as JS/Python
 local bindings. It should never require S3 mounts, JuiceFS, or a mounted remote
 filesystem underneath.
+
+## Implementation Shape
+
+The adapter lives in `cli/src/nfs_mount/` and is split into three blocks:
+
+- `daemon` owns mount lifecycle: foreground/background launch, state-file
+  bookkeeping, and conservative shutdown that avoids dup-mounting or killing a
+  live daemon;
+- `os` owns per-OS mount/unmount shellouts and process/mount-table probes;
+- `vfs` is the NFS filesystem bridge that maps artifacts onto an inode tree,
+  caches that tree, buffers dirty writes, and adapts engine errors to NFS
+  status codes.
+
+The `vfs` keeps a cached path/inode tree rebuilt lazily and only when marked
+stale, so read-path operations reuse a clean snapshot instead of re-querying the
+engine each call. Writes do not hit the engine per chunk: bytes are buffered
+per open file and flushed as one engine artifact version on NFS `COMMIT`. Until
+`COMMIT`, `stat` reflects the buffered in-flight size so editors see consistent
+file sizes mid-write.
