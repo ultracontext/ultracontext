@@ -116,11 +116,27 @@ async function runSharedFixture(uc, { legacyContextId = false } = {}) {
         error => error instanceof UltraContextError && error.code === 'not_found'
     )
 
+    // Invalid input parity: a delete target with neither id nor index is rejected by core through both routes.
+    await assert.rejects(
+        () => ctx.context.delete(fixture.invalid_delete_target),
+        error => error instanceof UltraContextError && error.code === 'invalid_input'
+    )
+
     await assert.rejects(
         async () => {
             const missing = await uc.sessions.get(fixture.missing_context)
             await missing.context.get()
         },
+        error => error instanceof UltraContextError && error.code === 'not_found'
+    )
+
+    // Session delete parity: local routes through delete_context, remote through the permanent delete target.
+    const deleted = await ctx.delete()
+    assert.equal(deleted.deleted, true)
+    assert.equal(deleted.id, ctx.id)
+
+    await assert.rejects(
+        () => ctx.context.get(),
         error => error instanceof UltraContextError && error.code === 'not_found'
     )
 }

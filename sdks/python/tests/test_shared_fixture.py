@@ -205,9 +205,23 @@ def run_shared_fixture(testcase, uc, legacy_context_id=False):
         ctx.fs.read(FIXTURE["artifact"]["renamed_path"])
     testcase.assertEqual(missing_artifact.exception.code, "not_found")
 
+    # Invalid input parity: a delete target with neither id nor index is rejected by core through both routes.
+    with testcase.assertRaises(UltraContextError) as invalid_target:
+        ctx.context.delete(FIXTURE["invalid_delete_target"])
+    testcase.assertEqual(invalid_target.exception.code, "invalid_input")
+
     with testcase.assertRaises(UltraContextError) as missing_context:
         uc.sessions.get(FIXTURE["missing_context"]).context.get()
     testcase.assertEqual(missing_context.exception.code, "not_found")
+
+    # Session delete parity: local routes through delete_context, remote through the permanent delete target.
+    deleted = ctx.delete()
+    testcase.assertEqual(deleted["deleted"], True)
+    testcase.assertEqual(deleted["id"], ctx.id)
+
+    with testcase.assertRaises(UltraContextError) as missing_after_delete:
+        ctx.context.get()
+    testcase.assertEqual(missing_after_delete.exception.code, "not_found")
 
 
 class SharedFixtureTests(unittest.TestCase):

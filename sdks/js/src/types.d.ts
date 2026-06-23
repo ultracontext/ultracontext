@@ -215,6 +215,7 @@ export interface NodeRecord {
     kind: NodeKind | string
     content: unknown
     metadata: Metadata
+    /** Base64-encoded blob bytes (byte-exact for non-UTF8 artifacts). */
     data?: string | null
     prev?: number | null
     parent?: number | null
@@ -223,13 +224,13 @@ export interface NodeRecord {
 }
 
 export interface Snapshot {
-    schema: 'ultracontext.snapshot.v1'
+    schema: 'ultracontext.snapshot.v2'
     cursor: number
     nodes: NodeRecord[]
 }
 
 export interface Changes {
-    schema: 'ultracontext.changes.v1'
+    schema: 'ultracontext.changes.v2'
     since: number
     cursor: number
     nodes: NodeRecord[]

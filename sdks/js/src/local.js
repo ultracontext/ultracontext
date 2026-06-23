@@ -49,11 +49,37 @@ function createLocalTransport(config) {
         storageDriver,
         s3,
         call(operation, body) {
+            // Lazily build the native core; surface napi failures as UltraContextError.
             if (!core) {
-                const native = config.native ?? loadNative()
-                core = new native.UltraContextCore(path, nativeOptions({ contentDir, inlineLimit, storageDriver, s3 }))
+                try {
+                    const native = config.native ?? loadNative()
+                    core = new native.UltraContextCore(path, nativeOptions({ contentDir, inlineLimit, storageDriver, s3 }))
+                } catch (error) {
+                    if (error instanceof UltraContextError) {
+                        throw error
+                    }
+                    throw new UltraContextError(error.message ?? 'UltraContext native core failed to load', {
+                        code: error.code ?? 'internal',
+                        body: error
+                    })
+                }
             }
-            const envelope = JSON.parse(core.dispatchJson(operation, JSON.stringify(body)))
+
+            // Dispatch through the native core; wrap raw napi errors too.
+            let raw
+            try {
+                raw = core.dispatchJson(operation, JSON.stringify(body))
+            } catch (error) {
+                if (error instanceof UltraContextError) {
+                    throw error
+                }
+                throw new UltraContextError(error.message ?? 'UltraContext request failed', {
+                    code: error.code ?? 'internal',
+                    body: error
+                })
+            }
+
+            const envelope = JSON.parse(raw)
             if (envelope.error) {
                 throw new UltraContextError(envelope.error.message ?? 'UltraContext request failed', {
                     code: envelope.error.code ?? 'internal',

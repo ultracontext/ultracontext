@@ -1,11 +1,6 @@
-const STATUS_BY_CODE = {
-    not_found: 404,
-    invalid_input: 400,
-    conflict: 409,
-    busy: 503,
-    incompatible_db: 500,
-    internal: 500
-}
+export { STATUS_BY_CODE } from './status.js'
+
+import { STATUS_BY_CODE } from './status.js'
 
 export { createServerClient } from './ssr.js'
 
@@ -23,7 +18,7 @@ export function createUltraContextHandler({ engine }) {
             const url = new URL(request.url)
             const segments = url.pathname.split('/').filter(Boolean).map(decodeURIComponent)
             const body = await readBody(request)
-            const result = await dispatch(engine, request.method, segments, body)
+            const result = await dispatch(engine, request.method, segments, body, url.searchParams)
             return json(result)
         } catch (error) {
             const code = error.code ?? 'internal'
@@ -33,7 +28,7 @@ export function createUltraContextHandler({ engine }) {
     }
 }
 
-async function dispatch(engine, method, segments, body) {
+async function dispatch(engine, method, segments, body, query) {
     const [version, resource, contextId, action, nested] = segments
 
     if (version !== 'v2') {
@@ -136,6 +131,10 @@ async function dispatch(engine, method, segments, body) {
     }
 
     if (action === 'files') {
+        if (method === 'GET' && segments.length === 4) {
+            return callEngine(engine, 'file_list', { ctxId: contextId, prefix: query?.get('prefix') ?? undefined })
+        }
+
         if (method === 'POST' && nested === 'read' && segments.length === 5) {
             return callEngine(engine, 'file_read', { ctxId: contextId, pathOrId: body.pathOrId, ...omit(body, ['pathOrId']) })
         }

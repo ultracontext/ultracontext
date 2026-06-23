@@ -1,7 +1,13 @@
 import { UltraContextBase, UltraContextError } from './client.js'
 import { maybeAttachDevtools } from './devtools.js'
+import { STATUS_BY_CODE } from './status.js'
 
 export { UltraContextError } from './client.js'
+
+// Reverse the canonical code->status map so HTTP statuses map back to error codes.
+const CODE_BY_STATUS = Object.fromEntries(
+    Object.entries(STATUS_BY_CODE).map(([code, status]) => [status, code])
+)
 
 export class UltraContext extends UltraContextBase {
     constructor(config = {}, options = {}) {
@@ -60,12 +66,24 @@ function createRemoteTransport(config) {
 
             const response = await fetchBound(`${baseUrl}${remotePath}`, request)
             const text = await response.text()
-            const body = text ? JSON.parse(text) : null
 
+            // Parse the body; a non-JSON payload becomes a status-derived error.
+            let body
+            try {
+                body = text ? JSON.parse(text) : null
+            } catch {
+                throw new UltraContextError('UltraContext returned a non-JSON response', {
+                    code: CODE_BY_STATUS[response.status] ?? 'internal',
+                    status: response.status,
+                    body: text
+                })
+            }
+
+            // Surface HTTP errors as UltraContextError, deriving code from the JSON body or status.
             if (!response.ok) {
                 const error = body?.error ?? body
                 throw new UltraContextError(error?.message ?? 'UltraContext request failed', {
-                    code: error?.code ?? 'internal',
+                    code: error?.code ?? CODE_BY_STATUS[response.status] ?? 'internal',
                     status: response.status,
                     body
                 })

@@ -25,5 +25,6 @@
     "final": "# Fixture Final\n\nlaunch fixture"
   },
   "search_query": "fixture",
-  "missing_context": "ctx_missing"
+  "missing_context": "ctx_missing",
+  "invalid_delete_target": { "note": "neither id nor index" }
 }

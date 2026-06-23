@@ -2,10 +2,21 @@ import json
 import os
 from pathlib import Path
 import urllib.error
+import urllib.parse
 import urllib.request
 
 PROJECT_CONFIG_FILE = "ultracontext.json"
 DEFAULT_INLINE_LIMIT = 64 * 1024
+
+# HTTP status for every error code; reverse-lookup builds the code from a status.
+STATUS_BY_CODE = {
+    "not_found": 404,
+    "invalid_input": 400,
+    "conflict": 409,
+    "busy": 503,
+    "incompatible_db": 500,
+    "internal": 500,
+}
 
 
 class UltraContextError(Exception):
@@ -14,6 +25,42 @@ class UltraContextError(Exception):
         self.code = code
         self.status = status
         self.body = body
+
+
+# Encode an id into a single path segment (matches JS encodeURIComponent).
+def _encode_segment(value):
+    return urllib.parse.quote(str(value), safe="")
+
+
+# Map an HTTP status back to its error code, defaulting to internal.
+def _code_from_status(status):
+    for code, code_status in STATUS_BY_CODE.items():
+        if code_status == status:
+            return code
+    return "internal"
+
+
+# Decode an HTTP body as JSON; non-JSON raises with the code mapped from status.
+def _parse_response_body(text, status):
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as error:
+        raise UltraContextError(
+            "UltraContext response was not valid JSON",
+            code=_code_from_status(status),
+            status=status,
+            body=text,
+        ) from error
+
+
+# Split a native "code: message" error into (code, message); fall back to internal.
+def _parse_native_error(text):
+    prefix, separator, message = text.partition(": ")
+    if separator and prefix in STATUS_BY_CODE:
+        return prefix, message
+    return "internal", text
 
 
 def create_client(api_key=None, **options):
@@ -27,6 +74,7 @@ def create_client(api_key=None, **options):
         path=config["db"],
         content_dir=config.get("content_dir"),
         inline_limit=config["inline_limit"],
+        storage_driver=config.get("storage_driver"),
         s3=config.get("s3"),
         native=options.get("native"),
     )
@@ -167,6 +215,7 @@ class UltraContext:
         path="ultracontext.db",
         content_dir=None,
         inline_limit=None,
+        storage_driver=None,
         s3=None,
         native=None,
     ):
@@ -176,6 +225,8 @@ class UltraContext:
         self.transport = transport or self._default_transport
         self.content_dir = content_dir
         self.inline_limit = inline_limit
+        # Storage driver mirrors JS .storageDriver: explicit value, else s3/local-dir by s3 presence.
+        self.storage_driver = storage_driver or ("s3" if s3 else "local-dir")
         self.s3 = s3
         self.core = (
             self._load_native(native, path, content_dir, inline_limit, s3)
@@ -249,7 +300,14 @@ class UltraContext:
                     raise
                 return native.UltraContextCore(path, content_dir, inline_limit)
         except Exception as error:
-            raise UltraContextError(str(error), code="internal") from error
+            # Prefer the structured `.code` the native binding sets on the exception;
+            # fall back to string parsing for older native builds without it.
+            code = getattr(error, "code", None)
+            if code in STATUS_BY_CODE:
+                message = str(error)
+            else:
+                code, message = _parse_native_error(str(error))
+            raise UltraContextError(message, code=code) from error
 
     def _default_transport(self, method, url, headers, payload):
         request = urllib.request.Request(
@@ -261,10 +319,10 @@ class UltraContext:
         try:
             with urllib.request.urlopen(request) as response:
                 text = response.read().decode("utf-8")
-                return response.status, json.loads(text) if text else None
+                return response.status, _parse_response_body(text, response.status)
         except urllib.error.HTTPError as error:
             text = error.read().decode("utf-8")
-            return error.code, json.loads(text) if text else None
+            return error.code, _parse_response_body(text, error.code)
 
 
 class WorkspacesApi:
@@ -286,14 +344,17 @@ class SessionsApi:
     def create(self, input=None, **kwargs):
         input = dict(input or {})
         input.update(kwargs)
-        workspace_id = input.pop("workspaceId", input.pop("workspace_id", None))
+        # Pull the workspace id from either spelling without eagerly dropping the other.
+        workspace_id = input.pop("workspaceId", None)
+        if workspace_id is None:
+            workspace_id = input.pop("workspace_id", None)
         body = metadata_body(input, {})
         if workspace_id:
             summary = self.client._call(
                 "create_session",
                 {"workspaceId": workspace_id, **body},
                 "POST",
-                f"/v2/workspaces/{workspace_id}/sessions",
+                f"/v2/workspaces/{_encode_segment(workspace_id)}/sessions",
                 body,
             )
         else:
@@ -313,7 +374,7 @@ class SessionsApi:
             "delete_context",
             {"ctxId": session_id},
             "POST",
-            f"/v2/contexts/{session_id}/delete",
+            f"/v2/contexts/{_encode_segment(session_id)}/delete",
             {"target": {"permanent": True}},
         )
 
@@ -322,7 +383,7 @@ class SessionsApi:
             "fork",
             {"sourceId": source_id, **options},
             "POST",
-            f"/v2/contexts/{source_id}/fork",
+            f"/v2/contexts/{_encode_segment(source_id)}/fork",
             options,
         )
         return SessionHandle(self.client, summary)
@@ -359,7 +420,7 @@ class SessionContextApi:
             "get",
             {"ctxId": self.session_id, **options},
             "POST",
-            f"/v2/contexts/{self.session_id}/get",
+            f"/v2/contexts/{_encode_segment(self.session_id)}/get",
             options,
         )
 
@@ -371,7 +432,7 @@ class SessionContextApi:
             "append",
             {"ctxId": self.session_id, **body},
             "POST",
-            f"/v2/contexts/{self.session_id}/messages",
+            f"/v2/contexts/{_encode_segment(self.session_id)}/messages",
             body,
         )
 
@@ -381,7 +442,7 @@ class SessionContextApi:
             "update",
             {"ctxId": self.session_id, **body},
             "POST",
-            f"/v2/contexts/{self.session_id}/update",
+            f"/v2/contexts/{_encode_segment(self.session_id)}/update",
             body,
         )
 
@@ -391,7 +452,7 @@ class SessionContextApi:
             "delete_messages",
             {"ctxId": self.session_id, **body},
             "POST",
-            f"/v2/contexts/{self.session_id}/delete",
+            f"/v2/contexts/{_encode_segment(self.session_id)}/delete",
             body,
         )
 
@@ -400,7 +461,7 @@ class SessionContextApi:
             "context_clear",
             {"ctxId": self.session_id, **options},
             "POST",
-            f"/v2/contexts/{self.session_id}/clear",
+            f"/v2/contexts/{_encode_segment(self.session_id)}/clear",
             options,
         )
 
@@ -409,7 +470,7 @@ class SessionContextApi:
             "context_history",
             {"ctxId": self.session_id},
             "GET",
-            f"/v2/contexts/{self.session_id}/history",
+            f"/v2/contexts/{_encode_segment(self.session_id)}/history",
         )
 
     def restore(self, context_id, **options):
@@ -418,7 +479,7 @@ class SessionContextApi:
             "context_restore",
             {"ctxId": self.session_id, "restoreContextId": context_id, **options},
             "POST",
-            f"/v2/contexts/{self.session_id}/restore",
+            f"/v2/contexts/{_encode_segment(self.session_id)}/restore",
             body,
         )
 
@@ -433,7 +494,7 @@ class SessionArtifactsApi:
             "save",
             {"ctxId": self.session_id, **input},
             "POST",
-            f"/v2/contexts/{self.session_id}/artifacts",
+            f"/v2/contexts/{_encode_segment(self.session_id)}/artifacts",
             input,
         )
 
@@ -442,7 +503,7 @@ class SessionArtifactsApi:
             "list_artifacts",
             {"ctxId": self.session_id},
             "GET",
-            f"/v2/contexts/{self.session_id}/artifacts",
+            f"/v2/contexts/{_encode_segment(self.session_id)}/artifacts",
         )
 
     def get(self, path_or_id, **options):
@@ -451,7 +512,7 @@ class SessionArtifactsApi:
             "load",
             {"ctxId": self.session_id, **body},
             "POST",
-            f"/v2/contexts/{self.session_id}/artifacts/load",
+            f"/v2/contexts/{_encode_segment(self.session_id)}/artifacts/load",
             body,
         )
 
@@ -461,7 +522,7 @@ class SessionArtifactsApi:
             "file_write",
             {"ctxId": self.session_id, **body},
             "POST",
-            f"/v2/contexts/{self.session_id}/files/write",
+            f"/v2/contexts/{_encode_segment(self.session_id)}/files/write",
             body,
         )
 
@@ -471,7 +532,7 @@ class SessionArtifactsApi:
             "file_remove",
             {"ctxId": self.session_id, **body},
             "POST",
-            f"/v2/contexts/{self.session_id}/files/remove",
+            f"/v2/contexts/{_encode_segment(self.session_id)}/files/remove",
             body,
         )
 
@@ -502,7 +563,7 @@ class SessionFileSystemApi:
             "file_list",
             {"ctxId": self.session_id, **options},
             "GET",
-            f"/v2/contexts/{self.session_id}/files",
+            f"/v2/contexts/{_encode_segment(self.session_id)}/files",
         )
 
     def read(self, path_or_id, **options):
@@ -511,7 +572,7 @@ class SessionFileSystemApi:
             "file_read",
             {"ctxId": self.session_id, **body},
             "POST",
-            f"/v2/contexts/{self.session_id}/files/read",
+            f"/v2/contexts/{_encode_segment(self.session_id)}/files/read",
             body,
         )
 
@@ -521,7 +582,7 @@ class SessionFileSystemApi:
             "file_write",
             {"ctxId": self.session_id, **body},
             "POST",
-            f"/v2/contexts/{self.session_id}/files/write",
+            f"/v2/contexts/{_encode_segment(self.session_id)}/files/write",
             body,
         )
 
@@ -531,7 +592,7 @@ class SessionFileSystemApi:
             "file_move",
             {"ctxId": self.session_id, **body},
             "POST",
-            f"/v2/contexts/{self.session_id}/files/move",
+            f"/v2/contexts/{_encode_segment(self.session_id)}/files/move",
             body,
         )
 
@@ -541,7 +602,7 @@ class SessionFileSystemApi:
             "file_remove",
             {"ctxId": self.session_id, **body},
             "POST",
-            f"/v2/contexts/{self.session_id}/files/remove",
+            f"/v2/contexts/{_encode_segment(self.session_id)}/files/remove",
             body,
         )
 
@@ -551,7 +612,7 @@ class SessionFileSystemApi:
             "file_glob",
             {"ctxId": self.session_id, **body},
             "POST",
-            f"/v2/contexts/{self.session_id}/files/glob",
+            f"/v2/contexts/{_encode_segment(self.session_id)}/files/glob",
             body,
         )
 
@@ -561,7 +622,7 @@ class SessionFileSystemApi:
             "file_grep",
             {"ctxId": self.session_id, **body},
             "POST",
-            f"/v2/contexts/{self.session_id}/files/grep",
+            f"/v2/contexts/{_encode_segment(self.session_id)}/files/grep",
             body,
         )
 
