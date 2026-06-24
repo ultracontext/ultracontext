@@ -93,7 +93,7 @@ const plan = await session.fs.read('plans/launch.md')
 
 Every change is versioned automatically, and storage and mount stay in sync.
 
-## Offload to artifacts
+## Work with artifacts
 
 Artifacts are the files models produce — plans, code, images, markdown. They live in the workspace and version themselves, so an overwritten file is never lost. Offloading bulky output keeps context windows lean and models sharp.
 
