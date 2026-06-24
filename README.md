@@ -118,7 +118,7 @@ await uc.search.query('launch notes')   // or from the SDK
 
 You get back a snippet plus an id — a message in a context, or a file path. Read the full content with a targeted `session.context` or `session.fs` read.
 
-## Compose context your own way
+## Composable context patterns
 
 Your context is one source of truth, queryable on demand — so you assemble the window you want and send it wherever. Pull back the version from before an agent compacted it, or have a subagent read another's context mid-run, and compose it into whatever comes next.
 
