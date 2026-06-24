@@ -116,24 +116,18 @@ await uc.search.query('launch notes')   // or from the SDK
 
 You get back a snippet plus an id — a message in a context, or a file path. Read the full content with a targeted `session.context` or `session.fs` read.
 
-## Advanced context engineering
+## Compose context your own way
 
-ultracontext makes context programmable — every version of every session, queryable on demand. Time-travel to a window before an agent compacted it, or let parallel subagents read each other's context live as they work.
+Your context is one source of truth, queryable on demand — so you assemble the window you want and send it wherever. Pull back the version from before an agent compacted it, or have a subagent read another's context mid-run, and compose it into whatever comes next.
 
 ```ts
-// Two subagents on the same task, each in its own session.
-const a = await uc.sessions.create({ metadata: { role: 'subagent' } })
-const b = await uc.sessions.create({ metadata: { role: 'subagent' } })
-await a.context.append({ role: 'user', content: 'Investigate the regression.' })
+// Pull the window from before the agent compacted it — nothing was lost.
+const { data: full } = await session.context.get({ version: 7 })
 
-// A works and records what it found.
-const { text } = await generateText({ model, messages: (await a.context.get()).data })
-await a.context.append({ role: 'assistant', content: text })
-
-// Mid-flight, B reads A's finding — live, straight from the store — and builds on it.
-const { data: fromA } = await a.context.get()
-await b.context.append([...fromA, { role: 'user', content: 'Continue from what A found.' }])
-const response = await generateText({ model, messages: (await b.context.get()).data })
+// Compose a subagent's window from it, then send.
+const sub = await uc.sessions.create({ metadata: { parent: session.id } })
+await sub.context.append([...full, { role: 'user', content: 'What caused the regression?' }])
+const finding = await generateText({ model, messages: (await sub.context.get()).data })
 ```
 
 The [docs](https://github.com/ultracontext/ultracontext/tree/main/docs) have more patterns.
