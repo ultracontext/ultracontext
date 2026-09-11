@@ -6,4 +6,16 @@
 
 ---
 
-UltraContext is an open-source context toolkit for AI agents. The kernel is a small Rust binary. It runs everywhere and executes lightweight drivers. The kernel is unopinionated by design. Everything is a driver. Drivers talk to systems and agents on any machine. They get context, process it, and do what you want with it.
+UltraContext is one interface to work with context of any shape, in any place. Lightweight, unopinionated, and extensible.
+
+A small Rust kernel runs everywhere. Everything else is a driver.
+
+Use it to build:
+
+- an agentic Dropbox
+- a company brain
+- continuous data ingestors
+- agent harnesses
+- agent-friendly access to any system
+- drivers for devices with no CLI, such as an iPhone
+- edge agents
