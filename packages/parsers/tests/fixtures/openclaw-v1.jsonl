@@ -1,8 +1,0 @@
-{"type":"session","id":"sess-oc-001","timestamp":"2026-04-01T10:00:00.000Z","cwd":"/Users/alice/Code/myapp","version":"0.1.0","parentSession":null}
-{"type":"custom","id":"evt-001","customType":"model-snapshot","timestamp":"2026-04-01T10:00:01.000Z","data":{"provider":"anthropic","modelApi":"messages","modelId":"claude-3-sonnet","timestamp":"2026-04-01T10:00:01.000Z"}}
-{"type":"message","id":"evt-002","parentId":"sess-oc-001","timestamp":"2026-04-01T10:00:02.000Z","message":{"role":"user","content":"Add error handling to the API routes"}}
-{"type":"message","id":"evt-003","parentId":"evt-002","timestamp":"2026-04-01T10:00:05.000Z","message":{"role":"assistant","content":[{"type":"text","text":"I'll add try/catch blocks to all API route handlers."}]}}
-{"type":"message","id":"evt-004","parentId":"evt-003","timestamp":"2026-04-01T10:00:06.000Z","message":{"role":"assistant","content":[{"type":"toolCall","name":"editFile","input":{"path":"/src/routes.ts"}}]}}
-{"type":"message","id":"evt-005","parentId":"evt-004","timestamp":"2026-04-01T10:00:07.000Z","message":{"role":"toolresult","toolName":"editFile","isError":false,"content":"File updated successfully"}}
-{"type":"compaction","id":"evt-006","timestamp":"2026-04-01T10:01:00.000Z","firstKeptEntryId":"evt-002","tokensBefore":5000}
-{"type":"branch_summary","id":"evt-007","timestamp":"2026-04-01T10:01:01.000Z","firstKeptEntryId":"evt-002","summary":"Added error handling to API routes"}

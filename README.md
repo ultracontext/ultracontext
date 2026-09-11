@@ -1,171 +1,134 @@
-<p align="center">
-  <a href="https://ultracontext.ai">
-    <img src="https://ultracontext.ai/gh-cover.png" alt="UltraContext" />
-  </a>
-</p>
-
-<h3 align="center">Same context. Everywhere.</h3>
-
-<p align="center">
-  Start on Claude Code. Continue on Codex.<br/>
-  Open source, realtime and invisible context infrastructure for the ones shipping at inference speed.
-</p>
-
-<p align="center">
-  <a href="https://ultracontext.ai/docs">Documentation</a> ·
-  <a href="https://ultracontext.ai/docs/api-reference/introduction">API Reference</a> ·
-  <a href="https://ultracontext.ai/docs/changelog">Changelog</a>
-</p>
-
-<p align="center">
-  <a href="https://www.npmjs.com/package/ultracontext">
-    <img src="https://img.shields.io/npm/v/ultracontext" alt="npm version" />
-  </a>
-  <a href="https://pypi.org/project/ultracontext/">
-    <img src="https://img.shields.io/pypi/v/ultracontext" alt="PyPI version" />
-  </a>
-  <a href="https://github.com/ultracontext/ultracontext/blob/main/LICENSE">
-    <img src="https://img.shields.io/github/license/ultracontext/ultracontext" alt="license" />
-  </a>
-  <a href="https://ultracontext.ai">
-    <img src="https://img.shields.io/badge/Visit-ultracontext.ai-4B6EF5" alt="Visit ultracontext.ai" />
-  </a>
-</p>
-
 <div align="center">
-  <a href="https://twitter.com/ultracontext">
-    <img src="https://img.shields.io/badge/Follow%20on%20X-000000?style=for-the-badge&logo=x&logoColor=white" alt="Follow on X" />
-  </a>
-  <a href="https://discord.com/invite/4HjcS6KwhW">
-    <img src="https://img.shields.io/badge/Join%20our%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join our Discord" />
-  </a>
+  <h1>UltraContext</h1>
+  <h3>Context that goes beyond.</h3>
+  <p>Agents, sessions, machines, teams. Anything.</p>
 </div>
 
 ---
 
-![ultracontext-gif](https://github.com/user-attachments/assets/be73afe5-161d-4fa3-8f4d-c4987fe63cb4)
+UltraContext is an open-source context toolkit for AI agents. A small kernel captures the context of every agent on all your machines and keeps each version. The tools let any agent search, resume, and fork that context from anywhere.
 
-What Claude Code knows, Codex doesn't. What your teammate is shipping right now? Your agent has no idea.
+> **Status:** this branch holds the specification only. The code comes next.
 
-UltraContext captures every agent's context in realtime and makes it available to all of them. It's like having a personal context engineer everywhere. Continue a session in a different agent, or just ask what's happeming.
+## The problem
 
-For example:
+Agents lose context.
 
-- *"Codex, grab the last plan Claude Code made and implement it."*
-- *"What's the team building today?"*
-- *"What is Alex working on in Codex right now?"*
+- An agent compacts its window and loses the plan.
+- A new session starts with no context.
+- Codex does not know what Claude Code did.
+- Your laptop does not know what your server did.
 
-Open source. Framework-agnostic. Customizable via the git-like Context API.
-
-## Features
-
-| CLI | Auto-ingest Claude Code, Codex, and OpenClaw sessions with a terminal dashboard. |
-| --- | --- |
-| MCP Server | Share context everywhere. Built into the API, or run standalone via stdio. |
-| Context API | Git-like context engineering API. Store, version, and retrieve agent context with zero complexity. |
-
----
+Each agent keeps its own context. That context stops when the agent stops. UltraContext keeps the context after the agent stops.
 
 ## How it works
 
-1. **Start sync.** It captures all your agents' context in realtime.
+UltraContext has two parts.
 
-2. **Add the MCP server.** Any agent gets full awareness of every other agent.
+**The kernel** captures context from each source and stores it in one tree. It stores the raw data first. It makes a new version on each change. It does not delete old versions. It syncs the tree between your machines.
 
-3. **That's it.** Ask questions, continue sessions, fork — your context is everywhere.
+**The tools** read the tree. There are three tools: search, resume, and fork. You use them from the terminal. Agents use them through the skill, the MCP server, or the SDK.
+
+## One tree
+
+All context lives in one tree. The path tells you where the context came from.
+
+```text
+~/.ultracontext/
+  <host>/
+    <agent>/
+      <session>/
+        v0
+        v1
+        v2   <- current
+```
+
+- A **host** is a machine.
+- An **agent** is a tool such as Claude Code or Codex.
+- A **session** is one run of one agent.
+- A **version** is the state of one session at one point in time.
 
 ## Install
 
-Requires Node >= 22.
-
-```bash
-npm install -g ultracontext
+```sh
+curl -fsSL https://ultracontext.com/install.sh | sh
+uc init
 ```
 
-## Quick Start
+`uc init` finds the sources on this machine, starts capture, and installs the skill into each agent.
 
-```bash
-ultracontext          # start sync (daemon + dashboard)
+## Search
+
+Find context in all sessions on all hosts.
+
+```sh
+uc search "deploy uses Fly.io"
 ```
 
-That's it. UltraContext watches your agents, ingests context in realtime, and the dashboard shows everything.
+Each result shows the host, the agent, the session, the version, and a short extract.
 
-```bash
-ultracontext sync     # start sync (daemon + dashboard)
-ultracontext stop     # stop daemon
-ultracontext config   # run setup wizard
-ultracontext update   # update CLI globally
+## Resume
+
+Continue a session in any agent, from any version.
+
+```sh
+uc resume ses_4f2e                 # the current version
+uc resume ses_4f2e --version 7     # the version before the agent compacted it
+uc resume ses_4f2e --into codex    # open it in a different agent
 ```
 
-## Context API
+## Fork
 
-For builders who want to go deeper. Git-like primitives for context engineering.
+Start a new session from a point in an old session.
 
-- **Five methods** — Create, get, append, update, delete. That's it.
-- **Automatic versioning** — Every change creates a new version. Full history out of the box.
-- **Time-travel** — Jump to any point in your context history.
-- **Framework-agnostic** — Works with any LLM framework. No vendor lock-in.
-
-Use the API standalone to build your own agents, or extend existing ones in UltraContext.
-
-| SDK                   | Install                    | Source                               |
-| --------------------- | -------------------------- | ------------------------------------ |
-| JavaScript/TypeScript | `npm install ultracontext` | [apps/js-sdk](./apps/js-sdk)         |
-| Python                | `pip install ultracontext` | [apps/python-sdk](./apps/python-sdk) |
-
-### JavaScript/TypeScript
-
-```bash
-npm install ultracontext
+```sh
+uc fork ses_4f2e --version 7
 ```
 
-```typescript
-import { UltraContext } from 'ultracontext';
+The new session gets a new id. The old session does not change.
 
-const uc = new UltraContext({ apiKey: 'uc_live_...' });
+## Sources
 
-const ctx = await uc.create();
-await uc.append(ctx.id, { role: 'user', content: 'Hello!' });
+A source is anything that makes context. There are three kinds.
 
-// use with any LLM framework
-const response = await generateText({ model, messages: ctx.data });
+| Kind | Example | How the kernel gets the context |
+| --- | --- | --- |
+| Directory | `~/.claude`, `~/.codex`, `~/.cursor` | It watches the directory and copies new files. |
+| Stream | A hosted agent, an API | It polls the endpoint or receives events. |
+| Push | Your own agent, through the SDK | Your code writes to the tree. |
+
+Add a source with one command.
+
+```sh
+uc source add notes ~/notes
 ```
 
-### Python
+## SDK
 
-```bash
-pip install ultracontext
+Use the SDK to make your own agent a source. Its sessions go into the same tree as all other sessions.
+
+```ts
+import { UltraContext } from 'ultracontext'
+
+const uc = new UltraContext()
+const session = await uc.sessions.create()
+await session.append({ role: 'user', content: 'Deploy uses Fly.io.' })
+
+const { data } = await session.get()
+const response = await generateText({ model, messages: data })
 ```
 
-```python
-from ultracontext import UltraContext
+The SDK has the same three tools: `uc.search`, `uc.resume`, and `uc.fork`.
 
-uc = UltraContext(api_key="uc_live_...")
+## Rules
 
-ctx = uc.create()
-uc.append(ctx["id"], {"role": "user", "content": "Hello!"})
+Four rules apply to all parts of UltraContext.
 
-# use with any LLM framework
-response = generate_text(model=model, messages=uc.get(ctx["id"])["data"])
-```
+1. **Raw data is the truth.** The kernel stores the source data as it is. Parsers run later. A parser error does not lose data.
+2. **Each change makes a version.** The kernel does not overwrite data.
+3. **All context is a file.** You can read the tree with `ls`, `cat`, and `grep`. Agents can do the same.
+4. **The tools are small.** Each tool does one job. Each tool can write JSON. You can connect tools with pipes.
 
-<p align="center">📚 Context API Guides</p>
-<p align="center">
-  <a href="https://ultracontext.ai/docs/guides/store-retrieve-contexts">Store & Retrieve</a>
-  ·
-  <a href="https://ultracontext.ai/docs/guides/edit-contexts">Edit Contexts</a>
-  ·
-  <a href="https://ultracontext.ai/docs/guides/fork-clone-contexts">Fork & Clone</a>
-  ·
-  <a href="https://ultracontext.ai/docs/guides/view-context-history">View History</a>
-</p>
+## License
 
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=ultracontext/ultracontext-node&type=date&legend=top-left)](https://www.star-history.com/#ultracontext/ultracontext-node&type=date&legend=top-left)
-
-## Documentation
-
-- [Quickstart](https://ultracontext.ai/docs/quickstart) — Get running in 2 minutes
-- [Guides](https://ultracontext.ai/docs/guides/store-retrieve-contexts) — Practical patterns for common use cases
-- [API Reference](https://ultracontext.ai/docs/api-reference/introduction) — Full endpoint documentation
+Apache-2.0
