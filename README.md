@@ -6,4 +6,4 @@
 
 ---
 
-UltraContext is an open-source context toolkit for AI agents. Drivers bring in the context of every agent on all your machines. The kernel keeps every version. The tools let any agent search, resume, and fork it from anywhere.
+UltraContext is an open-source context toolkit for AI agents. A small kernel keeps every version of your context and runs anywhere. Drivers are the verbs: capture from any agent, sync to any machine, search, resume, fork. You and your agents call them from the terminal, the skill, the MCP server, or the SDK.
