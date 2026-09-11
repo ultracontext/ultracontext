@@ -6,7 +6,7 @@
 
 ---
 
-UltraContext is one interface to work with context of any shape, in any place. Lightweight, unopinionated, and extensible.
+UltraContext is an open-source context toolkit for AI agents. One interface to work with context of any shape, in any place. Lightweight, unopinionated, and extensible.
 
 A small Rust kernel runs everywhere. Everything else is a driver.
 
