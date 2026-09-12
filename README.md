@@ -6,3 +6,9 @@
 ---
 
 ultracontext is an open-source context toolkit for agents. It is a small Rust kernel that runs everywhere. Everything else is a driver. The kernel is the runtime. Drivers teach it behaviours.
+
+Use it for:
+
+- personal dropbox
+- company brain
+- continuous ingestors
