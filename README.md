@@ -1,7 +1,6 @@
 <div align="center">
   <h1>UltraContext</h1>
   <h3>Context that goes beyond.</h3>
-  <p>Agents, sessions, machines, teams. Anything.</p>
 </div>
 
 ---
