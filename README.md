@@ -1,5 +1,5 @@
 <div align="center">
-  <h1>ultracontext</h1>
+  <h1>[•] ultracontext</h1>
   <h3>Context that goes beyond.</h3>
 </div>
 
