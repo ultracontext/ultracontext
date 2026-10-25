@@ -1,0 +1,41 @@
+[package]
+name = "ultracontext"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+description = "Dropbox for developers and their agents: real-time folder + Claude Code / Codex session sync across machines."
+license = "Apache-2.0"
+repository = "https://github.com/ultracontext/ultracontext"
+default-run = "uc"
+
+[[bin]]
+name = "uc"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+blake3 = "1.8"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+clap = { version = "4.6", features = ["derive", "env"] }
+gethostname = "1"
+globset = "0.4"
+ignore = "0.4"
+libc = "0.2"
+notify = "8.2"
+rusqlite = { version = "0.37", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+toml = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+unicode-normalization = "0.1"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = true

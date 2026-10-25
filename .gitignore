@@ -1,0 +1,9 @@
+/target/
+.DS_Store
+.env
+*.db
+# leftovers from older branches in local checkouts
+/core/
+/sdks/
+/clube.json
+/test.excalidraw
