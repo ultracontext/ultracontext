@@ -623,6 +623,23 @@ fn claude_session_follows_you() {
         )
     });
 
+    // From inside the project, no id needed: `--here` and bare `uc resume` (DESIGN §7) find it.
+    let here = linux.uc_json_in(&linux_cwd, &["sessions", "--here"]);
+    w.check(
+        here.as_array()
+            .is_some_and(|a| find_session(a, &id).is_some()),
+        || {
+            format!(
+                "linux: `uc sessions --here` in {} should list {id}:\n{here:#}",
+                linux_cwd.display()
+            )
+        },
+    );
+    let latest = linux.uc_json_in(&linux_cwd, &["resume", "--print"]);
+    w.check(jstr(&latest, "/id") == Some(id.as_str()), || {
+        format!("linux: bare `uc resume` in the project should pick {id}:\n{latest:#}")
+    });
+
     // claude continues on linux ...
     let line = claude_user_line(
         &id,

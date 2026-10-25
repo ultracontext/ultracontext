@@ -7,6 +7,7 @@
 #   e2e/run.sh --keep       leave the containers up afterwards (docker compose -p uc-e2e ...)
 #
 # Exits non-zero on the first failed check, after printing hub/daemon logs.
+# shellcheck disable=SC2016 # single-quoted snippets are expanded inside the containers
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -42,7 +43,8 @@ fail() {
     exit 1
 }
 
-# Run a shell snippet on a container machine, as its user, in its HOME.
+# Run a shell snippet on a container machine, as its user, in its HOME. Output goes through
+# files: a daemon the command spawns must not keep the exec pipe (and this script) hanging.
 on() {
     local svc=$1 user=root home=/root
     shift
@@ -50,13 +52,28 @@ on() {
         user=fabio
         home=/home/fabio
     fi
-    dc exec -T -u "$user" -e HOME="$home" -w "$home" "$svc" sh -c "$*"
+    dc exec -T -u "$user" -e HOME="$home" -w "$home" "$svc" sh -c '
+        o=$(mktemp) e=$(mktemp)
+        sh -c "$1" >"$o" 2>"$e" </dev/null
+        rc=$?
+        cat "$e" >&2
+        cat "$o"
+        rm -f "$o" "$e"
+        exit $rc' sh "$*"
 }
 
-# The native binary as a third machine with a throwaway HOME.
+# The native binary as a third machine with a throwaway HOME (output via files, as in `on`).
 macuc() {
+    local o e rc=0
+    o=$(mktemp)
+    e=$(mktemp)
     env HOME="$mac_home" UC_HOME="$mac_home/.ultracontext" CLAUDE_CONFIG_DIR="$mac_home/.claude" \
-        CODEX_HOME="$mac_home/.codex" UC_TOKEN="$UC_TOKEN" UC_LOG="${UC_LOG:-debug}" "$mac_uc" "$@"
+        CODEX_HOME="$mac_home/.codex" UC_TOKEN="$UC_TOKEN" UC_LOG="${UC_LOG:-debug}" \
+        "$mac_uc" "$@" >"$o" 2>"$e" </dev/null || rc=$?
+    cat "$e" >&2
+    cat "$o"
+    rm -f "$o" "$e"
+    return "$rc"
 }
 
 # JSON checks without jq: compare with all whitespace removed.
@@ -157,6 +174,9 @@ for svc in linux1 linux2; do
 done
 
 step "linux1: init over ssh, share ~/Code"
+for svc in linux1 linux2; do
+    on "$svc" 'mkdir -p ~/.claude ~/.codex' # agents installed, no sessions yet
+done
 on linux1 'mkdir -p ~/Code/proj && printf "hello from linux1\n" > ~/Code/proj/hello.txt &&
     printf "#!/bin/sh\necho hi\n" > ~/Code/proj/run.sh && chmod +x ~/Code/proj/run.sh &&
     ln -s hello.txt ~/Code/proj/link'
