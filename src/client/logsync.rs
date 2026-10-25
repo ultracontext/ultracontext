@@ -81,6 +81,20 @@ struct State {
     /// diverged originals, keyed by absolute path (persisted in kv)
     forks: BTreeMap<String, ForkRec>,
     forks_loaded: bool,
+    /// agent spaces whose hub entries were listed since startup
+    listed: HashSet<String>,
+    /// failing paths/logs: (next attempt, failures)
+    retry: HashMap<String, (Instant, u32)>,
+}
+
+trait RetryDue {
+    fn is_none_or_due(&self, now: Instant) -> bool;
+}
+
+impl RetryDue for Option<&(Instant, u32)> {
+    fn is_none_or_due(&self, now: Instant) -> bool {
+        self.map_or(true, |(at, _)| now >= *at)
+    }
 }
 
 enum Step {
@@ -267,7 +281,9 @@ impl LogSync {
     /// Scan agent roots + reconcile (startup, reconnect, periodic).
     pub async fn rescan(&self) -> Result<()> {
         for d in self.drivers.clone() {
-            if self.deps.hub.is_connected() {
+            // one listing per process is enough: afterwards the change stream keeps R current
+            let listed = self.st().listed.contains(d.space());
+            if !listed && self.deps.hub.is_connected() {
                 let q = Query::Entries {
                     space: d.space().to_string(),
                     prefix: None,
@@ -278,6 +294,7 @@ impl LogSync {
                         for e in &entries {
                             self.adopt_entry(e)?;
                         }
+                        self.st().listed.insert(d.space().to_string());
                     }
                     Err(e) => tracing::debug!("listing {}: {e:#}", d.space()),
                 }
@@ -355,7 +372,13 @@ impl LogSync {
             let due: Vec<PathBuf> = st
                 .dirty
                 .iter()
-                .filter(|(_, t)| force || now.duration_since(**t) >= self.deps.tun.debounce)
+                .filter(|(p, t)| {
+                    (force || now.duration_since(**t) >= self.deps.tun.debounce)
+                        && st
+                            .retry
+                            .get(&p.to_string_lossy().to_string())
+                            .is_none_or_due(now)
+                })
                 .map(|(p, _)| p.clone())
                 .collect();
             for p in &due {
@@ -364,22 +387,41 @@ impl LogSync {
             due
         };
         for abs in due {
-            if let Err(e) = self.sync_local(&abs).await {
-                tracing::warn!("session sync {}: {e:#}", abs.display());
-                self.report(&e);
-                self.st().dirty.insert(abs, Instant::now());
+            let id = abs.to_string_lossy().to_string();
+            match self.sync_local(&abs).await {
+                Ok(()) => self.retry_ok(&id),
+                Err(e) => {
+                    tracing::warn!("session sync {}: {e:#}", abs.display());
+                    self.report(&e);
+                    self.retry_failed(&id);
+                    self.st().dirty.insert(abs, Instant::now());
+                }
             }
         }
-        let keys: Vec<Key> = std::mem::take(&mut self.st().remote).into_iter().collect();
+        let keys: Vec<Key> = {
+            let mut st = self.st();
+            let now = Instant::now();
+            let (due, later): (Vec<Key>, Vec<Key>) =
+                std::mem::take(&mut st.remote).into_iter().partition(|k| {
+                    st.retry
+                        .get(&format!("{}/{}", k.0, k.1))
+                        .is_none_or_due(now)
+                });
+            st.remote.extend(later);
+            due
+        };
         for key in keys {
+            let id = format!("{}/{}", key.0, key.1);
             match self.reconcile_remote(&key).await {
-                Ok(Step::Done) => {}
+                Ok(Step::Done) => self.retry_ok(&id),
                 Ok(Step::Deferred) => {
+                    self.retry_ok(&id);
                     self.st().remote.insert(key);
                 }
                 Err(e) => {
-                    tracing::warn!("session apply {}/{}: {e:#}", key.0, key.1);
+                    tracing::warn!("session apply {id}: {e:#}");
                     self.report(&e);
+                    self.retry_failed(&id);
                     self.st().remote.insert(key);
                 }
             }
@@ -510,6 +552,22 @@ impl LogSync {
 
     fn st(&self) -> MutexGuard<'_, State> {
         self.st.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn retry_ok(&self, id: &str) {
+        let mut st = self.st();
+        if !st.retry.is_empty() {
+            st.retry.remove(id);
+        }
+    }
+
+    /// Exponential backoff (1s .. 60s) for a path or log that keeps failing.
+    fn retry_failed(&self, id: &str) {
+        let mut st = self.st();
+        let now = Instant::now();
+        let e = st.retry.entry(id.to_string()).or_insert((now, 0));
+        e.1 = e.1.saturating_add(1);
+        e.0 = now + Duration::from_secs((1u64 << e.1.min(6)).min(60));
     }
 
     /// A dirty timestamp that is already past the debounce.
@@ -712,6 +770,36 @@ impl LogSync {
         let mut m = src.d.parse_meta(src.sid, &head, &tail, map)?;
         if src.d.name() == "codex" {
             m.native_rel = Some(src.rel.to_string());
+        }
+        if src.d.name() == "claude" {
+            // where Claude keeps the file is the truth for its cwd: when the parsed cwd does not
+            // match the project dir (relocation line scrolled out of the windows), pick the
+            // cwd seen in the windows that does
+            let dir = src
+                .rel
+                .strip_prefix("projects/")
+                .and_then(|r| r.split('/').next());
+            if let Some(dir) = dir {
+                use crate::drivers::claude::{json_lines, slug};
+                let matches = |c: &str| slug(&map.smudge(c)) == dir;
+                if !m.cwd.as_deref().is_some_and(matches) {
+                    let found = json_lines(&head)
+                        .into_iter()
+                        .chain(json_lines(&tail))
+                        .flat_map(|v| {
+                            ["relocatedCwd", "cwd"]
+                                .into_iter()
+                                .filter_map(|f| {
+                                    v.get(f).and_then(|x| x.as_str()).map(str::to_string)
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .find(|c| slug(c) == dir);
+                    if let Some(c) = found {
+                        m.cwd = Some(map.clean(&c));
+                    }
+                }
+            }
         }
         if let Some((old, new)) = &dst.fork {
             m.id = new.clone();
@@ -1103,6 +1191,44 @@ impl LogSync {
                 return Ok(());
             }
         }
+        if !owner && !r.deleted {
+            // a follower copy that only lost lines (agent GC, tombstones) is stale, not a new
+            // history: put the hub copy back once nobody writes it
+            let map = self.map();
+            let cleaned = self.clean_bytes(src.d, &local[..n], &map, dst.fork.as_ref());
+            let hub = self
+                .read_log_range(&dst.space, &dst.canonical, 0, r.size)
+                .await?;
+            let hub_lines: HashSet<&[u8]> = hub.split(|&c| c == b'\n').collect();
+            if cleaned
+                .split(|&c| c == b'\n')
+                .all(|l| hub_lines.contains(l))
+            {
+                if hash::tail_fp(&hub) != r.hash
+                    || self.is_live(src.d, src.sid, src.abs)
+                    || self.touched_within(src.abs, self.deps.tun.cold_ms)
+                {
+                    return Ok(()); // retried on the next change or rescan
+                }
+                lfs::copy_to_trash(&self.deps.paths.trash(), src.abs)?;
+                let restored = self.smudge_bytes(src.d, &hub, &map);
+                let key = (dst.space.clone(), dst.canonical.clone());
+                let meta = self.session_meta(&key, r);
+                lfs::replace(src.abs, &restored, Some(self.mtime_for(meta.as_ref(), r)))?;
+                self.note_written(src.abs);
+                let p = LogPoint {
+                    local_len: restored.len() as u64,
+                    local_tail: hash::tail_fp(&restored),
+                    native: src.abs.to_string_lossy().to_string(),
+                };
+                self.set_base(&dst.space, &dst.canonical, &log_base(r, p))?;
+                tracing::info!(
+                    "restored the hub copy of session {} over a pruned local copy",
+                    src.sid
+                );
+                return Ok(());
+            }
+        }
         self.fork(src, dst, n as u64).await
     }
 
@@ -1356,6 +1482,13 @@ impl LogSync {
         if b.version >= r.version {
             return Ok(Step::Done);
         }
+        if b.size == r.size && b.hash == r.hash {
+            // only owner/metadata changed (claims): nothing to write
+            let mut b2 = b.clone();
+            b2.version = r.version;
+            self.set_base(&key.0, &key.1, &b2)?;
+            return Ok(Step::Done);
+        }
         if self.st().forks.contains_key(&p.native) {
             return Ok(Step::Deferred); // diverged original: replaced once cold
         }
@@ -1395,7 +1528,55 @@ impl LogSync {
             self.st().dirty.entry(native).or_insert_with(Instant::now);
             return Ok(Step::Deferred);
         }
-        self.catch_up(&d, key, &r, &b, &p).await
+        let step = self.catch_up(&d, key, &r, &b, &p).await?;
+        if matches!(step, Step::Done) && d.name() == "claude" && is_transcript(&key.1) {
+            self.follow_relocation(&d, key, &r)?;
+        }
+        Ok(step)
+    }
+
+    /// The session moved to another cwd on its owner (Claude relocation): move our copy (and
+    /// its sidecar dir) to the new project dir instead of leaving the id in two places.
+    fn follow_relocation(&self, d: &Arc<dyn AgentDriver>, key: &Key, r: &Entry) -> Result<()> {
+        let Some(b) = self
+            .deps
+            .store
+            .get(&key.0, &key.1)?
+            .and_then(|row| row.base)
+        else {
+            return Ok(());
+        };
+        let Some(p) = b.log.clone() else {
+            return Ok(());
+        };
+        let meta = self.session_meta(key, r);
+        let Some(rel) = d.native_rel(&key.1, meta.as_ref(), &self.map()) else {
+            return Ok(());
+        };
+        let want = crate::paths::join_canonical(&d.root(), &rel);
+        let cur = PathBuf::from(&p.native);
+        if want == cur || want.exists() || !cur.exists() {
+            return Ok(());
+        }
+        if let Some(dir) = want.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::rename(&cur, &want).with_context(|| format!("moving {}", cur.display()))?;
+        let (side_old, side_new) = (cur.with_extension(""), want.with_extension(""));
+        if side_old.is_dir() && !side_new.exists() {
+            if let Err(e) = std::fs::rename(&side_old, &side_new) {
+                tracing::warn!("moving {}: {e}", side_old.display());
+            }
+        }
+        self.note_written(&want);
+        let mut b2 = b;
+        b2.log = Some(LogPoint {
+            native: want.to_string_lossy().to_string(),
+            ..p
+        });
+        self.set_base(&key.0, &key.1, &b2)?;
+        tracing::info!("session {} relocated to {}", key.1, want.display());
+        Ok(())
     }
 
     /// Append the hub's lines past our sync point to the local file.
@@ -1441,10 +1622,23 @@ impl LogSync {
             return Ok(Step::Deferred);
         }
         lfs::append(&native, &local)?;
+        let len2 = p.local_len + local.len() as u64;
+        if lfs::fp(&native).map(|f| f.0) != Some(len2) {
+            // an agent appended in the instant between our check and our write: the local
+            // order is now mixed, so forget the sync point and let the line-by-line compare
+            // decide (adopt or fork); the hub log is untouched either way
+            tracing::warn!(
+                "{} changed while applying hub lines; re-checking it",
+                native.display()
+            );
+            let mut b2 = b.clone();
+            b2.log = None;
+            self.set_base(&key.0, &key.1, &b2)?;
+            return Ok(Step::Deferred);
+        }
         let meta = self.session_meta(key, r);
         lfs::set_mtime(&native, self.mtime_for(meta.as_ref(), r))?;
         self.note_written(&native);
-        let len2 = p.local_len + local.len() as u64;
         let p2 = LogPoint {
             local_len: len2,
             local_tail: hash::tail_fp_file(&native, len2)?,
@@ -1469,7 +1663,10 @@ impl LogSync {
         let local = self.smudge_bytes(d, &data, &self.map());
         let native = PathBuf::from(&p.native);
         let sid = sid_of(&key.1).unwrap_or_default();
-        if self.is_live(d, sid, &native) || !lfs::tail_ok(&native, p.local_len, &p.local_tail) {
+        if self.is_live(d, sid, &native)
+            || lfs::fp(&native).map(|f| f.0) != Some(p.local_len)
+            || !lfs::tail_ok(&native, p.local_len, &p.local_tail)
+        {
             return Ok(Step::Deferred);
         }
         lfs::copy_to_trash(&self.deps.paths.trash(), &native)?;
@@ -1510,10 +1707,17 @@ impl LogSync {
         }
         let map = self.map();
         let meta = self.session_meta(key, r);
-        let Some(native_rel) = d.native_rel(&key.1, meta.as_ref(), &map) else {
+        let Some(mut native_rel) = d.native_rel(&key.1, meta.as_ref(), &map) else {
             tracing::debug!("cannot place {}/{} on this machine (no cwd)", key.0, key.1);
             return Ok(Step::Done);
         };
+        // `claude --resume <id>` refuses ids found in two project dirs: reuse a local copy that
+        // already lives in another one (relocation follows once it is in sync)
+        if d.name() == "claude" && is_transcript(&key.1) {
+            if let Some(existing) = claude_copy_elsewhere(&d.root(), &native_rel) {
+                native_rel = existing;
+            }
+        }
         let target = crate::paths::join_canonical(&d.root(), &native_rel);
         if self.fork_of(&target).is_some() {
             return Ok(Step::Deferred); // a diverged local copy sits there until it is cold
@@ -1808,6 +2012,20 @@ impl LogSync {
             forked_to,
         })
     }
+}
+
+/// `projects/<other slug>/<sid>.jsonl` when the transcript `rel` exists locally under another
+/// project dir.
+fn claude_copy_elsewhere(root: &Path, rel: &str) -> Option<String> {
+    let name = rel.rsplit('/').next()?;
+    if root.join(rel).exists() {
+        return None;
+    }
+    let rd = std::fs::read_dir(root.join("projects")).ok()?;
+    rd.flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .find(|e| e.path().join(name).is_file())
+        .map(|e| format!("projects/{}/{name}", e.file_name().to_string_lossy()))
 }
 
 /// Classified files under a driver root (only the subtrees sessions live in).

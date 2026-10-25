@@ -92,7 +92,7 @@ impl PathMap {
             v.push((h, HOME_TOKEN.to_string()));
         }
         // longest first; spaces win ties against $HOME because they were pushed first
-        v.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        v.sort_by_key(|r| std::cmp::Reverse(r.0.len()));
         v
     }
 

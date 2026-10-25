@@ -289,19 +289,19 @@ impl AgentDriver for Claude {
         let relocated = all()
             .filter(|v| v.get("type").and_then(Value::as_str) == Some("relocated"))
             .filter_map(|v| v.get("relocatedCwd").and_then(Value::as_str))
-            .last()
+            .next_back()
             .map(str::to_string);
         m.cwd = relocated.or(first_cwd).map(|c| map.clean(&c));
         m.git_branch = all()
             .filter_map(|v| v.get("gitBranch").and_then(Value::as_str))
             .filter(|b| !b.is_empty())
-            .last()
+            .next_back()
             .map(str::to_string);
         m.model = all()
             .filter(|v| v.get("type").and_then(Value::as_str) == Some("assistant"))
             .filter_map(|v| v.get("message")?.get("model")?.as_str())
             .filter(|m| !m.starts_with('<'))
-            .last()
+            .next_back()
             .map(str::to_string);
         // custom titles beat AI titles beat legacy summaries; the latest of each kind wins
         let latest = |ty: &str, field: &str| {
@@ -309,7 +309,7 @@ impl AgentDriver for Claude {
                 .filter(|v| v.get("type").and_then(Value::as_str) == Some(ty))
                 .filter_map(|v| v.get(field).and_then(Value::as_str))
                 .filter(|s| !s.trim().is_empty())
-                .last()
+                .next_back()
                 .map(|s| clip(s, 200))
         };
         m.title = latest("custom-title", "customTitle")
