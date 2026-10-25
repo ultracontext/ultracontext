@@ -128,6 +128,11 @@ See [docs/CLI.md](docs/CLI.md).
 - SQLite `-wal` / `-shm` sidecar files and editor temp files
 - anything your `.gitignore` or a `.ucignore` excludes
 
+uc also refuses to do anything that would silently destroy data:
+
+- If most files of a folder vanish at once (an unmounted disk, or a folder that was moved away), uc does not delete them on your other machines. If you really deleted them, run `touch <folder>/.uc-allow-deletes`.
+- If the hub is restored from an older backup, sync stops with a clear message instead of overwriting newer local work. `uc init` re-joins safely.
+
 Synced files get the current time when they are written, the same as `git checkout`, so `make` and `cargo` rebuild correctly.
 
 ## How it works

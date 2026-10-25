@@ -231,6 +231,13 @@ These rules apply in order:
 - **Permissions**: only the exec bit. Empty directories are not synced.
 - **Special files** (fifos, sockets, devices): ignored.
 
+### 5.7 Guards against silent loss
+
+- **Mass deletes**: when more than half of a space's tracked files (and at least 10) vanish in one rescan, uc pushes no deletes for that space. An emptied, replaced or unmounted folder looks exactly like a mass delete. Deletes resume when the files come back, or when the user confirms with `touch <space>/.uc-allow-deletes`.
+- **Hub rollback**: the client remembers the change at its cursor. If the hub restarts without that change (restored from an older backup or a VM snapshot), the daemon stops syncing and leaves a marker until `uc init` re-joins. Re-joining turns differing files into pushes or conflict copies, never overwrites.
+- **Case**: on case-insensitive filesystems, every path component must match exactly. A remote path whose folder exists here only under another case is reported as a collision and not applied.
+- **Symlinks**: hub paths must be canonical, and writes never pass through a symlinked or non-directory parent (`paths::safe_join`).
+
 ## 6. Agent sessions (§6)
 
 ### 6.1 Principle: one session, one canonical log

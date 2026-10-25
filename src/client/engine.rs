@@ -26,6 +26,8 @@ use crate::proto::{Change, Entry, Kind, LogRecord, Msg, Op, Query, SpaceStatus};
 const MAX_DIRTY: Duration = Duration::from_secs(5);
 /// Paths reconciled at once (their hub requests pipeline over one connection).
 const PARALLEL: usize = 48;
+/// Marker file confirming a mass delete in a space (see `check_mass_delete`).
+const ALLOW_DELETES: &str = ".uc-allow-deletes";
 const TICK: Duration = Duration::from_millis(100);
 const RETRY_MIN: Duration = Duration::from_millis(500);
 const RETRY_MAX: Duration = Duration::from_secs(60);
@@ -154,6 +156,8 @@ struct State {
     conflicts: Vec<String>,
     gen: u64,
     debounce: Duration,
+    /// spaces where most tracked files vanished at once: deletes are not pushed (§5.1)
+    deletes_paused: HashSet<String>,
 }
 
 /// A stable local snapshot (§5.2): content identity + staged copy to upload from.
@@ -463,6 +467,9 @@ impl Engine {
                 marks.push(s.rel.clone());
             }
         }
+        if sub.is_empty() {
+            self.check_mass_delete(space, &root, &rows, &seen);
+        }
         for (path, r) in &rows {
             let live_base = r.base.as_ref().is_some_and(|b| !b.deleted);
             let behind = is_behind(r);
@@ -475,6 +482,42 @@ impl Engine {
             self.mark(space, &m, true, true);
         }
         Ok(())
+    }
+
+    /// An emptied, replaced or unmounted space folder looks like "everything was deleted". When
+    /// most tracked files vanish at once, stop pushing deletes for that space so the other
+    /// machines keep their copies, until the files come back or the user confirms with
+    /// `<space>/.uc-allow-deletes`.
+    fn check_mass_delete(&self, space: &str, root: &Path, rows: &HashMap<String, Row>, seen: &HashSet<&str>) {
+        let live: Vec<&String> = rows
+            .iter()
+            .filter(|(_, r)| r.base.as_ref().is_some_and(|b| !b.deleted))
+            .map(|(p, _)| p)
+            .collect();
+        let missing = live.iter().filter(|p| !seen.contains(p.as_str())).count();
+        let allow = root.join(ALLOW_DELETES);
+        let mass = live.len() >= 10 && missing * 2 > live.len();
+        let mut st = self.lock();
+        if mass && !allow.exists() {
+            if st.deletes_paused.insert(space.to_string()) {
+                let msg = format!(
+                    "{missing} of {} files vanished from space '{space}' ({}) at once; not deleting them on \
+                     your other machines. If you really deleted them: touch {}",
+                    live.len(),
+                    paths::tilde(root),
+                    paths::tilde(&allow)
+                );
+                warn!("{msg}");
+                drop(st);
+                self.ctx.set_error(msg);
+            }
+        } else {
+            if mass {
+                let _ = std::fs::remove_file(&allow);
+                info!("space {space}: mass delete confirmed with {ALLOW_DELETES}");
+            }
+            st.deletes_paused.remove(space);
+        }
     }
 
     /// Bases describe files in one specific folder. If a space now points at another folder,
@@ -681,7 +724,21 @@ impl Engine {
             Stat::Entry(kind, fp) => Some((kind, fp)),
         };
         self.forget_collision(space, rel);
-        if local.is_some() && self.case_insensitive(space) && !self.exact_name_exists(&abs)? {
+        let case_clash = self.case_insensitive(space) && !self.exact_path_ok(&root, &abs)?;
+        if case_clash && local.is_none() {
+            // a parent folder exists here under another case: writing would land in it (§5.6)
+            let remote_new = r
+                .as_ref()
+                .is_some_and(|r| !r.deleted && b.as_ref().map_or(true, |b| r.version > b.version));
+            if remote_new {
+                info!("{space}/{rel}: a folder on the way differs only in case; not applied");
+                if let Some(s) = self.lock().spaces.get_mut(space) {
+                    s.collisions.insert(rel.to_string());
+                }
+                return Ok(Step::Done);
+            }
+        }
+        if local.is_some() && case_clash {
             // stat matched a file whose name differs only in case (§5.6)
             let remote_new = r
                 .as_ref()
@@ -802,6 +859,23 @@ impl Engine {
         Ok(found)
     }
 
+    /// Every existing component of `abs` below `root` has exactly this name (NFC), not just a
+    /// case-insensitive match (macOS). Missing components are fine: they will be created as named.
+    fn exact_path_ok(&self, root: &Path, abs: &Path) -> Result<bool> {
+        let Ok(rest) = abs.strip_prefix(root) else { return Ok(true) };
+        let mut p = root.to_path_buf();
+        for c in rest.components() {
+            p.push(c);
+            if !matches!(std::fs::symlink_metadata(&p), Ok(_)) {
+                return Ok(true);
+            }
+            if !self.exact_name_exists(&p)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     /// We changed `abs`'s directory ourselves: cached listings of it are stale.
     fn touched(&self, abs: &Path) {
         if let Some(dir) = abs.parent() {
@@ -904,10 +978,17 @@ impl Engine {
             return Ok(true);
         }
         self.touched(abs);
-        self.exact_name_exists(abs)
+        match self.space_parts(space) {
+            Some((root, _)) => self.exact_path_ok(&root, abs),
+            None => self.exact_name_exists(abs),
+        }
     }
 
     async fn push_delete(&self, space: &str, rel: &str, abs: &Path, base: u64) -> Result<Step> {
+        if self.lock().deletes_paused.contains(space) {
+            debug!("{space}/{rel}: delete held (mass delete guard)");
+            return Ok(Step::Done);
+        }
         if self.present_exact(space, abs)? {
             return Ok(Step::Again);
         }

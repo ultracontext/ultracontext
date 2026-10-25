@@ -110,6 +110,7 @@ const COLS: &str = "space, path, r_json, b_version, b_kind, b_hash, b_size, b_ex
                     fp_size, fp_mtime_ns, fp_ino, fp_exec, log_local_len, log_local_tail, log_native";
 
 const CURSOR: &str = "cursor";
+const CURSOR_AT: &str = "cursor_at";
 
 pub struct ClientDb {
     conn: Mutex<Connection>,
@@ -261,8 +262,22 @@ impl ClientDb {
         }
         upsert_remote(&tx, &change.entry)?;
         kv_set_on(&tx, CURSOR, &change.seq.to_string())?;
+        // identity of the change at the cursor: lets the daemon detect a hub rolled back to an
+        // older backup even after it has moved past our cursor again
+        let e = &change.entry;
+        kv_set_on(&tx, CURSOR_AT, &format!("{}\t{}\t{}\t{}", change.seq, e.space, e.path, e.hash))?;
         tx.commit()?;
         Ok(())
+    }
+
+    /// (seq, space, path, hash) of the last change recorded with the cursor.
+    pub fn cursor_at(&self) -> Result<Option<(u64, String, String, String)>> {
+        let Some(v) = kv_get_on(&self.lock(), CURSOR_AT)? else { return Ok(None) };
+        let mut it = v.splitn(4, '\t');
+        let (Some(seq), Some(space), Some(path), Some(hash)) = (it.next(), it.next(), it.next(), it.next()) else {
+            return Ok(None);
+        };
+        Ok(seq.parse().ok().map(|s| (s, space.to_string(), path.to_string(), hash.to_string())))
     }
 
     /// Upsert R only (e.g. from a Conflict/Committed response), no cursor change.

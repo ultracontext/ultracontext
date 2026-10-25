@@ -73,6 +73,11 @@ pub async fn run(paths: Paths) -> Result<()> {
             paths.config().display()
         ),
     };
+    let marker = hub_mismatch_marker(&paths);
+    if marker.exists() {
+        let why = std::fs::read_to_string(&marker).unwrap_or_default();
+        bail!("sync is stopped: {}", why.trim());
+    }
     let _pid = PidLock::acquire(&paths.daemon_pid())?;
     let listener = control::bind(&paths.daemon_sock())?;
     info!(pid = std::process::id(), version = proto::VERSION, hub = %cfg.hub, "uc daemon starting");
@@ -281,6 +286,18 @@ fn watch_add_blocking(watcher: &Mutex<Watcher>, ctx: &Ctx, root: &Path) {
 }
 
 impl Daemon {
+    /// Does the hub still hold the exact change this machine's cursor points at? A hub restored
+    /// from an older backup may already be past our cursor again, with different changes.
+    async fn cursor_change_gone(&self) -> bool {
+        let Ok(Some((seq, space, path, hash))) = self.ctx.db.cursor_at() else {
+            return false;
+        };
+        let q = Query::History { space, path, limit: Some(100_000) };
+        let Ok(v) = self.ctx.hub.query(q).await else { return false };
+        let Ok(hist) = serde_json::from_value::<Vec<proto::LogRecord>>(v) else { return false };
+        !hist.iter().any(|r| r.seq == seq && r.hash == hash)
+    }
+
     async fn on_hub_event(&self, ev: HubEvent) {
         match ev {
             HubEvent::Connected {
@@ -322,6 +339,23 @@ impl Daemon {
                         return;
                     }
                 };
+                let rolled_back = head_seq < cursor || self.cursor_change_gone().await;
+                if rolled_back {
+                    // The hub went back in time (restored from a backup / VM snapshot). Our bases
+                    // point at changes it no longer has: applying its future changes on top would
+                    // overwrite local edits it lost. Stop; `uc init` re-joins safely (differing
+                    // files become pushes or conflict copies).
+                    let msg = format!(
+                        "the hub went back in time (it is at change #{head_seq} and no longer has change #{cursor} \
+                         this machine already synced): was it restored from a backup? Sync is stopped so nothing \
+                         is overwritten; run 'uc init {}' to re-join safely",
+                        self.ctx.cfg().hub
+                    );
+                    let _ = std::fs::write(hub_mismatch_marker(&self.ctx.paths), &msg);
+                    self.ctx.set_error(&msg);
+                    let _ = self.fatal.send(msg);
+                    return;
+                }
                 if let Err(e) = self.ctx.hub.subscribe(cursor).await {
                     warn!("{SUBSCRIBE_FAILED}: {e:#}");
                     self.ctx.set_error(format!("{SUBSCRIBE_FAILED}: {e:#}"));

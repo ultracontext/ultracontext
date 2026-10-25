@@ -22,6 +22,7 @@ const BUILTIN_ANY: &[&str] = &[
     "**/.DS_Store",
     "**/Thumbs.db",
     "**/.uc-tmp-*",
+    "**/.uc-allow-deletes",
     "**/*.swp",
     "**/*.swo",
     "**/*~",
