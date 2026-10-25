@@ -10,6 +10,8 @@ use crate::proto::SessionMeta;
 
 pub mod claude;
 pub mod codex;
+#[cfg(test)]
+mod real_data;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentFileKind {
