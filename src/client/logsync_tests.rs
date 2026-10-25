@@ -798,6 +798,13 @@ async fn sidecars_follow_their_transcript() {
     mac.changed(&tool_txt).await;
     settle(&mut [&mut mac, &mut lin]).await;
     assert_eq!(hub.entry("@claude", &tool_canon).unwrap().version, before);
+    // a takeover moves the subagent logs along with the transcript
+    lin.ls.resume(None, &sid, true, false).await.unwrap();
+    let sub = format!("sessions/{sid}/subagents/agent-a1.jsonl");
+    assert_eq!(
+        hub.entry("@claude", &sub).unwrap().owner.as_deref(),
+        Some("m_linux")
+    );
 }
 
 #[tokio::test]
@@ -817,6 +824,204 @@ async fn torn_tail_from_dead_writer_is_cut_before_remote_lines() {
     settle(&mut [&mut mac, &mut lin]).await;
     assert_eq!(read(&lin_path), translate(&read(&mac_path), &mac, &lin));
     assert_eq!(lin.trash_files().len(), 1);
+}
+
+#[tokio::test]
+async fn follower_pruned_copy_is_restored_not_forked() {
+    let hub = MockHub::new();
+    let mut mac = M::new(&hub, "mac", "Users/fab");
+    let mut lin = M::new(&hub, "linux", "home/fabio");
+    let (sid, mac_path) = mac_session(&mut mac).await;
+    settle(&mut [&mut mac, &mut lin]).await;
+    let lin_path = lin.transcript(&sid);
+    let first: String = read(&lin_path)
+        .lines()
+        .take(1)
+        .map(|l| format!("{l}\n"))
+        .collect();
+    std::fs::write(&lin_path, first).unwrap();
+    lin.changed(&lin_path).await;
+    settle(&mut [&mut mac, &mut lin]).await;
+    assert_eq!(
+        hub.paths("@claude").len(),
+        1,
+        "no fork for a pruned follower copy"
+    );
+    assert_eq!(read(&lin_path), translate(&read(&mac_path), &mac, &lin));
+    assert_eq!(lin.trash_files().len(), 1);
+}
+
+#[tokio::test]
+async fn relocation_on_owner_moves_follower_copy() {
+    let hub = MockHub::new();
+    let mut mac = M::new(&hub, "mac", "Users/fab");
+    let mut lin = M::new(&hub, "linux", "home/fabio");
+    let (sid, mac_path) = mac_session(&mut mac).await;
+    settle(&mut [&mut mac, &mut lin]).await;
+    // Claude on mac enters a worktree: the transcript moves to the new project dir
+    let wt = mac.proj().join(".wt");
+    let moved = mac
+        .claude
+        .join("projects")
+        .join(slug(&wt.to_string_lossy()))
+        .join(format!("{sid}.jsonl"));
+    std::fs::create_dir_all(moved.parent().unwrap()).unwrap();
+    std::fs::rename(&mac_path, &moved).unwrap();
+    append(
+        &moved,
+        &format!(
+            "{{\"type\":\"relocated\",\"relocatedCwd\":\"{}\",\"sessionId\":\"{sid}\"}}\n",
+            wt.display()
+        ),
+    );
+    mac.changed(&mac_path).await;
+    mac.changed(&moved).await;
+    settle(&mut [&mut mac, &mut lin]).await;
+
+    assert_eq!(hub.paths("@claude").len(), 1, "a move is not a new session");
+    let lin_wt = lin.proj().join(".wt");
+    let lin_moved = lin
+        .claude
+        .join("projects")
+        .join(slug(&lin_wt.to_string_lossy()))
+        .join(format!("{sid}.jsonl"));
+    assert_eq!(lin.transcripts(), vec![lin_moved.clone()]);
+    assert_eq!(read(&lin_moved), translate(&read(&moved), &mac, &lin));
+}
+
+#[tokio::test]
+async fn resume_where_it_is_already_running() {
+    let hub = MockHub::new();
+    let mut mac = M::new(&hub, "mac", "Users/fab");
+    let (sid, mac_path) = mac_session(&mut mac).await;
+    mac.claude_live(&sid, true);
+    let plan = mac.ls.resume(None, &sid, false, false).await.unwrap();
+    assert!(!plan.took_over);
+    assert_eq!(PathBuf::from(plan.native_path), mac_path);
+    mac.claude_live(&sid, false);
+}
+
+#[tokio::test]
+async fn existing_copy_in_another_project_dir_is_reused_not_duplicated() {
+    let hub = MockHub::new();
+    let mut mac = M::new(&hub, "mac", "Users/fab");
+    let (sid, mac_path) = mac_session(&mut mac).await;
+    let mut lin = M::new(&hub, "linux", "home/fabio");
+    // linux already has this session (copied by hand) under some other project dir
+    let stray = lin
+        .claude
+        .join(format!("projects/-somewhere-else/{sid}.jsonl"));
+    append(&stray, &translate(&read(&mac_path), &mac, &lin));
+    lin.ls.rescan().await.unwrap();
+    settle(&mut [&mut mac, &mut lin]).await;
+    assert_eq!(
+        lin.transcripts(),
+        vec![stray.clone()],
+        "the existing copy is adopted, not duplicated"
+    );
+    assert_eq!(hub.paths("@claude").len(), 1);
+    // and it keeps following the hub where it is
+    let line = user_line(&sid, &mac.proj(), "u7", "more from mac");
+    append(&mac_path, &format!("{line}\n"));
+    mac.changed(&mac_path).await;
+    hub.advance(1);
+    settle(&mut [&mut mac, &mut lin]).await;
+    // once in sync it moves to the project dir of its cwd, still as a single copy
+    assert_eq!(lin.transcripts(), vec![lin.transcript(&sid)]);
+    assert!(read(&lin.transcript(&sid)).contains("more from mac"));
+}
+
+#[tokio::test]
+async fn codex_divergence_forks_with_same_timestamp_name() {
+    let hub = MockHub::new();
+    let mut mac = M::new(&hub, "mac", "Users/fab");
+    let mut lin = M::new(&hub, "linux", "home/fabio");
+    let tid = uuid::Uuid::new_v4().to_string();
+    let rel = format!("sessions/2026/10/25/rollout-2026-10-25T08-00-00-{tid}.jsonl");
+    let mac_file = mac.codex.join(&rel);
+    let ts = now_iso();
+    append(
+        &mac_file,
+        &format!(
+            "{}\n",
+            format!(
+                r#"{{"timestamp":"{ts}","type":"session_meta","payload":{{"id":"{tid}","timestamp":"{ts}","cwd":"{}"}}}}"#,
+                mac.proj().display()
+            )
+        ),
+    );
+    mac.changed(&mac_file).await;
+    settle(&mut [&mut mac, &mut lin]).await;
+    lin.ls
+        .resume(Some("codex"), &tid, true, false)
+        .await
+        .unwrap();
+    // the old Codex on mac writes one more line
+    append(
+        &mac_file,
+        &format!(
+            r#"{{"timestamp":"{ts}","ordinal":2,"type":"event_msg","payload":{{"type":"agent_message","message":"thread {tid}"}}}}"#
+        ),
+    );
+    append(&mac_file, "\n");
+    let original = std::fs::read(&mac_file).unwrap();
+    mac.changed(&mac_file).await;
+    settle(&mut [&mut mac, &mut lin]).await;
+
+    let fork = hub
+        .paths("@codex")
+        .into_iter()
+        .find(|p| !p.contains(&tid))
+        .unwrap();
+    let new = fork
+        .trim_start_matches("sessions/")
+        .trim_end_matches(".jsonl")
+        .to_string();
+    let meta =
+        SessionMeta::from_meta(hub.entry("@codex", &fork).unwrap().meta.as_ref().unwrap()).unwrap();
+    assert_eq!(meta.forked_from.as_deref(), Some(tid.as_str()));
+    let fork_rel = rel.replace(&tid, &new);
+    assert_eq!(meta.native_rel.as_deref(), Some(fork_rel.as_str()));
+    let expected = String::from_utf8(original).unwrap().replace(&tid, &new);
+    assert_eq!(
+        String::from_utf8(hub.log("@codex", &fork).unwrap()).unwrap(),
+        expected
+    );
+    // cold: both come back from the hub at their native names, byte-exact
+    assert_eq!(read(&mac.codex.join(&fork_rel)), expected);
+    assert_eq!(
+        std::fs::read(&mac_file).unwrap(),
+        hub.log("@codex", &format!("sessions/{tid}.jsonl")).unwrap()
+    );
+    assert_eq!(read(&lin.codex.join(&fork_rel)), expected);
+}
+
+#[tokio::test]
+async fn large_transcript_goes_in_frame_sized_chunks() {
+    let hub = MockHub::new();
+    let mut mac = M::new(&hub, "mac", "Users/fab");
+    let mut lin = M::new(&hub, "linux", "home/fabio");
+    let sid = uuid::Uuid::new_v4().to_string();
+    let p = mac.transcript(&sid);
+    let pad = "x".repeat(20_000);
+    let mut body = String::new();
+    for i in 0..1000 {
+        body.push_str(&user_line(&sid, &mac.proj(), &format!("u{i}"), &pad));
+        body.push('\n');
+    }
+    append(&p, &body); // ~20 MB, more than one frame
+    mac.changed(&p).await;
+    settle(&mut [&mut mac, &mut lin]).await;
+    let e = hub
+        .entry("@claude", &format!("sessions/{sid}.jsonl"))
+        .unwrap();
+    assert!(
+        e.version >= 5,
+        "pushed in several appends (version {})",
+        e.version
+    );
+    assert_eq!(read(&lin.transcript(&sid)), translate(&body, &mac, &lin));
+    assert_eq!(mac.ls.pending().up, 0);
 }
 
 /// The daemon spawns these futures on the multi-threaded runtime.

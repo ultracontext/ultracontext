@@ -226,13 +226,13 @@ impl AgentDriver for Codex {
         m.model = all()
             .filter(|v| v.get("type").and_then(Value::as_str) == Some("turn_context"))
             .filter_map(|v| v.get("payload")?.get("model")?.as_str())
-            .last()
+            .next_back()
             .map(str::to_string);
         if m.cwd.is_none() {
             m.cwd = all()
                 .filter(|v| v.get("type").and_then(Value::as_str) == Some("turn_context"))
                 .filter_map(|v| v.get("payload")?.get("cwd")?.as_str())
-                .last()
+                .next_back()
                 .map(|c| map.clean(c));
         }
         m.first_prompt = head_v
