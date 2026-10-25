@@ -42,6 +42,11 @@ impl Watcher {
                         let _ = tx.send(r);
                     }
                 }
+                // inotify also reports opens/reads (IN_OPEN): our own scans and hashing would
+                // feed back into endless rescans. Only changes matter.
+                if matches!(ev.kind, notify::EventKind::Access(_)) {
+                    return;
+                }
                 for p in ev.paths {
                     let _ = tx.send(p);
                 }
