@@ -160,7 +160,7 @@ impl Default for Tunables {
         Tunables {
             debounce: Duration::from_millis(200),
             hot_ms: 10_000,
-            cold_ms: 60_000,
+            cold_ms: 30_000,
             resume_timeout: Duration::from_secs(120),
         }
     }

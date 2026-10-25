@@ -681,8 +681,6 @@ fn codex_session_follows_you() {
         return;
     };
     let (mac_cwd, linux_cwd) = (mac.code().join("proj"), linux.code().join("proj"));
-    let mac_home = mac.home.to_string_lossy().into_owned();
-    let linux_home = linux.home.to_string_lossy().into_owned();
 
     let id = new_uuid();
     let rel = codex_rollout_rel(&id);
@@ -700,15 +698,17 @@ fn codex_session_follows_you() {
     mac.sync();
     linux.sync();
 
-    // Recent sessions are materialized eagerly (DESIGN §6.5), at the same relative path.
+    // Recent sessions are materialized eagerly (DESIGN §6.5), at the same relative path, and
+    // BYTE-EXACT: Codex rollouts carry load-bearing byte offsets/ordinals (DESIGN §6.5a), so
+    // paths move through `codex resume -C <local cwd>` instead of being rewritten.
     let linux_file = linux.codex_dir.join(&rel);
-    let want = translate(&mac_content, &mac_home, &linux_home);
+    let want = mac_content.clone();
     let ok = wait_until(Duration::from_secs(10), || {
         read(&linux_file).as_deref() == Some(want.as_bytes())
     });
     w.check(ok, || {
         format!(
-            "linux: {} should hold mac's rollout with {mac_home} -> {linux_home}\n  expected: {}\n  found:    {:?}",
+            "linux: {} should hold mac's rollout byte-exact\n  expected: {}\n  found:    {:?}",
             linux_file.display(),
             clip(&want, 1500),
             read(&linux_file).as_deref().map(lossy)
@@ -732,20 +732,22 @@ fn codex_session_follows_you() {
         av.len() >= 2 && av[0] == "codex" && av[1] == "resume",
         || format!("codex argv should start with [\"codex\", \"resume\"]: {av:?}"),
     );
+    let linux_cwd_s = linux_cwd.to_string_lossy().into_owned();
+    w.check(
+        av.windows(2).any(|p| p[0] == "-C" && p[1] == linux_cwd_s),
+        || format!("codex argv should pass -C {linux_cwd_s}: {av:?}"),
+    );
 
     // codex continues on linux; the mac (online) follows.
     let line = codex_user_line(&format!("Also update {}/README.md", linux_cwd.display()));
     append_line(&linux_file, &line);
     linux.sync();
     mac.sync();
-    let want_mac = format!(
-        "{mac_content}{}\n",
-        translate(&line, &linux_home, &mac_home)
-    );
+    let want_mac = format!("{mac_content}{line}\n");
     let got = read(&mac_file);
     w.check(got.as_deref() == Some(want_mac.as_bytes()), || {
         format!(
-            "mac rollout should end with linux's line (mac paths)\n  expected: {}\n  found:    {:?}",
+            "mac rollout should end with linux's line, byte-exact\n  expected: {}\n  found:    {:?}",
             clip(&want_mac, 1500),
             got.as_deref().map(lossy)
         )

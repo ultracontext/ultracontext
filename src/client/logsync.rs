@@ -444,11 +444,22 @@ impl LogSync {
     }
 
     pub fn pending(&self) -> Pending {
-        let (up, want) = {
+        let (up, want, forks) = {
             let st = self.st();
-            (st.dirty.len() as u64, st.want.clone())
+            (st.dirty.len() as u64, st.want.clone(), st.forks.clone())
         };
         let mut down = 0;
+        // A diverged original waits (by design) until the local agent stops writing it; that is
+        // not work `uc sync` can finish, so it is reported, not counted as pending.
+        let conflicts: Vec<String> = forks
+            .values()
+            .map(|f| {
+                format!(
+                    "session {} diverged on this machine; its local lines continue as {}",
+                    f.old_id, f.new_id
+                )
+            })
+            .collect();
         for d in &self.drivers {
             let Ok(rows) = self.deps.store.rows(d.space()) else {
                 continue;
@@ -456,6 +467,14 @@ impl LogSync {
             for row in rows {
                 let Some(r) = &row.remote else { continue };
                 if r.deleted || row.base.as_ref().is_some_and(|b| b.version >= r.version) {
+                    continue;
+                }
+                if row
+                    .base
+                    .as_ref()
+                    .and_then(|b| b.log.as_ref())
+                    .is_some_and(|p| forks.contains_key(&p.native))
+                {
                     continue;
                 }
                 let key = (row.space.clone(), row.path.clone());
@@ -474,7 +493,7 @@ impl LogSync {
         Pending {
             up,
             down,
-            conflicts: Vec::new(),
+            conflicts,
         }
     }
 
