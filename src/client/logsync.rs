@@ -542,6 +542,28 @@ impl LogSync {
                 bail!("could not claim session {}: {reason}", info.meta.id)
             }
         };
+        // the session's other logs (subagents) move with it; best effort
+        let others: Vec<Key> = {
+            let st = self.st();
+            st.want
+                .iter()
+                .filter(|k| k.0 == key.0 && *k != &key && sid_of(&k.1) == sid_of(&key.1))
+                .cloned()
+                .collect()
+        };
+        for k in others {
+            let msg = Msg::Claim {
+                id: self.deps.hub.next_id(),
+                space: k.0.clone(),
+                path: k.1.clone(),
+                force: takeover,
+            };
+            if let Ok(Commit::Committed { entry, .. }) = self.deps.hub.commit(msg, Vec::new()).await
+            {
+                self.adopt_entry(&entry)?;
+                self.st().claimed.insert(k);
+            }
+        }
         // lines the previous owner appended before the claim landed
         self.refresh(&key).await?;
         self.ensure_local(&key, deadline).await?;

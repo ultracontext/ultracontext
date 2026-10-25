@@ -798,6 +798,10 @@ async fn sidecars_follow_their_transcript() {
     mac.changed(&tool_txt).await;
     settle(&mut [&mut mac, &mut lin]).await;
     assert_eq!(hub.entry("@claude", &tool_canon).unwrap().version, before);
+    // a takeover moves the subagent logs along with the transcript
+    lin.ls.resume(None, &sid, true, false).await.unwrap();
+    let sub = format!("sessions/{sid}/subagents/agent-a1.jsonl");
+    assert_eq!(hub.entry("@claude", &sub).unwrap().owner.as_deref(), Some("m_linux"));
 }
 
 #[tokio::test]
