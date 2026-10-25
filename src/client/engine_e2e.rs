@@ -146,7 +146,7 @@ async fn two_machines_converge_without_losing_data() {
     .await;
     assert_eq!(fs::read_link(rb.join("link")).unwrap(), PathBuf::from("sub/deep.txt"));
     let copy = conflict_copies(&rb, "").pop().unwrap();
-    assert!(copy.starts_with("diff (conflict m_b "), "{copy}");
+    assert!(copy.starts_with("diff.txt.conflict-m_b-"), "{copy}");
     assert_eq!(read(&rb, &copy).as_deref(), Some("from B"));
     assert_eq!(read(&rb, "same.txt").as_deref(), Some("same"));
     eventually("conflict copy reaches A", || read(&ra, &copy).as_deref() == Some("from B")).await;
@@ -184,10 +184,10 @@ async fn two_machines_converge_without_losing_data() {
     hub.inject_file("code", "diff.txt", b"X edit", "m_x");
     eventually("A resolves the conflict", || {
         read(&ra, "diff.txt").as_deref() == Some("X edit")
-            && conflict_copies(&ra, "").iter().any(|n| n.contains("conflict m_a"))
+            && conflict_copies(&ra, "").iter().any(|n| n.contains(".conflict-m_a-"))
     })
     .await;
-    let mine = conflict_copies(&ra, "").into_iter().find(|n| n.contains("conflict m_a")).unwrap();
+    let mine = conflict_copies(&ra, "").into_iter().find(|n| n.contains(".conflict-m_a-")).unwrap();
     assert_eq!(read(&ra, &mine).as_deref(), Some("A edit"));
     eventually("B sees both versions", || {
         read(&rb, "diff.txt").as_deref() == Some("X edit") && read(&rb, &mine).as_deref() == Some("A edit")

@@ -37,7 +37,8 @@ impl M {
             .prefix("uc")
             .tempdir_in("/tmp")
             .unwrap();
-        let home = dir.path().join(home_rel);
+        // physical path: Claude slugs physical cwds, and macOS /tmp is a symlink
+        let home = dir.path().canonicalize().unwrap().join(home_rel);
         let claude = home.join(".claude");
         let codex = home.join(".codex");
         let uc = home.join(".ultracontext");

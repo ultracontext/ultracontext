@@ -817,10 +817,21 @@ impl LogSync {
 
     fn eager(&self, key: &Key, r: &Entry) -> bool {
         let days = (self.deps.cfg)().agents.eager_days as i64;
-        let at = self
-            .session_meta(key, r)
-            .and_then(|m| m.updated_at)
-            .unwrap_or(r.mtime);
+        let meta = self.session_meta(key, r);
+        // A session whose project lives in a space this machine has not mapped yet would land
+        // in a guessed directory; wait until the space is mapped (`uc resume` still works).
+        if let Some(space) = meta
+            .as_ref()
+            .and_then(|m| m.cwd.as_deref())
+            .and_then(|c| c.strip_prefix("@@UC_SPACE:"))
+            .and_then(|c| c.split_once("@@"))
+            .map(|(name, _)| name)
+        {
+            if !self.map().has_space(space) {
+                return false;
+            }
+        }
+        let at = meta.and_then(|m| m.updated_at).unwrap_or(r.mtime);
         at >= now_ms() - days * DAY_MS
     }
 

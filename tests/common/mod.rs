@@ -942,34 +942,26 @@ pub fn conflict_copies(root: &Path) -> Vec<String> {
     walk(root)
         .into_iter()
         .map(|(rel, _, _)| rel)
-        .filter(|rel| rel.contains(" (conflict "))
+        .filter(|rel| parse_conflict_name(rel.rsplit('/').next().unwrap_or(rel)).is_some())
         .collect()
 }
 
-/// Split `<stem> (conflict <machine> <YYYY-MM-DD HHMMSS>)<.ext>` (file name only) into
-/// (stem, machine, ext).
-pub fn parse_conflict_name(name: &str) -> Option<(String, String, String)> {
-    let (stem, rest) = name.split_once(" (conflict ")?;
-    let close = rest.rfind(')')?;
-    let inner = &rest[..close];
-    let ext = rest[close + 1..].to_string();
-    let mut parts = inner.rsplitn(3, ' ');
-    let time = parts.next()?;
-    let date = parts.next()?;
-    let machine = parts.next()?;
-    let date_ok = date.len() == 10
-        && date.chars().enumerate().all(|(i, c)| {
-            if i == 4 || i == 7 {
-                c == '-'
-            } else {
-                c.is_ascii_digit()
-            }
-        });
-    let time_ok = time.len() == 6 && time.chars().all(|c| c.is_ascii_digit());
-    if !date_ok || !time_ok || machine.is_empty() {
+/// Split `<name>.conflict-<machine>-<YYYYMMDD>-<HHMMSS>` (file name only) into (name, machine).
+pub fn parse_conflict_name(name: &str) -> Option<(String, String)> {
+    let i = name.rfind(".conflict-")?;
+    let orig = &name[..i];
+    let tail = &name[i + ".conflict-".len()..];
+    let n = tail.len();
+    if orig.is_empty() || n < 17 || !tail.is_char_boundary(n - 16) {
         return None;
     }
-    Some((stem.to_string(), machine.to_string(), ext))
+    let (machine, ts) = tail.split_at(n - 16);
+    let b = ts.as_bytes();
+    let ok = b[0] == b'-'
+        && b[9] == b'-'
+        && b[1..9].iter().all(u8::is_ascii_digit)
+        && b[10..].iter().all(u8::is_ascii_digit);
+    (ok && !machine.is_empty()).then(|| (orig.to_string(), machine.to_string()))
 }
 
 /// Files named exactly `name` anywhere under `root`.

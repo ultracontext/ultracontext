@@ -60,13 +60,13 @@ exits with code 3 the session is live on another machine: ask the user whether t
 ## Conflicts
 
 A conflict copy sits next to the original:
-`notes (conflict linux-box 2026-10-25 141502).md`. To resolve:
+`notes.md.conflict-linux-box-20261025-141502`. To resolve:
 1. Read both files completely.
-2. Merge the wanted changes into the original (the path without ` (conflict ...)`).
+2. Merge the wanted changes into the original (the path without `.conflict-...`).
 3. Delete the conflict copy. Deleting it syncs everywhere.
 
 Never delete or overwrite a conflict copy you have not read. Inside `.git/` a conflict
-copy of a ref is ignored by git; it only keeps the other side recoverable.
+copy of a ref is a valid ref (`main.conflict-...`): `git log` it to see the other side.
 
 ## Rules
 

@@ -232,27 +232,41 @@ fn suffixed(name: &str, suffix: &str) -> String {
     format!("{stem}{suffix}{ext}")
 }
 
-/// Conflict copy name: `<stem> (conflict <machine> <YYYY-MM-DD HHMMSS>)<.ext>` (canonical rel).
+const CONFLICT_MARK: &str = ".conflict-";
+
+/// Conflict copy name (DESIGN §5.4): `<name>.conflict-<machine>-<YYYYMMDD-HHMMSS>`. The suffix
+/// goes after the whole file name, so a copy never matches language globs (`*.rs`, `test_*.py`),
+/// never breaks a build, and is still a valid git ref name inside `.git/refs`.
 pub fn conflict_name(rel: &str, machine_name: &str, at_ms: i64) -> String {
     let when = chrono::Local
         .timestamp_millis_opt(at_ms)
         .single()
         .unwrap_or_else(chrono::Local::now)
-        .format("%Y-%m-%d %H%M%S")
+        .format("%Y%m%d-%H%M%S")
         .to_string();
     let machine: String = machine_name
         .chars()
-        .map(|c| if c == '/' || c.is_control() { '-' } else { c })
+        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '-' })
         .collect();
-    let (dir, name) = match rel.rfind('/') {
-        Some(i) => (&rel[..=i], &rel[i + 1..]),
-        None => ("", rel),
-    };
-    format!("{dir}{}", suffixed(name, &format!(" (conflict {machine} {when})")))
+    format!("{rel}{CONFLICT_MARK}{machine}-{when}")
 }
 
+/// Is this a conflict copy name? (`<name>.conflict-<machine>-<YYYYMMDD-HHMMSS>`)
 pub fn is_conflict_name(rel: &str) -> bool {
-    rel.contains(" (conflict ")
+    conflict_original(rel).is_some()
+}
+
+/// The path a conflict copy belongs to: `dir/notes.md.conflict-mac-20261025-141502` -> `dir/notes.md`.
+pub fn conflict_original(rel: &str) -> Option<&str> {
+    let i = rel.rfind(CONFLICT_MARK)?;
+    let tail = rel[i + CONFLICT_MARK.len()..].as_bytes();
+    // <machine>-YYYYMMDD-HHMMSS, machine non-empty
+    let n = tail.len();
+    if n < 17 || tail[n - 16] != b'-' || tail[n - 7] != b'-' {
+        return None;
+    }
+    let digits = tail[n - 15..n - 7].iter().chain(&tail[n - 6..]).all(u8::is_ascii_digit);
+    (digits && i > 0 && !rel[..i].ends_with('/')).then(|| &rel[..i])
 }
 
 /// Rename `abs` to a conflict copy beside it, never overwriting. Returns the new path.
@@ -293,14 +307,20 @@ mod tests {
             .timestamp_millis();
         assert_eq!(
             conflict_name("dir/report.md", "mac", at),
-            "dir/report (conflict mac 2026-10-25 141502).md"
+            "dir/report.md.conflict-mac-20261025-141502"
         );
-        assert_eq!(conflict_name("Makefile", "mac", at), "Makefile (conflict mac 2026-10-25 141502)");
-        assert_eq!(conflict_name("a/.env", "mac", at), "a/.env (conflict mac 2026-10-25 141502)");
+        assert_eq!(conflict_name("Makefile", "mac", at), "Makefile.conflict-mac-20261025-141502");
+        assert_eq!(conflict_name("a/.env", "mac", at), "a/.env.conflict-mac-20261025-141502");
         assert_eq!(
-            conflict_name("x.tar.gz", "lin/ux", at),
-            "x.tar (conflict lin-ux 2026-10-25 141502).gz"
+            conflict_name("x.tar.gz", "lin/ux box", at),
+            "x.tar.gz.conflict-lin-ux-box-20261025-141502"
         );
+        assert_eq!(
+            conflict_original("dir/report.md.conflict-mac-20261025-141502"),
+            Some("dir/report.md")
+        );
+        assert_eq!(conflict_original("a.conflict-notes.md"), None);
+        assert_eq!(conflict_original("dir/.conflict-mac-20261025-141502"), None);
         assert!(is_conflict_name(&conflict_name("a/b.txt", "m", at)));
         assert!(!is_conflict_name("a/b.txt"));
     }

@@ -199,7 +199,7 @@ Remote deletes move the local file to `trash/`, and only if L == B. A remote del
 When L and R both changed and their contents differ:
 
 - R takes the canonical path, because the hub is the source of truth.
-- L is renamed to `<stem> (conflict <machine> <YYYY-MM-DD HHMMSS>)<.ext>` in the same directory and pushed as a new file, so every machine sees it.
+- L is renamed to `<name>.conflict-<machine>-<YYYYMMDD-HHMMSS>` in the same directory and pushed as a new file, so every machine sees it. The suffix goes after the whole name, so a copy never matches language globs (`*.rs`, `test_*.py`) and never breaks a build.
 - `uc conflicts` lists the conflict copies.
 
 The other cases:
@@ -207,7 +207,7 @@ The other cases:
 - **Same content on both sides**: no conflict.
 - **Delete vs modify**: the modification wins.
 
-Inside `.git/` the same rule applies. A conflicting ref becomes the ref `main (conflict ...)`, which git ignores. Its contents are preserved in the conflict copy for recovery.
+Inside `.git/` the same rule applies. A losing ref becomes a valid ref next to it, e.g. `refs/heads/main.conflict-mac-20261025-141502`, so `git log main.conflict-mac-…` shows the commits it pointed to.
 
 ### 5.5 Ignore rules
 

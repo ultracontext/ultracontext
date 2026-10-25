@@ -336,6 +336,10 @@ impl AgentDriver for Claude {
         if !cwd.starts_with('/') {
             return None;
         }
+        // Claude slugs the PHYSICAL cwd (a session started in /tmp lives in -private-tmp-...)
+        let cwd = std::fs::canonicalize(&cwd)
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or(cwd);
         Some(format!("projects/{}/{}", slug(&cwd), rest))
     }
 

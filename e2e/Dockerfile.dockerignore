@@ -2,4 +2,5 @@
 !Cargo.toml
 !Cargo.lock
 !src/
+!skills/
 !e2e/entrypoint.sh

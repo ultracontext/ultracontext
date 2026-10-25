@@ -1013,15 +1013,9 @@ struct ConflictRow {
     original: String,
 }
 
-/// `notes (conflict box 2026-10-25 141502).md` -> `notes.md`
+/// `notes.md.conflict-box-20261025-141502` -> `notes.md`
 pub(crate) fn original_of(path: &str) -> String {
-    let Some(start) = path.rfind(" (conflict ") else {
-        return path.to_string();
-    };
-    match path[start..].find(')') {
-        Some(end) => format!("{}{}", &path[..start], &path[start + end + 1..]),
-        None => path.to_string(),
-    }
+    apply::conflict_original(path).unwrap_or(path).to_string()
 }
 
 fn cmd_conflicts(app: &App) -> Result<i32> {
@@ -1484,12 +1478,9 @@ mod tests {
 
     #[test]
     fn conflict_originals() {
+        assert_eq!(original_of("notes.md.conflict-box-20261025-141502"), "notes.md");
         assert_eq!(
-            original_of("notes (conflict box 2026-10-25 141502).md"),
-            "notes.md"
-        );
-        assert_eq!(
-            original_of("dir/Makefile (conflict box 2026-10-25 141502)"),
+            original_of("dir/Makefile.conflict-my-mac-20261025-141502"),
             "dir/Makefile"
         );
         assert_eq!(original_of("plain.txt"), "plain.txt");

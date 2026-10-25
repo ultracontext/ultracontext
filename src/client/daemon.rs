@@ -605,6 +605,8 @@ impl Daemon {
         match self.engine.add_space(name, &abs).await {
             Ok(st) => {
                 info!(space = name, path = %abs.display(), "space added");
+                // sessions whose project lives in this space can now be materialized
+                self.rescan_wanted.notify_one();
                 Ok(st)
             }
             Err(e) => {

@@ -316,10 +316,10 @@ fn conflict_keeps_both() {
         });
         let parsed = parse_conflict_name(&copies[0]);
         w.check(
-            parsed == Some(("notes".to_string(), "linux".to_string(), ".md".to_string())),
+            parsed == Some(("notes.md".to_string(), "linux".to_string())),
             || {
                 format!(
-                    "{}: conflict copy {:?} should be named `notes (conflict linux YYYY-MM-DD HHMMSS).md`",
+                    "{}: conflict copy {:?} should be named `notes.md.conflict-linux-YYYYMMDD-HHMMSS`",
                     m.name, copies[0]
                 )
             },
@@ -332,7 +332,7 @@ fn conflict_keeps_both() {
 
         let listed = m.uc_json(&["conflicts"]);
         w.check(
-            listed.to_string().contains("notes (conflict linux "),
+            listed.to_string().contains("notes.md.conflict-linux-"),
             || {
                 format!(
                     "{}: `uc conflicts --json` does not list {:?}:\n{listed:#}",
@@ -376,7 +376,7 @@ fn same_content_no_duplicate() {
         assert_file(&w, m, "shared.txt", b"v2: the same edit on both machines\n");
         assert_file(&w, m, "new/dir/x.bin", &big);
         let listed = m.uc_json(&["conflicts"]);
-        w.check(!listed.to_string().contains("(conflict "), || {
+        w.check(!listed.to_string().contains(".conflict-"), || {
             format!(
                 "{}: identical content must not produce conflicts:\n{listed:#}",
                 m.name
@@ -1070,15 +1070,15 @@ fn harness_self_check() {
         "/home/l/x /h/mac2/y /h/mac.d /home/l\n\"/home/l\""
     );
     assert_eq!(
-        parse_conflict_name("notes (conflict linux 2026-10-25 071530).md"),
-        Some(("notes".into(), "linux".into(), ".md".into()))
+        parse_conflict_name("notes.md.conflict-linux-20261025-071530"),
+        Some(("notes.md".into(), "linux".into()))
     );
     assert_eq!(
-        parse_conflict_name("Makefile (conflict my mac 2026-10-25 071530)"),
-        Some(("Makefile".into(), "my mac".into(), String::new()))
+        parse_conflict_name("Makefile.conflict-my-mac-20261025-071530"),
+        Some(("Makefile".into(), "my-mac".into()))
     );
     assert_eq!(
-        parse_conflict_name("notes (conflict linux yesterday).md"),
+        parse_conflict_name("notes.md.conflict-linux-yesterday"),
         None
     );
     assert_eq!(parse_conflict_name("notes.md"), None);
@@ -1133,10 +1133,10 @@ fn harness_self_check() {
         "{d}"
     );
     assert_eq!(conflict_copies(&a), Vec::<String>::new());
-    put(&a, "x/y (conflict mac 2026-10-25 071530).txt", b"other");
+    put(&a, "x/y.txt.conflict-mac-20261025-071530", b"other");
     assert_eq!(
         conflict_copies(&a),
-        vec!["x/y (conflict mac 2026-10-25 071530).txt".to_string()]
+        vec!["x/y.txt.conflict-mac-20261025-071530".to_string()]
     );
     assert_eq!(find_named(&a, "y.txt").len(), 1);
 

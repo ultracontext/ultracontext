@@ -29,6 +29,9 @@ pub struct PathMap {
     pub home: String,
     /// (space name, absolute local root without trailing slash), any order
     pub spaces: Vec<(String, String)>,
+    /// (physical root, token) for roots reached through a symlink (macOS /tmp -> /private/tmp):
+    /// agents record physical cwds, so `clean` must recognise both spellings.
+    pub physical: Vec<(String, String)>,
 }
 
 /// Absolute root without trailing '/'; None for "/", "" or relative paths (never mapped).
@@ -56,6 +59,19 @@ fn valid_space_name(name: &str) -> bool {
 
 impl PathMap {
     pub fn new(home: &Path, spaces: &[(String, PathBuf)]) -> Self {
+        let mut physical = Vec::new();
+        let mut alias = |p: &Path, token: String| {
+            if let Ok(real) = p.canonicalize() {
+                let real = real.to_string_lossy().trim_end_matches('/').to_string();
+                if real != p.to_string_lossy().trim_end_matches('/') {
+                    physical.push((real, token));
+                }
+            }
+        };
+        alias(home, HOME_TOKEN.to_string());
+        for (n, p) in spaces.iter().filter(|(n, _)| valid_space_name(n)) {
+            alias(p, space_token(n));
+        }
         PathMap {
             home: home.to_string_lossy().trim_end_matches('/').to_string(),
             spaces: spaces
@@ -68,7 +84,13 @@ impl PathMap {
                     )
                 })
                 .collect(),
+            physical,
         }
+    }
+
+    /// Is `name` mapped to a local root on this machine?
+    pub fn has_space(&self, name: &str) -> bool {
+        self.spaces.iter().any(|(n, _)| n == name)
     }
 
     pub fn from_config(cfg: &Config) -> Self {
@@ -91,6 +113,11 @@ impl PathMap {
         if let Some(h) = usable_root(&self.home) {
             v.push((h, HOME_TOKEN.to_string()));
         }
+        v.extend(
+            self.physical
+                .iter()
+                .filter_map(|(p, t)| usable_root(p).map(|r| (r, t.clone()))),
+        );
         // longest first; spaces win ties against $HOME because they were pushed first
         v.sort_by_key(|r| std::cmp::Reverse(r.0.len()));
         v
