@@ -1,0 +1,113 @@
+name: Release
+
+# Push a tag like v1.0.0 to build every target and publish a GitHub release with
+# uc-<target>.tar.gz, SHA256SUMS and install.sh. A manual run (workflow_dispatch) only builds,
+# which is a cheap way to check that all targets still compile before tagging.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: aarch64-apple-darwin, os: macos-14 }
+          # macos-13 (Intel) runners are retired: cross-compile x86_64 on Apple silicon.
+          - { target: x86_64-apple-darwin, os: macos-14 }
+          # Both Linux builds link against glibc 2.35 (Ubuntu 22.04), so they run on any distro
+          # from 2022 on. install.sh test-runs the binary and builds from source on older systems.
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm }
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }} --bin uc
+
+      - name: Smoke test
+        if: matrix.target != 'x86_64-apple-darwin' # cross-compiled; cannot run natively here
+        run: target/${{ matrix.target }}/release/uc --version
+
+      - name: Package
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/uc-$TARGET"
+          mkdir -p "$stage" dist
+          cp "target/$TARGET/release/uc" LICENSE README.md "$stage/"
+          chmod 755 "$stage/uc"
+          # COPYFILE_DISABLE keeps macOS tar from adding AppleDouble (._*) entries.
+          COPYFILE_DISABLE=1 tar -C "$stage" -czf "dist/uc-$TARGET.tar.gz" uc LICENSE README.md
+          tar -tzvf "dist/uc-$TARGET.tar.gz"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uc-${{ matrix.target }}
+          path: dist/uc-${{ matrix.target }}.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: publish
+    needs: build # all targets or nothing: a partial release would make install.sh 404 on some machines
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: uc-*
+          path: dist
+          merge-multiple: true
+
+      - name: SHA256SUMS
+        working-directory: dist
+        run: |
+          sha256sum uc-*.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Check the tag matches Cargo.toml
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::warning::tag $GITHUB_REF_NAME does not match Cargo.toml version $version; uc --version will print $version"
+          fi
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/uc-*.tar.gz
+            dist/SHA256SUMS
+            install.sh
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          body: |
+            Install or update on macOS and Linux (checksums verified, no sudo):
+
+            ```sh
+            curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/install.sh | UC_VERSION=${{ github.ref_name }} sh
+            ```
