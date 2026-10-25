@@ -889,9 +889,10 @@ fn live_session_takeover() {
         lparent = u;
     }
     linux.sync();
-    mac.sync();
+    // The mac's original transcript diverged and stays "hot" for 60s (left alone, DESIGN §6.4),
+    // so remote appends to it may wait there; everything the mac wrote must be pushed (the fork).
+    mac.sync_pushed(10);
     linux.sync();
-    mac.sync();
 
     // The canonical transcript is exactly what it was at takeover plus linux's own lines.
     let got = read(&linux_file).expect("linux transcript");

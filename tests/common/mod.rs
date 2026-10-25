@@ -512,6 +512,28 @@ impl Machine {
         v
     }
 
+    /// `uc sync --timeout <secs> --json` that only requires everything local to be pushed
+    /// (`pending_up == 0`); remote changes may legitimately stay pending, e.g. for a diverged
+    /// transcript left alone while hot (DESIGN §6.4).
+    pub fn sync_pushed(&self, secs: u32) -> Value {
+        let secs = secs.to_string();
+        let (out, v) = self.try_json(&["sync", "--timeout", &secs]);
+        let Some(v) = v else {
+            self.fail(&format!(
+                "`uc sync --json` on {} did not print a SyncReport:\n{}",
+                self.name,
+                show(&out)
+            ));
+        };
+        if v.get("pending_up").and_then(Value::as_u64) != Some(0) {
+            self.fail(&format!(
+                "`uc sync` on {}: local changes not pushed:\n{v:#}",
+                self.name
+            ));
+        }
+        v
+    }
+
     /// `uc daemon stop`, then wait until the control socket and the process are gone.
     /// Do not run any other `uc` command on this machine until `daemon_start`: the CLI would
     /// start the daemon again.
