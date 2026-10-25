@@ -163,6 +163,9 @@ impl MockHub {
                 if bin.is_empty() || bin.last() != Some(&b'\n') {
                     bail!("append must be complete lines");
                 }
+                if bin.len() > crate::proto::MAX_FRAME - 64 * 1024 {
+                    bail!("frame too large");
+                }
                 st.seq += 1;
                 let seq = st.seq;
                 let m = st.entries.entry(key).or_insert_with(|| MEntry {

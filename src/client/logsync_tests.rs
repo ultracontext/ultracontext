@@ -801,7 +801,10 @@ async fn sidecars_follow_their_transcript() {
     // a takeover moves the subagent logs along with the transcript
     lin.ls.resume(None, &sid, true, false).await.unwrap();
     let sub = format!("sessions/{sid}/subagents/agent-a1.jsonl");
-    assert_eq!(hub.entry("@claude", &sub).unwrap().owner.as_deref(), Some("m_linux"));
+    assert_eq!(
+        hub.entry("@claude", &sub).unwrap().owner.as_deref(),
+        Some("m_linux")
+    );
 }
 
 #[tokio::test]
@@ -991,6 +994,34 @@ async fn codex_divergence_forks_with_same_timestamp_name() {
         hub.log("@codex", &format!("sessions/{tid}.jsonl")).unwrap()
     );
     assert_eq!(read(&lin.codex.join(&fork_rel)), expected);
+}
+
+#[tokio::test]
+async fn large_transcript_goes_in_frame_sized_chunks() {
+    let hub = MockHub::new();
+    let mut mac = M::new(&hub, "mac", "Users/fab");
+    let mut lin = M::new(&hub, "linux", "home/fabio");
+    let sid = uuid::Uuid::new_v4().to_string();
+    let p = mac.transcript(&sid);
+    let pad = "x".repeat(20_000);
+    let mut body = String::new();
+    for i in 0..1000 {
+        body.push_str(&user_line(&sid, &mac.proj(), &format!("u{i}"), &pad));
+        body.push('\n');
+    }
+    append(&p, &body); // ~20 MB, more than one frame
+    mac.changed(&p).await;
+    settle(&mut [&mut mac, &mut lin]).await;
+    let e = hub
+        .entry("@claude", &format!("sessions/{sid}.jsonl"))
+        .unwrap();
+    assert!(
+        e.version >= 5,
+        "pushed in several appends (version {})",
+        e.version
+    );
+    assert_eq!(read(&lin.transcript(&sid)), translate(&body, &mac, &lin));
+    assert_eq!(mac.ls.pending().up, 0);
 }
 
 /// The daemon spawns these futures on the multi-threaded runtime.

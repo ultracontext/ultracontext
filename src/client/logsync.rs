@@ -47,6 +47,10 @@ type Key = (String, String);
 /// Head/tail windows used for session metadata (same as Claude's own session listing).
 const META_WINDOW: u64 = 64 * 1024;
 const READ_CHUNK: u64 = 4 * 1024 * 1024;
+/// Bytes of complete lines per Append (frames are capped at proto::MAX_FRAME).
+const PUSH_CHUNK: usize = 4 * 1024 * 1024;
+/// Largest Append payload that still fits a frame next to its JSON header and metadata.
+const MAX_APPEND: usize = crate::proto::MAX_FRAME - 256 * 1024;
 const FORKS_KV: &str = "logsync.forks";
 const DAY_MS: i64 = 86_400_000;
 /// Claude deletes transcripts whose mtime is older than cleanupPeriodDays (30) at startup.
@@ -192,6 +196,30 @@ fn map_lines(data: &[u8], f: impl Fn(&str) -> String) -> Vec<u8> {
         if nl {
             out.push(b'\n');
         }
+    }
+    out
+}
+
+/// Line-aligned prefix of `data` (complete lines) to send in one Append: up to PUSH_CHUNK
+/// bytes, or exactly one line when a single line is larger.
+fn chunk_len(data: &[u8]) -> usize {
+    let n = lfs::complete_len(&data[..data.len().min(PUSH_CHUNK)]);
+    if n > 0 {
+        return n;
+    }
+    data.iter()
+        .position(|&c| c == b'\n')
+        .map_or(data.len(), |i| i + 1)
+}
+
+/// Split complete canonical lines into Append-sized chunks.
+fn chunks(data: &[u8]) -> Vec<&[u8]> {
+    let mut out = Vec::new();
+    let mut off = 0;
+    while off < data.len() {
+        let n = chunk_len(&data[off..]);
+        out.push(&data[off..off + n]);
+        off += n;
     }
     out
 }
@@ -1061,46 +1089,63 @@ impl LogSync {
             return Ok(());
         }
         let new = lfs::read_range(src.abs, p.local_len, len)?;
-        let n = lfs::complete_len(&new);
-        if n == 0 {
+        let total = lfs::complete_len(&new);
+        if total == 0 {
             return Ok(()); // only a partial line so far
         }
         let map = self.map();
-        let cleaned = self.clean_bytes(src.d, &new[..n], &map, dst.fork.as_ref());
-        let end = p.local_len + n as u64;
-        let meta = self.meta_for(src, dst, end, &map);
         let key = (dst.space.clone(), dst.canonical.clone());
-        let claim = self.st().claimed.contains(&key);
-        let msg = Msg::Append {
-            id: self.deps.hub.next_id(),
-            space: dst.space.clone(),
-            path: dst.canonical.clone(),
-            offset: b.size,
-            tail: (b.size > 0).then(|| b.hash.clone()),
-            meta: meta.map(|m| m.to_meta()),
-            claim,
-        };
-        match self.deps.hub.commit(msg, cleaned.clone()).await? {
-            Commit::Committed { entry, .. } => {
-                self.adopt_entry(&entry)?;
-                let p2 = LogPoint {
-                    local_len: end,
-                    local_tail: hash::tail_fp_file(src.abs, end)?,
-                    native: p.native.clone(),
-                };
-                self.set_base(&dst.space, &dst.canonical, &log_base(&entry, p2))?;
-                self.st().claimed.remove(&key);
-                Ok(())
+        let (mut b, mut p) = (b.clone(), p.clone());
+        let mut off = 0usize;
+        // frames are capped (proto::MAX_FRAME): push big backlogs in line-aligned chunks
+        while off < total {
+            let n = chunk_len(&new[off..total]);
+            let cleaned = self.clean_bytes(src.d, &new[off..off + n], &map, dst.fork.as_ref());
+            if cleaned.len() > MAX_APPEND {
+                bail!(
+                    "a {} byte line in {} exceeds the hub frame size",
+                    cleaned.len(),
+                    src.abs.display()
+                );
             }
-            Commit::Conflict { current, reason } => {
-                self.append_rejected(src, dst, b, p, &cleaned, end, current, &reason)
-                    .await
-            }
-            Commit::Busy { .. } => {
-                self.append_rejected(src, dst, b, p, &cleaned, end, None, "owner")
-                    .await
+            let end = p.local_len + n as u64;
+            let meta = self.meta_for(src, dst, end, &map);
+            let claim = self.st().claimed.contains(&key);
+            let msg = Msg::Append {
+                id: self.deps.hub.next_id(),
+                space: dst.space.clone(),
+                path: dst.canonical.clone(),
+                offset: b.size,
+                tail: (b.size > 0).then(|| b.hash.clone()),
+                meta: meta.map(|m| m.to_meta()),
+                claim,
+            };
+            match self.deps.hub.commit(msg, cleaned.clone()).await? {
+                Commit::Committed { entry, .. } => {
+                    self.adopt_entry(&entry)?;
+                    let p2 = LogPoint {
+                        local_len: end,
+                        local_tail: hash::tail_fp_file(src.abs, end)?,
+                        native: p.native.clone(),
+                    };
+                    b = log_base(&entry, p2.clone());
+                    p = p2;
+                    self.set_base(&dst.space, &dst.canonical, &b)?;
+                    self.st().claimed.remove(&key);
+                    off += n;
+                }
+                Commit::Conflict { current, reason } => {
+                    return self
+                        .append_rejected(src, dst, &b, &p, &cleaned, end, current, &reason)
+                        .await;
+                }
+                Commit::Busy { .. } => {
+                    tracing::warn!("session {} is owned by another machine; forking", src.sid);
+                    return self.fork(src, dst, end).await;
+                }
             }
         }
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1369,23 +1414,10 @@ impl LogSync {
             fork: Some(rewrite),
         };
         let meta = self.meta_for(src, &fdst, n as u64, &map);
-        let msg = Msg::Append {
-            id: self.deps.hub.next_id(),
-            space: dst.space.clone(),
-            path: fork_canonical.clone(),
-            offset: 0,
-            tail: None,
-            meta: meta.map(|m| m.to_meta()),
-            claim: false,
-        };
-        let entry = match self.deps.hub.commit(msg, content).await? {
-            Commit::Committed { entry, .. } => entry,
-            Commit::Conflict { reason, .. } => {
-                bail!("could not create fork {new} of {old}: {reason}")
-            }
-            Commit::Busy { .. } => bail!("could not create fork {new} of {old}: busy"),
-        };
-        self.adopt_entry(&entry)?;
+        let entry = self
+            .create_log(&dst.space, &fork_canonical, &content, meta.as_ref())
+            .await
+            .with_context(|| format!("creating fork {new} of {old}"))?;
         let original = src.abs.to_string_lossy().to_string();
         let p = LogPoint {
             local_len: n as u64,
@@ -1406,6 +1438,40 @@ impl LogSync {
         self.save_forks()?;
         tracing::warn!("session {old} forked as {new} (forked_from = {old})");
         Ok(())
+    }
+
+    /// Publish a new log (complete canonical lines), chunked to fit frames.
+    async fn create_log(
+        &self,
+        space: &str,
+        path: &str,
+        content: &[u8],
+        meta: Option<&SessionMeta>,
+    ) -> Result<Entry> {
+        let mut last: Option<Entry> = None;
+        for chunk in chunks(content) {
+            if chunk.len() > MAX_APPEND {
+                bail!("a {} byte line exceeds the hub frame size", chunk.len());
+            }
+            let msg = Msg::Append {
+                id: self.deps.hub.next_id(),
+                space: space.to_string(),
+                path: path.to_string(),
+                offset: last.as_ref().map_or(0, |e| e.size),
+                tail: last.as_ref().map(|e| e.hash.clone()),
+                meta: meta.map(SessionMeta::to_meta),
+                claim: false,
+            };
+            match self.deps.hub.commit(msg, chunk.to_vec()).await? {
+                Commit::Committed { entry, .. } => {
+                    self.adopt_entry(&entry)?;
+                    last = Some(entry);
+                }
+                Commit::Conflict { reason, .. } => bail!("{path} rejected by the hub: {reason}"),
+                Commit::Busy { .. } => bail!("{path} rejected by the hub: busy"),
+            }
+        }
+        last.ok_or_else(|| anyhow!("nothing to publish for {path}"))
     }
 
     /// A diverged original that went cold is replaced by the hub's versions of both sessions.
@@ -1973,20 +2039,9 @@ impl LogSync {
         meta.forked_from = Some(old.clone());
         meta.native_rel = meta.native_rel.map(|x| d.fork_line(&x, &old, &new));
         meta.updated_at = Some(now_ms());
-        let msg = Msg::Append {
-            id: self.deps.hub.next_id(),
-            space: key.0.clone(),
-            path: fork_canonical.clone(),
-            offset: 0,
-            tail: None,
-            meta: Some(meta.to_meta()),
-            claim: false,
-        };
-        match self.deps.hub.commit(msg, content).await? {
-            Commit::Committed { entry, .. } => self.adopt_entry(&entry)?,
-            Commit::Conflict { reason, .. } => bail!("could not create fork of {old}: {reason}"),
-            Commit::Busy { .. } => bail!("could not create fork of {old}: busy"),
-        }
+        self.create_log(&key.0, &fork_canonical, &content, Some(&meta))
+            .await
+            .with_context(|| format!("creating fork of {old}"))?;
         let fkey = (key.0.clone(), fork_canonical);
         self.st().want.insert(fkey.clone());
         self.ensure_local(&fkey, deadline).await?;
