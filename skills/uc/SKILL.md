@@ -70,9 +70,9 @@ copy of a ref is a valid ref (`main.conflict-...`): `git log` it to see the othe
 
 ## Branches
 
-A synced repo is one checkout on every machine. Never `git checkout` another branch in a
-synced repo another machine may be working in: run `uc branch <name>` and work in the
-new folder it prints (`<repo>-<name>`, a worktree with relative paths).
+A synced repo is one checkout on every machine. Do not `git checkout` another branch in a
+synced repo another machine may be working in: that switches it there too. For a parallel
+branch, use a separate folder (`git worktree add --relative-paths ../<repo>-<branch> <branch>`).
 
 ## Rules
 
