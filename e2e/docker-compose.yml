@@ -1,0 +1,54 @@
+# Cross-OS e2e: one hub and two Linux "machines" with different users and home dirs, so path
+# translation is exercised (/home/fabio <-> /root). Clients reach the hub over ssh (DESIGN §1);
+# the host can join over tcp on 127.0.0.1:${UC_E2E_PORT}. Driven by e2e/run.sh.
+name: uc-e2e
+
+x-client-env: &client_env
+  UC_LOG: ${UC_LOG:-debug}
+  UC_SSH: ssh -i /etc/uc-e2e/id -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR
+
+services:
+  hub:
+    build:
+      context: ..
+      dockerfile: e2e/Dockerfile
+    image: uc-e2e:dev
+    hostname: hub
+    command: ["hub"]
+    environment:
+      UC_TOKEN: ${UC_TOKEN:?run e2e/run.sh, or export UC_TOKEN}
+      UC_LOG: ${UC_LOG:-debug}
+    volumes:
+      - keys:/keys
+    ports:
+      - "127.0.0.1:${UC_E2E_PORT:-7707}:7707"
+    healthcheck:
+      test: ["CMD", "test", "-S", "/home/uc/.ultracontext/hub.sock"]
+      interval: 1s
+      timeout: 2s
+      retries: 60
+
+  linux1:
+    image: uc-e2e:dev
+    pull_policy: never
+    hostname: linux1
+    command: ["client", "fabio"]
+    environment: *client_env
+    volumes:
+      - keys:/keys:ro
+    depends_on:
+      - hub
+
+  linux2:
+    image: uc-e2e:dev
+    pull_policy: never
+    hostname: linux2
+    command: ["client", "root"]
+    environment: *client_env
+    volumes:
+      - keys:/keys:ro
+    depends_on:
+      - hub
+
+volumes:
+  keys:

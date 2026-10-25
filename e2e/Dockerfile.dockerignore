@@ -1,0 +1,5 @@
+*
+!Cargo.toml
+!Cargo.lock
+!src/
+!e2e/entrypoint.sh
