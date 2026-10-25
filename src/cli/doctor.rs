@@ -202,7 +202,24 @@ pub fn cmd_doctor(app: &App) -> Result<i32> {
         )
     });
 
+    let me = std::env::current_exe().ok().and_then(|p| p.canonicalize().ok());
     checks.push(match which("uc") {
+        // an older uc earlier on PATH (e.g. a previous `cargo install`) would answer agents
+        // and `ssh <hub> uc` instead of this one
+        Some(p) if me.is_some() && p.canonicalize().ok() != me => check(
+            "PATH",
+            Level::Warn,
+            format!(
+                "'uc' on PATH is {}, not this binary ({})",
+                paths::tilde(&p),
+                me.as_deref().map(paths::tilde).unwrap_or_default()
+            ),
+            Some(format!(
+                "remove or replace the other one: ln -sf {} {}",
+                me.as_deref().map(|m| m.display().to_string()).unwrap_or_default(),
+                p.display()
+            )),
+        ),
         Some(p) => check("PATH", Level::Ok, paths::tilde(&p), None),
         None => check(
             "PATH",
