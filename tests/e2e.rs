@@ -623,6 +623,23 @@ fn claude_session_follows_you() {
         )
     });
 
+    // From inside the project, no id needed: `--here` and bare `uc resume` (DESIGN §7) find it.
+    let here = linux.uc_json_in(&linux_cwd, &["sessions", "--here"]);
+    w.check(
+        here.as_array()
+            .is_some_and(|a| find_session(a, &id).is_some()),
+        || {
+            format!(
+                "linux: `uc sessions --here` in {} should list {id}:\n{here:#}",
+                linux_cwd.display()
+            )
+        },
+    );
+    let latest = linux.uc_json_in(&linux_cwd, &["resume", "--print"]);
+    w.check(jstr(&latest, "/id") == Some(id.as_str()), || {
+        format!("linux: bare `uc resume` in the project should pick {id}:\n{latest:#}")
+    });
+
     // claude continues on linux ...
     let line = claude_user_line(
         &id,
@@ -669,6 +686,52 @@ fn claude_session_follows_you() {
         find_session(&sessions, &id).is_some() && forks.is_empty(),
         || format!("mac: expected session {id} and no forks:\n{sessions:#?}"),
     );
+}
+
+// ---------------------------------------------------------------- g2) a machine joins later
+
+/// A new machine joins after sessions exist: its folder spaces must be mapped before sessions are
+/// materialized, or `@@UC_SPACE:code@@` lands at a wrong path (wrong Claude project dir).
+#[test]
+fn late_joiner_gets_sessions() {
+    let Some((w, mac, linux)) = code_pair("late_joiner", |c| {
+        put(c, "proj/main.py", b"print('hi')\n");
+    }) else {
+        return;
+    };
+    let mac_cwd = mac.code().join("proj");
+    let mac_home = mac.home.to_string_lossy().into_owned();
+    let id = new_uuid();
+    let u1 = new_uuid();
+    let mac_file = mac.claude_transcript(&mac_cwd, &id);
+    let prompt = format!("Explain {}/main.py", mac_cwd.display());
+    append_line(
+        &mac_file,
+        &claude_user_line(&id, &mac_cwd, &u1, None, &prompt),
+    );
+    let mac_content = String::from_utf8(read(&mac_file).expect("mac transcript")).expect("utf8");
+    mac.sync();
+    linux.sync();
+
+    let late = w.machine("late");
+    late.init();
+    late.expect_space("code", &late.code());
+    late.sync();
+    let late_home = late.home.to_string_lossy().into_owned();
+    let late_file = late.claude_transcript(&late.code().join("proj"), &id);
+    let want = translate(&mac_content, &mac_home, &late_home);
+    let ok = wait_until(Duration::from_secs(10), || {
+        read(&late_file).as_deref() == Some(want.as_bytes())
+    });
+    let found = find_named(&late.claude_dir, &format!("{id}.jsonl"));
+    w.check(ok && found.len() == 1, || {
+        format!(
+            "late: transcript should be at {} with {mac_home} -> {late_home}; found {found:?}\n  expected: {}",
+            late_file.display(),
+            clip(&want, 1500)
+        )
+    });
+    assert_file(&w, &late, "proj/main.py", b"print('hi')\n");
 }
 
 // ---------------------------------------------------------------- h) Codex session
@@ -874,9 +937,10 @@ fn live_session_takeover() {
         lparent = u;
     }
     linux.sync();
-    mac.sync();
+    // The mac's original transcript diverged and stays "hot" for 60s (left alone, DESIGN §6.4),
+    // so remote appends to it may wait there; everything the mac wrote must be pushed (the fork).
+    mac.sync_pushed(10);
     linux.sync();
-    mac.sync();
 
     // The canonical transcript is exactly what it was at takeover plus linux's own lines.
     let got = read(&linux_file).expect("linux transcript");

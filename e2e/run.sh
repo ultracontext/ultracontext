@@ -5,20 +5,25 @@
 #   e2e/run.sh              build, run the scenario, tear everything down
 #   e2e/run.sh --with-mac   also run the native binary (target/debug/uc) as machine "mac"
 #   e2e/run.sh --keep       leave the containers up afterwards (docker compose -p uc-e2e ...)
+#   e2e/run.sh --no-build   use the existing uc-e2e:dev image
 #
+# UC_E2E_MAC_BIN overrides the native binary; UC_E2E_PORT the host port of the hub (7707).
 # Exits non-zero on the first failed check, after printing hub/daemon logs.
+# shellcheck disable=SC2016 # single-quoted snippets are expanded inside the containers
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/.." && pwd)
 with_mac=0
 keep=0
+build=1
 for arg in "$@"; do
     case "$arg" in
     --with-mac) with_mac=1 ;;
     --keep) keep=1 ;;
+    --no-build) build=0 ;;
     -h | --help)
-        sed -n '2,9p' "$0"
+        sed -n '2,12p' "$0"
         exit 0
         ;;
     *)
@@ -34,7 +39,7 @@ export UC_TOKEN UC_E2E_PORT
 dc() { docker compose -f "$here/docker-compose.yml" "$@"; }
 
 mac_home=""
-mac_uc="$repo/target/debug/uc"
+mac_uc=${UC_E2E_MAC_BIN:-$repo/target/debug/uc}
 
 step() { printf '\n── %s\n' "$*"; }
 fail() {
@@ -42,7 +47,8 @@ fail() {
     exit 1
 }
 
-# Run a shell snippet on a container machine, as its user, in its HOME.
+# Run a shell snippet on a container machine, as its user, in its HOME. Output goes through
+# files: a daemon the command spawns must not keep the exec pipe (and this script) hanging.
 on() {
     local svc=$1 user=root home=/root
     shift
@@ -50,13 +56,28 @@ on() {
         user=fabio
         home=/home/fabio
     fi
-    dc exec -T -u "$user" -e HOME="$home" -w "$home" "$svc" sh -c "$*"
+    dc exec -T -u "$user" -e HOME="$home" -w "$home" "$svc" sh -c '
+        o=$(mktemp) e=$(mktemp)
+        sh -c "$1" >"$o" 2>"$e" </dev/null
+        rc=$?
+        cat "$e" >&2
+        cat "$o"
+        rm -f "$o" "$e"
+        exit $rc' sh "$*"
 }
 
-# The native binary as a third machine with a throwaway HOME.
+# The native binary as a third machine with a throwaway HOME (output via files, as in `on`).
 macuc() {
+    local o e rc=0
+    o=$(mktemp)
+    e=$(mktemp)
     env HOME="$mac_home" UC_HOME="$mac_home/.ultracontext" CLAUDE_CONFIG_DIR="$mac_home/.claude" \
-        CODEX_HOME="$mac_home/.codex" UC_TOKEN="$UC_TOKEN" UC_LOG="${UC_LOG:-debug}" "$mac_uc" "$@"
+        CODEX_HOME="$mac_home/.codex" UC_TOKEN="$UC_TOKEN" UC_LOG="${UC_LOG:-debug}" \
+        "$mac_uc" "$@" >"$o" 2>"$e" </dev/null || rc=$?
+    cat "$e" >&2
+    cat "$o"
+    rm -f "$o" "$e"
+    return "$rc"
 }
 
 # JSON checks without jq: compare with all whitespace removed.
@@ -141,8 +162,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
-step "build image (uc from $repo)"
-dc build
+if [ "$build" -eq 1 ]; then
+    step "build image (uc from $repo)"
+    dc build
+fi
 
 step "start hub + linux1 (user fabio, /home/fabio) + linux2 (root, /root)"
 dc up -d
@@ -157,6 +180,9 @@ for svc in linux1 linux2; do
 done
 
 step "linux1: init over ssh, share ~/Code"
+for svc in linux1 linux2; do
+    on "$svc" 'mkdir -p ~/.claude ~/.codex' # agents installed, no sessions yet
+done
 on linux1 'mkdir -p ~/Code/proj && printf "hello from linux1\n" > ~/Code/proj/hello.txt &&
     printf "#!/bin/sh\necho hi\n" > ~/Code/proj/run.sh && chmod +x ~/Code/proj/run.sh &&
     ln -s hello.txt ~/Code/proj/link'

@@ -516,7 +516,8 @@ fn cmd_spaces(app: &App) -> Result<i32> {
         }
     };
     let mut rows: BTreeMap<String, SpaceRow> = BTreeMap::new();
-    for s in hub.iter().flatten() {
+    // '@claude' / '@codex' hold agent sessions (see `uc sessions`), not folders
+    for s in hub.iter().flatten().filter(|s| !s.name.starts_with('@')) {
         rows.insert(
             s.name.clone(),
             SpaceRow {

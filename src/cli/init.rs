@@ -180,7 +180,8 @@ pub fn cmd_init(app: &App, a: InitArgs) -> Result<i32> {
     let mut joined = Vec::new();
     let mut available = Vec::new();
     for s in hub_spaces {
-        if cfg_now.space(&s.name).is_some() {
+        // '@claude', '@codex': agent sessions sync on their own, they are not folders
+        if s.name.starts_with('@') || cfg_now.space(&s.name).is_some() {
             continue;
         }
         let join = if a.yes {

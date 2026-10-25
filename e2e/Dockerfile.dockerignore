@@ -1,3 +1,5 @@
+# Allow-list: only what the build needs (never .env files, local DBs or other checkouts' junk).
+# skills/ is embedded with include_str!.
 *
 !Cargo.toml
 !Cargo.lock
