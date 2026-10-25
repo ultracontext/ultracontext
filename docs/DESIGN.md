@@ -251,7 +251,7 @@ Path map tokens:
 | `@@UC_SPACE:<name>@@` | local path of space `<name>` (longest match first) |
 | `@@UC_HOME@@` | `$HOME` |
 
-A replacement only happens at a path boundary: the next char must not be alphanumeric, `-`, `_`, or `.`. So `/Users/fabioroma` on the Mac becomes `/home/fabio` on Linux. The resumed agent then sees paths that exist on the new machine.
+A replacement only happens at a path boundary: the next char must not be alphanumeric, `-`, `_`, or `.`. So `/Users/fabioroma` on the Mac becomes `/home/fabio` on Linux. The resumed agent then sees paths that exist on the new machine. Drivers may opt out and replicate byte-exact; Codex does (§6.5a).
 
 The client tracks a sync point per log: `(local_len, canon_len, local_tail_fp)`. When local bytes past `local_len` grow, the new lines are cleaned and appended. Remote appends are smudged and appended locally. If the local prefix changes (the file shrank or was rewritten), the owner sends `LogReset` with the full cleaned content.
 
@@ -302,6 +302,34 @@ On each machine, the daemon materializes a session into the agent's native locat
 - `uc resume` asks for it.
 
 The file mtime is set to the session's last activity. That way `claude --continue` in a project picks the most recently active session from **any** machine.
+
+### 6.5a Agent facts the drivers rely on (verified on Claude Code 2.1.310, Codex 0.162.1)
+
+**Claude Code**
+
+- **Location**: transcript at `projects/<slug>/<id>.jsonl`.
+  - The slug is the cwd with every UTF-16 unit outside `[A-Za-z0-9]` replaced by `-`.
+  - If the slug is longer than 200 chars: `slug[..200] + "-" + base36(|javaHash(cwd)|)`.
+- **Resume**: `claude --resume <id>` works from any directory, but only if the id exists in exactly **one** slug dir. So a machine never holds two copies, and a relocated session is moved, not copied. The resumed session keeps writing to the same file.
+- **Continue**: `claude --continue` picks the newest file by mtime in the current slug dir. So materialized files get `mtime = last activity`.
+- **Writes**: one `appendFile` per flushed chunk, with no long-lived file handle. A session is live when `sessions/<pid>.json` names it and the pid is alive.
+- **Rewrites**: tombstone truncation and optional GC rewrite the file. The owner sends `LogReset` for these.
+- **Path rewriting is safe**: resume walks the `uuid`/`parentUuid` tree, not byte offsets.
+- **Sidecars** under `<id>/` are synced:
+  - `subagents/*.jsonl` (as logs)
+  - `subagents/*.meta.json`, `tool-results/*`, `session-memory/*`, `file-history/<id>/*` (as files)
+
+**Codex**
+
+- **Location**: rollout at `sessions/YYYY/MM/DD/rollout-<local-ts>-<uuid>.jsonl`, at the same relative path on every machine.
+- **Resume**: `codex resume <id>` finds a rollout from the file alone (filename walk, then DB repair). The state DBs are never synced, because they hold absolute paths.
+- **Writes**: one long-lived `O_APPEND` file handle, possibly held by a shared app-server. A writer is live when `thread-writer-locks/<id>.lock` is locked. Never rename over a live rollout.
+- **Byte offsets are load-bearing** (fork `history_base`, projections). So Codex lines replicate **byte-exact**: the driver's clean/smudge are identity. The cwd moves through `codex resume -C <local cwd> <id>` instead.
+- **Not synced in v1**: `.jsonl.zst` (compressed, more than 7 days old) and revert files (`…_<rollout>.jsonl`).
+
+**Both agents**
+
+- **Local deletes in agent spaces are never propagated.** Agents prune their own files: Claude has 30-day retention, and Codex compresses and archives. Such a prune is not a user's intent to delete the session everywhere.
 
 ### 6.6 Drivers
 
