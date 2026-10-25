@@ -30,6 +30,25 @@ const BUILTIN_ANY: &[&str] = &[
     "**/.git/gc.pid",
     "**/.git/objects/pack/tmp_*",
     "**/.git/objects/*/tmp_obj_*",
+    "**/.git/objects/tmp_objdir-*",
+    "**/.git/gc.log",
+    // macOS AppleDouble / Finder icons, vim's write probe, emacs autosaves
+    "**/._*",
+    "**/Icon\r",
+    "**/4913",
+    "**/#*#",
+    // Claude Code's own atomic-write temp files: <target>.tmp.<pid>.<hex>
+    "**/*.tmp.[0-9]*",
+    // live SQLite sidecars: a copy without its database (or vice versa) is corrupt
+    "**/*.db-wal",
+    "**/*.db-shm",
+    "**/*.db-journal",
+    "**/*.sqlite-wal",
+    "**/*.sqlite-shm",
+    "**/*.sqlite-journal",
+    "**/*.sqlite3-wal",
+    "**/*.sqlite3-shm",
+    "**/*.sqlite3-journal",
 ];
 const BUILTIN_DIRS: &[&str] = &[
     "**/node_modules",
@@ -46,6 +65,9 @@ const BUILTIN_DIRS: &[&str] = &[
     "**/.gradle",
     "**/.terraform",
     "**/.git/fsmonitor--daemon",
+    "**/.direnv",
+    // Claude Code worktrees hold absolute gitdir paths of the machine that made them
+    "**/.claude/worktrees",
 ];
 
 pub const UCIGNORE: &str = ".ucignore";

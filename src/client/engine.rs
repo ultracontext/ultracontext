@@ -900,7 +900,9 @@ impl Engine {
 
     async fn apply_remote(&self, space: &str, rel: &str, abs: &Path, r: &Entry, expect: Option<&LocalFp>) -> Result<Step> {
         let hub = &self.ctx.hub;
-        let mtime = (r.mtime > 0).then_some(r.mtime);
+        // Like `git checkout`: a synced file gets the current time, never the origin's mtime,
+        // or make/cargo would consider stale outputs fresh.
+        let mtime = None;
         let placed = match r.kind {
             Kind::File => {
                 let tmp = apply::temp_beside(abs)?;
