@@ -90,11 +90,15 @@ pub fn expand_tilde(p: &str) -> PathBuf {
 /// Render an absolute path as `~/...` when it is under `$HOME` (for display and default space paths).
 pub fn tilde(p: &Path) -> String {
     let h = home();
-    if let Ok(rest) = p.strip_prefix(&h) {
-        if rest.as_os_str().is_empty() {
-            return "~".to_string();
+    // $HOME may sit behind a symlink (macOS /tmp -> /private/tmp) while `p` is canonicalized.
+    let homes = [Some(h.clone()), h.canonicalize().ok()];
+    for h in homes.iter().flatten() {
+        if let Ok(rest) = p.strip_prefix(h) {
+            if rest.as_os_str().is_empty() {
+                return "~".to_string();
+            }
+            return format!("~/{}", rest.to_string_lossy());
         }
-        return format!("~/{}", rest.to_string_lossy());
     }
     p.to_string_lossy().to_string()
 }

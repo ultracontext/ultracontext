@@ -433,6 +433,12 @@ impl Conn {
                     .await?;
                 outcome_msg(id, o)
             }
+            Msg::Release { id, space, path } => {
+                state
+                    .with_store(move |s| s.release(&space, &path, &origin))
+                    .await?;
+                Msg::Ok { re: id }
+            }
             Msg::SpaceCreate {
                 id,
                 name,

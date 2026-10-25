@@ -28,7 +28,7 @@ mod tests;
 use store::{BlobStore, Store};
 
 /// Default `lease_idle_ms` (DESIGN §6.4).
-pub const DEFAULT_LEASE_IDLE_MS: i64 = 120_000;
+pub const DEFAULT_LEASE_IDLE_MS: i64 = 30_000;
 
 #[derive(Debug, Clone)]
 pub struct HubOpts {

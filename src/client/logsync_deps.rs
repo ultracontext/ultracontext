@@ -33,6 +33,11 @@ pub trait LogHub: Send + Sync {
     fn query(&self, q: Query) -> BoxFut<'_, Result<Value>>;
     fn upload_bytes<'a>(&'a self, data: &'a [u8], hash: &'a str) -> BoxFut<'a, Result<()>>;
     fn download_blob<'a>(&'a self, hash: &'a str, dest: &'a Path) -> BoxFut<'a, Result<()>>;
+    /// Drop our lease on a log (DESIGN §6.4). Default: no-op (test hubs without leases).
+    fn release<'a>(&'a self, space: &'a str, path: &'a str) -> BoxFut<'a, Result<()>> {
+        let _ = (space, path);
+        Box::pin(async { Ok(()) })
+    }
 }
 
 impl LogHub for HubClient {
@@ -62,6 +67,16 @@ impl LogHub for HubClient {
     }
     fn download_blob<'a>(&'a self, hash: &'a str, dest: &'a Path) -> BoxFut<'a, Result<()>> {
         Box::pin(HubClient::download_blob(self, hash, dest))
+    }
+    fn release<'a>(&'a self, space: &'a str, path: &'a str) -> BoxFut<'a, Result<()>> {
+        Box::pin(async move {
+            let msg = Msg::Release {
+                id: HubClient::next_id(self),
+                space: space.to_string(),
+                path: path.to_string(),
+            };
+            HubClient::request(self, msg, Vec::new()).await.map(|_| ())
+        })
     }
 }
 

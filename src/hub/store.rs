@@ -1110,6 +1110,19 @@ impl Store {
                     idle_ms: idle_ms.max(0),
                 });
             }
+            if o == origin {
+                // the owner re-claiming is a lease heartbeat: refresh owner_at, no log row
+                self.db.execute(
+                    "UPDATE entries SET owner_at = ?3 WHERE space = ?1 AND path = ?2",
+                    rusqlite::params![space, path, now],
+                )?;
+                let seq = e.version;
+                return Ok(Outcome::Committed {
+                    seq,
+                    entry: Entry { owner_at: now, ..e },
+                    new: false,
+                });
+            }
         }
         let seq = self.head + 1;
         let entry = Entry {
@@ -1125,6 +1138,18 @@ impl Store {
             entry,
             new: true,
         })
+    }
+
+    /// The owner gives up its lease (its agent is no longer running the session), so another
+    /// machine can continue it without a takeover. No-op unless `origin` is the owner.
+    pub fn release(&mut self, space: &str, path: &str, origin: &str) -> Result<()> {
+        check_path(path)?;
+        check_space(space)?;
+        self.db.execute(
+            "UPDATE entries SET owner = NULL, owner_at = 0 WHERE space = ?1 AND path = ?2 AND owner = ?3",
+            rusqlite::params![space, path, origin],
+        )?;
+        Ok(())
     }
 
     /// `[offset, offset+len)` of a live log (len capped at `CHUNK`). Returns (bytes, eof).

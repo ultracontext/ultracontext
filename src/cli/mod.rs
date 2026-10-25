@@ -1293,7 +1293,7 @@ fn hub_serve(tcp: Option<String>, detach: bool, json: bool) -> Result<i32> {
         uc_home,
         tcp,
         token,
-        lease_idle_ms: 120_000,
+        lease_idle_ms: crate::hub::DEFAULT_LEASE_IDLE_MS,
     }))?;
     Ok(EXIT_OK)
 }

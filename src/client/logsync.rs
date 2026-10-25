@@ -48,6 +48,8 @@ type Key = (String, String);
 const META_WINDOW: u64 = 64 * 1024;
 const READ_CHUNK: u64 = 4 * 1024 * 1024;
 const FORKS_KV: &str = "logsync.forks";
+/// Lease heartbeat / release cadence; well under the hub's lease (hub::DEFAULT_LEASE_IDLE_MS).
+const LEASE_EVERY: Duration = Duration::from_secs(10);
 const DAY_MS: i64 = 86_400_000;
 /// Claude deletes transcripts whose mtime is older than cleanupPeriodDays (30) at startup.
 const MIN_MTIME_AGE_MS: i64 = 20 * DAY_MS;
@@ -331,6 +333,7 @@ impl LogSync {
 
     /// Background loop (debounced pushes, deferred materialization, fork reconciliation).
     pub async fn run(self: Arc<Self>) -> Result<()> {
+        let mut last_lease = Instant::now();
         loop {
             tokio::select! {
                 _ = self.wake.notified() => {}
@@ -339,7 +342,59 @@ impl LogSync {
             if let Err(e) = self.tick(false).await {
                 self.report(&e);
             }
+            if last_lease.elapsed() >= LEASE_EVERY {
+                last_lease = Instant::now();
+                if let Err(e) = self.maintain_leases().await {
+                    tracing::debug!("session lease upkeep: {e:#}");
+                }
+            }
         }
+    }
+
+    /// Lease upkeep (DESIGN §6.4). While an agent runs one of our sessions here, heartbeat the
+    /// lease so other machines see it live (they must take over or fork). Once the agent stopped
+    /// (no process, no recent writes), release it: the next machine continues without a prompt.
+    /// A sleeping laptop sends nothing, so its leases lapse on the hub after `lease_idle_ms`.
+    pub async fn maintain_leases(&self) -> Result<()> {
+        if !self.deps.hub.is_connected() {
+            return Ok(());
+        }
+        let me = self.deps.machine.id.clone();
+        for d in &self.drivers {
+            for row in self.deps.store.rows(d.space())? {
+                if !is_transcript(&row.path) {
+                    continue;
+                }
+                let Some(r) = row.remote.as_ref() else { continue };
+                if r.deleted || r.owner.as_deref() != Some(me.as_str()) {
+                    continue;
+                }
+                let Some(native) = row.base.as_ref().and_then(|b| b.log.as_ref()) else {
+                    continue;
+                };
+                let Some(sid) = sid_of(&row.path) else { continue };
+                if self.is_live(d, sid, Path::new(&native.native)) {
+                    let msg = Msg::Claim {
+                        id: self.deps.hub.next_id(),
+                        space: row.space.clone(),
+                        path: row.path.clone(),
+                        force: false,
+                    };
+                    if let Commit::Committed { entry, .. } = self.deps.hub.commit(msg, Vec::new()).await? {
+                        self.deps.store.set_remote(&entry)?;
+                    }
+                } else {
+                    self.deps.hub.release(&row.space, &row.path).await?;
+                    let released = Entry {
+                        owner: None,
+                        owner_at: 0,
+                        ..r.clone()
+                    };
+                    self.deps.store.set_remote(&released)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// One reconciliation pass. `force` ignores the debounce (tests, `uc sync`).
@@ -431,6 +486,9 @@ impl LogSync {
                 continue;
             };
             s.local_cwd = s.meta.cwd.as_deref().map(|c| map.smudge(c));
+            // titles/prompts are stored canonical (tokenized paths); show them in local terms
+            s.meta.title = s.meta.title.as_deref().map(|t| map.smudge(t));
+            s.meta.first_prompt = s.meta.first_prompt.as_deref().map(|t| map.smudge(t));
             let base_native = self
                 .deps
                 .store

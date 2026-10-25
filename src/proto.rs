@@ -455,11 +455,19 @@ pub enum Msg {
         offset: u64,
         len: u64,
     },
+    /// Take ownership of a log. Sent by the current owner it is a lease heartbeat (no log row).
     Claim {
         id: u64,
         space: String,
         path: String,
         force: bool,
+    },
+    /// The owner's agent stopped running the session: drop the lease so another machine can
+    /// continue it without a takeover (DESIGN §6.4). Answered with Ok; no-op for non-owners.
+    Release {
+        id: u64,
+        space: String,
+        path: String,
     },
     SpaceCreate {
         id: u64,
@@ -529,6 +537,7 @@ impl Msg {
             | LogReset { id, .. }
             | LogRead { id, .. }
             | Claim { id, .. }
+            | Release { id, .. }
             | SpaceCreate { id, .. }
             | Query { id, .. }
             | Ping { id }
