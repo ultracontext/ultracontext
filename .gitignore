@@ -7,3 +7,5 @@
 /sdks/
 /clube.json
 /test.excalidraw
+.claude/worktrees/
+.claude/settings.local.json
