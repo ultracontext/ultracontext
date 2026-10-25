@@ -15,7 +15,7 @@ RUN mkdir src \
  && cargo fetch --locked \
  && cargo build --release --locked \
  && rm -rf src target/release/uc target/release/deps/uc-* target/release/.fingerprint/ultracontext-*
-COPY src ./src
+COPY . .
 # touch: COPY keeps host mtimes, which may predate the dummy build above.
 RUN touch src/main.rs \
  && cargo build --release --locked \

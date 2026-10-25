@@ -5,7 +5,9 @@
 #   e2e/run.sh              build, run the scenario, tear everything down
 #   e2e/run.sh --with-mac   also run the native binary (target/debug/uc) as machine "mac"
 #   e2e/run.sh --keep       leave the containers up afterwards (docker compose -p uc-e2e ...)
+#   e2e/run.sh --no-build   use the existing uc-e2e:dev image
 #
+# UC_E2E_MAC_BIN overrides the native binary; UC_E2E_PORT the host port of the hub (7707).
 # Exits non-zero on the first failed check, after printing hub/daemon logs.
 # shellcheck disable=SC2016 # single-quoted snippets are expanded inside the containers
 set -euo pipefail
@@ -14,12 +16,14 @@ here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/.." && pwd)
 with_mac=0
 keep=0
+build=1
 for arg in "$@"; do
     case "$arg" in
     --with-mac) with_mac=1 ;;
     --keep) keep=1 ;;
+    --no-build) build=0 ;;
     -h | --help)
-        sed -n '2,9p' "$0"
+        sed -n '2,12p' "$0"
         exit 0
         ;;
     *)
@@ -35,7 +39,7 @@ export UC_TOKEN UC_E2E_PORT
 dc() { docker compose -f "$here/docker-compose.yml" "$@"; }
 
 mac_home=""
-mac_uc="$repo/target/debug/uc"
+mac_uc=${UC_E2E_MAC_BIN:-$repo/target/debug/uc}
 
 step() { printf '\n── %s\n' "$*"; }
 fail() {
@@ -158,8 +162,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
-step "build image (uc from $repo)"
-dc build
+if [ "$build" -eq 1 ]; then
+    step "build image (uc from $repo)"
+    dc build
+fi
 
 step "start hub + linux1 (user fabio, /home/fabio) + linux2 (root, /root)"
 dc up -d

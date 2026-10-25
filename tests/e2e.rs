@@ -688,6 +688,52 @@ fn claude_session_follows_you() {
     );
 }
 
+// ---------------------------------------------------------------- g2) a machine joins later
+
+/// A new machine joins after sessions exist: its folder spaces must be mapped before sessions are
+/// materialized, or `@@UC_SPACE:code@@` lands at a wrong path (wrong Claude project dir).
+#[test]
+fn late_joiner_gets_sessions() {
+    let Some((w, mac, linux)) = code_pair("late_joiner", |c| {
+        put(c, "proj/main.py", b"print('hi')\n");
+    }) else {
+        return;
+    };
+    let mac_cwd = mac.code().join("proj");
+    let mac_home = mac.home.to_string_lossy().into_owned();
+    let id = new_uuid();
+    let u1 = new_uuid();
+    let mac_file = mac.claude_transcript(&mac_cwd, &id);
+    let prompt = format!("Explain {}/main.py", mac_cwd.display());
+    append_line(
+        &mac_file,
+        &claude_user_line(&id, &mac_cwd, &u1, None, &prompt),
+    );
+    let mac_content = String::from_utf8(read(&mac_file).expect("mac transcript")).expect("utf8");
+    mac.sync();
+    linux.sync();
+
+    let late = w.machine("late");
+    late.init();
+    late.expect_space("code", &late.code());
+    late.sync();
+    let late_home = late.home.to_string_lossy().into_owned();
+    let late_file = late.claude_transcript(&late.code().join("proj"), &id);
+    let want = translate(&mac_content, &mac_home, &late_home);
+    let ok = wait_until(Duration::from_secs(10), || {
+        read(&late_file).as_deref() == Some(want.as_bytes())
+    });
+    let found = find_named(&late.claude_dir, &format!("{id}.jsonl"));
+    w.check(ok && found.len() == 1, || {
+        format!(
+            "late: transcript should be at {} with {mac_home} -> {late_home}; found {found:?}\n  expected: {}",
+            late_file.display(),
+            clip(&want, 1500)
+        )
+    });
+    assert_file(&w, &late, "proj/main.py", b"print('hi')\n");
+}
+
 // ---------------------------------------------------------------- h) Codex session
 
 #[test]
