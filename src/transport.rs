@@ -206,6 +206,11 @@ pub fn ssh_args(target: &str, port: Option<u16>, remote_uc: Option<&str>) -> Vec
         "ServerAliveCountMax=3",
         "-o",
         "ConnectTimeout=10",
+        // never ride (or kill) the user's multiplexed connection: the sync channel is long-lived
+        "-o",
+        "ControlMaster=no",
+        "-o",
+        "ControlPath=none",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -390,7 +395,7 @@ mod tests {
         assert_eq!(
             a.join(" "),
             "-T -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
-             -o ConnectTimeout=10 -p 2222 fabio@uc -- /opt/uc/bin/uc hub connect"
+             -o ConnectTimeout=10 -o ControlMaster=no -o ControlPath=none -p 2222 fabio@uc -- /opt/uc/bin/uc hub connect"
         );
         let a = ssh_args("uc", None, None);
         assert_eq!(

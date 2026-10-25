@@ -2,7 +2,7 @@
 name = "ultracontext"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.89"
 description = "Dropbox for developers and their agents: real-time folder + Claude Code / Codex session sync across machines."
 license = "Apache-2.0"
 repository = "https://github.com/ultracontext/ultracontext"

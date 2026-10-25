@@ -34,6 +34,9 @@ use crate::proto::{
 const RESCAN_EVERY: Duration = Duration::from_secs(300);
 /// Housekeeping tick; a much later wall clock than expected means the machine slept.
 const TICK: Duration = Duration::from_secs(30);
+/// Trash keeps every file uc overwrote or deleted locally for this long (DESIGN §2).
+const TRASH_KEEP_DAYS: i64 = 30;
+const PURGE_EVERY: Duration = Duration::from_secs(24 * 3600);
 const WAKE_GAP_MS: i64 = 90_000;
 const START_TIMEOUT: Duration = Duration::from_secs(5);
 const LIVE_QUERY_TIMEOUT: Duration = Duration::from_millis(1500);
@@ -145,6 +148,8 @@ pub async fn run(paths: Paths) -> Result<()> {
     let mut tick = tokio::time::interval(TICK);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut last_rescan = Instant::now();
+    // first purge one tick after start, then daily
+    let mut last_purge = Instant::now() - PURGE_EVERY + TICK;
     let mut last_wall = paths::now_ms();
 
     let result: Result<()> = loop {
@@ -158,6 +163,17 @@ pub async fn run(paths: Paths) -> Result<()> {
                 let now = paths::now_ms();
                 let woke = now - last_wall > WAKE_GAP_MS;
                 last_wall = now;
+                if last_purge.elapsed() >= PURGE_EVERY {
+                    last_purge = Instant::now();
+                    let trash = d.ctx.paths.trash();
+                    tokio::task::spawn_blocking(move || {
+                        match super::apply::purge_trash(&trash, TRASH_KEEP_DAYS) {
+                            Ok(n) if n > 0 => info!("trash: removed {n} entries older than {TRASH_KEEP_DAYS} days"),
+                            Ok(_) => {}
+                            Err(e) => warn!("trash purge: {e:#}"),
+                        }
+                    });
+                }
                 if woke || last_rescan.elapsed() >= RESCAN_EVERY {
                     if woke {
                         info!("clock jumped (sleep/wake?): rescanning");
