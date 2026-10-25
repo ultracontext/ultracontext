@@ -291,6 +291,20 @@ pub fn cmd_resume(app: &App, a: ResumeArgs) -> Result<i32> {
             )
         })
         .unwrap_or_default();
+    if !plan.unsynced.is_empty() {
+        note(&format!(
+            "{} this session edited {} file(s) outside your synced folders; those changes stayed on the other machine:",
+            output::warn_mark(),
+            plan.unsynced.len()
+        ));
+        for p in plan.unsynced.iter().take(8) {
+            note(&format!("    {}", paths::tilde(Path::new(p))));
+        }
+        if plan.unsynced.len() > 8 {
+            note(&format!("    … and {} more (uc resume --json lists all)", plan.unsynced.len() - 8));
+        }
+        note("  sync their folder next time: uc add <dir>");
+    }
     note(&format!(
         "resuming {} session {} from {from} in {}{fork_note}",
         plan.agent,

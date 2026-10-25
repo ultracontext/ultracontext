@@ -74,6 +74,7 @@ Before you close the lid, you can run `uc sync`. It waits until everything is on
 - **Paths are rewritten for each machine.** `/Users/you/Code/app` on the Mac becomes `/home/you/Code/app` on Linux. The resumed agent sees paths that exist on the machine it now runs on.
 - **Claude Code** transcripts are written to the folder Claude itself uses for that project on that machine. Their mtime is the last activity, so `claude --continue` in the project picks the newest session from any machine.
 - **Codex** rollouts are copied byte for byte, because Codex depends on exact byte offsets. uc runs them with `codex resume -C <local dir> <id>`.
+- **Files outside your synced folders don't move.** If a session edited such files (say `~/.zshrc`), `uc resume` lists them before continuing, so you know what stayed behind.
 - **A session is "live"** only while an awake machine is actually running it. That machine renews a 30-second lease on the hub.
   - When you close the laptop, the lease runs out and the session is free within 30 seconds.
   - `uc resume` on a live session asks you to **take over** (the other machine stops writing to it) or **fork** (you continue as a new session).

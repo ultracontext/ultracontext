@@ -346,6 +346,10 @@ pub struct ResumePlan {
     pub forked_to: Option<String>,
     /// the cwd does not exist on this machine
     pub cwd_missing: bool,
+    /// files the session edited that live outside every synced folder: their changes did NOT
+    /// follow the session to this machine (local paths, at most 50)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unsynced: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

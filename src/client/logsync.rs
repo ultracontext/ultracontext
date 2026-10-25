@@ -2218,6 +2218,17 @@ impl LogSync {
             .and_then(|b| b.log)
             .map(|p| p.native)
             .unwrap_or_default();
+        let roots: Vec<PathBuf> = map
+            .spaces
+            .iter()
+            .map(|(_, p)| PathBuf::from(p))
+            .chain(map.physical.iter().map(|(p, _)| PathBuf::from(p)))
+            .chain([d.root()])
+            .collect();
+        let unsynced = match std::fs::read(&native_path) {
+            Ok(data) => unsynced_edits(&data, &roots),
+            Err(_) => Vec::new(),
+        };
         Ok(ResumePlan {
             agent: d.name().to_string(),
             id: meta.id.clone(),
@@ -2227,8 +2238,48 @@ impl LogSync {
             native_path,
             took_over,
             forked_to,
+            unsynced,
         })
     }
+}
+
+/// Absolute paths of files a transcript edited (Claude tool inputs/results, Codex patch changes)
+/// that lie outside every synced root: their changes stayed on the machine that made them.
+pub(crate) fn unsynced_edits(transcript: &[u8], roots: &[PathBuf]) -> Vec<String> {
+    fn walk(v: &serde_json::Value, out: &mut std::collections::BTreeSet<String>) {
+        match v {
+            serde_json::Value::Object(m) => {
+                for (k, x) in m {
+                    if matches!(k.as_str(), "file_path" | "filePath" | "notebook_path") {
+                        if let Some(p) = x.as_str() {
+                            out.insert(p.to_string());
+                        }
+                    }
+                    if k == "changes" {
+                        if let Some(c) = x.as_object() {
+                            out.extend(c.keys().cloned());
+                        }
+                    }
+                    walk(x, out);
+                }
+            }
+            serde_json::Value::Array(a) => a.iter().for_each(|x| walk(x, out)),
+            _ => {}
+        }
+    }
+    let mut found = std::collections::BTreeSet::new();
+    for line in transcript.split(|&b| b == b'\n') {
+        if let Ok(v) = serde_json::from_slice::<serde_json::Value>(line) {
+            walk(&v, &mut found);
+        }
+    }
+    const SCRATCH: [&str; 4] = ["/tmp/", "/private/tmp/", "/private/var/folders/", "/var/folders/"];
+    found
+        .into_iter()
+        .filter(|p| p.starts_with('/') && !SCRATCH.iter().any(|s| p.starts_with(s)))
+        .filter(|p| !roots.iter().any(|r| Path::new(p).starts_with(r)))
+        .take(50)
+        .collect()
 }
 
 /// `projects/<other slug>/<sid>.jsonl` when the transcript `rel` exists locally under another

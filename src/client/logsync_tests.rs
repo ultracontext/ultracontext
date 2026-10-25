@@ -1036,3 +1036,18 @@ fn futures_are_send(ls: Arc<LogSync>, c: Change) {
     send(ls.tick(true));
     send(ls.resume(None, "x", false, false));
 }
+
+#[test]
+fn unsynced_edits_lists_files_outside_synced_roots() {
+    let t = concat!(
+        r#"{"type":"assistant","message":{"content":[{"type":"tool_use","input":{"file_path":"/home/f/Code/app/a.rs"}}]}}"#, "\n",
+        r#"{"type":"assistant","message":{"content":[{"type":"tool_use","input":{"file_path":"/home/f/.zshrc"}}]}}"#, "\n",
+        r#"{"type":"user","toolUseResult":{"filePath":"/tmp/scratch.txt"}}"#, "\n",
+        r#"{"type":"event_msg","payload":{"changes":{"/etc/hosts":{}}}}"#, "\n",
+    );
+    let roots = vec![PathBuf::from("/home/f/Code")];
+    assert_eq!(
+        super::unsynced_edits(t.as_bytes(), &roots),
+        vec!["/etc/hosts".to_string(), "/home/f/.zshrc".to_string()]
+    );
+}
