@@ -24,6 +24,8 @@ use crate::proto::{Change, Entry, Kind, LogRecord, Msg, Op, Query, SpaceStatus};
 
 /// A path changing for longer than this is pushed anyway, from a stable snapshot (§5.2).
 const MAX_DIRTY: Duration = Duration::from_secs(5);
+/// Paths reconciled at once (their hub requests pipeline over one connection).
+const PARALLEL: usize = 48;
 const TICK: Duration = Duration::from_millis(100);
 const RETRY_MIN: Duration = Duration::from_millis(500);
 const RETRY_MAX: Duration = Duration::from_secs(60);
@@ -540,19 +542,43 @@ impl Engine {
             let batch = self.ready();
             // refs/index wait while git objects of the same space are still in flight (§5.5)
             let mut objects_pending = self.spaces_with_unready_objects(&batch);
-            for (space, rel, gen) in batch {
+            // §5.5 order holds between classes (objects, tree, refs, index); paths within one
+            // class are independent, so they run concurrently and their hub requests pipeline
+            // over the one connection instead of paying a round trip each.
+            let mut by_class: std::collections::BTreeMap<u8, Vec<(String, String, u64)>> =
+                std::collections::BTreeMap::new();
+            for item in batch {
+                by_class.entry(order_class(&item.1)).or_default().push(item);
+            }
+            for (class, items) in by_class {
                 if !self.ctx.hub.is_connected() {
                     break;
                 }
-                let class = order_class(&rel);
-                if class >= 2 && objects_pending.contains(&space) {
-                    continue;
+                let mut queue = items.into_iter();
+                let mut running = tokio::task::JoinSet::new();
+                loop {
+                    while running.len() < PARALLEL {
+                        let Some((space, rel, gen)) = queue.next() else { break };
+                        if class >= 2 && objects_pending.contains(&space) {
+                            continue;
+                        }
+                        let me = self.clone();
+                        running.spawn(async move {
+                            let res = me.reconcile(&space, &rel).await;
+                            (space, rel, gen, res)
+                        });
+                    }
+                    match running.join_next().await {
+                        Some(Ok((space, rel, gen, res))) => {
+                            if res.is_err() && class == 0 {
+                                objects_pending.insert(space.clone());
+                            }
+                            self.finish(&space, &rel, gen, res);
+                        }
+                        Some(Err(e)) => warn!("sync task failed: {e}"),
+                        None => break,
+                    }
                 }
-                let res = self.reconcile(&space, &rel).await;
-                if res.is_err() && class == 0 {
-                    objects_pending.insert(space.clone());
-                }
-                self.finish(&space, &rel, gen, res);
             }
         }
     }
