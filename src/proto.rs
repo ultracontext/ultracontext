@@ -462,6 +462,13 @@ pub enum Msg {
         path: String,
         force: bool,
     },
+    /// The owner's agent is still working on the session: refresh the lease (never acquires
+    /// it). Answered with Ok; no-op unless the sender is the owner.
+    Heartbeat {
+        id: u64,
+        space: String,
+        path: String,
+    },
     /// The owner's agent stopped running the session: drop the lease so another machine can
     /// continue it without a takeover (DESIGN §6.4). Answered with Ok; no-op for non-owners.
     Release {
@@ -538,6 +545,7 @@ impl Msg {
             | LogRead { id, .. }
             | Claim { id, .. }
             | Release { id, .. }
+            | Heartbeat { id, .. }
             | SpaceCreate { id, .. }
             | Query { id, .. }
             | Ping { id }

@@ -54,6 +54,8 @@ const MAX_APPEND: usize = crate::proto::MAX_FRAME - 256 * 1024;
 const FORKS_KV: &str = "logsync.forks";
 /// Lease heartbeat / release cadence; well under the hub's lease (hub::DEFAULT_LEASE_IDLE_MS).
 const LEASE_EVERY: Duration = Duration::from_secs(10);
+/// Transcript writes this recent count as "an agent is working on it" (under the hub lease).
+const LEASE_ACTIVE_MS: i64 = 25_000;
 const DAY_MS: i64 = 86_400_000;
 /// Claude deletes transcripts whose mtime is older than cleanupPeriodDays (30) at startup.
 const MIN_MTIME_AGE_MS: i64 = 20 * DAY_MS;
@@ -410,25 +412,22 @@ impl LogSync {
                 if !is_transcript(&row.path) {
                     continue;
                 }
-                let Some(r) = row.remote.as_ref() else { continue };
+                let Some(r) = row.remote.as_ref() else {
+                    continue;
+                };
                 if r.deleted || r.owner.as_deref() != Some(me.as_str()) {
                     continue;
                 }
                 let Some(native) = row.base.as_ref().and_then(|b| b.log.as_ref()) else {
                     continue;
                 };
-                let Some(sid) = sid_of(&row.path) else { continue };
-                if self.is_live(d, sid, Path::new(&native.native)) {
-                    let msg = Msg::Claim {
-                        id: self.deps.hub.next_id(),
-                        space: row.space.clone(),
-                        path: row.path.clone(),
-                        force: false,
-                    };
-                    if let Commit::Committed { entry, .. } = self.deps.hub.commit(msg, Vec::new()).await? {
-                        self.deps.store.set_remote(&entry)?;
-                    }
-                } else {
+                let Some(sid) = sid_of(&row.path) else {
+                    continue;
+                };
+                let behind = row.base.as_ref().is_some_and(|b| b.version < r.version);
+                if self.is_working(d, sid, Path::new(&native.native)) && !behind {
+                    self.deps.hub.heartbeat(&row.space, &row.path).await?;
+                } else if !behind {
                     self.deps.hub.release(&row.space, &row.path).await?;
                     let released = Entry {
                         owner: None,
@@ -783,6 +782,14 @@ impl LogSync {
         if let Some(fp) = lfs::fp(p) {
             self.st().written.insert(p.to_path_buf(), fp);
         }
+    }
+
+    /// Is an agent actively working on this session here (what keeps a lease)? Claude must be
+    /// busy (not idle at its prompt), or the transcript changed within the lease window. An open
+    /// but idle window must not hold the session against the user's other machine.
+    fn is_working(&self, d: &Arc<dyn AgentDriver>, sid: &str, native: &Path) -> bool {
+        let busy = d.name() == "claude" && crate::drivers::claude::is_busy_in(&d.root(), sid);
+        busy || self.touched_within(native, LEASE_ACTIVE_MS)
     }
 
     /// Live per the agent's own registry/locks, or touched recently by someone other than us.
@@ -1319,32 +1326,8 @@ impl LogSync {
             return self.fork(src, dst, n as u64).await;
         };
         let owner = r.owner.as_deref() == Some(self.deps.machine.id.as_str());
-        if owner && r.version == b.version {
-            let map = self.map();
-            let content = self.clean_bytes(src.d, &local[..n], &map, dst.fork.as_ref());
-            let h = hash::hash_bytes(&content);
-            self.deps.hub.upload_bytes(&content, &h).await?;
-            let meta = self.meta_for(src, dst, n as u64, &map);
-            let msg = Msg::LogReset {
-                id: self.deps.hub.next_id(),
-                space: dst.space.clone(),
-                path: dst.canonical.clone(),
-                base: Some(b.version),
-                hash: h,
-                size: content.len() as u64,
-                meta: meta.map(|m| m.to_meta()),
-            };
-            if let Commit::Committed { entry, .. } = self.deps.hub.commit(msg, Vec::new()).await? {
-                self.adopt_entry(&entry)?;
-                let p = LogPoint {
-                    local_len: n as u64,
-                    local_tail: hash::tail_fp(&local[..n]),
-                    native: src.abs.to_string_lossy().to_string(),
-                };
-                self.set_base(&dst.space, &dst.canonical, &log_base(&entry, p))?;
-                tracing::info!("session {} rewritten locally; hub log reset", src.sid);
-                return Ok(());
-            }
+        if owner && r.version == b.version && self.reset_hub_log(src, dst, b, &local, n).await? {
+            return Ok(());
         }
         if !owner && !r.deleted {
             // a follower copy that only lost lines (agent GC, tombstones) is stale, not a new
@@ -1355,9 +1338,12 @@ impl LogSync {
                 .read_log_range(&dst.space, &dst.canonical, 0, r.size)
                 .await?;
             let hub_lines: HashSet<&[u8]> = hub.split(|&c| c == b'\n').collect();
+            let smudged = self.smudge_bytes(src.d, &hub, &map);
+            let hub_local: HashSet<&[u8]> = smudged.split(|&c| c == b'\n').collect();
             if cleaned
                 .split(|&c| c == b'\n')
-                .all(|l| hub_lines.contains(l))
+                .zip(local[..n].split(|&c| c == b'\n'))
+                .all(|(c, l)| hub_lines.contains(c) || hub_local.contains(l))
             {
                 if hash::tail_fp(&hub) != r.hash
                     || self.is_live(src.d, src.sid, src.abs)
@@ -1384,7 +1370,63 @@ impl LogSync {
                 return Ok(());
             }
         }
+        if !owner && !r.deleted && r.version == b.version {
+            // the lease may simply be free (the other machine released it, which is not
+            // replicated): claim it and reset instead of forking an identical-prefix history
+            let msg = Msg::Claim {
+                id: self.deps.hub.next_id(),
+                space: dst.space.clone(),
+                path: dst.canonical.clone(),
+                force: false,
+            };
+            if let Commit::Committed { entry, .. } = self.deps.hub.commit(msg, Vec::new()).await? {
+                self.adopt_entry(&entry)?;
+                let mut b2 = b.clone();
+                b2.version = entry.version;
+                if self.reset_hub_log(src, dst, &b2, &local, n).await? {
+                    return Ok(());
+                }
+            }
+        }
         self.fork(src, dst, n as u64).await
+    }
+
+    /// The owner rewrote its local transcript (tombstones, GC): replace the hub log with it.
+    /// Ok(false) when the hub refused (then the caller forks).
+    async fn reset_hub_log(
+        &self,
+        src: &Src<'_>,
+        dst: &Dst,
+        b: &Base,
+        local: &[u8],
+        n: usize,
+    ) -> Result<bool> {
+        let map = self.map();
+        let content = self.clean_bytes(src.d, &local[..n], &map, dst.fork.as_ref());
+        let h = hash::hash_bytes(&content);
+        self.deps.hub.upload_bytes(&content, &h).await?;
+        let meta = self.meta_for(src, dst, n as u64, &map);
+        let msg = Msg::LogReset {
+            id: self.deps.hub.next_id(),
+            space: dst.space.clone(),
+            path: dst.canonical.clone(),
+            base: Some(b.version),
+            hash: h,
+            size: content.len() as u64,
+            meta: meta.map(|m| m.to_meta()),
+        };
+        if let Commit::Committed { entry, .. } = self.deps.hub.commit(msg, Vec::new()).await? {
+            self.adopt_entry(&entry)?;
+            let p = LogPoint {
+                local_len: n as u64,
+                local_tail: hash::tail_fp(&local[..n]),
+                native: src.abs.to_string_lossy().to_string(),
+            };
+            self.set_base(&dst.space, &dst.canonical, &log_base(&entry, p))?;
+            tracing::info!("session {} rewritten locally; hub log reset", src.sid);
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     /// No usable sync point: line-compare the local file with the hub log and adopt the common
@@ -1414,13 +1456,23 @@ impl LogSync {
         let map = self.map();
         let (mut hpos, mut lpos) = (0usize, 0usize);
         for line in local[..n].split_inclusive(|&b| b == b'\n') {
-            let c = self.clean_bytes(src.d, line, &map, dst.fork.as_ref());
-            if hub.len() - hpos >= c.len() && hub[hpos..hpos + c.len()] == c[..] {
-                hpos += c.len();
-                lpos += line.len();
-            } else {
+            let Some(hend) = hub[hpos..]
+                .iter()
+                .position(|&b| b == b'\n')
+                .map(|i| hpos + i + 1)
+            else {
+                break;
+            };
+            let hline = &hub[hpos..hend];
+            // equal in hub terms, or in local terms: clean(smudge(x)) need not give x back
+            // (a path of another machine's home inside text), so compare both ways
+            let same = self.clean_bytes(src.d, line, &map, dst.fork.as_ref()) == hline
+                || (dst.fork.is_none() && self.smudge_bytes(src.d, hline, &map) == line);
+            if !same {
                 break;
             }
+            hpos = hend;
+            lpos += line.len();
         }
         let p = LogPoint {
             local_len: lpos as u64,

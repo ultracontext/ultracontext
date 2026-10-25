@@ -433,6 +433,12 @@ impl Conn {
                     .await?;
                 outcome_msg(id, o)
             }
+            Msg::Heartbeat { id, space, path } => {
+                state
+                    .with_store(move |s| s.heartbeat(&space, &path, &origin, now_ms()))
+                    .await?;
+                Msg::Ok { re: id }
+            }
             Msg::Release { id, space, path } => {
                 state
                     .with_store(move |s| s.release(&space, &path, &origin))

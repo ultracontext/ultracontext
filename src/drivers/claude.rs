@@ -45,8 +45,20 @@ impl Claude {
 
 /// Liveness check against a Claude root (see [`Claude::is_live`]).
 pub fn is_live_in(root: &Path, session_id: &str) -> bool {
+    registry_state(root, session_id).is_some()
+}
+
+/// A running Claude process is WORKING on the session right now (registry `status` is not
+/// "idle"). A window left open at an idle prompt does not count: it must not hold the session
+/// against another machine for hours.
+pub fn is_busy_in(root: &Path, session_id: &str) -> bool {
+    registry_state(root, session_id).is_some_and(|status| status.as_deref() != Some("idle"))
+}
+
+/// `Some(status)` when a live process registered this session (status may be absent).
+fn registry_state(root: &Path, session_id: &str) -> Option<Option<String>> {
     let Ok(rd) = std::fs::read_dir(root.join("sessions")) else {
-        return false;
+        return None;
     };
     for e in rd.flatten() {
         let name = e.file_name();
@@ -72,10 +84,10 @@ pub fn is_live_in(root: &Path, session_id: &str) -> bool {
             .or_else(|| stem.parse::<i64>().ok())
             .unwrap_or(0);
         if pid > 0 && pid <= i32::MAX as i64 && process_alive(pid as i32) {
-            return true;
+            return Some(v.get("status").and_then(Value::as_str).map(str::to_string));
         }
     }
-    false
+    None
 }
 
 /// kill(pid, 0): alive unless ESRCH (EPERM = exists, owned by someone else).

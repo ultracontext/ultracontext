@@ -275,7 +275,7 @@ The driver parses session metadata from the transcript and sends it as `meta` wi
 
 ### 6.4 Single writer: ownership, takeover, forks
 
-Each log has an **owner** (machine id). It becomes `idle` when the owner has not appended for `lease_idle_ms` (120 s).
+Each log has an **owner** (machine id). It becomes `idle` when the owner has neither appended nor sent a heartbeat for `lease_idle_ms` (30 s). The owner heartbeats only while its agent is actually working (Claude busy, or the transcript written in the last 25 s); otherwise it releases the lease.
 
 An append from machine M is accepted when all of these hold:
 

@@ -1140,6 +1140,17 @@ impl Store {
         })
     }
 
+    /// The owner refreshes its lease. Never acquires: a released or taken-over log stays so.
+    pub fn heartbeat(&mut self, space: &str, path: &str, origin: &str, now: i64) -> Result<()> {
+        check_path(path)?;
+        check_space(space)?;
+        self.db.execute(
+            "UPDATE entries SET owner_at = ?4 WHERE space = ?1 AND path = ?2 AND owner = ?3",
+            rusqlite::params![space, path, origin, now],
+        )?;
+        Ok(())
+    }
+
     /// The owner gives up its lease (its agent is no longer running the session), so another
     /// machine can continue it without a takeover. No-op unless `origin` is the owner.
     pub fn release(&mut self, space: &str, path: &str, origin: &str) -> Result<()> {

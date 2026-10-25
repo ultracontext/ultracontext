@@ -38,7 +38,7 @@ pub struct HubOpts {
     pub tcp: Option<String>,
     /// required token for TCP clients (UC_TOKEN)
     pub token: Option<String>,
-    /// idle time after which a log owner loses its lease (DESIGN §6.4), default 120_000
+    /// idle time after which a log owner loses its lease (DESIGN §6.4), default 30_000
     pub lease_idle_ms: i64,
 }
 
