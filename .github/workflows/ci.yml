@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main, beyond]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  rust:
+    name: rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt
+        run: cargo fmt --all --check
+
+      # Advisory for now: the v1 codebase is brand new and still settling. Findings show up as
+      # annotations without failing the job. Remove continue-on-error once clippy is clean.
+      - name: cargo clippy (advisory)
+        continue-on-error: true
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      # The e2e tests spawn real daemons and hubs; a hung daemon must not hold the runner for hours.
+      - name: cargo test
+        timeout-minutes: 20
+        run: cargo test --all-targets --locked
+
+  installer:
+    name: install.sh
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - name: shellcheck
+        run: |
+          command -v shellcheck >/dev/null || { sudo apt-get update -q && sudo apt-get install -y -q shellcheck; }
+          shellcheck -s sh install.sh
+      - name: syntax (dash)
+        run: dash -n install.sh
+      - name: dry run
+        run: |
+          UC_DRY_RUN=1 sh install.sh
+          UC_DRY_RUN=1 sh install.sh --version 1.2.3 --dir /tmp/uc-bin | grep -q 'releases/download/v1.2.3/uc-x86_64-unknown-linux-gnu.tar.gz'
