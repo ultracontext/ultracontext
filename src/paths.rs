@@ -150,6 +150,35 @@ pub fn join_canonical(root: &Path, rel: &str) -> PathBuf {
     p
 }
 
+/// `join_canonical` for paths that came from the hub (or another machine): `rel` must be
+/// canonical, and no existing directory between `root` and the target may be a symlink or a
+/// non-directory. A synced symlink can then never redirect a write outside `root`.
+pub fn safe_join(root: &Path, rel: &str) -> Result<PathBuf> {
+    if canonical(rel)? != rel {
+        bail!("refusing non-canonical path {rel:?}");
+    }
+    let parts: Vec<&str> = rel.split('/').collect();
+    let mut p = root.to_path_buf();
+    let mut exists = true;
+    for part in &parts[..parts.len() - 1] {
+        p.push(part);
+        if !exists {
+            continue; // below a missing dir everything is created fresh
+        }
+        match std::fs::symlink_metadata(&p) {
+            Ok(m) if m.file_type().is_symlink() => {
+                bail!("refusing to write {rel}: {} is a symlink", p.display())
+            }
+            Ok(m) if !m.is_dir() => bail!("refusing to write {rel}: {} is not a directory", p.display()),
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => exists = false,
+            Err(e) => return Err(e.into()),
+        }
+    }
+    p.push(parts[parts.len() - 1]);
+    Ok(p)
+}
+
 pub fn os_name() -> &'static str {
     if cfg!(target_os = "macos") {
         "macos"
@@ -179,6 +208,23 @@ mod tests {
         assert!(canonical("a//b").is_err());
         // NFD "é" -> NFC
         assert_eq!(canonical("cafe\u{301}").unwrap(), "caf\u{e9}");
+    }
+
+    #[test]
+    fn safe_join_refuses_symlinked_parents() {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path().join("space");
+        let outside = t.path().join("outside");
+        std::fs::create_dir_all(root.join("ok")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("link")).unwrap();
+        assert!(safe_join(&root, "ok/a.txt").is_ok());
+        assert_eq!(safe_join(&root, "new/dir/a.txt").unwrap(), root.join("new/dir/a.txt"));
+        assert!(safe_join(&root, "link/a.txt").is_err());
+        assert!(safe_join(&root, "../x").is_err());
+        assert!(safe_join(&root, "/etc/x").is_err());
+        // the symlink itself (last component) may be replaced; it is never followed
+        assert!(safe_join(&root, "link").is_ok());
     }
 
     #[test]

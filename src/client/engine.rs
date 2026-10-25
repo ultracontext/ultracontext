@@ -659,7 +659,13 @@ impl Engine {
         }
         self.bind_root(space, &root)?;
         self.ensure_case_probe(space, &root);
-        let abs = paths::join_canonical(&root, rel);
+        let abs = match paths::safe_join(&root, rel) {
+            Ok(a) => a,
+            Err(e) => {
+                warn!("{space}/{rel}: {e:#}");
+                return Ok(Step::Done);
+            }
+        };
         if ignore.is_ignored(&abs, false) {
             return Ok(Step::Done);
         }

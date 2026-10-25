@@ -94,9 +94,20 @@ pub fn same_fp(a: &LocalFp, b: &LocalFp) -> bool {
 }
 
 /// Keep existing read/write bits when replacing; only the exec bit is synced (DESIGN §5.6).
+/// Names that usually hold secrets: created owner-only (0600) on every machine. uc syncs only
+/// the exec bit, so without this a 0600 `.env` would arrive world-readable elsewhere.
+fn looks_secret(target: &Path) -> bool {
+    let name = target.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    name.starts_with(".env")
+        || name.starts_with("id_")
+        || matches!(name, ".netrc" | ".npmrc" | ".pypirc" | "credentials" | ".credentials.json")
+        || [".pem", ".key", ".p12", ".pfx", ".keystore"].iter().any(|e| name.ends_with(e))
+}
+
 fn target_mode(target: &Path, exec: bool) -> u32 {
     let base = match fs::symlink_metadata(target) {
         Ok(m) if m.file_type().is_file() => m.mode() & 0o777,
+        _ if looks_secret(target) => 0o600,
         _ => 0o644,
     };
     if exec {
@@ -323,6 +334,14 @@ mod tests {
         assert_eq!(conflict_original("dir/.conflict-mac-20261025-141502"), None);
         assert!(is_conflict_name(&conflict_name("a/b.txt", "m", at)));
         assert!(!is_conflict_name("a/b.txt"));
+    }
+
+    #[test]
+    fn secret_names_are_created_private() {
+        assert_eq!(target_mode(Path::new("/nonexistent/.env.local"), false), 0o600);
+        assert_eq!(target_mode(Path::new("/nonexistent/server.pem"), false), 0o600);
+        assert_eq!(target_mode(Path::new("/nonexistent/main.rs"), false), 0o644);
+        assert_eq!(target_mode(Path::new("/nonexistent/run.sh"), true), 0o755);
     }
 
     #[test]

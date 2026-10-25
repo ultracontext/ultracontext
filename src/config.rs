@@ -140,7 +140,18 @@ impl Config {
             std::fs::create_dir_all(dir)?;
         }
         let tmp = path.with_extension("toml.tmp");
-        std::fs::write(&tmp, toml::to_string_pretty(self)?)?;
+        // may hold the tcp token: owner-only from the first byte
+        {
+            use std::io::Write;
+            use std::os::unix::fs::OpenOptionsExt;
+            let _ = std::fs::remove_file(&tmp);
+            let mut f = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&tmp)?;
+            f.write_all(toml::to_string_pretty(self)?.as_bytes())?;
+        }
         std::fs::rename(&tmp, path)?;
         Ok(())
     }

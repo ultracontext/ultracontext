@@ -1055,7 +1055,7 @@ impl LogSync {
         let Some(native_rel) = d.native_rel(&key.1, meta.as_ref(), &map) else {
             return Ok(Step::Done);
         };
-        let target = crate::paths::join_canonical(&d.root(), &native_rel);
+        let target = crate::paths::safe_join(&d.root(), &native_rel)?;
         if let Ok((h, _)) = hash::hash_file(&target) {
             if h == r.hash {
                 self.set_base(&key.0, &key.1, &file_base(r))?;
@@ -1729,7 +1729,7 @@ impl LogSync {
         let Some(rel) = d.native_rel(&key.1, meta.as_ref(), &self.map()) else {
             return Ok(());
         };
-        let want = crate::paths::join_canonical(&d.root(), &rel);
+        let want = crate::paths::safe_join(&d.root(), &rel)?;
         let cur = PathBuf::from(&p.native);
         if want == cur || want.exists() || !cur.exists() {
             return Ok(());
@@ -1894,7 +1894,7 @@ impl LogSync {
                 native_rel = existing;
             }
         }
-        let target = crate::paths::join_canonical(&d.root(), &native_rel);
+        let target = crate::paths::safe_join(&d.root(), &native_rel)?;
         if self.fork_of(&target).is_some() {
             return Ok(Step::Deferred); // a diverged local copy sits there until it is cold
         }
