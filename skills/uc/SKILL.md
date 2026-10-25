@@ -68,6 +68,12 @@ A conflict copy sits next to the original:
 Never delete or overwrite a conflict copy you have not read. Inside `.git/` a conflict
 copy of a ref is a valid ref (`main.conflict-...`): `git log` it to see the other side.
 
+## Branches
+
+A synced repo is one checkout on every machine. Never `git checkout` another branch in a
+synced repo another machine may be working in: run `uc branch <name>` and work in the
+new folder it prints (`<repo>-<name>`, a worktree with relative paths).
+
 ## Rules
 
 - Synced folders are live on all machines: edits appear on the other machines within

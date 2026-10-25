@@ -79,6 +79,17 @@ Before you close the lid, you can run `uc sync`. It waits until everything is on
   - `uc resume` on a live session asks you to **take over** (the other machine stops writing to it) or **fork** (you continue as a new session).
   - Agents pass `--takeover` or `--fork`.
 
+## Branches: one folder per branch
+
+A synced repo is one working copy on every machine. If your Mac Mini checks out another branch in `~/Code/app`, your MacBook's `~/Code/app` switches too, under whatever its agent is doing. uc warns when that happens. The fix is to give each branch its own folder:
+
+```sh
+cd ~/Code/app
+uc branch feat/login        # creates ~/Code/app-feat-login (a git worktree), synced like the rest
+```
+
+Any machine can then work on any branch, and resume its sessions, without touching the others.
+
 ## Commands
 
 | command | what it does |
@@ -89,6 +100,7 @@ Before you close the lid, you can run `uc sync`. It waits until everything is on
 | `uc sessions` / `uc resume` | List sessions from every machine, and continue one here. |
 | `uc log` / `uc history <file>` / `uc restore <file>` | See who changed what, and get any version back. |
 | `uc conflicts` | List conflict copies that need your decision. |
+| `uc branch <name>` | Work on a branch in its own synced folder (a relative-path git worktree). |
 | `uc doctor` | Find setup problems. |
 | `uc service install [--hub]` | Start uc (or the hub) automatically. |
 

@@ -158,6 +158,9 @@ struct State {
     debounce: Duration,
     /// spaces where most tracked files vanished at once: deletes are not pushed (§5.1)
     deletes_paused: HashSet<String>,
+    /// recent local working-tree pushes (space, rel, when): detects another machine switching
+    /// the branch of a repo this machine is working in
+    recent_local: std::collections::VecDeque<(String, String, Instant)>,
 }
 
 /// A stable local snapshot (§5.2): content identity + staged copy to upload from.
@@ -406,8 +409,36 @@ impl Engine {
                 return Ok(());
             }
         }
+        if change.op == Op::Put && e.origin != self.ctx.machine.id {
+            self.check_branch_switch(&e.space, &e.path, &e.origin);
+        }
         self.mark(&e.space, &e.path, false, true);
         Ok(())
+    }
+
+    /// Another machine moved `.git/HEAD` (a checkout) of a repo this machine edited recently:
+    /// the shared working copy just switched branch under this machine's work. Say so loudly;
+    /// the fix is one folder per branch (`uc branch`).
+    fn check_branch_switch(&self, space: &str, path: &str, origin: &str) {
+        let Some(repo) = path.strip_suffix(".git/HEAD") else { return };
+        let window = Duration::from_secs(600);
+        let edited = self
+            .lock()
+            .recent_local
+            .iter()
+            .filter(|(s, r, t)| s == space && r.starts_with(repo) && t.elapsed() < window)
+            .count();
+        if edited == 0 {
+            return;
+        }
+        let repo_name = if repo.is_empty() { space.to_string() } else { format!("{space}/{}", repo.trim_end_matches('/')) };
+        let msg = format!(
+            "{repo_name}: machine {origin} switched branches in this repo while you were working on it here \
+             ({edited} files edited in the last 10 min). A synced repo is one checkout on every machine: \
+             give each branch its own folder with 'uc branch <name>'"
+        );
+        warn!("{msg}");
+        self.ctx.set_error(msg);
     }
 
     /// Full rescan of all folder spaces + reconcile everything (startup, reconnect, every 5 min).
@@ -956,6 +987,13 @@ impl Engine {
                 self.ctx.db.set_remote(&entry)?;
                 self.ctx.db.set_base(space, rel, Some(&Base::from_entry(&entry, Some(snap.fp))))?;
                 debug!("{space}/{rel}: pushed v{}", entry.version);
+                if !rel.starts_with(".git/") && !rel.contains("/.git/") {
+                    let mut st = self.lock();
+                    st.recent_local.push_back((space.to_string(), rel.to_string(), Instant::now()));
+                    while st.recent_local.len() > 4096 {
+                        st.recent_local.pop_front();
+                    }
+                }
                 Ok(Step::Done)
             }
             Commit::Conflict { current, reason } => {

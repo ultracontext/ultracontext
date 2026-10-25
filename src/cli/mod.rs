@@ -21,6 +21,7 @@ use crate::proto::{
 };
 use crate::service;
 
+mod branch;
 mod doctor;
 mod init;
 pub mod output;
@@ -82,6 +83,14 @@ pub enum Cmd {
         /// Version to restore (see 'uc history'); default: the version before the current one
         #[arg(long)]
         seq: Option<u64>,
+    },
+    /// Work on a branch in its own synced folder (a git worktree next to the repo), so machines
+    /// on different branches never switch each other's checkout
+    Branch {
+        name: String,
+        /// The repository (default: the current directory)
+        #[arg(long)]
+        from: Option<String>,
     },
     /// Conflict copies waiting for you
     Conflicts,
@@ -276,6 +285,7 @@ fn run(cli: Cli) -> Result<i32> {
                 Cmd::History { path } => cmd_history(&app, &path),
                 Cmd::Restore { path, seq } => cmd_restore(&app, &path, seq),
                 Cmd::Conflicts => cmd_conflicts(&app),
+                Cmd::Branch { name, from } => branch::cmd_branch(&app, &name, from.as_deref()),
                 Cmd::Doctor => doctor::cmd_doctor(&app),
                 Cmd::Daemon(d) => cmd_daemon(&app, d),
                 Cmd::Service(s) => cmd_service(&app, s),

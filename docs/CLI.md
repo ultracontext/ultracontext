@@ -153,3 +153,15 @@ LogRecord    { seq, op: put|delete|append|reset|claim, at, space, path, kind, ha
 MachineInfo  { id, name, os, home }
 SpaceInfo    { name, default_path, created_at, files, bytes }
 ```
+
+## uc branch
+
+```sh
+uc branch <name> [--from <repo>] [--json]
+```
+
+Creates `<repo>-<name>` next to the repository as a git worktree (`git worktree add
+--relative-paths`, creating the branch if needed), so every branch has its own synced folder and
+machines on different branches never switch each other's checkout. JSON:
+`{"branch", "path", "created_branch", "relative_paths"}`. Needs git >= 2.48 for relative paths
+(otherwise the worktree only works on machines with the same home directory).
