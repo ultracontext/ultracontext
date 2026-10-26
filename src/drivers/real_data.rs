@@ -23,7 +23,9 @@ fn windows(p: &Path) -> Option<(Vec<u8>, Vec<u8>)> {
 }
 
 fn walk(root: &Path, out: &mut Vec<std::path::PathBuf>) {
-    let Ok(rd) = std::fs::read_dir(root) else { return };
+    let Ok(rd) = std::fs::read_dir(root) else {
+        return;
+    };
     for e in rd.flatten() {
         let Ok(t) = e.file_type() else { continue };
         if t.is_dir() {
@@ -62,8 +64,12 @@ fn survey(d: &dyn AgentDriver, map: &PathMap) {
             continue;
         }
         transcripts += 1;
-        let Some((head, tail)) = windows(p) else { continue };
-        let Some(m) = d.parse_meta(&af.session_id, &head, &tail, map) else { continue };
+        let Some((head, tail)) = windows(p) else {
+            continue;
+        };
+        let Some(m) = d.parse_meta(&af.session_id, &head, &tail, map) else {
+            continue;
+        };
         meta_ok += 1;
         cwd_ok += m.cwd.is_some() as usize;
         prompt_ok += m.first_prompt.is_some() as usize;

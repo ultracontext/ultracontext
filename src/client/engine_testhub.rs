@@ -74,7 +74,11 @@ impl FakeHub {
                 });
                 hub.lock().sessions.push(task.abort_handle());
                 let (r, w) = tokio::io::split(client);
-                Ok(Conn { reader: Box::new(r), writer: Box::new(w), child: None })
+                Ok(Conn {
+                    reader: Box::new(r),
+                    writer: Box::new(w),
+                    child: None,
+                })
             })
         })
     }
@@ -101,7 +105,10 @@ impl FakeHub {
     }
 
     pub fn entry(&self, space: &str, path: &str) -> Option<Entry> {
-        self.lock().entries.get(&(space.to_string(), path.to_string())).cloned()
+        self.lock()
+            .entries
+            .get(&(space.to_string(), path.to_string()))
+            .cloned()
     }
 
     pub fn blob(&self, hash: &str) -> Option<Vec<u8>> {
@@ -113,7 +120,15 @@ impl FakeHub {
         let mut st = self.lock();
         st.seq += 1;
         e.version = st.seq;
-        let c = Change { seq: st.seq, op: Op::Put, at: 0, entry: e.clone(), offset: None, len: None, inline: false };
+        let c = Change {
+            seq: st.seq,
+            op: Op::Put,
+            at: 0,
+            entry: e.clone(),
+            offset: None,
+            len: None,
+            inline: false,
+        };
         st.entries.insert((e.space.clone(), e.path.clone()), e);
         broadcast(&mut st, c);
         st.seq
@@ -123,10 +138,27 @@ impl FakeHub {
     pub fn inject_delete(&self, space: &str, path: &str, origin: &str) -> u64 {
         let mut st = self.lock();
         let key = (space.to_string(), path.to_string());
-        let Some(cur) = st.entries.get(&key).cloned() else { return st.seq };
+        let Some(cur) = st.entries.get(&key).cloned() else {
+            return st.seq;
+        };
         st.seq += 1;
-        let e = Entry { version: st.seq, hash: String::new(), size: 0, deleted: true, origin: origin.into(), ..cur };
-        let c = Change { seq: st.seq, op: Op::Delete, at: 0, entry: e.clone(), offset: None, len: None, inline: false };
+        let e = Entry {
+            version: st.seq,
+            hash: String::new(),
+            size: 0,
+            deleted: true,
+            origin: origin.into(),
+            ..cur
+        };
+        let c = Change {
+            seq: st.seq,
+            op: Op::Delete,
+            at: 0,
+            entry: e.clone(),
+            offset: None,
+            len: None,
+            inline: false,
+        };
         st.entries.insert(key, e);
         broadcast(&mut st, c);
         st.seq
@@ -146,8 +178,13 @@ impl FakeHub {
         let (mut r, mut w) = tokio::io::split(stream);
         proto::read_magic(&mut r).await?;
         proto::write_magic(&mut w).await?;
-        let Some(f) = proto::read_frame(&mut r).await? else { return Ok(()) };
-        let Msg::Hello { id, machine, token, .. } = f.msg else {
+        let Some(f) = proto::read_frame(&mut r).await? else {
+            return Ok(());
+        };
+        let Msg::Hello {
+            id, machine, token, ..
+        } = f.msg
+        else {
             anyhow::bail!("expected hello");
         };
         let head = {
@@ -156,7 +193,12 @@ impl FakeHub {
             st.last_token = token;
             st.seq
         };
-        let welcome = Msg::Welcome { re: id, hub_id: "h_fake".into(), head_seq: head, version: "test".into() };
+        let welcome = Msg::Welcome {
+            re: id,
+            hub_id: "h_fake".into(),
+            head_seq: head,
+            version: "test".into(),
+        };
         proto::write_frame(&mut w, &welcome, &[]).await?;
         let (tx, mut rx) = mpsc::unbounded_channel::<(Msg, Vec<u8>)>();
         let writer = tokio::spawn(async move {
@@ -195,38 +237,84 @@ impl FakeHub {
                 st.subscribers.push(tx.clone());
             }
             Msg::HasBlobs { id, hashes } => {
-                let missing = hashes.into_iter().filter(|h| !st.blobs.contains_key(h)).collect();
-                reply(Msg::Missing { re: id, hashes: missing }, vec![]);
+                let missing = hashes
+                    .into_iter()
+                    .filter(|h| !st.blobs.contains_key(h))
+                    .collect();
+                reply(
+                    Msg::Missing {
+                        re: id,
+                        hashes: missing,
+                    },
+                    vec![],
+                );
             }
-            Msg::BlobPut { id, hash, offset, last } => {
+            Msg::BlobPut {
+                id,
+                hash,
+                offset,
+                last,
+            } => {
                 let buf = st.partial.entry(hash.clone()).or_default();
                 if buf.len() as u64 != offset {
-                    reply(Msg::error(Some(id), "bad_offset", "unexpected offset"), vec![]);
+                    reply(
+                        Msg::error(Some(id), "bad_offset", "unexpected offset"),
+                        vec![],
+                    );
                     return;
                 }
                 buf.extend_from_slice(&bin);
                 if last {
                     let data = st.partial.remove(&hash).unwrap_or_default();
                     if crate::hash::hash_bytes(&data) != hash {
-                        reply(Msg::error(Some(id), "hash_mismatch", "blob hash mismatch"), vec![]);
+                        reply(
+                            Msg::error(Some(id), "hash_mismatch", "blob hash mismatch"),
+                            vec![],
+                        );
                         return;
                     }
                     st.blobs.insert(hash, data);
                 }
                 reply(Msg::Ok { re: id }, vec![]);
             }
-            Msg::BlobGet { id, hash, offset, len } => match st.blobs.get(&hash) {
+            Msg::BlobGet {
+                id,
+                hash,
+                offset,
+                len,
+            } => match st.blobs.get(&hash) {
                 Some(data) => {
                     let start = (offset as usize).min(data.len());
                     let end = (start + len as usize).min(data.len());
                     let eof = end == data.len();
-                    reply(Msg::Blob { re: id, offset, eof }, data[start..end].to_vec());
+                    reply(
+                        Msg::Blob {
+                            re: id,
+                            offset,
+                            eof,
+                        },
+                        data[start..end].to_vec(),
+                    );
                 }
                 None => reply(Msg::error(Some(id), "not_found", "no such blob"), vec![]),
             },
-            Msg::Put { id, space, path, base, kind, hash, size, exec, mtime, meta } => {
+            Msg::Put {
+                id,
+                space,
+                path,
+                base,
+                kind,
+                hash,
+                size,
+                exec,
+                mtime,
+                meta,
+            } => {
                 if !st.blobs.contains_key(&hash) {
-                    reply(Msg::error(Some(id), "missing_blob", "upload the blob first"), vec![]);
+                    reply(
+                        Msg::error(Some(id), "missing_blob", "upload the blob first"),
+                        vec![],
+                    );
                     return;
                 }
                 let key = (space.clone(), path.clone());
@@ -238,7 +326,14 @@ impl FakeHub {
                     (None, Some(_)) => false,
                 };
                 if !ok {
-                    reply(Msg::Conflict { re: id, current: cur, reason: "base mismatch".into() }, vec![]);
+                    reply(
+                        Msg::Conflict {
+                            re: id,
+                            current: cur,
+                            reason: "base mismatch".into(),
+                        },
+                        vec![],
+                    );
                     return;
                 }
                 st.seq += 1;
@@ -257,12 +352,32 @@ impl FakeHub {
                     owner: None,
                     owner_at: 0,
                 };
-                let c = Change { seq: st.seq, op: Op::Put, at: 0, entry: e.clone(), offset: None, len: None, inline: false };
+                let c = Change {
+                    seq: st.seq,
+                    op: Op::Put,
+                    at: 0,
+                    entry: e.clone(),
+                    offset: None,
+                    len: None,
+                    inline: false,
+                };
                 st.entries.insert(key, e.clone());
-                reply(Msg::Committed { re: id, seq: st.seq, entry: e }, vec![]);
+                reply(
+                    Msg::Committed {
+                        re: id,
+                        seq: st.seq,
+                        entry: e,
+                    },
+                    vec![],
+                );
                 broadcast(&mut st, c);
             }
-            Msg::Delete { id, space, path, base } => {
+            Msg::Delete {
+                id,
+                space,
+                path,
+                base,
+            } => {
                 let key = (space, path);
                 let cur = st.entries.get(&key).cloned();
                 match cur {
@@ -276,20 +391,59 @@ impl FakeHub {
                             origin: origin.to_string(),
                             ..c
                         };
-                        let ch = Change { seq: st.seq, op: Op::Delete, at: 0, entry: e.clone(), offset: None, len: None, inline: false };
+                        let ch = Change {
+                            seq: st.seq,
+                            op: Op::Delete,
+                            at: 0,
+                            entry: e.clone(),
+                            offset: None,
+                            len: None,
+                            inline: false,
+                        };
                         st.entries.insert(key, e.clone());
-                        reply(Msg::Committed { re: id, seq: st.seq, entry: e }, vec![]);
+                        reply(
+                            Msg::Committed {
+                                re: id,
+                                seq: st.seq,
+                                entry: e,
+                            },
+                            vec![],
+                        );
                         broadcast(&mut st, ch);
                     }
-                    cur => reply(Msg::Conflict { re: id, current: cur, reason: "base mismatch".into() }, vec![]),
+                    cur => reply(
+                        Msg::Conflict {
+                            re: id,
+                            current: cur,
+                            reason: "base mismatch".into(),
+                        },
+                        vec![],
+                    ),
                 }
             }
-            Msg::SpaceCreate { id, name, default_path } => {
+            Msg::SpaceCreate {
+                id,
+                name,
+                default_path,
+            } => {
                 if !st.spaces.iter().any(|s| s.name == name) {
-                    st.spaces.push(SpaceInfo { name: name.clone(), default_path, created_at: 0, files: 0, bytes: 0 });
+                    st.spaces.push(SpaceInfo {
+                        name: name.clone(),
+                        default_path,
+                        created_at: 0,
+                        files: 0,
+                        bytes: 0,
+                    });
                 }
                 let e = file_entry(&name, "", "", st.seq);
-                reply(Msg::Committed { re: id, seq: st.seq, entry: e }, vec![]);
+                reply(
+                    Msg::Committed {
+                        re: id,
+                        seq: st.seq,
+                        entry: e,
+                    },
+                    vec![],
+                );
             }
             Msg::Query { id, query } => {
                 if st.hang_queries {
@@ -307,7 +461,9 @@ impl FakeHub {
                         v.sort_by(|a, b| a.path.cmp(&b.path));
                         serde_json::to_value(v).ok()
                     }
-                    Query::Entry { space, path } => serde_json::to_value(st.entries.get(&(space, path))).ok(),
+                    Query::Entry { space, path } => {
+                        serde_json::to_value(st.entries.get(&(space, path))).ok()
+                    }
                     Query::History { space, path, .. } => {
                         let v: Vec<LogRecord> = st
                             .log
@@ -333,12 +489,18 @@ impl FakeHub {
                 };
                 match data {
                     Some(data) => reply(Msg::Result { re: id, data }, vec![]),
-                    None => reply(Msg::error(Some(id), "unsupported", "query not supported"), vec![]),
+                    None => reply(
+                        Msg::error(Some(id), "unsupported", "query not supported"),
+                        vec![],
+                    ),
                 }
             }
             other => {
                 if let Some(id) = other.id() {
-                    reply(Msg::error(Some(id), "unsupported", "not implemented by the fake hub"), vec![]);
+                    reply(
+                        Msg::error(Some(id), "unsupported", "not implemented by the fake hub"),
+                        vec![],
+                    );
                 }
             }
         }
@@ -347,5 +509,6 @@ impl FakeHub {
 
 fn broadcast(st: &mut State, c: Change) {
     st.log.push(c.clone());
-    st.subscribers.retain(|s| s.send((Msg::Change(c.clone()), vec![])).is_ok());
+    st.subscribers
+        .retain(|s| s.send((Msg::Change(c.clone()), vec![])).is_ok());
 }

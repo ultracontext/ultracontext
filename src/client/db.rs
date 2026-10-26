@@ -173,7 +173,12 @@ fn read_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Row> {
             })
         }
     };
-    Ok(Row { space: r.get(0)?, path: r.get(1)?, remote, base })
+    Ok(Row {
+        space: r.get(0)?,
+        path: r.get(1)?,
+        remote,
+        base,
+    })
 }
 
 fn upsert_remote(c: &Connection, e: &Entry) -> Result<()> {
@@ -189,7 +194,10 @@ fn upsert_remote(c: &Connection, e: &Entry) -> Result<()> {
 }
 
 fn kv_get_on(c: &Connection, k: &str) -> Result<Option<String>> {
-    Ok(c.query_row("SELECT v FROM kv WHERE k = ?1", [k], |r| r.get(0)).optional()?)
+    Ok(
+        c.query_row("SELECT v FROM kv WHERE k = ?1", [k], |r| r.get(0))
+            .optional()?,
+    )
 }
 
 fn kv_set_on(c: &Connection, k: &str, v: &str) -> Result<()> {
@@ -234,7 +242,9 @@ impl ClientDb {
             }
             v => bail!("unsupported client.db schema v{v}"),
         }
-        Ok(ClientDb { conn: Mutex::new(conn) })
+        Ok(ClientDb {
+            conn: Mutex::new(conn),
+        })
     }
 
     fn lock(&self) -> MutexGuard<'_, Connection> {
@@ -249,7 +259,8 @@ impl ClientDb {
     pub fn get(&self, space: &str, path: &str) -> Result<Option<Row>> {
         let c = self.lock();
         let sql = format!("SELECT {COLS} FROM entries WHERE space = ?1 AND path = ?2");
-        Ok(c.query_row(&sql, params![space, path], read_row).optional()?)
+        Ok(c.query_row(&sql, params![space, path], read_row)
+            .optional()?)
     }
 
     /// Upsert R from a change and advance the cursor to change.seq, atomically.
@@ -265,19 +276,30 @@ impl ClientDb {
         // identity of the change at the cursor: lets the daemon detect a hub rolled back to an
         // older backup even after it has moved past our cursor again
         let e = &change.entry;
-        kv_set_on(&tx, CURSOR_AT, &format!("{}\t{}\t{}\t{}", change.seq, e.space, e.path, e.hash))?;
+        kv_set_on(
+            &tx,
+            CURSOR_AT,
+            &format!("{}\t{}\t{}\t{}", change.seq, e.space, e.path, e.hash),
+        )?;
         tx.commit()?;
         Ok(())
     }
 
     /// (seq, space, path, hash) of the last change recorded with the cursor.
     pub fn cursor_at(&self) -> Result<Option<(u64, String, String, String)>> {
-        let Some(v) = kv_get_on(&self.lock(), CURSOR_AT)? else { return Ok(None) };
-        let mut it = v.splitn(4, '\t');
-        let (Some(seq), Some(space), Some(path), Some(hash)) = (it.next(), it.next(), it.next(), it.next()) else {
+        let Some(v) = kv_get_on(&self.lock(), CURSOR_AT)? else {
             return Ok(None);
         };
-        Ok(seq.parse().ok().map(|s| (s, space.to_string(), path.to_string(), hash.to_string())))
+        let mut it = v.splitn(4, '\t');
+        let (Some(seq), Some(space), Some(path), Some(hash)) =
+            (it.next(), it.next(), it.next(), it.next())
+        else {
+            return Ok(None);
+        };
+        Ok(seq
+            .parse()
+            .ok()
+            .map(|s| (s, space.to_string(), path.to_string(), hash.to_string())))
     }
 
     /// Upsert R only (e.g. from a Conflict/Committed response), no cursor change.
@@ -349,13 +371,17 @@ impl ClientDb {
              WHERE space = ?1",
             [space],
         )?;
-        c.execute("DELETE FROM entries WHERE space = ?1 AND r_json IS NULL", [space])?;
+        c.execute(
+            "DELETE FROM entries WHERE space = ?1 AND r_json IS NULL",
+            [space],
+        )?;
         Ok(())
     }
 
     /// Drop all rows of a space (uc rm).
     pub fn forget_space(&self, space: &str) -> Result<()> {
-        self.lock().execute("DELETE FROM entries WHERE space = ?1", [space])?;
+        self.lock()
+            .execute("DELETE FROM entries WHERE space = ?1", [space])?;
         Ok(())
     }
 
@@ -363,7 +389,9 @@ impl ClientDb {
         let c = self.lock();
         let sql = format!("SELECT {COLS} FROM entries WHERE space = ?1 ORDER BY path");
         let mut st = c.prepare(&sql)?;
-        let rows = st.query_map([space], read_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let rows = st
+            .query_map([space], read_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
 
@@ -415,7 +443,9 @@ impl ClientDb {
              ORDER BY space, path"
         );
         let mut st = c.prepare(&sql)?;
-        let rows = st.query_map([space], read_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let rows = st
+            .query_map([space], read_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
 
@@ -462,34 +492,65 @@ mod tests {
     }
 
     fn change(seq: u64, e: Entry) -> Change {
-        Change { seq, op: Op::Put, at: 0, entry: e, offset: None, len: None, inline: false }
+        Change {
+            seq,
+            op: Op::Put,
+            at: 0,
+            entry: e,
+            offset: None,
+            len: None,
+            inline: false,
+        }
     }
 
     #[test]
     fn record_remote_is_idempotent_and_advances_cursor() {
         let db = ClientDb::open_in_memory().unwrap();
         assert_eq!(db.cursor().unwrap(), 0);
-        db.record_remote(&change(3, entry("code", "a.txt", 3, "h3", false))).unwrap();
+        db.record_remote(&change(3, entry("code", "a.txt", 3, "h3", false)))
+            .unwrap();
         assert_eq!(db.cursor().unwrap(), 3);
-        db.record_remote(&change(5, entry("code", "a.txt", 5, "h5", false))).unwrap();
+        db.record_remote(&change(5, entry("code", "a.txt", 5, "h5", false)))
+            .unwrap();
         // replay of an older change is ignored: R stays at v5, cursor at 5
-        db.record_remote(&change(3, entry("code", "a.txt", 3, "h3", false))).unwrap();
+        db.record_remote(&change(3, entry("code", "a.txt", 3, "h3", false)))
+            .unwrap();
         let row = db.get("code", "a.txt").unwrap().unwrap();
         assert_eq!(row.remote.as_ref().unwrap().hash, "h5");
         assert_eq!(db.cursor().unwrap(), 5);
         // set_remote never regresses either
-        db.set_remote(&entry("code", "a.txt", 4, "h4", false)).unwrap();
-        assert_eq!(db.get("code", "a.txt").unwrap().unwrap().remote.unwrap().version, 5);
+        db.set_remote(&entry("code", "a.txt", 4, "h4", false))
+            .unwrap();
+        assert_eq!(
+            db.get("code", "a.txt")
+                .unwrap()
+                .unwrap()
+                .remote
+                .unwrap()
+                .version,
+            5
+        );
     }
 
     #[test]
     fn base_roundtrip_and_behind() {
-        let dir = tempfile::Builder::new().prefix("uc").tempdir_in("/tmp").unwrap();
+        let dir = tempfile::Builder::new()
+            .prefix("uc")
+            .tempdir_in("/tmp")
+            .unwrap();
         let db = ClientDb::open(&dir.path().join("client.db")).unwrap();
-        db.record_remote(&change(1, entry("code", "a.txt", 1, "h1", false))).unwrap();
-        db.record_remote(&change(2, entry("code", "gone.txt", 2, "", true))).unwrap();
-        db.record_remote(&change(3, entry("code", "d/b.txt", 3, "hb", false))).unwrap();
-        let behind: Vec<String> = db.rows_behind(Some("code")).unwrap().into_iter().map(|r| r.path).collect();
+        db.record_remote(&change(1, entry("code", "a.txt", 1, "h1", false)))
+            .unwrap();
+        db.record_remote(&change(2, entry("code", "gone.txt", 2, "", true)))
+            .unwrap();
+        db.record_remote(&change(3, entry("code", "d/b.txt", 3, "hb", false)))
+            .unwrap();
+        let behind: Vec<String> = db
+            .rows_behind(Some("code"))
+            .unwrap()
+            .into_iter()
+            .map(|r| r.path)
+            .collect();
         assert_eq!(behind, vec!["a.txt", "d/b.txt"]);
 
         let base = Base {
@@ -499,19 +560,39 @@ mod tests {
             size: 3,
             exec: true,
             deleted: false,
-            fp: Some(LocalFp { size: 3, mtime_ns: 1_700_000_000_123_456_789, ino: u64::MAX - 1, exec: true }),
-            log: Some(LogPoint { local_len: 9, local_tail: "t".into(), native: "/x".into() }),
+            fp: Some(LocalFp {
+                size: 3,
+                mtime_ns: 1_700_000_000_123_456_789,
+                ino: u64::MAX - 1,
+                exec: true,
+            }),
+            log: Some(LogPoint {
+                local_len: 9,
+                local_tail: "t".into(),
+                native: "/x".into(),
+            }),
         };
         db.set_base("code", "a.txt", Some(&base)).unwrap();
-        assert_eq!(db.get("code", "a.txt").unwrap().unwrap().base.unwrap(), base);
+        assert_eq!(
+            db.get("code", "a.txt").unwrap().unwrap().base.unwrap(),
+            base
+        );
         assert_eq!(db.rows_behind(None).unwrap().len(), 1);
         assert_eq!(db.count_synced("code").unwrap(), 1);
         assert_eq!(db.rows_prefix("code", "d/").unwrap().len(), 1);
         assert_eq!(db.rows_prefix("code", "").unwrap().len(), 3);
-        db.set_remote(&entry("code", "d0.txt", 9, "x", false)).unwrap();
-        db.set_remote(&entry("code", "dd/x", 9, "x", false)).unwrap();
-        db.set_remote(&entry("code", "d/é/y", 9, "x", false)).unwrap();
-        let under: Vec<String> = db.rows_prefix("code", "d/").unwrap().into_iter().map(|r| r.path).collect();
+        db.set_remote(&entry("code", "d0.txt", 9, "x", false))
+            .unwrap();
+        db.set_remote(&entry("code", "dd/x", 9, "x", false))
+            .unwrap();
+        db.set_remote(&entry("code", "d/é/y", 9, "x", false))
+            .unwrap();
+        let under: Vec<String> = db
+            .rows_prefix("code", "d/")
+            .unwrap()
+            .into_iter()
+            .map(|r| r.path)
+            .collect();
         assert_eq!(under, vec!["d/b.txt", "d/é/y"]);
         assert_eq!(db.rows_prefix("code", "d/é").unwrap().len(), 1);
 
@@ -532,7 +613,10 @@ mod tests {
 
     #[test]
     fn newer_schema_is_refused() {
-        let dir = tempfile::Builder::new().prefix("uc").tempdir_in("/tmp").unwrap();
+        let dir = tempfile::Builder::new()
+            .prefix("uc")
+            .tempdir_in("/tmp")
+            .unwrap();
         let p = dir.path().join("client.db");
         {
             let c = Connection::open(&p).unwrap();

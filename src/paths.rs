@@ -69,7 +69,12 @@ impl Paths {
         self.hub_dir().join("hub.log")
     }
     pub fn ensure(&self) -> Result<()> {
-        for d in [self.root.clone(), self.logs_dir(), self.trash(), self.staging()] {
+        for d in [
+            self.root.clone(),
+            self.logs_dir(),
+            self.trash(),
+            self.staging(),
+        ] {
             std::fs::create_dir_all(&d)?;
         }
         Ok(())
@@ -169,7 +174,10 @@ pub fn safe_join(root: &Path, rel: &str) -> Result<PathBuf> {
             Ok(m) if m.file_type().is_symlink() => {
                 bail!("refusing to write {rel}: {} is a symlink", p.display())
             }
-            Ok(m) if !m.is_dir() => bail!("refusing to write {rel}: {} is not a directory", p.display()),
+            Ok(m) if !m.is_dir() => bail!(
+                "refusing to write {rel}: {} is not a directory",
+                p.display()
+            ),
             Ok(_) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => exists = false,
             Err(e) => return Err(e.into()),
@@ -219,7 +227,10 @@ mod tests {
         std::fs::create_dir_all(&outside).unwrap();
         std::os::unix::fs::symlink(&outside, root.join("link")).unwrap();
         assert!(safe_join(&root, "ok/a.txt").is_ok());
-        assert_eq!(safe_join(&root, "new/dir/a.txt").unwrap(), root.join("new/dir/a.txt"));
+        assert_eq!(
+            safe_join(&root, "new/dir/a.txt").unwrap(),
+            root.join("new/dir/a.txt")
+        );
         assert!(safe_join(&root, "link/a.txt").is_err());
         assert!(safe_join(&root, "../x").is_err());
         assert!(safe_join(&root, "/etc/x").is_err());
@@ -230,7 +241,10 @@ mod tests {
     #[test]
     fn rel_and_join() {
         let root = Path::new("/r/space");
-        assert_eq!(rel_canonical(root, Path::new("/r/space/x/y")).unwrap(), "x/y");
+        assert_eq!(
+            rel_canonical(root, Path::new("/r/space/x/y")).unwrap(),
+            "x/y"
+        );
         assert!(rel_canonical(root, Path::new("/r/other")).is_none());
         assert_eq!(join_canonical(root, "x/y"), PathBuf::from("/r/space/x/y"));
     }

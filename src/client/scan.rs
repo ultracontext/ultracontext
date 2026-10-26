@@ -131,7 +131,10 @@ impl Ignore {
     /// Never sync anything under `dir` (when it lies strictly inside the root), whatever the
     /// rules say: e.g. `$UC_HOME` or an agent root inside a synced home folder.
     pub fn exclude(&mut self, dir: &Path) {
-        if dir.starts_with(&self.root) && dir != self.root && !self.excluded.iter().any(|d| d == dir) {
+        if dir.starts_with(&self.root)
+            && dir != self.root
+            && !self.excluded.iter().any(|d| d == dir)
+        {
             self.excluded.push(dir.to_path_buf());
         }
     }
@@ -234,7 +237,11 @@ impl Ignore {
         }
         let rules = Arc::new(DirRules {
             uc: load_gitignore(dir, UCIGNORE),
-            git: if self.respect_gitignore { load_gitignore(dir, GITIGNORE) } else { None },
+            git: if self.respect_gitignore {
+                load_gitignore(dir, GITIGNORE)
+            } else {
+                None
+            },
             has_git: fs::symlink_metadata(dir.join(".git")).is_ok(),
         });
         self.lock().insert(dir.to_path_buf(), rules.clone());
@@ -379,13 +386,18 @@ pub fn scan_dir(root: &Path, dir: &Path, ignore: &Ignore) -> Result<Vec<Scanned>
                 debug!("skipping non-UTF-8 name {}", abs.display());
                 continue;
             };
-            let Some(rel) = paths::rel_canonical(root, &abs) else { continue };
+            let Some(rel) = paths::rel_canonical(root, &abs) else {
+                continue;
+            };
             let ft = match ent.file_type() {
                 Ok(t) => t,
                 Err(_) => continue,
             };
             if !unicode_normalization::is_nfc(&name) && !resolves_same(root, &rel, &abs) {
-                warn!("skipping {}: name is not NFC on a normalization-sensitive filesystem", abs.display());
+                warn!(
+                    "skipping {}: name is not NFC on a normalization-sensitive filesystem",
+                    abs.display()
+                );
                 continue;
             }
             if ft.is_dir() {
@@ -442,7 +454,10 @@ mod tests {
     use super::*;
 
     fn tmpdir() -> tempfile::TempDir {
-        tempfile::Builder::new().prefix("uc").tempdir_in("/tmp").unwrap()
+        tempfile::Builder::new()
+            .prefix("uc")
+            .tempdir_in("/tmp")
+            .unwrap()
     }
 
     fn touch(root: &Path, rel: &str, data: &str) {
@@ -456,7 +471,11 @@ mod tests {
     }
 
     fn default_ignore(root: &Path) -> Ignore {
-        let inc = vec![".env".to_string(), ".env.*".to_string(), ".envrc".to_string()];
+        let inc = vec![
+            ".env".to_string(),
+            ".env.*".to_string(),
+            ".envrc".to_string(),
+        ];
         Ignore::new(root, true, &inc).unwrap()
     }
 
@@ -471,7 +490,11 @@ mod tests {
         touch(r, "proj/.git/refs/heads/main.lock", "x");
         touch(r, "proj/.git/objects/ab/cdef", "obj");
         touch(r, "proj/.git/objects/pack/tmp_pack_1", "x");
-        touch(r, "proj/.git/logs/x.log", "gitignore must not reach inside .git");
+        touch(
+            r,
+            "proj/.git/logs/x.log",
+            "gitignore must not reach inside .git",
+        );
         touch(r, "proj/src/main.rs", "fn main(){}");
         touch(r, "proj/a.log", "ignored");
         touch(r, "proj/keep.log", "whitelisted");

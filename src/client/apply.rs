@@ -52,14 +52,17 @@ fn replace_inner(
     if !precondition_holds(target, expect)? {
         return Ok(None);
     }
-    fs::rename(src_tmp, target)
-        .with_context(|| format!("renaming into {}", target.display()))?;
+    fs::rename(src_tmp, target).with_context(|| format!("renaming into {}", target.display()))?;
     fsync_parent(target);
     Ok(Some(fp))
 }
 
 /// Same as `atomic_replace`, for a symlink pointing at `link_target` (never followed).
-pub fn atomic_symlink(target: &Path, link_target: &str, expect: Option<&LocalFp>) -> Result<Option<LocalFp>> {
+pub fn atomic_symlink(
+    target: &Path,
+    link_target: &str,
+    expect: Option<&LocalFp>,
+) -> Result<Option<LocalFp>> {
     let tmp = temp_beside(target)?;
     std::os::unix::fs::symlink(link_target, &tmp)
         .with_context(|| format!("creating symlink {}", tmp.display()))?;
@@ -100,8 +103,13 @@ fn looks_secret(target: &Path) -> bool {
     let name = target.file_name().and_then(|n| n.to_str()).unwrap_or("");
     name.starts_with(".env")
         || name.starts_with("id_")
-        || matches!(name, ".netrc" | ".npmrc" | ".pypirc" | "credentials" | ".credentials.json")
-        || [".pem", ".key", ".p12", ".pfx", ".keystore"].iter().any(|e| name.ends_with(e))
+        || matches!(
+            name,
+            ".netrc" | ".npmrc" | ".pypirc" | "credentials" | ".credentials.json"
+        )
+        || [".pem", ".key", ".p12", ".pfx", ".keystore"]
+            .iter()
+            .any(|e| name.ends_with(e))
 }
 
 fn target_mode(target: &Path, exec: bool) -> u32 {
@@ -205,9 +213,12 @@ pub fn purge_trash(trash_root: &Path, keep_days: i64) -> Result<usize> {
     let mut removed = 0;
     for ent in rd.flatten() {
         let name = ent.file_name().to_string_lossy().to_string();
-        let Ok(day) = chrono::NaiveDate::parse_from_str(&name, "%Y-%m-%d") else { continue };
+        let Ok(day) = chrono::NaiveDate::parse_from_str(&name, "%Y-%m-%d") else {
+            continue;
+        };
         if day < cutoff && ent.file_type().is_ok_and(|t| t.is_dir()) {
-            fs::remove_dir_all(ent.path()).with_context(|| format!("purging {}", ent.path().display()))?;
+            fs::remove_dir_all(ent.path())
+                .with_context(|| format!("purging {}", ent.path().display()))?;
             removed += 1;
         }
     }
@@ -257,7 +268,13 @@ pub fn conflict_name(rel: &str, machine_name: &str, at_ms: i64) -> String {
         .to_string();
     let machine: String = machine_name
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect();
     format!("{rel}{CONFLICT_MARK}{machine}-{when}")
 }
@@ -276,7 +293,10 @@ pub fn conflict_original(rel: &str) -> Option<&str> {
     if n < 17 || tail[n - 16] != b'-' || tail[n - 7] != b'-' {
         return None;
     }
-    let digits = tail[n - 15..n - 7].iter().chain(&tail[n - 6..]).all(u8::is_ascii_digit);
+    let digits = tail[n - 15..n - 7]
+        .iter()
+        .chain(&tail[n - 6..])
+        .all(u8::is_ascii_digit);
     (digits && i > 0 && !rel[..i].ends_with('/')).then(|| &rel[..i])
 }
 
@@ -307,7 +327,10 @@ mod tests {
     use super::*;
 
     fn tmpdir() -> tempfile::TempDir {
-        tempfile::Builder::new().prefix("uc").tempdir_in("/tmp").unwrap()
+        tempfile::Builder::new()
+            .prefix("uc")
+            .tempdir_in("/tmp")
+            .unwrap()
     }
 
     #[test]
@@ -320,8 +343,14 @@ mod tests {
             conflict_name("dir/report.md", "mac", at),
             "dir/report.md.conflict-mac-20261025-141502"
         );
-        assert_eq!(conflict_name("Makefile", "mac", at), "Makefile.conflict-mac-20261025-141502");
-        assert_eq!(conflict_name("a/.env", "mac", at), "a/.env.conflict-mac-20261025-141502");
+        assert_eq!(
+            conflict_name("Makefile", "mac", at),
+            "Makefile.conflict-mac-20261025-141502"
+        );
+        assert_eq!(
+            conflict_name("a/.env", "mac", at),
+            "a/.env.conflict-mac-20261025-141502"
+        );
         assert_eq!(
             conflict_name("x.tar.gz", "lin/ux box", at),
             "x.tar.gz.conflict-lin-ux-box-20261025-141502"
@@ -338,8 +367,14 @@ mod tests {
 
     #[test]
     fn secret_names_are_created_private() {
-        assert_eq!(target_mode(Path::new("/nonexistent/.env.local"), false), 0o600);
-        assert_eq!(target_mode(Path::new("/nonexistent/server.pem"), false), 0o600);
+        assert_eq!(
+            target_mode(Path::new("/nonexistent/.env.local"), false),
+            0o600
+        );
+        assert_eq!(
+            target_mode(Path::new("/nonexistent/server.pem"), false),
+            0o600
+        );
         assert_eq!(target_mode(Path::new("/nonexistent/main.rs"), false), 0o644);
         assert_eq!(target_mode(Path::new("/nonexistent/run.sh"), true), 0o755);
     }
@@ -350,9 +385,16 @@ mod tests {
         let target = d.path().join("sub/dir/f.txt");
         // absent target, expect None -> placed
         let tmp = temp_beside(&target).unwrap();
-        assert!(tmp.file_name().unwrap().to_str().unwrap().starts_with(".uc-tmp-"));
+        assert!(tmp
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .starts_with(".uc-tmp-"));
         fs::write(&tmp, b"one").unwrap();
-        let fp1 = atomic_replace(&tmp, &target, None, true, Some(1_700_000_000_123)).unwrap().unwrap();
+        let fp1 = atomic_replace(&tmp, &target, None, true, Some(1_700_000_000_123))
+            .unwrap()
+            .unwrap();
         assert_eq!(fs::read(&target).unwrap(), b"one");
         assert!(fp1.exec);
         assert_eq!(fp1.mtime_ns, 1_700_000_000_123_000_000);
@@ -362,14 +404,18 @@ mod tests {
         // expect None but target exists -> precondition fails, tmp removed, target untouched
         let tmp = temp_beside(&target).unwrap();
         fs::write(&tmp, b"two").unwrap();
-        assert!(atomic_replace(&tmp, &target, None, false, None).unwrap().is_none());
+        assert!(atomic_replace(&tmp, &target, None, false, None)
+            .unwrap()
+            .is_none());
         assert!(!tmp.exists());
         assert_eq!(fs::read(&target).unwrap(), b"one");
 
         // matching fingerprint -> replaced, exec cleared
         let tmp = temp_beside(&target).unwrap();
         fs::write(&tmp, b"three").unwrap();
-        let fp2 = atomic_replace(&tmp, &target, Some(&fp1), false, None).unwrap().unwrap();
+        let fp2 = atomic_replace(&tmp, &target, Some(&fp1), false, None)
+            .unwrap()
+            .unwrap();
         assert_eq!(fs::read(&target).unwrap(), b"three");
         assert!(!fp2.exec);
         assert_eq!(fs::metadata(&target).unwrap().mode() & 0o777, 0o644);
@@ -378,7 +424,9 @@ mod tests {
         fs::write(&target, b"local edit!").unwrap();
         let tmp = temp_beside(&target).unwrap();
         fs::write(&tmp, b"four").unwrap();
-        assert!(atomic_replace(&tmp, &target, Some(&fp2), false, None).unwrap().is_none());
+        assert!(atomic_replace(&tmp, &target, Some(&fp2), false, None)
+            .unwrap()
+            .is_none());
         assert_eq!(fs::read(&target).unwrap(), b"local edit!");
     }
 
@@ -386,7 +434,9 @@ mod tests {
     fn symlink_replace() {
         let d = tmpdir();
         let link = d.path().join("l");
-        let fp = atomic_symlink(&link, "../somewhere", None).unwrap().unwrap();
+        let fp = atomic_symlink(&link, "../somewhere", None)
+            .unwrap()
+            .unwrap();
         assert_eq!(fs::read_link(&link).unwrap(), PathBuf::from("../somewhere"));
         assert!(atomic_symlink(&link, "other", None).unwrap().is_none());
         atomic_symlink(&link, "other", Some(&fp)).unwrap().unwrap();
@@ -405,7 +455,12 @@ mod tests {
         fs::write(&f, b"2").unwrap();
         let t2 = move_to_trash(&trash, &f).unwrap();
         assert_ne!(t1, t2);
-        assert!(t2.file_name().unwrap().to_str().unwrap().ends_with(" (2).txt"));
+        assert!(t2
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .ends_with(" (2).txt"));
         assert_eq!(fs::read(&t1).unwrap(), b"1");
         assert_eq!(fs::read(&t2).unwrap(), b"2");
         assert!(!f.exists());

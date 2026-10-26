@@ -202,7 +202,9 @@ pub fn cmd_doctor(app: &App) -> Result<i32> {
         )
     });
 
-    let me = std::env::current_exe().ok().and_then(|p| p.canonicalize().ok());
+    let me = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.canonicalize().ok());
     checks.push(match which("uc") {
         // an older uc earlier on PATH (e.g. a previous `cargo install`) would answer agents
         // and `ssh <hub> uc` instead of this one
@@ -216,7 +218,9 @@ pub fn cmd_doctor(app: &App) -> Result<i32> {
             ),
             Some(format!(
                 "remove or replace the other one: ln -sf {} {}",
-                me.as_deref().map(|m| m.display().to_string()).unwrap_or_default(),
+                me.as_deref()
+                    .map(|m| m.display().to_string())
+                    .unwrap_or_default(),
                 p.display()
             )),
         ),

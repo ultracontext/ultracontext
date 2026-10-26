@@ -17,7 +17,10 @@ struct Machine {
 }
 
 fn tmpdir() -> tempfile::TempDir {
-    tempfile::Builder::new().prefix("uc").tempdir_in("/tmp").unwrap()
+    tempfile::Builder::new()
+        .prefix("uc")
+        .tempdir_in("/tmp")
+        .unwrap()
 }
 
 fn write(root: &Path, rel: &str, data: &str) -> PathBuf {
@@ -61,7 +64,10 @@ async fn machine(hub: &FakeHub, id: &str, root: &Path) -> Machine {
     cfg.machine_name = id.into();
     cfg.hub = "fake".into();
     cfg.sync.debounce_ms = 50;
-    cfg.spaces.push(SpaceConfig { name: "code".into(), path: root.to_string_lossy().to_string() });
+    cfg.spaces.push(SpaceConfig {
+        name: "code".into(),
+        path: root.to_string_lossy().to_string(),
+    });
     let info = cfg.machine_info();
     let (hubc, mut events) = HubClient::start_with(hub.connector(), info.clone(), None);
     let ctx = Arc::new(Ctx {
@@ -88,7 +94,11 @@ async fn machine(hub: &FakeHub, id: &str, root: &Path) -> Machine {
     });
     tokio::spawn(engine.clone().run());
     assert!(ctx.hub.wait_connected(Duration::from_secs(5)).await);
-    Machine { ctx, engine, _home: home }
+    Machine {
+        ctx,
+        engine,
+        _home: home,
+    }
 }
 
 fn hub_has(hub: &FakeHub, path: &str, data: &str) -> bool {
@@ -124,14 +134,22 @@ async fn two_machines_converge_without_losing_data() {
             && hub_has(&hub, "sub/deep.txt", "deep")
             && hub_has(&hub, "proj/.git/objects/ab/cdef", "object")
             && hub_has(&hub, "proj/.git/refs/heads/main", "abcdef")
-            && hub.entry("code", "link").is_some_and(|e| e.kind == Kind::Symlink)
+            && hub
+                .entry("code", "link")
+                .is_some_and(|e| e.kind == Kind::Symlink)
     })
     .await;
     assert!(hub.entry("code", "proj/.git/index.lock").is_none());
     assert!(hub.entry("code", "proj/node_modules/x/index.js").is_none());
     // git objects were committed before the ref pointing at them (§5.5)
-    let obj = hub.entry("code", "proj/.git/objects/ab/cdef").unwrap().version;
-    let rf = hub.entry("code", "proj/.git/refs/heads/main").unwrap().version;
+    let obj = hub
+        .entry("code", "proj/.git/objects/ab/cdef")
+        .unwrap()
+        .version;
+    let rf = hub
+        .entry("code", "proj/.git/refs/heads/main")
+        .unwrap()
+        .version;
     assert!(obj < rf);
 
     // B joins: identical file adopted (no duplicate), different file -> hub wins + conflict copy
@@ -144,18 +162,27 @@ async fn two_machines_converge_without_losing_data() {
             && conflict_copies(&rb, "").len() == 1
     })
     .await;
-    assert_eq!(fs::read_link(rb.join("link")).unwrap(), PathBuf::from("sub/deep.txt"));
+    assert_eq!(
+        fs::read_link(rb.join("link")).unwrap(),
+        PathBuf::from("sub/deep.txt")
+    );
     let copy = conflict_copies(&rb, "").pop().unwrap();
     assert!(copy.starts_with("diff.txt.conflict-m_b-"), "{copy}");
     assert_eq!(read(&rb, &copy).as_deref(), Some("from B"));
     assert_eq!(read(&rb, "same.txt").as_deref(), Some("same"));
-    eventually("conflict copy reaches A", || read(&ra, &copy).as_deref() == Some("from B")).await;
+    eventually("conflict copy reaches A", || {
+        read(&ra, &copy).as_deref() == Some("from B")
+    })
+    .await;
     assert_eq!(b.engine.pending().conflicts.len(), 1);
 
     // edit on A -> B
     let p = write(&ra, "sub/deep.txt", "v2");
     a.engine.on_local(p).await;
-    eventually("edit reaches B", || read(&rb, "sub/deep.txt").as_deref() == Some("v2")).await;
+    eventually("edit reaches B", || {
+        read(&rb, "sub/deep.txt").as_deref() == Some("v2")
+    })
+    .await;
 
     // delete on B -> A (moved to A's trash, not destroyed)
     fs::remove_file(rb.join("same.txt")).unwrap();
@@ -184,13 +211,19 @@ async fn two_machines_converge_without_losing_data() {
     hub.inject_file("code", "diff.txt", b"X edit", "m_x");
     eventually("A resolves the conflict", || {
         read(&ra, "diff.txt").as_deref() == Some("X edit")
-            && conflict_copies(&ra, "").iter().any(|n| n.contains(".conflict-m_a-"))
+            && conflict_copies(&ra, "")
+                .iter()
+                .any(|n| n.contains(".conflict-m_a-"))
     })
     .await;
-    let mine = conflict_copies(&ra, "").into_iter().find(|n| n.contains(".conflict-m_a-")).unwrap();
+    let mine = conflict_copies(&ra, "")
+        .into_iter()
+        .find(|n| n.contains(".conflict-m_a-"))
+        .unwrap();
     assert_eq!(read(&ra, &mine).as_deref(), Some("A edit"));
     eventually("B sees both versions", || {
-        read(&rb, "diff.txt").as_deref() == Some("X edit") && read(&rb, &mine).as_deref() == Some("A edit")
+        read(&rb, "diff.txt").as_deref() == Some("X edit")
+            && read(&rb, &mine).as_deref() == Some("A edit")
     })
     .await;
     assert_eq!(a.engine.pending().conflicts.len(), before + 1);
@@ -199,26 +232,40 @@ async fn two_machines_converge_without_losing_data() {
     let hist: Vec<LogRecord> = serde_json::from_value(
         a.ctx
             .hub
-            .query(Query::History { space: "code".into(), path: "sub/deep.txt".into(), limit: None })
+            .query(Query::History {
+                space: "code".into(),
+                path: "sub/deep.txt".into(),
+                limit: None,
+            })
             .await
             .unwrap(),
     )
     .unwrap();
     let first = hist.iter().map(|r| r.seq).min().unwrap();
-    a.engine.restore("code", "sub/deep.txt", first).await.unwrap();
+    a.engine
+        .restore("code", "sub/deep.txt", first)
+        .await
+        .unwrap();
     eventually("restore reaches both", || {
-        read(&ra, "sub/deep.txt").as_deref() == Some("deep") && read(&rb, "sub/deep.txt").as_deref() == Some("deep")
+        read(&ra, "sub/deep.txt").as_deref() == Some("deep")
+            && read(&rb, "sub/deep.txt").as_deref() == Some("deep")
     })
     .await;
 
     // nothing left to do on either side, and rescans find nothing new
     a.engine.rescan().await.unwrap();
     b.engine.rescan().await.unwrap();
-    eventually("both idle", || a.engine.pending().idle() && b.engine.pending().idle()).await;
+    eventually("both idle", || {
+        a.engine.pending().idle() && b.engine.pending().idle()
+    })
+    .await;
     let st = b.engine.space_status();
     assert_eq!(st.len(), 1);
     assert!(st[0].files >= 6, "{st:?}");
-    assert_eq!(a.engine.locate(&ra.join("x/y.txt")), Some(("code".into(), "x/y.txt".into())));
+    assert_eq!(
+        a.engine.locate(&ra.join("x/y.txt")),
+        Some(("code".into(), "x/y.txt".into()))
+    );
     assert_eq!(a.engine.locate(&ra), None);
 }
 
@@ -236,7 +283,8 @@ async fn case_collisions_are_reported_not_applied() {
     let m = machine(&hub, "m_b", &root).await;
     m.engine.add_space("code", &root).await.unwrap();
     eventually("collision reported", || {
-        m.engine.space_status()[0].case_collisions == vec!["readme.md".to_string()] && m.engine.pending().idle()
+        m.engine.space_status()[0].case_collisions == vec!["readme.md".to_string()]
+            && m.engine.pending().idle()
     })
     .await;
     assert_eq!(read(&root, "README.md").as_deref(), Some("mine"));
@@ -251,7 +299,8 @@ async fn case_collisions_are_reported_not_applied() {
             .flatten()
             .map(|e| e.file_name().to_string_lossy().to_string())
             .collect();
-        names == vec!["readme.md".to_string()] && read(&root, "readme.md").as_deref() == Some("other")
+        names == vec!["readme.md".to_string()]
+            && read(&root, "readme.md").as_deref() == Some("other")
     })
     .await;
     assert!(m.engine.space_status()[0].case_collisions.is_empty());
@@ -261,7 +310,8 @@ async fn case_collisions_are_reported_not_applied() {
     m.engine.on_local(root.join("readme.md")).await;
     m.engine.on_local(root.join("Readme.md")).await;
     eventually("hub has only the new name", || {
-        hub.entry("code", "readme.md").is_some_and(|e| e.deleted) && hub_has(&hub, "Readme.md", "other")
+        hub.entry("code", "readme.md").is_some_and(|e| e.deleted)
+            && hub_has(&hub, "Readme.md", "other")
     })
     .await;
     assert_eq!(read(&root, "Readme.md").as_deref(), Some("other"));
@@ -276,18 +326,27 @@ async fn modifications_win_over_deletes() {
     write(&root, "y.txt", "y0");
     let m = machine(&hub, "m_a", &root).await;
     m.engine.add_space("code", &root).await.unwrap();
-    eventually("pushed", || hub_has(&hub, "x.txt", "x0") && hub_has(&hub, "y.txt", "y0")).await;
+    eventually("pushed", || {
+        hub_has(&hub, "x.txt", "x0") && hub_has(&hub, "y.txt", "y0")
+    })
+    .await;
 
     // remote delete vs local edit: the edit is pushed again as a create
     write(&root, "x.txt", "local edit");
     hub.inject_delete("code", "x.txt", "m_x");
-    eventually("edit survives the delete", || hub_has(&hub, "x.txt", "local edit")).await;
+    eventually("edit survives the delete", || {
+        hub_has(&hub, "x.txt", "local edit")
+    })
+    .await;
     assert_eq!(read(&root, "x.txt").as_deref(), Some("local edit"));
 
     // local delete vs remote edit: the edit comes back
     fs::remove_file(root.join("y.txt")).unwrap();
     hub.inject_file("code", "y.txt", b"remote edit", "m_x");
-    eventually("remote edit restored locally", || read(&root, "y.txt").as_deref() == Some("remote edit")).await;
+    eventually("remote edit restored locally", || {
+        read(&root, "y.txt").as_deref() == Some("remote edit")
+    })
+    .await;
     assert!(hub_has(&hub, "y.txt", "remote edit"));
     eventually("idle", || m.engine.pending().idle()).await;
     assert!(conflict_copies(&root, "").is_empty());
@@ -302,10 +361,16 @@ async fn newly_ignored_files_are_not_deleted() {
     write(&root, ".env", "SECRET=1");
     let m = machine(&hub, "m_a", &root).await;
     m.engine.add_space("code", &root).await.unwrap();
-    eventually("pushed", || hub_has(&hub, "logs/a.log", "line") && hub_has(&hub, ".env", "SECRET=1")).await;
+    eventually("pushed", || {
+        hub_has(&hub, "logs/a.log", "line") && hub_has(&hub, ".env", "SECRET=1")
+    })
+    .await;
     let p = write(&root, ".gitignore", "*.log\n.env\n");
     m.engine.on_local(p).await;
-    eventually("rules pushed", || hub_has(&hub, ".gitignore", "*.log\n.env\n")).await;
+    eventually("rules pushed", || {
+        hub_has(&hub, ".gitignore", "*.log\n.env\n")
+    })
+    .await;
     // a now-ignored file is left alone (never deleted on the hub); always_include still syncs .env
     write(&root, "logs/a.log", "line\nmore");
     m.engine.on_local(root.join("logs/a.log")).await;
@@ -331,7 +396,10 @@ async fn repointed_space_rejoins_instead_of_deleting() {
     fs::create_dir_all(&new).unwrap();
     m.ctx.cfg.write().unwrap().spaces[0].path = new.to_string_lossy().to_string();
     m.engine.rescan().await.unwrap();
-    eventually("files arrive in the new folder", || read(&new, "a.txt").as_deref() == Some("keep me")).await;
+    eventually("files arrive in the new folder", || {
+        read(&new, "a.txt").as_deref() == Some("keep me")
+    })
+    .await;
     assert!(!hub.entry("code", "a.txt").unwrap().deleted);
     assert_eq!(read(&old, "a.txt").as_deref(), Some("keep me"));
 }

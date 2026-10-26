@@ -24,8 +24,14 @@ use crate::transport::{self, Conn, HubAddr};
 /// Events from the connection task to the daemon loop.
 #[derive(Debug)]
 pub enum HubEvent {
-    Connected { hub_id: String, head_seq: u64, version: String },
-    Disconnected { error: String },
+    Connected {
+        hub_id: String,
+        head_seq: u64,
+        version: String,
+    },
+    Disconnected {
+        error: String,
+    },
     /// a replicated change (+ inline append bytes)
     Change(Change, Vec<u8>),
     CaughtUp(u64),
@@ -43,9 +49,19 @@ pub struct HubSettings {
 /// Outcome of a mutation request.
 #[derive(Debug, Clone)]
 pub enum Commit {
-    Committed { seq: u64, entry: Entry },
-    Conflict { current: Option<Entry>, reason: String },
-    Busy { owner: String, owner_name: String, idle_ms: i64 },
+    Committed {
+        seq: u64,
+        entry: Entry,
+    },
+    Conflict {
+        current: Option<Entry>,
+        reason: String,
+    },
+    Busy {
+        owner: String,
+        owner_name: String,
+        idle_ms: i64,
+    },
 }
 
 /// An `Error` response from the hub; recover it with `err.downcast_ref::<HubError>()`.
@@ -110,7 +126,10 @@ pub struct HubClient {
 
 impl HubClient {
     /// Spawn the connection task. Events arrive on the returned receiver.
-    pub fn start(settings: HubSettings, machine: MachineInfo) -> (HubClient, mpsc::UnboundedReceiver<HubEvent>) {
+    pub fn start(
+        settings: HubSettings,
+        machine: MachineInfo,
+    ) -> (HubClient, mpsc::UnboundedReceiver<HubEvent>) {
         let token = settings
             .token
             .clone()
@@ -178,7 +197,10 @@ impl HubClient {
     /// Wait until connected (or timeout).
     pub async fn wait_connected(&self, timeout: std::time::Duration) -> bool {
         let mut rx = self.inner.connected.subscribe();
-        let ok = matches!(tokio::time::timeout(timeout, rx.wait_for(|c| *c)).await, Ok(Ok(_)));
+        let ok = matches!(
+            tokio::time::timeout(timeout, rx.wait_for(|c| *c)).await,
+            Ok(Ok(_))
+        );
         ok
     }
 
@@ -233,7 +255,13 @@ impl HubClient {
     async fn has_blob(&self, hash: &str) -> Result<bool> {
         let id = self.next_id();
         let (msg, _) = self
-            .request(Msg::HasBlobs { id, hashes: vec![hash.to_string()] }, Vec::new())
+            .request(
+                Msg::HasBlobs {
+                    id,
+                    hashes: vec![hash.to_string()],
+                },
+                Vec::new(),
+            )
             .await?;
         match msg {
             Msg::Missing { hashes, .. } => Ok(!hashes.iter().any(|h| h == hash)),
@@ -243,7 +271,12 @@ impl HubClient {
 
     async fn put_chunk(&self, hash: &str, offset: u64, last: bool, chunk: Vec<u8>) -> Result<()> {
         let id = self.next_id();
-        let msg = Msg::BlobPut { id, hash: hash.to_string(), offset, last };
+        let msg = Msg::BlobPut {
+            id,
+            hash: hash.to_string(),
+            offset,
+            last,
+        };
         match self.request(msg, chunk).await?.0 {
             Msg::Ok { .. } => Ok(()),
             other => bail!("unexpected reply to BlobPut: {}", tag(&other)),
@@ -289,7 +322,8 @@ impl HubClient {
         loop {
             let end = (offset + proto::CHUNK).min(data.len());
             let last = end == data.len();
-            self.put_chunk(hash, offset as u64, last, data[offset..end].to_vec()).await?;
+            self.put_chunk(hash, offset as u64, last, data[offset..end].to_vec())
+                .await?;
             offset = end;
             if last {
                 return Ok(());
@@ -314,9 +348,17 @@ impl HubClient {
         let mut offset = 0u64;
         loop {
             let id = self.next_id();
-            let req = Msg::BlobGet { id, hash: hash.to_string(), offset, len: proto::CHUNK as u64 };
+            let req = Msg::BlobGet {
+                id,
+                hash: hash.to_string(),
+                offset,
+                len: proto::CHUNK as u64,
+            };
             let (msg, bin) = self.request(req, Vec::new()).await?;
-            let Msg::Blob { offset: got, eof, .. } = msg else {
+            let Msg::Blob {
+                offset: got, eof, ..
+            } = msg
+            else {
                 bail!("unexpected reply to BlobGet: {}", tag(&msg));
             };
             if got != offset {
@@ -341,13 +383,25 @@ impl HubClient {
     }
 
     /// Read `[offset, offset+len)` of a log.
-    pub async fn read_log(&self, space: &str, path: &str, offset: u64, len: u64) -> Result<Vec<u8>> {
+    pub async fn read_log(
+        &self,
+        space: &str,
+        path: &str,
+        offset: u64,
+        len: u64,
+    ) -> Result<Vec<u8>> {
         let mut out = Vec::with_capacity(len.min(proto::CHUNK as u64) as usize);
         while (out.len() as u64) < len {
             let id = self.next_id();
             let at = offset + out.len() as u64;
             let want = (len - out.len() as u64).min(proto::CHUNK as u64);
-            let req = Msg::LogRead { id, space: space.into(), path: path.into(), offset: at, len: want };
+            let req = Msg::LogRead {
+                id,
+                space: space.into(),
+                path: path.into(),
+                offset: at,
+                len: want,
+            };
             let (msg, bin) = self.request(req, Vec::new()).await?;
             let Msg::Blob { eof, .. } = msg else {
                 bail!("unexpected reply to LogRead: {}", tag(&msg));
@@ -362,7 +416,11 @@ impl HubClient {
 
     pub async fn query(&self, q: Query) -> Result<serde_json::Value> {
         let id = self.next_id();
-        match self.request(Msg::Query { id, query: q }, Vec::new()).await?.0 {
+        match self
+            .request(Msg::Query { id, query: q }, Vec::new())
+            .await?
+            .0
+        {
             Msg::Result { data, .. } => Ok(data),
             other => bail!("unexpected reply to Query: {}", tag(&other)),
         }
@@ -375,8 +433,19 @@ impl HubClient {
                 self.inner.head_seq.fetch_max(seq, Ordering::SeqCst);
                 Ok(Commit::Committed { seq, entry })
             }
-            Msg::Conflict { current, reason, .. } => Ok(Commit::Conflict { current, reason }),
-            Msg::Busy { owner, owner_name, idle_ms, .. } => Ok(Commit::Busy { owner, owner_name, idle_ms }),
+            Msg::Conflict {
+                current, reason, ..
+            } => Ok(Commit::Conflict { current, reason }),
+            Msg::Busy {
+                owner,
+                owner_name,
+                idle_ms,
+                ..
+            } => Ok(Commit::Busy {
+                owner,
+                owner_name,
+                idle_ms,
+            }),
             other => bail!("unexpected reply to a mutation: {}", tag(&other)),
         }
     }
@@ -451,9 +520,17 @@ async fn session(
     let conn = tokio::time::timeout(HANDSHAKE_TIMEOUT, connector())
         .await
         .map_err(|_| anyhow!("timed out connecting to the hub"))??;
-    let Conn { reader, mut writer, child } = conn;
+    let Conn {
+        reader,
+        mut writer,
+        child,
+    } = conn;
     let last_rx = Arc::new(AtomicU64::new(0));
-    let mut reader = Tracked { inner: reader, last_rx: last_rx.clone(), epoch: inner.epoch };
+    let mut reader = Tracked {
+        inner: reader,
+        last_rx: last_rx.clone(),
+        epoch: inner.epoch,
+    };
     last_rx.store(inner.epoch.elapsed().as_millis() as u64, Ordering::SeqCst);
 
     let hello = Msg::Hello {
@@ -472,7 +549,12 @@ async fn session(
                 bail!("hub closed the connection during the handshake");
             };
             match f.msg {
-                Msg::Welcome { hub_id, head_seq, version, .. } => return Ok((hub_id, head_seq, version)),
+                Msg::Welcome {
+                    hub_id,
+                    head_seq,
+                    version,
+                    ..
+                } => return Ok((hub_id, head_seq, version)),
                 Msg::Error { code, msg, .. } => return Err(HubError { code, msg }.into()),
                 other => debug!("ignoring {} before welcome", tag(&other)),
             }
@@ -486,14 +568,27 @@ async fn session(
     *lock(&inner.hub_version) = Some(version.clone());
     let (tx, rx) = mpsc::unbounded_channel();
     let pending: PendingMap = Arc::default();
-    *lock(&inner.link) = Some(Link { tx: tx.clone(), pending: pending.clone() });
+    *lock(&inner.link) = Some(Link {
+        tx: tx.clone(),
+        pending: pending.clone(),
+    });
     inner.connected.send_replace(true);
     *up_since = Some(Instant::now());
     info!("connected to hub {hub_id} (v{version}, head {head_seq})");
-    let _ = events.send(HubEvent::Connected { hub_id, head_seq, version });
+    let _ = events.send(HubEvent::Connected {
+        hub_id,
+        head_seq,
+        version,
+    });
 
     let mut writer_task = tokio::spawn(write_loop(writer, rx, inner.clone()));
-    let mut reader_task = tokio::spawn(read_loop(reader, tx, pending.clone(), inner.clone(), events.clone()));
+    let mut reader_task = tokio::spawn(read_loop(
+        reader,
+        tx,
+        pending.clone(),
+        inner.clone(),
+        events.clone(),
+    ));
     let res = tokio::select! {
         r = &mut reader_task => r.unwrap_or_else(|e| Err(anyhow!("reader task failed: {e}"))),
         r = &mut writer_task => r.unwrap_or_else(|e| Err(anyhow!("writer task failed: {e}"))),
@@ -558,7 +653,10 @@ async fn read_loop(
     events: mpsc::UnboundedSender<HubEvent>,
 ) -> Result<()> {
     loop {
-        let Some(frame) = proto::read_frame(&mut r).await.context("reading from the hub")? else {
+        let Some(frame) = proto::read_frame(&mut r)
+            .await
+            .context("reading from the hub")?
+        else {
             return Ok(());
         };
         let (msg, bin) = (frame.msg, frame.bin);
@@ -607,11 +705,16 @@ struct Tracked {
 }
 
 impl AsyncRead for Tracked {
-    fn poll_read(mut self: Pin<&mut Self>, cx: &mut TaskCx<'_>, buf: &mut ReadBuf<'_>) -> Poll<std::io::Result<()>> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskCx<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
         let before = buf.filled().len();
         let res = Pin::new(&mut self.inner).poll_read(cx, buf);
         if matches!(res, Poll::Ready(Ok(()))) && buf.filled().len() > before {
-            self.last_rx.store(self.epoch.elapsed().as_millis() as u64, Ordering::SeqCst);
+            self.last_rx
+                .store(self.epoch.elapsed().as_millis() as u64, Ordering::SeqCst);
         }
         res
     }
@@ -627,13 +730,19 @@ mod tests {
     use super::*;
 
     fn machine(id: &str) -> MachineInfo {
-        MachineInfo { id: id.into(), name: id.into(), os: "macos".into(), home: "/h".into() }
+        MachineInfo {
+            id: id.into(),
+            name: id.into(),
+            os: "macos".into(),
+            home: "/h".into(),
+        }
     }
 
     #[tokio::test]
     async fn handshake_request_events_and_reconnect() {
         let hub = FakeHub::new();
-        let (client, mut ev) = HubClient::start_with(hub.connector(), machine("m1"), Some("tok".into()));
+        let (client, mut ev) =
+            HubClient::start_with(hub.connector(), machine("m1"), Some("tok".into()));
         assert!(client.wait_connected(Duration::from_secs(5)).await);
         match ev.recv().await.unwrap() {
             HubEvent::Connected { head_seq, .. } => assert_eq!(head_seq, 0),
@@ -652,7 +761,10 @@ mod tests {
         let h = crate::hash::hash_bytes(&data);
         client.upload_bytes(&data, &h).await.unwrap();
         client.upload_bytes(&data, &h).await.unwrap();
-        let d = tempfile::Builder::new().prefix("uc").tempdir_in("/tmp").unwrap();
+        let d = tempfile::Builder::new()
+            .prefix("uc")
+            .tempdir_in("/tmp")
+            .unwrap();
         let dest = d.path().join("blob");
         client.download_blob(&h, &dest).await.unwrap();
         assert_eq!(std::fs::read(&dest).unwrap(), data);
@@ -665,7 +777,11 @@ mod tests {
         client.subscribe(0).await.unwrap();
         let mut saw_change = false;
         loop {
-            match tokio::time::timeout(Duration::from_secs(5), ev.recv()).await.unwrap().unwrap() {
+            match tokio::time::timeout(Duration::from_secs(5), ev.recv())
+                .await
+                .unwrap()
+                .unwrap()
+            {
                 HubEvent::Change(c, _) => {
                     assert_eq!(c.entry.path, "a.txt");
                     saw_change = true;

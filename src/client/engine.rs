@@ -52,9 +52,13 @@ pub enum Action {
     /// local already equals R (or both are deleted): record R as the new base
     Adopt,
     /// push local content as a new version against `base`
-    Push { base: Option<u64> },
+    Push {
+        base: Option<u64>,
+    },
     /// push a local delete
-    PushDelete { base: u64 },
+    PushDelete {
+        base: u64,
+    },
     /// write R over an unchanged (or absent) local path
     Apply,
     /// remote delete of an unchanged local file: move it to trash
@@ -80,7 +84,9 @@ pub fn decide(l: Option<&Content>, b: Option<&Base>, r: Option<&Entry>) -> Actio
     let same_as_r = |l: &Content, r: &Entry| !r.deleted && l.kind == r.kind && l.hash == r.hash;
     match (l_changed, r_changed, l, r) {
         (false, false, _, _) => Action::Nothing,
-        (true, false, Some(_), _) => Action::Push { base: b.map(|b| b.version).or(r.map(|r| r.version)) },
+        (true, false, Some(_), _) => Action::Push {
+            base: b.map(|b| b.version).or(r.map(|r| r.version)),
+        },
         (true, false, None, _) => match b_live {
             Some(b) => Action::PushDelete { base: b.version },
             None => Action::Nothing,
@@ -100,7 +106,9 @@ pub fn decide(l: Option<&Content>, b: Option<&Base>, r: Option<&Entry>) -> Actio
             }
         }
         // local change vs remote delete: the change wins, re-created on top of the tombstone
-        (true, true, Some(_), Some(r)) if r.deleted => Action::Push { base: Some(r.version) },
+        (true, true, Some(_), Some(r)) if r.deleted => Action::Push {
+            base: Some(r.version),
+        },
         (true, true, Some(l), Some(r)) => {
             if same_as_r(l, r) {
                 Action::Adopt
@@ -115,7 +123,9 @@ pub fn decide(l: Option<&Content>, b: Option<&Base>, r: Option<&Entry>) -> Actio
 /// §5.5 push/apply order: git objects, then everything else, then refs, then the index.
 pub fn order_class(rel: &str) -> u8 {
     let parts: Vec<&str> = rel.split('/').collect();
-    let Some(g) = parts.iter().position(|p| *p == ".git") else { return 1 };
+    let Some(g) = parts.iter().position(|p| *p == ".git") else {
+        return 1;
+    };
     match &parts[g + 1..] {
         ["objects", ..] => 0,
         ["refs", ..] | ["packed-refs"] | ["HEAD"] => 2,
@@ -200,7 +210,10 @@ fn agent_roots() -> Vec<PathBuf> {
         Some(v) if !v.is_empty() => PathBuf::from(v),
         _ => paths::home().join(dflt),
     };
-    vec![env_or("CLAUDE_CONFIG_DIR", ".claude"), env_or("CODEX_HOME", ".codex")]
+    vec![
+        env_or("CLAUDE_CONFIG_DIR", ".claude"),
+        env_or("CODEX_HOME", ".codex"),
+    ]
 }
 
 impl Engine {
@@ -219,7 +232,9 @@ impl Engine {
     /// Staged copies left behind by a crash are garbage (only our own prefixes: logsync may
     /// share the directory).
     fn clean_staging(&self) {
-        let Ok(rd) = std::fs::read_dir(self.ctx.paths.staging()) else { return };
+        let Ok(rd) = std::fs::read_dir(self.ctx.paths.staging()) else {
+            return;
+        };
         for ent in rd.flatten() {
             let name = ent.file_name().to_string_lossy().to_string();
             if name.starts_with(STAGED_UP) || name.starts_with(STAGED_DOWN) {
@@ -238,13 +253,15 @@ impl Engine {
 
     fn make_space(&self, root: PathBuf) -> SpaceState {
         let cfg = self.ctx.cfg();
-        let mut ignore = match Ignore::new(&root, cfg.sync.respect_gitignore, &cfg.sync.always_include) {
-            Ok(i) => i,
-            Err(e) => {
-                warn!("bad always_include patterns ({e:#}); ignoring them");
-                Ignore::new(&root, cfg.sync.respect_gitignore, &[]).expect("built-in ignore globs are valid")
-            }
-        };
+        let mut ignore =
+            match Ignore::new(&root, cfg.sync.respect_gitignore, &cfg.sync.always_include) {
+                Ok(i) => i,
+                Err(e) => {
+                    warn!("bad always_include patterns ({e:#}); ignoring them");
+                    Ignore::new(&root, cfg.sync.respect_gitignore, &[])
+                        .expect("built-in ignore globs are valid")
+                }
+            };
         ignore.exclude(&self.ctx.paths.root);
         for r in agent_roots() {
             ignore.exclude(&r);
@@ -272,7 +289,8 @@ impl Engine {
         let rules = (cfg.sync.respect_gitignore, cfg.sync.always_include.clone());
         let mut st = self.lock();
         st.debounce = Duration::from_millis(cfg.sync.debounce_ms);
-        st.spaces.retain(|name, sp| want.get(name) == Some(&sp.root) && sp.rules == rules);
+        st.spaces
+            .retain(|name, sp| want.get(name) == Some(&sp.root) && sp.rules == rules);
         for (name, root) in want {
             if let std::collections::hash_map::Entry::Vacant(v) = st.spaces.entry(name) {
                 v.insert(self.make_space(root));
@@ -284,7 +302,12 @@ impl Engine {
 
     /// Space roots currently synced (for the watcher). Agent spaces ('@...') are not here.
     pub fn roots(&self) -> Vec<(String, PathBuf)> {
-        let mut v: Vec<_> = self.lock().spaces.iter().map(|(n, s)| (n.clone(), s.root.clone())).collect();
+        let mut v: Vec<_> = self
+            .lock()
+            .spaces
+            .iter()
+            .map(|(n, s)| (n.clone(), s.root.clone()))
+            .collect();
         v.sort();
         v
     }
@@ -322,24 +345,34 @@ impl Engine {
     }
 
     fn space_parts(&self, space: &str) -> Option<(PathBuf, Arc<Ignore>)> {
-        self.lock().spaces.get(space).map(|s| (s.root.clone(), s.ignore.clone()))
+        self.lock()
+            .spaces
+            .get(space)
+            .map(|s| (s.root.clone(), s.ignore.clone()))
     }
 
     fn mark(&self, space: &str, rel: &str, local: bool, ready_now: bool) {
         let now = Instant::now();
         let mut st = self.lock();
-        let stamp = if ready_now { now.checked_sub(st.debounce).unwrap_or(now) } else { now };
+        let stamp = if ready_now {
+            now.checked_sub(st.debounce).unwrap_or(now)
+        } else {
+            now
+        };
         st.gen += 1;
         let gen = st.gen;
-        let d = st.dirty.entry((space.to_string(), rel.to_string())).or_insert(Dirty {
-            first: stamp,
-            last: stamp,
-            local: false,
-            remote: false,
-            gen,
-            attempts: 0,
-            not_before: None,
-        });
+        let d = st
+            .dirty
+            .entry((space.to_string(), rel.to_string()))
+            .or_insert(Dirty {
+                first: stamp,
+                last: stamp,
+                local: false,
+                remote: false,
+                gen,
+                attempts: 0,
+                not_before: None,
+            });
         d.gen = gen;
         if local {
             if !d.local {
@@ -355,18 +388,24 @@ impl Engine {
     }
 
     fn mark_subtree(&self, space: &str, rel: &str) {
-        self.lock().subtrees.insert((space.to_string(), rel.to_string()));
+        self.lock()
+            .subtrees
+            .insert((space.to_string(), rel.to_string()));
         self.wake.notify_one();
     }
 
     /// Mark local paths dirty (from the watcher). Debounced; never blocks long.
     pub async fn on_local(&self, abs: PathBuf) {
-        let Some((space, rel)) = self.locate_any(&abs) else { return };
+        let Some((space, rel)) = self.locate_any(&abs) else {
+            return;
+        };
         if rel.is_empty() {
             self.mark_subtree(&space, "");
             return;
         }
-        let Some((root, ignore)) = self.space_parts(&space) else { return };
+        let Some((root, ignore)) = self.space_parts(&space) else {
+            return;
+        };
         let local = paths::join_canonical(&root, &rel);
         if matches!(scan::stat(&local), Ok(Stat::Dir)) {
             if !ignore.is_ignored(&local, true) {
@@ -394,7 +433,10 @@ impl Engine {
             return Ok(());
         }
         if !is_canonical(&e.path) {
-            warn!("ignoring remote change with a non-canonical path {:?}", e.path);
+            warn!(
+                "ignoring remote change with a non-canonical path {:?}",
+                e.path
+            );
             return Ok(());
         }
         if !self.lock().spaces.contains_key(&e.space) {
@@ -430,13 +472,22 @@ impl Engine {
 
     /// Scan `sub` ("" = whole space), compare with the DB and mark what differs.
     async fn rescan_space(&self, space: &str, sub: &str) -> Result<()> {
-        let Some((root, ignore)) = self.space_parts(space) else { return Ok(()) };
+        let Some((root, ignore)) = self.space_parts(space) else {
+            return Ok(());
+        };
         if !root.is_dir() {
-            bail!("space folder {} is missing; not syncing it until it is back", root.display());
+            bail!(
+                "space folder {} is missing; not syncing it until it is back",
+                root.display()
+            );
         }
         self.bind_root(space, &root)?;
         self.ensure_case_probe(space, &root);
-        let dir = if sub.is_empty() { root.clone() } else { paths::join_canonical(&root, sub) };
+        let dir = if sub.is_empty() {
+            root.clone()
+        } else {
+            paths::join_canonical(&root, sub)
+        };
         if !sub.is_empty() && (ignore.is_ignored(&dir, true) || !dir.is_dir()) {
             // the directory is gone or ignored now: re-check what we track under it
             for r in self.ctx.db.rows_prefix(space, &format!("{sub}/"))? {
@@ -448,7 +499,11 @@ impl Engine {
         let scanned = tokio::task::spawn_blocking(move || scan::scan_dir(&r2, &dir, &i2))
             .await
             .context("scan task failed")??;
-        let prefix = if sub.is_empty() { String::new() } else { format!("{sub}/") };
+        let prefix = if sub.is_empty() {
+            String::new()
+        } else {
+            format!("{sub}/")
+        };
         let rows: HashMap<String, Row> = self
             .ctx
             .db
@@ -460,9 +515,14 @@ impl Engine {
         let mut marks = Vec::new();
         for s in &scanned {
             seen.insert(s.rel.as_str());
-            let unchanged = rows.get(&s.rel).and_then(|r| r.base.as_ref()).is_some_and(|b| {
-                !b.deleted && b.fp.as_ref().is_some_and(|fp| apply::same_fp(fp, &s.fp)) && b.kind == kind_of(&s.kind)
-            });
+            let unchanged = rows
+                .get(&s.rel)
+                .and_then(|r| r.base.as_ref())
+                .is_some_and(|b| {
+                    !b.deleted
+                        && b.fp.as_ref().is_some_and(|fp| apply::same_fp(fp, &s.fp))
+                        && b.kind == kind_of(&s.kind)
+                });
             if !unchanged {
                 marks.push(s.rel.clone());
             }
@@ -477,7 +537,11 @@ impl Engine {
                 marks.push(path.clone());
             }
         }
-        debug!("rescan {space}/{sub}: {} files, {} to reconcile", scanned.len(), marks.len());
+        debug!(
+            "rescan {space}/{sub}: {} files, {} to reconcile",
+            scanned.len(),
+            marks.len()
+        );
         for m in marks {
             self.mark(space, &m, true, true);
         }
@@ -488,7 +552,13 @@ impl Engine {
     /// most tracked files vanish at once, stop pushing deletes for that space so the other
     /// machines keep their copies, until the files come back or the user confirms with
     /// `<space>/.uc-allow-deletes`.
-    fn check_mass_delete(&self, space: &str, root: &Path, rows: &HashMap<String, Row>, seen: &HashSet<&str>) {
+    fn check_mass_delete(
+        &self,
+        space: &str,
+        root: &Path,
+        rows: &HashMap<String, Row>,
+        seen: &HashSet<&str>,
+    ) {
         let live: Vec<&String> = rows
             .iter()
             .filter(|(_, r)| r.base.as_ref().is_some_and(|b| !b.deleted))
@@ -545,7 +615,12 @@ impl Engine {
     }
 
     fn ensure_case_probe(&self, space: &str, root: &Path) {
-        if self.lock().spaces.get(space).is_some_and(|s| s.case_insensitive.is_some()) {
+        if self
+            .lock()
+            .spaces
+            .get(space)
+            .is_some_and(|s| s.case_insensitive.is_some())
+        {
             return;
         }
         let ci = match scan::probe_case_insensitive(root) {
@@ -576,7 +651,9 @@ impl Engine {
                 continue;
             }
             self.listings().clear();
-            let subs: Vec<(String, String)> = std::mem::take(&mut self.lock().subtrees).into_iter().collect();
+            let subs: Vec<(String, String)> = std::mem::take(&mut self.lock().subtrees)
+                .into_iter()
+                .collect();
             for (space, sub) in subs {
                 if let Err(e) = self.rescan_space(&space, &sub).await {
                     warn!("rescan {space}/{sub}: {e:#}");
@@ -601,7 +678,9 @@ impl Engine {
                 let mut running = tokio::task::JoinSet::new();
                 loop {
                     while running.len() < PARALLEL {
-                        let Some((space, rel, gen)) = queue.next() else { break };
+                        let Some((space, rel, gen)) = queue.next() else {
+                            break;
+                        };
                         if class >= 2 && objects_pending.contains(&space) {
                             continue;
                         }
@@ -627,7 +706,10 @@ impl Engine {
     }
 
     fn spaces_with_unready_objects(&self, batch: &[(String, String, u64)]) -> HashSet<String> {
-        let in_batch: HashSet<(&str, &str)> = batch.iter().map(|(s, r, _)| (s.as_str(), r.as_str())).collect();
+        let in_batch: HashSet<(&str, &str)> = batch
+            .iter()
+            .map(|(s, r, _)| (s.as_str(), r.as_str()))
+            .collect();
         self.lock()
             .dirty
             .keys()
@@ -646,7 +728,9 @@ impl Engine {
             .iter()
             .filter(|(_, d)| d.not_before.map_or(true, |t| t <= now))
             .filter(|(_, d)| {
-                !d.local || now.duration_since(d.last) >= debounce || now.duration_since(d.first) >= MAX_DIRTY
+                !d.local
+                    || now.duration_since(d.last) >= debounce
+                    || now.duration_since(d.first) >= MAX_DIRTY
             })
             .map(|((s, r), d)| (order_class(r), s.clone(), r.clone(), d.gen))
             .collect();
@@ -693,7 +777,9 @@ impl Engine {
     }
 
     async fn reconcile_once(&self, space: &str, rel: &str) -> Result<Step> {
-        let Some((root, ignore)) = self.space_parts(space) else { return Ok(Step::Done) };
+        let Some((root, ignore)) = self.space_parts(space) else {
+            return Ok(Step::Done);
+        };
         if !root.is_dir() {
             bail!("space folder {} is missing", root.display());
         }
@@ -744,7 +830,9 @@ impl Engine {
                 .as_ref()
                 .is_some_and(|r| !r.deleted && b.as_ref().map_or(true, |b| r.version > b.version));
             if remote_new {
-                info!("{space}/{rel}: collides case-insensitively with an existing file; not applied");
+                info!(
+                    "{space}/{rel}: collides case-insensitively with an existing file; not applied"
+                );
                 if let Some(s) = self.lock().spaces.get_mut(space) {
                     s.collisions.insert(rel.to_string());
                 }
@@ -767,15 +855,23 @@ impl Engine {
             None => None,
             Some((kind, fp)) => {
                 let unchanged = b.as_ref().is_some_and(|b| {
-                    !b.deleted && b.kind == kind_of(kind) && b.fp.as_ref().is_some_and(|f| apply::same_fp(f, fp))
+                    !b.deleted
+                        && b.kind == kind_of(kind)
+                        && b.fp.as_ref().is_some_and(|f| apply::same_fp(f, fp))
                 });
                 if unchanged {
-                    b.as_ref().map(|b| Content { kind: b.kind, hash: b.hash.clone(), exec: b.exec })
+                    b.as_ref().map(|b| Content {
+                        kind: b.kind,
+                        hash: b.hash.clone(),
+                        exec: b.exec,
+                    })
                 } else {
                     let s = self.snapshot(&abs, kind).await?;
                     let c = s.content.clone();
                     // touched but identical to B: just remember the new fingerprint
-                    if let Some(base) = b.as_mut().filter(|b| !b.deleted && b.hash == c.hash && b.kind == c.kind && b.exec == c.exec) {
+                    if let Some(base) = b.as_mut().filter(|b| {
+                        !b.deleted && b.hash == c.hash && b.kind == c.kind && b.exec == c.exec
+                    }) {
                         base.fp = Some(s.fp.clone());
                         self.ctx.db.set_base(space, rel, Some(base))?;
                     }
@@ -784,7 +880,10 @@ impl Engine {
                 }
             }
         };
-        let observed_fp = snap.as_ref().map(|s| s.fp.clone()).or_else(|| local.as_ref().map(|(_, fp)| fp.clone()));
+        let observed_fp = snap
+            .as_ref()
+            .map(|s| s.fp.clone())
+            .or_else(|| local.as_ref().map(|(_, fp)| fp.clone()));
 
         let action = decide(l.as_ref(), b.as_ref(), r.as_ref());
         debug!("{space}/{rel}: {action:?}");
@@ -792,7 +891,9 @@ impl Engine {
             Action::Nothing => Ok(Step::Done),
             Action::Adopt => {
                 let r = r.context("adopt without remote state")?;
-                self.ctx.db.set_base(space, rel, Some(&Base::from_entry(&r, observed_fp)))?;
+                self.ctx
+                    .db
+                    .set_base(space, rel, Some(&Base::from_entry(&r, observed_fp)))?;
                 self.forget_collision(space, rel);
                 Ok(Step::Done)
             }
@@ -803,7 +904,8 @@ impl Engine {
             Action::PushDelete { base } => self.push_delete(space, rel, &abs, base).await,
             Action::Apply => {
                 let r = r.context("apply without remote state")?;
-                self.apply_remote(space, rel, &abs, &r, observed_fp.as_ref()).await
+                self.apply_remote(space, rel, &abs, &r, observed_fp.as_ref())
+                    .await
             }
             Action::ApplyDelete => {
                 let r = r.context("delete without remote state")?;
@@ -814,13 +916,16 @@ impl Engine {
                 let to = apply::move_to_trash(&self.ctx.paths.trash(), &abs)?;
                 self.touched(&abs);
                 info!("{space}/{rel}: deleted remotely, moved to {}", to.display());
-                self.ctx.db.set_base(space, rel, Some(&Base::from_entry(&r, None)))?;
+                self.ctx
+                    .db
+                    .set_base(space, rel, Some(&Base::from_entry(&r, None)))?;
                 prune_empty_dirs(&root, &abs);
                 self.retry_collisions(space, rel);
                 Ok(Step::Done)
             }
             Action::Conflict => {
-                let copy = apply::rename_to_conflict(&abs, &self.ctx.machine.name, paths::now_ms())?;
+                let copy =
+                    apply::rename_to_conflict(&abs, &self.ctx.machine.name, paths::now_ms())?;
                 self.touched(&abs);
                 let shown = paths::tilde(&copy);
                 warn!("conflict on {space}/{rel}: kept your version as {shown}");
@@ -834,14 +939,19 @@ impl Engine {
     }
 
     fn case_insensitive(&self, space: &str) -> bool {
-        self.lock().spaces.get(space).and_then(|s| s.case_insensitive).unwrap_or(false)
+        self.lock()
+            .spaces
+            .get(space)
+            .and_then(|s| s.case_insensitive)
+            .unwrap_or(false)
     }
 
     /// Is there a directory entry named exactly (NFC) like `abs`? A cached listing may be stale,
     /// so a miss is confirmed with a fresh one.
     fn exact_name_exists(&self, abs: &Path) -> Result<bool> {
         use unicode_normalization::UnicodeNormalization;
-        let (Some(dir), Some(name)) = (abs.parent(), abs.file_name().and_then(|n| n.to_str())) else {
+        let (Some(dir), Some(name)) = (abs.parent(), abs.file_name().and_then(|n| n.to_str()))
+        else {
             return Ok(true);
         };
         let want: String = name.nfc().collect();
@@ -862,7 +972,9 @@ impl Engine {
     /// Every existing component of `abs` below `root` has exactly this name (NFC), not just a
     /// case-insensitive match (macOS). Missing components are fine: they will be created as named.
     fn exact_path_ok(&self, root: &Path, abs: &Path) -> Result<bool> {
-        let Ok(rest) = abs.strip_prefix(root) else { return Ok(true) };
+        let Ok(rest) = abs.strip_prefix(root) else {
+            return Ok(true);
+        };
         let mut p = root.to_path_buf();
         for c in rest.components() {
             p.push(c);
@@ -896,7 +1008,13 @@ impl Engine {
             .lock()
             .spaces
             .get(space)
-            .map(|s| s.collisions.iter().filter(|c| c.to_lowercase() == lower).cloned().collect())
+            .map(|s| {
+                s.collisions
+                    .iter()
+                    .filter(|c| c.to_lowercase() == lower)
+                    .cloned()
+                    .collect()
+            })
             .unwrap_or_default();
         for h in hits {
             self.mark(space, &h, false, true);
@@ -908,7 +1026,11 @@ impl Engine {
         if let LocalKind::Symlink(target) = kind {
             let fp = scan::fingerprint(abs).context("symlink vanished")?.1;
             return Ok(Snap {
-                content: Content { kind: Kind::Symlink, hash: crate::hash::hash_bytes(target.as_bytes()), exec: false },
+                content: Content {
+                    kind: Kind::Symlink,
+                    hash: crate::hash::hash_bytes(target.as_bytes()),
+                    exec: false,
+                },
                 size: target.len() as u64,
                 fp,
                 staged: None,
@@ -916,7 +1038,8 @@ impl Engine {
             });
         }
         let staging = self.ctx.paths.staging();
-        std::fs::create_dir_all(&staging).with_context(|| format!("creating {}", staging.display()))?;
+        std::fs::create_dir_all(&staging)
+            .with_context(|| format!("creating {}", staging.display()))?;
         let mut delay = Duration::from_millis(100);
         for _ in 0..SNAPSHOT_TRIES {
             let (src, dir) = (abs.to_path_buf(), staging.clone());
@@ -954,7 +1077,9 @@ impl Engine {
         match hub.commit(msg, Vec::new()).await? {
             Commit::Committed { entry, .. } => {
                 self.ctx.db.set_remote(&entry)?;
-                self.ctx.db.set_base(space, rel, Some(&Base::from_entry(&entry, Some(snap.fp))))?;
+                self.ctx
+                    .db
+                    .set_base(space, rel, Some(&Base::from_entry(&entry, Some(snap.fp))))?;
                 debug!("{space}/{rel}: pushed v{}", entry.version);
                 Ok(Step::Done)
             }
@@ -993,11 +1118,18 @@ impl Engine {
             return Ok(Step::Again);
         }
         let hub = &self.ctx.hub;
-        let msg = Msg::Delete { id: hub.next_id(), space: space.to_string(), path: rel.to_string(), base };
+        let msg = Msg::Delete {
+            id: hub.next_id(),
+            space: space.to_string(),
+            path: rel.to_string(),
+            base,
+        };
         match hub.commit(msg, Vec::new()).await? {
             Commit::Committed { entry, .. } => {
                 self.ctx.db.set_remote(&entry)?;
-                self.ctx.db.set_base(space, rel, Some(&Base::from_entry(&entry, None)))?;
+                self.ctx
+                    .db
+                    .set_base(space, rel, Some(&Base::from_entry(&entry, None)))?;
                 self.retry_collisions(space, rel);
                 Ok(Step::Done)
             }
@@ -1011,7 +1143,14 @@ impl Engine {
         }
     }
 
-    async fn apply_remote(&self, space: &str, rel: &str, abs: &Path, r: &Entry, expect: Option<&LocalFp>) -> Result<Step> {
+    async fn apply_remote(
+        &self,
+        space: &str,
+        rel: &str,
+        abs: &Path,
+        r: &Entry,
+        expect: Option<&LocalFp>,
+    ) -> Result<Step> {
         let hub = &self.ctx.hub;
         // Like `git checkout`: a synced file gets the current time, never the origin's mtime,
         // or make/cargo would consider stale outputs fresh.
@@ -1025,9 +1164,11 @@ impl Engine {
             Kind::Symlink => {
                 let staging = self.ctx.paths.staging();
                 std::fs::create_dir_all(&staging)?;
-                let tmp = Staged(staging.join(format!("{STAGED_DOWN}{}", uuid::Uuid::new_v4().simple())));
+                let tmp =
+                    Staged(staging.join(format!("{STAGED_DOWN}{}", uuid::Uuid::new_v4().simple())));
                 hub.download_blob(&r.hash, &tmp.0).await?;
-                let target = String::from_utf8(std::fs::read(&tmp.0)?).context("symlink target is not UTF-8")?;
+                let target = String::from_utf8(std::fs::read(&tmp.0)?)
+                    .context("symlink target is not UTF-8")?;
                 std::fs::create_dir_all(abs.parent().context("no parent")?)?;
                 apply::atomic_symlink(abs, &target, expect)?
             }
@@ -1038,7 +1179,9 @@ impl Engine {
             debug!("{space}/{rel}: changed locally while applying; re-deciding");
             return Ok(Step::Again);
         };
-        self.ctx.db.set_base(space, rel, Some(&Base::from_entry(r, Some(fp))))?;
+        self.ctx
+            .db
+            .set_base(space, rel, Some(&Base::from_entry(r, Some(fp))))?;
         self.forget_collision(space, rel);
         if let Some(name) = abs.file_name().and_then(|n| n.to_str()) {
             if Ignore::is_rules_file(name) {
@@ -1060,7 +1203,14 @@ impl Engine {
             let spaces: Vec<(String, PathBuf, Arc<Ignore>, BTreeSet<String>)> = st
                 .spaces
                 .iter()
-                .map(|(n, s)| (n.clone(), s.root.clone(), s.ignore.clone(), s.collisions.clone()))
+                .map(|(n, s)| {
+                    (
+                        n.clone(),
+                        s.root.clone(),
+                        s.ignore.clone(),
+                        s.collisions.clone(),
+                    )
+                })
                 .collect();
             (up, st.conflicts.clone(), spaces)
         };
@@ -1068,10 +1218,20 @@ impl Engine {
         for (name, root, ignore, collisions) in spaces {
             down += self.behind_count(&name, &root, &ignore, &collisions);
         }
-        Pending { up, down, conflicts }
+        Pending {
+            up,
+            down,
+            conflicts,
+        }
     }
 
-    fn behind_count(&self, space: &str, root: &Path, ignore: &Ignore, collisions: &BTreeSet<String>) -> u64 {
+    fn behind_count(
+        &self,
+        space: &str,
+        root: &Path,
+        ignore: &Ignore,
+        collisions: &BTreeSet<String>,
+    ) -> u64 {
         match self.ctx.db.rows_behind(Some(space)) {
             Ok(rows) => rows
                 .iter()
@@ -1091,7 +1251,14 @@ impl Engine {
             .lock()
             .spaces
             .iter()
-            .map(|(n, s)| (n.clone(), s.root.clone(), s.ignore.clone(), s.collisions.clone()))
+            .map(|(n, s)| {
+                (
+                    n.clone(),
+                    s.root.clone(),
+                    s.ignore.clone(),
+                    s.collisions.clone(),
+                )
+            })
             .collect();
         let mut out: Vec<SpaceStatus> = spaces
             .into_iter()
@@ -1126,10 +1293,16 @@ impl Engine {
         if !hub.wait_connected(Duration::from_secs(10)).await {
             bail!("not connected to the hub");
         }
-        let msg = Msg::SpaceCreate { id: hub.next_id(), name: name.to_string(), default_path: paths::tilde(path) };
+        let msg = Msg::SpaceCreate {
+            id: hub.next_id(),
+            name: name.to_string(),
+            default_path: paths::tilde(path),
+        };
         match hub.request(msg, Vec::new()).await {
             Ok(_) => {}
-            Err(e) if e.downcast_ref::<HubError>().is_some_and(|h| h.code == "exists") => {}
+            Err(e)
+                if e.downcast_ref::<HubError>()
+                    .is_some_and(|h| h.code == "exists") => {}
             Err(e) => return Err(e).context("creating the space on the hub"),
         }
         std::fs::create_dir_all(path).with_context(|| format!("creating {}", path.display()))?;
@@ -1140,14 +1313,27 @@ impl Engine {
             self.lock().spaces.insert(name.to_string(), sp);
         }
         // learn R for every path first, so existing local files adopt or conflict, never duplicate
-        let data = hub.query(Query::Entries { space: name.to_string(), prefix: None }).await?;
+        let data = hub
+            .query(Query::Entries {
+                space: name.to_string(),
+                prefix: None,
+            })
+            .await?;
         let entries: Vec<Entry> = serde_json::from_value(data).context("bad Entries result")?;
         for e in &entries {
             self.ctx.db.set_remote(e)?;
         }
         self.rescan_space(name, "").await?;
-        info!("syncing space {name} at {} ({} entries on the hub)", path.display(), entries.len());
-        Ok(self.space_status().into_iter().find(|s| s.name == name).unwrap_or_default())
+        info!(
+            "syncing space {name} at {} ({} entries on the hub)",
+            path.display(),
+            entries.len()
+        );
+        Ok(self
+            .space_status()
+            .into_iter()
+            .find(|s| s.name == name)
+            .unwrap_or_default())
     }
 
     pub async fn remove_space(&self, name: &str) -> Result<()> {
@@ -1164,7 +1350,12 @@ impl Engine {
     pub async fn restore(&self, space: &str, path: &str, seq: u64) -> Result<()> {
         let hub = &self.ctx.hub;
         let hist: Vec<LogRecord> = serde_json::from_value(
-            hub.query(Query::History { space: space.to_string(), path: path.to_string(), limit: None }).await?,
+            hub.query(Query::History {
+                space: space.to_string(),
+                path: path.to_string(),
+                limit: None,
+            })
+            .await?,
         )
         .context("bad History result")?;
         let rec = hist
@@ -1172,16 +1363,26 @@ impl Engine {
             .find(|r| r.seq == seq)
             .with_context(|| format!("{space}/{path} has no version at seq {seq}"))?;
         if rec.op != Op::Put || rec.kind == Kind::Log {
-            bail!("seq {seq} of {space}/{path} is not a file version (it was a {:?})", rec.op);
+            bail!(
+                "seq {seq} of {space}/{path} is not a file version (it was a {:?})",
+                rec.op
+            );
         }
         let cur: Option<Entry> = serde_json::from_value(
-            hub.query(Query::Entry { space: space.to_string(), path: path.to_string() }).await?,
+            hub.query(Query::Entry {
+                space: space.to_string(),
+                path: path.to_string(),
+            })
+            .await?,
         )
         .context("bad Entry result")?;
         if let Some(c) = &cur {
             self.ctx.db.set_remote(c)?;
         }
-        let exec = cur.as_ref().filter(|c| c.kind == rec.kind && !c.deleted).is_some_and(|c| c.exec);
+        let exec = cur
+            .as_ref()
+            .filter(|c| c.kind == rec.kind && !c.deleted)
+            .is_some_and(|c| c.exec);
         let msg = Msg::Put {
             id: hub.next_id(),
             space: space.to_string(),
@@ -1234,7 +1435,8 @@ fn stage_copy(src: &Path, staging: &Path) -> Result<Option<Snap>> {
     };
     let staged = Staged(staging.join(format!("{STAGED_UP}{}", uuid::Uuid::new_v4().simple())));
     let mut f = std::fs::File::open(src).with_context(|| format!("opening {}", src.display()))?;
-    let mut out = std::fs::File::create(&staged.0).with_context(|| format!("creating {}", staged.0.display()))?;
+    let mut out = std::fs::File::create(&staged.0)
+        .with_context(|| format!("creating {}", staged.0.display()))?;
     let mut h = blake3::Hasher::new();
     let mut buf = vec![0u8; 256 * 1024];
     let mut size = 0u64;
@@ -1256,7 +1458,11 @@ fn stage_copy(src: &Path, staging: &Path) -> Result<Option<Snap>> {
         return Ok(None);
     }
     Ok(Some(Snap {
-        content: Content { kind: Kind::File, hash: h.finalize().to_hex().to_string(), exec: before.exec },
+        content: Content {
+            kind: Kind::File,
+            hash: h.finalize().to_hex().to_string(),
+            exec: before.exec,
+        },
         size,
         fp: before,
         staged: Some(staged),
@@ -1284,7 +1490,11 @@ mod tests {
     use super::*;
 
     fn c(hash: &str) -> Content {
-        Content { kind: Kind::File, hash: hash.into(), exec: false }
+        Content {
+            kind: Kind::File,
+            hash: hash.into(),
+            exec: false,
+        }
     }
     fn base(v: u64, hash: &str, deleted: bool) -> Base {
         Base {
@@ -1310,38 +1520,192 @@ mod tests {
         let cases: Vec<(&str, Option<Content>, Option<Base>, Option<Entry>, Action)> = vec![
             // nothing anywhere / everything agrees
             ("empty", None, None, None, Nothing),
-            ("in sync", Some(c("a")), Some(base(3, "a", false)), Some(rem(3, "a", false)), Nothing),
-            ("both deleted, agreed", None, Some(base(4, "", true)), Some(rem(4, "", true)), Nothing),
-            ("remote tombstone never had", None, None, Some(rem(4, "", true)), Nothing),
+            (
+                "in sync",
+                Some(c("a")),
+                Some(base(3, "a", false)),
+                Some(rem(3, "a", false)),
+                Nothing,
+            ),
+            (
+                "both deleted, agreed",
+                None,
+                Some(base(4, "", true)),
+                Some(rem(4, "", true)),
+                Nothing,
+            ),
+            (
+                "remote tombstone never had",
+                None,
+                None,
+                Some(rem(4, "", true)),
+                Nothing,
+            ),
             // local changes only
-            ("new local file", Some(c("a")), None, None, Push { base: None }),
-            ("local edit", Some(c("b")), Some(base(3, "a", false)), Some(rem(3, "a", false)), Push { base: Some(3) }),
-            ("local exec flip", Some(Content { exec: true, ..c("a") }), Some(base(3, "a", false)), Some(rem(3, "a", false)), Push { base: Some(3) }),
-            ("local delete", None, Some(base(3, "a", false)), Some(rem(3, "a", false)), PushDelete { base: 3 }),
-            ("recreate after agreed delete", Some(c("a")), Some(base(4, "", true)), Some(rem(4, "", true)), Push { base: Some(4) }),
-            ("create over unseen tombstone", Some(c("a")), None, Some(rem(4, "", true)), Push { base: Some(4) }),
+            (
+                "new local file",
+                Some(c("a")),
+                None,
+                None,
+                Push { base: None },
+            ),
+            (
+                "local edit",
+                Some(c("b")),
+                Some(base(3, "a", false)),
+                Some(rem(3, "a", false)),
+                Push { base: Some(3) },
+            ),
+            (
+                "local exec flip",
+                Some(Content {
+                    exec: true,
+                    ..c("a")
+                }),
+                Some(base(3, "a", false)),
+                Some(rem(3, "a", false)),
+                Push { base: Some(3) },
+            ),
+            (
+                "local delete",
+                None,
+                Some(base(3, "a", false)),
+                Some(rem(3, "a", false)),
+                PushDelete { base: 3 },
+            ),
+            (
+                "recreate after agreed delete",
+                Some(c("a")),
+                Some(base(4, "", true)),
+                Some(rem(4, "", true)),
+                Push { base: Some(4) },
+            ),
+            (
+                "create over unseen tombstone",
+                Some(c("a")),
+                None,
+                Some(rem(4, "", true)),
+                Push { base: Some(4) },
+            ),
             // remote changes only
-            ("remote new file", None, None, Some(rem(5, "r", false)), Apply),
-            ("remote edit", Some(c("a")), Some(base(3, "a", false)), Some(rem(5, "r", false)), Apply),
-            ("remote delete", Some(c("a")), Some(base(3, "a", false)), Some(rem(5, "", true)), ApplyDelete),
-            ("remote re-create after delete", None, Some(base(4, "", true)), Some(rem(6, "r", false)), Apply),
-            ("remote new version same content", Some(c("a")), Some(base(3, "a", false)), Some(rem(5, "a", false)), Adopt),
-            ("remote delete of deleted", None, Some(base(4, "", true)), Some(rem(6, "", true)), Adopt),
+            (
+                "remote new file",
+                None,
+                None,
+                Some(rem(5, "r", false)),
+                Apply,
+            ),
+            (
+                "remote edit",
+                Some(c("a")),
+                Some(base(3, "a", false)),
+                Some(rem(5, "r", false)),
+                Apply,
+            ),
+            (
+                "remote delete",
+                Some(c("a")),
+                Some(base(3, "a", false)),
+                Some(rem(5, "", true)),
+                ApplyDelete,
+            ),
+            (
+                "remote re-create after delete",
+                None,
+                Some(base(4, "", true)),
+                Some(rem(6, "r", false)),
+                Apply,
+            ),
+            (
+                "remote new version same content",
+                Some(c("a")),
+                Some(base(3, "a", false)),
+                Some(rem(5, "a", false)),
+                Adopt,
+            ),
+            (
+                "remote delete of deleted",
+                None,
+                Some(base(4, "", true)),
+                Some(rem(6, "", true)),
+                Adopt,
+            ),
             // both changed
-            ("same edit both sides", Some(c("x")), Some(base(3, "a", false)), Some(rem(5, "x", false)), Adopt),
-            ("different edits", Some(c("x")), Some(base(3, "a", false)), Some(rem(5, "y", false)), Conflict),
-            ("local delete vs remote edit", None, Some(base(3, "a", false)), Some(rem(5, "y", false)), Apply),
-            ("local edit vs remote delete", Some(c("x")), Some(base(3, "a", false)), Some(rem(5, "", true)), Push { base: Some(5) }),
-            ("both deleted", None, Some(base(3, "a", false)), Some(rem(5, "", true)), Adopt),
+            (
+                "same edit both sides",
+                Some(c("x")),
+                Some(base(3, "a", false)),
+                Some(rem(5, "x", false)),
+                Adopt,
+            ),
+            (
+                "different edits",
+                Some(c("x")),
+                Some(base(3, "a", false)),
+                Some(rem(5, "y", false)),
+                Conflict,
+            ),
+            (
+                "local delete vs remote edit",
+                None,
+                Some(base(3, "a", false)),
+                Some(rem(5, "y", false)),
+                Apply,
+            ),
+            (
+                "local edit vs remote delete",
+                Some(c("x")),
+                Some(base(3, "a", false)),
+                Some(rem(5, "", true)),
+                Push { base: Some(5) },
+            ),
+            (
+                "both deleted",
+                None,
+                Some(base(3, "a", false)),
+                Some(rem(5, "", true)),
+                Adopt,
+            ),
             // first join of a non-empty folder
-            ("join: same content", Some(c("a")), None, Some(rem(5, "a", false)), Adopt),
-            ("join: different content", Some(c("b")), None, Some(rem(5, "a", false)), Conflict),
+            (
+                "join: same content",
+                Some(c("a")),
+                None,
+                Some(rem(5, "a", false)),
+                Adopt,
+            ),
+            (
+                "join: different content",
+                Some(c("b")),
+                None,
+                Some(rem(5, "a", false)),
+                Conflict,
+            ),
             // stale R (older than B) is not a remote change
-            ("stale remote", Some(c("a")), Some(base(7, "a", false)), Some(rem(5, "z", false)), Nothing),
-            ("kind change local", Some(Content { kind: Kind::Symlink, ..c("a") }), Some(base(3, "a", false)), Some(rem(3, "a", false)), Push { base: Some(3) }),
+            (
+                "stale remote",
+                Some(c("a")),
+                Some(base(7, "a", false)),
+                Some(rem(5, "z", false)),
+                Nothing,
+            ),
+            (
+                "kind change local",
+                Some(Content {
+                    kind: Kind::Symlink,
+                    ..c("a")
+                }),
+                Some(base(3, "a", false)),
+                Some(rem(3, "a", false)),
+                Push { base: Some(3) },
+            ),
         ];
         for (name, l, b, r, want) in cases {
-            assert_eq!(decide(l.as_ref(), b.as_ref(), r.as_ref()), want, "case: {name}");
+            assert_eq!(
+                decide(l.as_ref(), b.as_ref(), r.as_ref()),
+                want,
+                "case: {name}"
+            );
         }
     }
 

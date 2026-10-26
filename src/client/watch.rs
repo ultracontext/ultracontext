@@ -35,30 +35,31 @@ impl Watcher {
     pub fn new(tx: mpsc::UnboundedSender<PathBuf>) -> Result<Watcher> {
         let roots: Arc<Mutex<Vec<PathBuf>>> = Arc::default();
         let cb_roots = roots.clone();
-        let inner = notify::recommended_watcher(move |res: notify::Result<notify::Event>| match res {
-            Ok(ev) => {
-                if ev.need_rescan() {
-                    for r in roots_for(&cb_roots, &ev.paths) {
+        let inner =
+            notify::recommended_watcher(move |res: notify::Result<notify::Event>| match res {
+                Ok(ev) => {
+                    if ev.need_rescan() {
+                        for r in roots_for(&cb_roots, &ev.paths) {
+                            let _ = tx.send(r);
+                        }
+                    }
+                    // inotify also reports opens/reads (IN_OPEN): our own scans and hashing would
+                    // feed back into endless rescans. Only changes matter.
+                    if matches!(ev.kind, notify::EventKind::Access(_)) {
+                        return;
+                    }
+                    for p in ev.paths {
+                        let _ = tx.send(p);
+                    }
+                }
+                Err(e) => {
+                    warn!("watcher: {e}");
+                    for r in roots_for(&cb_roots, &e.paths) {
                         let _ = tx.send(r);
                     }
                 }
-                // inotify also reports opens/reads (IN_OPEN): our own scans and hashing would
-                // feed back into endless rescans. Only changes matter.
-                if matches!(ev.kind, notify::EventKind::Access(_)) {
-                    return;
-                }
-                for p in ev.paths {
-                    let _ = tx.send(p);
-                }
-            }
-            Err(e) => {
-                warn!("watcher: {e}");
-                for r in roots_for(&cb_roots, &e.paths) {
-                    let _ = tx.send(r);
-                }
-            }
-        })
-        .context("starting filesystem watcher")?;
+            })
+            .context("starting filesystem watcher")?;
         Ok(Watcher { inner, roots })
     }
 
@@ -75,7 +76,10 @@ impl Watcher {
     }
 
     pub fn remove(&mut self, root: &Path) -> Result<()> {
-        self.roots.lock().unwrap_or_else(|e| e.into_inner()).retain(|r| r != root);
+        self.roots
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|r| r != root);
         self.inner
             .unwatch(root)
             .with_context(|| format!("unwatching {}", root.display()))
@@ -89,7 +93,10 @@ mod tests {
 
     #[tokio::test]
     async fn reports_changes_under_root() {
-        let d = tempfile::Builder::new().prefix("uc").tempdir_in("/tmp").unwrap();
+        let d = tempfile::Builder::new()
+            .prefix("uc")
+            .tempdir_in("/tmp")
+            .unwrap();
         let root = d.path().canonicalize().unwrap();
         let (tx, mut rx) = mpsc::unbounded_channel();
         let mut w = Watcher::new(tx).unwrap();
