@@ -166,8 +166,6 @@ pub struct Tunables {
     pub hot_ms: i64,
     /// a diverged original must be unchanged this long before it is replaced (DESIGN §6.4)
     pub cold_ms: i64,
-    /// how long `resume` waits for the transcript to catch up with the hub
-    pub resume_timeout: Duration,
 }
 
 impl Default for Tunables {
@@ -176,7 +174,6 @@ impl Default for Tunables {
             debounce: Duration::from_millis(200),
             hot_ms: 10_000,
             cold_ms: 30_000,
-            resume_timeout: Duration::from_secs(120),
         }
     }
 }
@@ -196,24 +193,3 @@ pub struct Deps {
     pub on_error: Option<Arc<dyn Fn(String) + Send + Sync>>,
     pub tun: Tunables,
 }
-
-/// `resume` hit a session that another machine is actively writing (DESIGN §6.4).
-/// The daemon maps it to error code "busy" (CLI exit code 3).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BusyError {
-    pub owner_name: String,
-    pub idle_ms: i64,
-}
-
-impl std::fmt::Display for BusyError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "busy: session is live on {} (active {}s ago)",
-            self.owner_name,
-            self.idle_ms.max(0) / 1000
-        )
-    }
-}
-
-impl std::error::Error for BusyError {}

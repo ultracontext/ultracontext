@@ -14,8 +14,8 @@ The CLI talks to the local daemon over `$UC_HOME/daemon.sock` and starts it when
   {"error": {"code": "offline", "message": "not connected to the hub (...)", "hint": "run 'uc doctor'", "exit_code": 1}}
   ```
   Codes: `usage`, `not_initialized`, `unreachable` (no daemon), `timeout`, `offline` (no hub),
-  `busy`, `conflict`, `not_found`, `invalid`, `exists`, `cwd_missing`, `exec`, `error`.
-- Exit codes: `0` ok, `1` error, `2` usage error, `3` busy/conflict.
+  `conflict`, `not_found`, `invalid`, `exists`, `error`.
+- Exit codes: `0` ok, `1` error, `2` usage error, `3` conflict.
 - Paths given to `log`, `history` and `restore` are local paths (relative to the current
   directory, `~` allowed); they must be inside a synced folder.
 - Environment: `UC_HOME` (state, default `~/.ultracontext`), `UC_LOG` (log filter, default
@@ -88,14 +88,10 @@ directory or one of its parents. JSON: `[SessionInfo]`.
    codex   9f8e7d6c  this machine  3h ago    ~/Code/web     add dark mode
 ```
 
-### `uc resume [ID|QUERY] [--agent A] [--takeover|--fork] [--print]`
-
-Target: exact id, then unique id prefix, then the newest text match. Without a target: the
-newest session of the current directory (or a parent), else the newest overall. The daemon
-materializes the transcript, claims it, and `uc` runs the agent in the session's directory
-(`exec`). If the session is live on another machine (exit 3 without a terminal), choose
-`--takeover` (this machine becomes the writer) or `--fork` (continue as a new session).
-`--print` prints `cd '<dir>' && claude --resume <id>` instead. JSON: `ResumePlan` (never execs).
+Continue a session with the agent itself: `claude --resume <id>`, `claude -c` in the
+project, `codex resume <id>` or `codex resume --all`. Sessions from every machine are already
+in the agents' native folders (last 30 days). Continuing one that is live on another machine
+makes a fork (DESIGN §6.4).
 
 ### `uc log [PATH] [--since 30m|2h|1d|1w] [--limit N]`
 

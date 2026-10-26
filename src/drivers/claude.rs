@@ -358,11 +358,6 @@ impl AgentDriver for Claude {
     fn fork_line(&self, line: &str, old_id: &str, new_id: &str) -> String {
         line.replace(old_id, new_id)
     }
-
-    fn resume_argv(&self, meta: &SessionMeta, local_cwd: &Path) -> Vec<String> {
-        let _ = local_cwd;
-        vec!["claude".into(), "--resume".into(), meta.id.clone()]
-    }
 }
 
 #[cfg(test)]
@@ -574,10 +569,6 @@ mod tests {
         assert_eq!(
             c.fork_line(&format!(r#"{{"sessionId":"{SID}"}}"#), SID, "new"),
             r#"{"sessionId":"new"}"#
-        );
-        assert_eq!(
-            c.resume_argv(&m, Path::new("/x")),
-            vec!["claude", "--resume", SID]
         );
     }
 

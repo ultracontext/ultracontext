@@ -29,11 +29,10 @@ uc log src/ --json          # recent changes under a folder
 uc history path/to/file --json
 uc conflicts --json
 uc sync --json              # wait until everything is pushed and pulled
-uc resume <id> --print      # the shell command that continues a session here
 uc doctor --json            # diagnose setup problems
 ```
 
-Exit codes: `0` ok, `1` error, `2` usage error, `3` busy/conflict. With `--json`, stdout is
+Exit codes: `0` ok, `1` error, `2` usage error, `3` conflict. With `--json`, stdout is
 exactly one JSON document; errors look like
 `{"error":{"code":"offline","message":"...","hint":"..."}}`.
 
@@ -45,10 +44,11 @@ exactly one JSON document; errors look like
 2. `uc log --json --since 2h`: the files that changed and on which machine (`origin_name`).
 3. Read the changed files directly; they are already synced into this machine's folders.
 
-**Continue a session here**: run `uc resume <id> --print` and show the user the command.
-Do not resume a session from inside another agent session unless the user asks. If uc
-exits with code 3 the session is live on another machine: ask the user whether to
-`--takeover` (the other machine stops writing it) or `--fork` (continue as a new session).
+**Continue a session here**: sessions from every machine are already in the agents' own
+folders. Tell the user to run `claude --resume <id>` (or `claude -c` in the project) or
+`codex resume <id>` (`codex resume --all` to pick). Do not resume a session from inside
+another agent session unless the user asks. If the session is still live on another machine
+(`live: true`), continuing it here makes a fork; say so first.
 
 **Before handing off or before the user closes the laptop**: `uc sync --json` and check
 `"ok": true`. If `timed_out` is true, report `pending_up` / `pending_down` and run

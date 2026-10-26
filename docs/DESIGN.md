@@ -3,7 +3,7 @@
 ultracontext v1 is a **Dropbox for developers and their agents**. It is one Rust binary, `uc`. The binary is the hub, the sync daemon, and the CLI.
 
 - Your folders are the same on every machine, in real time.
-- Your Claude Code and Codex sessions follow you. Close the MacBook, open the Linux box, run `uc resume` (or plain `claude -c` in the same project). You continue the same session.
+- Your Claude Code and Codex sessions follow you. Close the MacBook, open the Linux box, run plain `claude -c` in the same project (or `codex resume`). You continue the same session.
 - The hub is the **single source of truth**. Nothing is ever silently lost.
 
 This document is the contract for implementers. Section numbers are referenced from code comments.
@@ -77,7 +77,7 @@ debounce_ms       = 300
 [agents]
 claude = true          # root: $CLAUDE_CONFIG_DIR or ~/.claude
 codex  = true          # root: $CODEX_HOME or ~/.codex
-eager_days = 14        # sessions active in the last N days are materialized eagerly
+eager_days = 30        # sessions active in the last N days are materialized (Claude keeps 30)
 
 [[space]]
 name = "code"
@@ -273,7 +273,7 @@ The driver parses session metadata from the transcript and sends it as `meta` wi
              "created_at":…, "updated_at":…, "git_branch":"…", "model":"…", "native_rel":"…"}}
 ```
 
-### 6.4 Single writer: ownership, takeover, forks
+### 6.4 Single writer: ownership and forks
 
 Each log has an **owner** (machine id). It becomes `idle` when the owner has neither appended nor sent a heartbeat for `lease_idle_ms` (30 s). The owner heartbeats only while its agent is actually working (Claude busy, or the transcript written in the last 25 s); otherwise it releases the lease.
 
@@ -286,12 +286,7 @@ An append from machine M is accepted when all of these hold:
   - the owner is idle
   - the append has `claim:true` and the session was explicitly claimed by M
 
-Acceptance sets owner = M.
-
-`uc resume` sends `Claim{force}`:
-
-- If another machine owns the session and is not idle, the hub answers `Busy{owner_name, idle_ms}`.
-- The CLI then asks: **take over**, **fork**, or **cancel**. Non-TTY callers must pass `--takeover` or `--fork`.
+Acceptance sets owner = M. There is no resume command: the user continues a session with the agent's own `--resume` on any machine, and the first append decides. When the daemon stops cleanly (`uc daemon stop`, logout, shutdown) it releases every lease it holds, so another machine can continue at once.
 
 **Divergence never corrupts the canonical log.** If machine A appends lines the hub rejects (A lost ownership, or the hub moved on), A **forks**:
 
@@ -303,10 +298,7 @@ A leaves its local original alone while it is still hot (changed in the last 60 
 
 ### 6.5 Materialization
 
-On each machine, the daemon materializes a session into the agent's native location when either:
-
-- the session was active in the last `eager_days`, or
-- `uc resume` asks for it.
+On each machine, the daemon materializes every session active in the last `eager_days` (30, Claude Code's own retention) into the agent's native location. Sessions whose project is in a space this machine has not mapped wait until it is mapped.
 
 The file mtime is set to the session's last activity. That way `claude --continue` in a project picks the most recently active session from **any** machine.
 
@@ -348,13 +340,12 @@ Driver contract (Rust trait `AgentDriver`, `src/drivers/mod.rs`):
 - `parse_meta(head_lines)`: session metadata
 - `clean_line` / `smudge_line`: path transforms (§6.2)
 - `fork_line(line, old_id, new_id)`, `fork_native_path`
-- `resume_command(meta, local_cwd)`: the argv to continue the session
 
 Never synced: credentials (`.credentials.json`, `auth.json`), global config and state files, caches, logs, sqlite DBs, telemetry, IDE locks, shell snapshots.
 
 ## 7. CLI (§7)
 
-Every command takes `--json`, which prints machine-readable output for agents. Human output is short and colored when stdout is a TTY. Exit codes: 0 ok, 1 error, 2 usage error, 3 conflict/busy (resume).
+Every command takes `--json`, which prints machine-readable output for agents. Human output is short and colored when stdout is a TTY. Exit codes: 0 ok, 1 error, 2 usage error, 3 conflict.
 
 ```
 uc init [HUB] [--name NAME] [--yes]   set up this machine; joins all hub spaces at default paths (--yes)
@@ -364,7 +355,6 @@ uc spaces                             spaces on the hub and where they live here
 uc status                             hub link, machine, spaces, pending up/down, conflicts, live sessions
 uc sync [--timeout S]                 rescan now and wait until everything is pushed and pulled ("safe to close the lid")
 uc sessions [QUERY] [--agent A] [--machine M] [--here] [--limit N]   all sessions, every machine, newest first
-uc resume [ID|QUERY] [--takeover|--fork] [--print] [--agent A]       pull + claim + exec claude/codex in the right dir
 uc log [PATH] [--since 1h] [--limit N]   recent changes: who changed what, where
 uc history <PATH>                     versions of a file
 uc restore <PATH> [--seq N]           restore an old version (as a new change)
@@ -376,7 +366,7 @@ uc hub serve [--tcp ADDR] [--detach]  run the hub
 uc hub connect                        stdio bridge (used over ssh)
 ```
 
-`uc resume` with no argument picks the most recently active session of the current project. With no project, it picks the most recent session overall.
+Sessions are continued with the agents' own commands: `claude -c`, `claude --resume <id>`, `codex resume <id>` / `codex resume --all` (a Codex rollout keeps the original machine's cwd, so the picker lists it only under `--all`).
 
 ## 8. Non-goals for v1
 

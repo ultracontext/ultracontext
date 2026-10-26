@@ -157,15 +157,6 @@ fn respond(cmd: &Value, code: &Path) -> Result<Value, (&'static str, String)> {
             "spaces" => Ok(json!([])),
             q => Err(("invalid", format!("unexpected query {q}"))),
         },
-        "resume" if cmd["takeover"] == true => Ok(json!({
-            "agent": "claude", "id": "abc12345-0000", "cwd": code.to_string_lossy(),
-            "argv": ["claude", "--resume", "abc12345-0000"], "native_path": "/x.jsonl",
-            "took_over": true, "forked_to": null, "cwd_missing": false
-        })),
-        "resume" => Err((
-            "busy",
-            "claude session abc12345 is live on linux-box (active 3s ago)".into(),
-        )),
         other => Err(("invalid", format!("unexpected command {other}"))),
     }
 }
@@ -220,47 +211,6 @@ fn sessions_table_and_here_filter() {
     assert_eq!(json_out(&o).as_array().unwrap().len(), 1);
     let o = f.uc_in(&f.home, &["--json", "sessions", "--here"]);
     assert_eq!(json_out(&o).as_array().unwrap().len(), 0);
-}
-
-#[test]
-fn resume_busy_then_takeover_print() {
-    let f = Fixture::new();
-    let o = f.uc(&["resume", "abc1", "--print"]);
-    assert_eq!(
-        o.status.code(),
-        Some(3),
-        "busy must exit 3: {}",
-        text(&o.stderr)
-    );
-    let err = text(&o.stderr);
-    assert!(err.contains("live on linux-box"), "{err}");
-    assert!(
-        err.contains("--takeover") && err.contains("--fork"),
-        "{err}"
-    );
-
-    let o = f.uc(&["--json", "resume", "abc1"]);
-    assert_eq!(o.status.code(), Some(3));
-    assert_eq!(json_out(&o)["error"]["code"], "busy");
-
-    let o = f.uc(&["resume", "abc1", "--takeover", "--print"]);
-    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
-    assert_eq!(
-        text(&o.stdout),
-        format!("cd {} && claude --resume abc12345-0000\n", f.code.display())
-    );
-    let resume = f
-        .cmds()
-        .into_iter()
-        .rev()
-        .find(|c| c["cmd"] == "resume")
-        .unwrap();
-    assert_eq!(
-        resume["id"], "abc12345-0000",
-        "the full id is sent, not the prefix"
-    );
-    assert_eq!(resume["agent"], "claude");
-    assert_eq!(resume["takeover"], true);
 }
 
 #[test]

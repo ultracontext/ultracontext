@@ -20,7 +20,6 @@ use tracing::{debug, warn};
 use crate::proto::{self, Ctl, Msg};
 
 /// A control command failed. `code` is machine-readable:
-/// - `busy`: resume target is live on another machine (CLI exit code 3)
 /// - `conflict`: the hub rejected a change (CLI exit code 3)
 /// - `offline`: the daemon is not connected to the hub
 /// - `unreachable`: no daemon answers on the control socket
@@ -38,10 +37,6 @@ impl CtlError {
             code: code.to_string(),
             msg: msg.into(),
         }
-    }
-
-    pub fn is_busy(&self) -> bool {
-        self.code == "busy"
     }
 }
 
@@ -67,7 +62,7 @@ pub trait CtlHandler: Send + Sync + 'static {
 }
 
 /// CLI side: send one control command to the local daemon and return its JSON result.
-/// Errors carry the daemon's error code/message as a [`CtlError`] (e.g. code "busy" for resume);
+/// Errors carry the daemon's error code/message as a [`CtlError`];
 /// a dead socket is `CtlError{code: "unreachable"}`.
 pub async fn call(sock: &Path, cmd: Ctl) -> Result<Value> {
     let shutdown = matches!(cmd, Ctl::Shutdown);
@@ -239,16 +234,6 @@ mod tests {
             Box::pin(async move {
                 match cmd {
                     Ctl::Status => Ok(json!({"connected": true})),
-                    Ctl::Resume {
-                        id,
-                        takeover: false,
-                        fork: false,
-                        ..
-                    } => Err(CtlError::new(
-                        "busy",
-                        format!("session {id} is live on linux-box (active 3s ago)"),
-                    )),
-                    Ctl::Resume { id, .. } => Ok(json!({"id": id})),
                     Ctl::RmSpace { .. } => panic!("boom"),
                     _ => Ok(Value::Null),
                 }
@@ -275,18 +260,6 @@ mod tests {
 
         let v = call(&sock, Ctl::Status).await.unwrap();
         assert_eq!(v["connected"], true);
-
-        let resume = |takeover| Ctl::Resume {
-            agent: None,
-            id: "abc".into(),
-            takeover,
-            fork: false,
-        };
-        let err = call(&sock, resume(false)).await.unwrap_err();
-        let ce = ctl_error(&err).expect("typed control error");
-        assert!(ce.is_busy());
-        assert!(ce.msg.contains("linux-box"));
-        assert_eq!(call(&sock, resume(true)).await.unwrap()["id"], "abc");
 
         // a panicking handler yields an error reply and the daemon keeps serving
         let err = call(&sock, Ctl::RmSpace { name: "x".into() })

@@ -91,7 +91,7 @@ fn default_debounce() -> u64 {
     300
 }
 fn default_eager_days() -> u32 {
-    14
+    30 // Claude Code keeps transcripts 30 days
 }
 
 impl Config {
@@ -104,7 +104,11 @@ impl Config {
             .to_lowercase();
         Config {
             machine_id: id,
-            machine_name: if name.is_empty() { "machine".into() } else { name },
+            machine_name: if name.is_empty() {
+                "machine".into()
+            } else {
+                name
+            },
             hub: String::new(),
             remote_uc: String::new(),
             token: String::new(),
@@ -192,6 +196,6 @@ mod tests {
         // minimal file parses with defaults
         let min: Config = toml::from_str("machine_id='m'\nmachine_name='n'\n").unwrap();
         assert!(min.sync.respect_gitignore);
-        assert_eq!(min.agents.eager_days, 14);
+        assert_eq!(min.agents.eager_days, 30);
     }
 }

@@ -507,6 +507,19 @@ impl LogHub for MockClient {
             self.hub.query(q)
         })
     }
+    fn release<'a>(&'a self, space: &'a str, path: &'a str) -> BoxFut<'a, Result<()>> {
+        Box::pin(async move {
+            self.check()?;
+            let mut st = self.hub.st.lock().unwrap();
+            if let Some(m) = st.entries.get_mut(&(space.to_string(), path.to_string())) {
+                if m.e.owner.as_deref() == Some(self.me.id.as_str()) {
+                    m.e.owner = None;
+                    m.e.owner_at = 0;
+                }
+            }
+            Ok(())
+        })
+    }
     fn upload_bytes<'a>(&'a self, data: &'a [u8], h: &'a str) -> BoxFut<'a, Result<()>> {
         Box::pin(async move {
             self.check()?;

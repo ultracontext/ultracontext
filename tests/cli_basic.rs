@@ -53,7 +53,11 @@ fn help_and_version() {
     let o = env.uc(&["--help"]);
     assert_eq!(o.status.code(), Some(0));
     assert!(stdout(&o).contains("Usage: uc"));
-    assert!(stdout(&o).contains("resume"));
+    assert!(stdout(&o).contains("sessions"));
+    assert!(
+        !stdout(&o).contains("resume"),
+        "no uc resume: agents resume natively"
+    );
     let o = env.uc(&["--version"]);
     assert_eq!(o.status.code(), Some(0));
     assert!(stdout(&o).starts_with("uc "));
@@ -77,7 +81,7 @@ fn usage_errors_exit_2() {
         stderr(&o)
     );
 
-    let o = env.uc(&["resume", "x", "--takeover", "--fork"]);
+    let o = env.uc(&["resume", "x"]);
     assert_eq!(o.status.code(), Some(2));
 }
 

@@ -1,7 +1,7 @@
 //! Agent drivers: teach the kernel where an agent keeps its sessions and how to move them
 //! between machines (DESIGN §6.6). The kernel never parses agent formats itself.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::config::Config;
@@ -44,12 +44,21 @@ pub trait AgentDriver: Send + Sync {
     fn classify(&self, rel: &str) -> Option<AgentFile>;
     /// Session metadata from the head (first <=64 KiB) and tail (last <=64 KiB) of a LOCAL
     /// transcript. Paths in the result must be canonical (use `map.clean`).
-    fn parse_meta(&self, session_id: &str, head: &[u8], tail: &[u8], map: &PathMap)
-        -> Option<SessionMeta>;
+    fn parse_meta(
+        &self,
+        session_id: &str,
+        head: &[u8],
+        tail: &[u8],
+        map: &PathMap,
+    ) -> Option<SessionMeta>;
     /// Native path (relative to `root()`) where `canonical` lives on THIS machine.
     /// `meta` is the session's transcript metadata (canonical form) when known.
-    fn native_rel(&self, canonical: &str, meta: Option<&SessionMeta>, map: &PathMap)
-        -> Option<String>;
+    fn native_rel(
+        &self,
+        canonical: &str,
+        meta: Option<&SessionMeta>,
+        map: &PathMap,
+    ) -> Option<String>;
     /// local -> canonical, one complete JSONL line without the trailing '\n'
     fn clean_line(&self, line: &str, map: &PathMap) -> String {
         map.clean(line)
@@ -64,8 +73,6 @@ pub trait AgentDriver: Send + Sync {
     fn fork_canonical(&self, canonical: &str, old_id: &str, new_id: &str) -> String {
         canonical.replace(old_id, new_id)
     }
-    /// argv that continues the session in `local_cwd`, e.g. ["claude","--resume",id].
-    fn resume_argv(&self, meta: &SessionMeta, local_cwd: &Path) -> Vec<String>;
     fn new_session_id(&self) -> String {
         uuid::Uuid::new_v4().to_string()
     }
@@ -83,6 +90,9 @@ pub fn enabled(cfg: &Config) -> Vec<Arc<dyn AgentDriver>> {
     v
 }
 
-pub fn by_space<'a>(drivers: &'a [Arc<dyn AgentDriver>], space: &str) -> Option<&'a Arc<dyn AgentDriver>> {
+pub fn by_space<'a>(
+    drivers: &'a [Arc<dyn AgentDriver>],
+    space: &str,
+) -> Option<&'a Arc<dyn AgentDriver>> {
     drivers.iter().find(|d| d.space() == space)
 }

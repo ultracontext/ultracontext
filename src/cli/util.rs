@@ -145,17 +145,6 @@ pub fn is_within(a: &Path, b: &Path) -> bool {
     a.starts_with(b) || ca.starts_with(&cb)
 }
 
-/// Quote for POSIX sh when needed.
-pub fn sh_quote(s: &str) -> String {
-    if !s.is_empty()
-        && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || "_@%+=:,./-".contains(c))
-    {
-        return s.to_string();
-    }
-    format!("'{}'", s.replace('\'', r"'\''"))
-}
-
 /// Default space name for a folder: basename, lowercased, whitespace -> '-'.
 pub fn default_space_name(dir: &Path) -> String {
     let base = dir
@@ -285,11 +274,7 @@ mod tests {
     }
 
     #[test]
-    fn quoting_and_names() {
-        assert_eq!(sh_quote("claude"), "claude");
-        assert_eq!(sh_quote("/Users/f/My Code"), "'/Users/f/My Code'");
-        assert_eq!(sh_quote("it's"), r"'it'\''s'");
-        assert_eq!(sh_quote(""), "''");
+    fn names() {
         assert_eq!(default_space_name(Path::new("/x/My Project")), "my-project");
         assert_eq!(default_space_name(Path::new("/x/Code")), "code");
     }

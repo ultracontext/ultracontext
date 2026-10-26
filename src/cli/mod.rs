@@ -70,8 +70,6 @@ pub enum Cmd {
     },
     /// All Claude Code / Codex sessions from every machine, newest first
     Sessions(SessionsArgs),
-    /// Continue a session from any machine, right here
-    Resume(ResumeArgs),
     /// Recent changes across machines (who changed what)
     Log(LogArgs),
     /// Versions of a file
@@ -140,24 +138,6 @@ pub struct SessionsArgs {
     pub here: bool,
     #[arg(long, default_value_t = 20)]
     pub limit: u32,
-}
-
-#[derive(Args, Debug)]
-pub struct ResumeArgs {
-    /// Session id, id prefix, or search text (default: latest session of this project)
-    pub target: Option<String>,
-    /// Only this agent (claude, codex)
-    #[arg(long)]
-    pub agent: Option<String>,
-    /// Take over a session that is live on another machine
-    #[arg(long, conflicts_with = "fork")]
-    pub takeover: bool,
-    /// Continue as a new forked session (the original stays untouched)
-    #[arg(long)]
-    pub fork: bool,
-    /// Print the command instead of running it
-    #[arg(long)]
-    pub print: bool,
 }
 
 #[derive(Args, Debug)]
@@ -271,7 +251,6 @@ fn run(cli: Cli) -> Result<i32> {
                 Cmd::Status => cmd_status(&app),
                 Cmd::Sync { timeout } => cmd_sync(&app, timeout),
                 Cmd::Sessions(a) => sessions::cmd_sessions(&app, a),
-                Cmd::Resume(a) => sessions::cmd_resume(&app, a),
                 Cmd::Log(a) => cmd_log(&app, a),
                 Cmd::History { path } => cmd_history(&app, &path),
                 Cmd::Restore { path, seq } => cmd_restore(&app, &path, seq),
@@ -1343,16 +1322,6 @@ mod tests {
                 "--limit",
                 "5",
             ],
-            &["resume"],
-            &["resume", "1a2b3c", "--takeover"],
-            &[
-                "resume",
-                "fix login",
-                "--fork",
-                "--print",
-                "--agent",
-                "codex",
-            ],
             &["log"],
             &["log", "src/", "--since", "2h", "--limit", "10"],
             &["history", "a.txt"],
@@ -1413,7 +1382,6 @@ mod tests {
             &["add"],
             &["rm"],
             &["history"],
-            &["resume", "x", "--takeover", "--fork"],
             &["log", "--since", "yesterday"],
             &["sync", "--timeout", "soon"],
             &["daemon"],
@@ -1479,7 +1447,10 @@ mod tests {
 
     #[test]
     fn conflict_originals() {
-        assert_eq!(original_of("notes.md.conflict-box-20261025-141502"), "notes.md");
+        assert_eq!(
+            original_of("notes.md.conflict-box-20261025-141502"),
+            "notes.md"
+        );
         assert_eq!(
             original_of("dir/Makefile.conflict-my-mac-20261025-141502"),
             "dir/Makefile"

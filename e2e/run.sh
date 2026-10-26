@@ -212,19 +212,19 @@ sync_ok linux1
 sync_ok linux2
 sessions=$(on linux2 'uc sessions --json') || fail "linux2: uc sessions: $sessions"
 json_has "$sessions" "\"id\":\"$id\"" || fail "linux2: session $id not listed: $sessions"
-plan=$(on linux2 "uc resume ${id:0:8} --print --takeover --json") || fail "linux2: uc resume: $plan"
-json_has "$plan" '"cwd":"/root/Code/proj"' || fail "linux2: resume cwd should be /root/Code/proj: $plan"
-json_has "$plan" "\"--resume\",\"$id\"" || fail "linux2: resume argv should contain --resume $id: $plan"
+# already where `claude --resume` looks for it, with linux2's paths
 t2=$(on linux2 "cat ~/.claude/projects/$(claude_enc /root/Code/proj)/$id.jsonl") ||
     fail "linux2: transcript not materialized"
 case "$t2" in *"/root/Code/proj/hello.txt"*) ;; *) fail "linux2: transcript paths not translated: $t2" ;; esac
 case "$t2" in *"/home/fabio"*) fail "linux2: linux1 paths leaked: $t2" ;; esac
 
-step "claude continues on linux2; linux1 follows"
+step "close linux1; claude continues on linux2; linux1 follows when back"
+on linux1 'uc daemon stop' >/dev/null || fail "linux1: uc daemon stop"
 claude_line "$id" /root/Code/proj "$(on linux2 'cat /proc/sys/kernel/random/uuid')" "\"$u2\"" user \
     "Now run /root/Code/proj/run.sh" |
     dc exec -T linux2 sh -c "cat >> ~/.claude/projects/$(claude_enc /root/Code/proj)/$id.jsonl"
 sync_ok linux2
+on linux1 'uc daemon start' >/dev/null || fail "linux1: uc daemon start"
 sync_ok linux1
 eventually 10 "linux1: linux2's line (with linux1 paths) never arrived" \
     on linux1 "grep -Fq 'Now run /home/fabio/Code/proj/run.sh' '$dir1/$id.jsonl'"
@@ -246,8 +246,6 @@ if [ "$with_mac" -eq 1 ]; then
     [ "$(cat "$mac_home/Code/proj/hello.txt" 2>/dev/null)" = "hello from linux1" ] ||
         fail "mac: ~/Code/proj/hello.txt not synced"
     [ -x "$mac_home/Code/proj/run.sh" ] || fail "mac: run.sh lost its exec bit"
-    plan=$(macuc resume "$id" --print --takeover --json) || fail "mac: uc resume: $plan"
-    json_has "$plan" "\"cwd\":\"$mac_home/Code/proj\"" || fail "mac: resume cwd should be $mac_home/Code/proj: $plan"
     tm="$mac_home/.claude/projects/$(claude_enc "$mac_home/Code/proj")/$id.jsonl"
     grep -Fq "Now run $mac_home/Code/proj/run.sh" "$tm" || fail "mac: transcript missing or not translated ($tm)"
     if grep -Eq '/home/fabio|/root/' "$tm"; then fail "mac: linux paths leaked into $tm"; fi

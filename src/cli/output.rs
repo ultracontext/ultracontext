@@ -62,9 +62,6 @@ impl CliError {
     pub fn from_ctl(c: &CtlError) -> CliError {
         let e = CliError::new(&c.code, c.msg.clone());
         match c.code.as_str() {
-            "busy" => e
-                .exit(EXIT_BUSY)
-                .hint("pass --takeover to continue it here, or --fork to branch off a new session"),
             "conflict" => e
                 .exit(EXIT_BUSY)
                 .hint("run 'uc conflicts' to see what collided"),
@@ -480,10 +477,9 @@ mod tests {
 
     #[test]
     fn error_mapping() {
-        let busy: anyhow::Error = CtlError::new("busy", "live on box").into();
-        let e = CliError::from_anyhow(&busy);
-        assert_eq!((e.exit, e.code.as_str()), (EXIT_BUSY, "busy"));
-        assert!(e.hint.unwrap().contains("--takeover"));
+        let conflict: anyhow::Error = CtlError::new("conflict", "hub moved on").into();
+        let e = CliError::from_anyhow(&conflict);
+        assert_eq!((e.exit, e.code.as_str()), (EXIT_BUSY, "conflict"));
         let wrapped = anyhow::Error::from(CliError::usage("bad")).context("while parsing");
         assert_eq!(CliError::from_anyhow(&wrapped).exit, EXIT_USAGE);
         let plain = anyhow::anyhow!("boom");

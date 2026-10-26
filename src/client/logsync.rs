@@ -1,4 +1,4 @@
-//! Agent-session replication: logs, ownership, forks, materialization, resume (DESIGN §6).
+//! Agent-session replication: logs, ownership, forks, materialization (DESIGN §6).
 //! Owner: sessions agent.
 //!
 //! Level-triggered like the folder engine: watcher events and hub changes only mark logs
@@ -26,7 +26,7 @@ use crate::drivers::{AgentDriver, AgentFile, AgentFileKind};
 use crate::hash;
 use crate::pathmap::PathMap;
 use crate::paths::now_ms;
-use crate::proto::{Change, Entry, Kind, Msg, Query, ResumePlan, SessionInfo, SessionMeta};
+use crate::proto::{Change, Entry, Kind, Msg, Query, SessionInfo, SessionMeta};
 
 #[path = "logsync_deps.rs"]
 mod deps;
@@ -39,7 +39,7 @@ mod mock;
 #[path = "logsync_tests.rs"]
 mod tests;
 
-pub use deps::{BusyError, Deps, LogHub, LogStore, Tunables};
+pub use deps::{Deps, LogHub, LogStore, Tunables};
 
 /// (space, canonical path)
 type Key = (String, String);
@@ -80,9 +80,7 @@ struct State {
     dirty: HashMap<PathBuf, Instant>,
     /// hub entries to reconcile locally
     remote: BTreeSet<Key>,
-    /// logs we claimed and have not appended to since
-    claimed: HashSet<Key>,
-    /// materialize even when not eager (resume)
+    /// materialize even when not eager (a fork's canonical after its original went cold)
     want: HashSet<Key>,
     /// (size, mtime_ns) right after our own writes, so they are not mistaken for agent activity
     written: HashMap<PathBuf, (u64, i128)>,
@@ -441,6 +439,30 @@ impl LogSync {
         Ok(())
     }
 
+    /// Give up every session this machine owns (the daemon is stopping).
+    pub async fn release_all(&self) {
+        if !self.deps.hub.is_connected() {
+            return;
+        }
+        let me = self.deps.machine.id.as_str();
+        for d in &self.drivers {
+            let Ok(rows) = self.deps.store.rows(d.space()) else {
+                continue;
+            };
+            for row in rows {
+                let Some(r) = row.remote.as_ref() else {
+                    continue;
+                };
+                if r.deleted || r.owner.as_deref() != Some(me) {
+                    continue;
+                }
+                if let Err(e) = self.deps.hub.release(&row.space, &row.path).await {
+                    tracing::debug!("release {}: {e:#}", row.path);
+                }
+            }
+        }
+    }
+
     /// One reconciliation pass. `force` ignores the debounce (tests, `uc sync`).
     pub async fn tick(&self, force: bool) -> Result<()> {
         let _g = self.op.lock().await;
@@ -590,88 +612,6 @@ impl LogSync {
                 || d.native_rel(&s.path, Some(&s.meta), &map)
                     .is_some_and(|r| crate::paths::join_canonical(&d.root(), &r).exists());
         }
-    }
-
-    /// Resolve `id` (exact or unique prefix; agent optional), materialize the transcript (+ sidecars)
-    /// locally, claim ownership (Busy -> Err with code "busy" unless takeover/fork), and return
-    /// how to launch it. With `fork`, create a forked session first and resume that.
-    pub async fn resume(
-        &self,
-        agent: Option<&str>,
-        id: &str,
-        takeover: bool,
-        fork: bool,
-    ) -> Result<ResumePlan> {
-        let info = self.resolve(agent, id).await?;
-        let d = self.driver(&info.space).ok_or_else(|| {
-            anyhow!(
-                "{} sessions are not enabled on this machine",
-                info.meta.agent
-            )
-        })?;
-        let key = (info.space.clone(), info.path.clone());
-        let deadline = Instant::now() + self.deps.tun.resume_timeout;
-        if fork {
-            return self.resume_as_fork(&d, &key, deadline).await;
-        }
-        self.want_session(&d, &key).await?;
-        self.ensure_local(&key, deadline).await?;
-        let claim = Msg::Claim {
-            id: self.deps.hub.next_id(),
-            space: key.0.clone(),
-            path: key.1.clone(),
-            force: takeover,
-        };
-        let took_over = match self.deps.hub.commit(claim, Vec::new()).await? {
-            Commit::Committed { entry, .. } => {
-                self.adopt_entry(&entry)?;
-                self.st().claimed.insert(key.clone());
-                info.live
-                    && info
-                        .owner
-                        .as_deref()
-                        .is_some_and(|o| o != self.deps.machine.id)
-            }
-            Commit::Busy {
-                owner_name,
-                idle_ms,
-                ..
-            } => {
-                return Err(anyhow::Error::new(BusyError {
-                    owner_name,
-                    idle_ms,
-                }));
-            }
-            Commit::Conflict { reason, .. } => {
-                bail!("could not claim session {}: {reason}", info.meta.id)
-            }
-        };
-        // the session's other logs (subagents) move with it; best effort
-        let others: Vec<Key> = {
-            let st = self.st();
-            st.want
-                .iter()
-                .filter(|k| k.0 == key.0 && *k != &key && sid_of(&k.1) == sid_of(&key.1))
-                .cloned()
-                .collect()
-        };
-        for k in others {
-            let msg = Msg::Claim {
-                id: self.deps.hub.next_id(),
-                space: k.0.clone(),
-                path: k.1.clone(),
-                force: takeover,
-            };
-            if let Ok(Commit::Committed { entry, .. }) = self.deps.hub.commit(msg, Vec::new()).await
-            {
-                self.adopt_entry(&entry)?;
-                self.st().claimed.insert(k);
-            }
-        }
-        // lines the previous owner appended before the claim landed
-        self.refresh(&key).await?;
-        self.ensure_local(&key, deadline).await?;
-        self.plan(&d, &key, took_over, None)
     }
 
     // ---------------------------------------------------------------- helpers
@@ -826,7 +766,7 @@ impl LogSync {
         let days = (self.deps.cfg)().agents.eager_days as i64;
         let meta = self.session_meta(key, r);
         // A session whose project lives in a space this machine has not mapped yet would land
-        // in a guessed directory; wait until the space is mapped (`uc resume` still works).
+        // in a guessed directory; wait until the space is mapped.
         if let Some(space) = meta
             .as_ref()
             .and_then(|m| m.cwd.as_deref())
@@ -868,21 +808,6 @@ impl LogSync {
         }
         out.truncate(end.saturating_sub(start) as usize);
         Ok(out)
-    }
-
-    async fn refresh(&self, key: &Key) -> Result<Entry> {
-        let v = self
-            .deps
-            .hub
-            .query(Query::Entry {
-                space: key.0.clone(),
-                path: key.1.clone(),
-            })
-            .await?;
-        let e: Option<Entry> = serde_json::from_value(v).context("bad Entry query result")?;
-        let e = e.ok_or_else(|| anyhow!("{}/{} is not on the hub", key.0, key.1))?;
-        self.adopt_entry(&e)?;
-        Ok(e)
     }
 
     fn clean_bytes(
@@ -1189,7 +1114,6 @@ impl LogSync {
             return Ok(()); // only a partial line so far
         }
         let map = self.map();
-        let key = (dst.space.clone(), dst.canonical.clone());
         let (mut b, mut p) = (b.clone(), p.clone());
         let mut off = 0usize;
         // frames are capped (proto::MAX_FRAME): push big backlogs in line-aligned chunks
@@ -1205,7 +1129,6 @@ impl LogSync {
             }
             let end = p.local_len + n as u64;
             let meta = self.meta_for(src, dst, end, &map);
-            let claim = self.st().claimed.contains(&key);
             let msg = Msg::Append {
                 id: self.deps.hub.next_id(),
                 space: dst.space.clone(),
@@ -1213,7 +1136,7 @@ impl LogSync {
                 offset: b.size,
                 tail: (b.size > 0).then(|| b.hash.clone()),
                 meta: meta.map(|m| m.to_meta()),
-                claim,
+                claim: false,
             };
             match self.deps.hub.commit(msg, cleaned.clone()).await? {
                 Commit::Committed { entry, .. } => {
@@ -1226,7 +1149,6 @@ impl LogSync {
                     b = log_base(&entry, p2.clone());
                     p = p2;
                     self.set_base(&dst.space, &dst.canonical, &b)?;
-                    self.st().claimed.remove(&key);
                     off += n;
                 }
                 Commit::Conflict { current, reason } => {
@@ -2006,280 +1928,6 @@ impl LogSync {
         tracing::info!("materialized {}/{} at {}", key.0, key.1, target.display());
         Ok(Step::Done)
     }
-
-    // ---------------------------------------------------------------- resume
-
-    async fn resolve(&self, agent: Option<&str>, id: &str) -> Result<SessionInfo> {
-        let id = id.trim();
-        if id.is_empty() {
-            bail!("no session id given");
-        }
-        let q = Query::Sessions {
-            agent: agent.map(str::to_string),
-            machine: None,
-            text: Some(id.to_string()),
-            limit: Some(50),
-        };
-        let v = self.deps.hub.query(q).await?;
-        let list: Vec<SessionInfo> =
-            serde_json::from_value(v).context("bad Sessions query result")?;
-        let list: Vec<SessionInfo> = list
-            .into_iter()
-            .filter(|s| {
-                self.driver(&s.space).is_some() && agent.map_or(true, |a| s.meta.agent == a)
-            })
-            .collect();
-        if let Some(s) = list.iter().find(|s| s.meta.id == id) {
-            return Ok(s.clone());
-        }
-        let prefixed: Vec<&SessionInfo> =
-            list.iter().filter(|s| s.meta.id.starts_with(id)).collect();
-        let cands: Vec<&SessionInfo> = if prefixed.is_empty() {
-            list.iter().collect()
-        } else {
-            prefixed
-        };
-        match cands.len() {
-            0 => bail!("no session matches {id:?}"),
-            1 => Ok(cands[0].clone()),
-            n => {
-                let lines: Vec<String> = cands
-                    .iter()
-                    .take(10)
-                    .map(|s| {
-                        let label = s
-                            .meta
-                            .title
-                            .as_deref()
-                            .or(s.meta.first_prompt.as_deref())
-                            .unwrap_or("");
-                        format!(
-                            "  {} {} {}",
-                            s.meta.agent,
-                            s.meta.id,
-                            crate::drivers::claude::clip(label, 60)
-                        )
-                    })
-                    .collect();
-                bail!(
-                    "{id:?} matches {n} sessions; use a longer id:\n{}",
-                    lines.join("\n")
-                )
-            }
-        }
-    }
-
-    /// Learn the latest hub state of a session's logs and mark them wanted.
-    async fn want_session(&self, d: &Arc<dyn AgentDriver>, key: &Key) -> Result<()> {
-        self.refresh(key).await?;
-        let mut keys = vec![key.clone()];
-        if let Some(sid) = sid_of(&key.1) {
-            let q = Query::Entries {
-                space: key.0.clone(),
-                prefix: Some(format!("sessions/{sid}/")),
-            };
-            if let Ok(v) = self.deps.hub.query(q).await {
-                let entries: Vec<Entry> = serde_json::from_value(v).unwrap_or_default();
-                for e in entries.iter().filter(|e| e.kind == Kind::Log) {
-                    self.adopt_entry(e)?;
-                    keys.push((e.space.clone(), e.path.clone()));
-                }
-            }
-        }
-        let _ = d;
-        let mut st = self.st();
-        for k in keys {
-            st.want.insert(k.clone());
-            st.remote.insert(k);
-        }
-        Ok(())
-    }
-
-    /// Bring the local transcript up to the hub entry known now.
-    async fn ensure_local(&self, key: &Key, deadline: Instant) -> Result<()> {
-        let mut idle_rounds = 0;
-        loop {
-            let row = self.deps.store.get(&key.0, &key.1)?.unwrap_or_default();
-            let r = row
-                .remote
-                .ok_or_else(|| anyhow!("{} is not on the hub", key.1))?;
-            if row
-                .base
-                .as_ref()
-                .is_some_and(|b| b.log.is_some() && b.version >= r.version)
-            {
-                return Ok(());
-            }
-            let step = {
-                let _g = self.op.lock().await;
-                self.load_forks();
-                self.reconcile_remote(key).await?
-            };
-            let row = self.deps.store.get(&key.0, &key.1)?.unwrap_or_default();
-            if row
-                .base
-                .as_ref()
-                .is_some_and(|b| b.log.is_some() && b.version >= r.version)
-            {
-                return Ok(());
-            }
-            if let Step::Done = step {
-                idle_rounds += 1;
-                if idle_rounds > 3 {
-                    bail!(
-                        "cannot place session {} on this machine (unknown working directory?)",
-                        sid_of(&key.1).unwrap_or(&key.1)
-                    );
-                }
-            }
-            if Instant::now() > deadline {
-                bail!(
-                    "timed out bringing session {} up to date here; is it still running on this machine?",
-                    sid_of(&key.1).unwrap_or(&key.1)
-                );
-            }
-            // pending local lines (pushed by the tick) or a live local agent
-            {
-                let _g = self.op.lock().await;
-                let dirty: Vec<PathBuf> = self.st().dirty.keys().cloned().collect();
-                for abs in dirty {
-                    self.st().dirty.remove(&abs);
-                    if let Err(e) = self.sync_local(&abs).await {
-                        tracing::debug!("push before resume: {e:#}");
-                        self.st().dirty.insert(abs, Instant::now());
-                    }
-                }
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-    }
-
-    async fn resume_as_fork(
-        &self,
-        d: &Arc<dyn AgentDriver>,
-        key: &Key,
-        deadline: Instant,
-    ) -> Result<ResumePlan> {
-        let r = self.refresh(key).await?;
-        let old = sid_of(&key.1).unwrap_or_default().to_string();
-        let data = self.read_log_range(&key.0, &key.1, 0, r.size).await?;
-        let n = lfs::complete_len(&data);
-        let new = d.new_session_id();
-        let fork_canonical = d.fork_canonical(&key.1, &old, &new);
-        let content = map_lines(&data[..n], |l| d.fork_line(l, &old, &new));
-        let mut meta = r
-            .meta
-            .as_ref()
-            .and_then(SessionMeta::from_meta)
-            .unwrap_or_else(|| SessionMeta {
-                agent: d.name().to_string(),
-                ..Default::default()
-            });
-        meta.id = new.clone();
-        meta.forked_from = Some(old.clone());
-        meta.native_rel = meta.native_rel.map(|x| d.fork_line(&x, &old, &new));
-        meta.updated_at = Some(now_ms());
-        self.create_log(&key.0, &fork_canonical, &content, Some(&meta))
-            .await
-            .with_context(|| format!("creating fork of {old}"))?;
-        let fkey = (key.0.clone(), fork_canonical);
-        self.st().want.insert(fkey.clone());
-        self.ensure_local(&fkey, deadline).await?;
-        self.plan(d, &fkey, false, Some(new))
-    }
-
-    fn plan(
-        &self,
-        d: &Arc<dyn AgentDriver>,
-        key: &Key,
-        took_over: bool,
-        forked_to: Option<String>,
-    ) -> Result<ResumePlan> {
-        let row = self.deps.store.get(&key.0, &key.1)?.unwrap_or_default();
-        let r = row
-            .remote
-            .ok_or_else(|| anyhow!("{} is not on the hub", key.1))?;
-        let mut meta = r
-            .meta
-            .as_ref()
-            .and_then(SessionMeta::from_meta)
-            .unwrap_or_default();
-        if meta.id.is_empty() {
-            meta.id = sid_of(&key.1).unwrap_or_default().to_string();
-        }
-        let map = self.map();
-        let cwd = meta
-            .cwd
-            .as_deref()
-            .map(|c| map.smudge(c))
-            .unwrap_or_else(|| self.deps.home.to_string_lossy().to_string());
-        let native_path = row
-            .base
-            .and_then(|b| b.log)
-            .map(|p| p.native)
-            .unwrap_or_default();
-        let roots: Vec<PathBuf> = map
-            .spaces
-            .iter()
-            .map(|(_, p)| PathBuf::from(p))
-            .chain(map.physical.iter().map(|(p, _)| PathBuf::from(p)))
-            .chain([d.root()])
-            .collect();
-        let unsynced = match std::fs::read(&native_path) {
-            Ok(data) => unsynced_edits(&data, &roots),
-            Err(_) => Vec::new(),
-        };
-        Ok(ResumePlan {
-            agent: d.name().to_string(),
-            id: meta.id.clone(),
-            argv: d.resume_argv(&meta, Path::new(&cwd)),
-            cwd_missing: !Path::new(&cwd).is_dir(),
-            cwd,
-            native_path,
-            took_over,
-            forked_to,
-            unsynced,
-        })
-    }
-}
-
-/// Absolute paths of files a transcript edited (Claude tool inputs/results, Codex patch changes)
-/// that lie outside every synced root: their changes stayed on the machine that made them.
-pub(crate) fn unsynced_edits(transcript: &[u8], roots: &[PathBuf]) -> Vec<String> {
-    fn walk(v: &serde_json::Value, out: &mut std::collections::BTreeSet<String>) {
-        match v {
-            serde_json::Value::Object(m) => {
-                for (k, x) in m {
-                    if matches!(k.as_str(), "file_path" | "filePath" | "notebook_path") {
-                        if let Some(p) = x.as_str() {
-                            out.insert(p.to_string());
-                        }
-                    }
-                    if k == "changes" {
-                        if let Some(c) = x.as_object() {
-                            out.extend(c.keys().cloned());
-                        }
-                    }
-                    walk(x, out);
-                }
-            }
-            serde_json::Value::Array(a) => a.iter().for_each(|x| walk(x, out)),
-            _ => {}
-        }
-    }
-    let mut found = std::collections::BTreeSet::new();
-    for line in transcript.split(|&b| b == b'\n') {
-        if let Ok(v) = serde_json::from_slice::<serde_json::Value>(line) {
-            walk(&v, &mut found);
-        }
-    }
-    const SCRATCH: [&str; 4] = ["/tmp/", "/private/tmp/", "/private/var/folders/", "/var/folders/"];
-    found
-        .into_iter()
-        .filter(|p| p.starts_with('/') && !SCRATCH.iter().any(|s| p.starts_with(s)))
-        .filter(|p| !roots.iter().any(|r| Path::new(p).starts_with(r)))
-        .take(50)
-        .collect()
 }
 
 /// `projects/<other slug>/<sid>.jsonl` when the transcript `rel` exists locally under another

@@ -1032,24 +1032,9 @@ pub fn jstr<'a>(v: &'a Value, ptr: &str) -> Option<&'a str> {
     v.pointer(ptr).and_then(Value::as_str)
 }
 
-pub fn jbool(v: &Value, ptr: &str) -> Option<bool> {
-    v.pointer(ptr).and_then(Value::as_bool)
-}
-
 /// The SessionInfo whose `meta.id` is `id`.
 pub fn find_session<'a>(list: &'a [Value], id: &str) -> Option<&'a Value> {
     list.iter().find(|s| jstr(s, "/meta/id") == Some(id))
-}
-
-pub fn argv(plan: &Value) -> Vec<String> {
-    plan.get("argv")
-        .and_then(Value::as_array)
-        .map(|a| {
-            a.iter()
-                .filter_map(|x| x.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 // ---------------------------------------------------------------- agent transcripts

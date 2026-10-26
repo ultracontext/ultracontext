@@ -300,10 +300,6 @@ fn print_report(r: &InitReport) {
             "uc sessions",
             "Claude Code / Codex sessions from every machine",
         ),
-        (
-            "uc resume",
-            "continue the latest session of this folder, here",
-        ),
         ("uc service install", "start uc automatically at login"),
     ];
     for (cmd, what) in steps {

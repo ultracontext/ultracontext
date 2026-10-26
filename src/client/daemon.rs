@@ -27,7 +27,7 @@ use crate::config::{Config, SpaceConfig};
 use crate::drivers;
 use crate::paths::{self, Paths};
 use crate::proto::{
-    self, Ctl, HubStatus, Query, ResumePlan, SessionInfo, SpaceStatus, StatusReport, SyncReport,
+    self, Ctl, HubStatus, Query, SessionInfo, SpaceStatus, StatusReport, SyncReport,
 };
 
 /// Full rescan cadence (DESIGN §5.1).
@@ -193,6 +193,11 @@ pub async fn run(paths: Paths) -> Result<()> {
             _ = sigint.recv() => break Ok(()),
         }
     };
+    if result.is_ok() {
+        // a clean stop (uc daemon stop, logout, shutdown): another machine may continue our
+        // sessions right away instead of waiting for the lease to run out
+        let _ = tokio::time::timeout(Duration::from_secs(3), d.logsync.release_all()).await;
+    }
     let _ = std::fs::remove_file(paths.daemon_sock());
     match &result {
         Ok(()) => info!("uc daemon stopped"),
@@ -292,9 +297,17 @@ impl Daemon {
         let Ok(Some((seq, space, path, hash))) = self.ctx.db.cursor_at() else {
             return false;
         };
-        let q = Query::History { space, path, limit: Some(100_000) };
-        let Ok(v) = self.ctx.hub.query(q).await else { return false };
-        let Ok(hist) = serde_json::from_value::<Vec<proto::LogRecord>>(v) else { return false };
+        let q = Query::History {
+            space,
+            path,
+            limit: Some(100_000),
+        };
+        let Ok(v) = self.ctx.hub.query(q).await else {
+            return false;
+        };
+        let Ok(hist) = serde_json::from_value::<Vec<proto::LogRecord>>(v) else {
+            return false;
+        };
         !hist.iter().any(|r| r.seq == seq && r.hash == hash)
     }
 
@@ -491,12 +504,6 @@ impl Daemon {
                 self.rm_space(&name).await?;
                 Ok(Value::Null)
             }
-            Ctl::Resume {
-                agent,
-                id,
-                takeover,
-                fork,
-            } => to_json(&self.resume(agent, id, takeover, fork).await?),
             Ctl::Restore { space, path, seq } => {
                 self.restore(&space, &path, seq).await?;
                 Ok(Value::Null)
@@ -694,61 +701,6 @@ impl Daemon {
         Ok(())
     }
 
-    async fn resume(
-        &self,
-        agent: Option<String>,
-        id: String,
-        takeover: bool,
-        fork: bool,
-    ) -> Result<ResumePlan, CtlError> {
-        if takeover && fork {
-            return Err(CtlError::new("invalid", "choose one of takeover or fork"));
-        }
-        if !self.ctx.hub.is_connected() {
-            return Err(self.offline_error());
-        }
-        if !takeover && !fork {
-            // a clear "busy" with who/when, whatever the claim error looks like
-            if let Some(s) = self.find_session(agent.as_deref(), &id).await {
-                if let Some(e) = busy_check(&s, &self.ctx.machine.id) {
-                    return Err(e);
-                }
-            }
-        }
-        self.logsync
-            .resume(agent.as_deref(), &id, takeover, fork)
-            .await
-            .map_err(|e| {
-                let mut ce = self.hub_error(e);
-                if ce.code == "error" && ce.msg.to_lowercase().contains("busy") {
-                    ce.code = "busy".into();
-                }
-                ce
-            })
-    }
-
-    async fn find_session(&self, agent: Option<&str>, id: &str) -> Option<SessionInfo> {
-        let q = Query::Sessions {
-            agent: agent.map(str::to_string),
-            machine: None,
-            text: Some(id.to_string()),
-            limit: Some(50),
-        };
-        let v = tokio::time::timeout(HUB_QUERY_TIMEOUT, self.ctx.hub.query(q))
-            .await
-            .ok()?
-            .ok()?;
-        let list: Vec<SessionInfo> = serde_json::from_value(v).ok()?;
-        if let Some(s) = list.iter().find(|s| s.meta.id == id) {
-            return Some(s.clone());
-        }
-        let mut prefixed = list.into_iter().filter(|s| s.meta.id.starts_with(id));
-        match (prefixed.next(), prefixed.next()) {
-            (Some(s), None) => Some(s),
-            _ => None,
-        }
-    }
-
     async fn restore(&self, space: &str, path: &str, seq: u64) -> Result<(), CtlError> {
         if space.starts_with('@') {
             return Err(CtlError::new(
@@ -825,28 +777,6 @@ fn to_json<T: Serialize>(v: &T) -> Result<Value, CtlError> {
 /// `uc sync` is done when nothing is pending and every hub change up to `head` was applied.
 pub fn sync_done(p: &Pending, cursor: u64, head: u64) -> bool {
     p.idle() && cursor >= head
-}
-
-/// `Some(busy error)` if the session is live on another machine (DESIGN §6.4).
-pub fn busy_check(s: &SessionInfo, my_machine_id: &str) -> Option<CtlError> {
-    let owner = s.owner.as_deref()?;
-    if !s.live || owner == my_machine_id {
-        return None;
-    }
-    let who = s.owner_name.clone().unwrap_or_else(|| owner.to_string());
-    Some(CtlError::new(
-        "busy",
-        format!(
-            "{} session {} is live on {who} (active {}s ago)",
-            s.meta.agent,
-            short_id(&s.meta.id),
-            (s.idle_ms.max(0) / 1000)
-        ),
-    ))
-}
-
-fn short_id(id: &str) -> &str {
-    id.get(..8).unwrap_or(id)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1154,39 +1084,6 @@ pub fn log_tail(path: &Path, n: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::SessionMeta;
-
-    fn session(owner: Option<&str>, live: bool) -> SessionInfo {
-        SessionInfo {
-            space: "@claude".into(),
-            path: "sessions/abcdef0123.jsonl".into(),
-            meta: SessionMeta {
-                agent: "claude".into(),
-                id: "abcdef0123".into(),
-                ..Default::default()
-            },
-            owner: owner.map(str::to_string),
-            owner_name: owner.map(|o| format!("{o}-name")),
-            live,
-            idle_ms: 4_200,
-            size: 10,
-            version: 3,
-            local_cwd: None,
-            local: false,
-        }
-    }
-
-    #[test]
-    fn busy_only_when_live_elsewhere() {
-        assert!(busy_check(&session(Some("m_other"), false), "m_me").is_none());
-        assert!(busy_check(&session(Some("m_me"), true), "m_me").is_none());
-        assert!(busy_check(&session(None, true), "m_me").is_none());
-        let e = busy_check(&session(Some("m_other"), true), "m_me").unwrap();
-        assert_eq!(e.code, "busy");
-        assert!(e.msg.contains("m_other-name"), "{}", e.msg);
-        assert!(e.msg.contains("abcdef01"), "{}", e.msg);
-        assert!(e.msg.contains("4s ago"), "{}", e.msg);
-    }
 
     #[test]
     fn sync_done_needs_idle_and_caught_up() {

@@ -11,8 +11,10 @@ Close the MacBook. Open the Linux box. Continue the same session:
 
 ```sh
 cd ~/Code/myproject
-uc resume            # or just: claude -c
+claude -c            # or: claude --resume, codex resume --all
 ```
+
+There is no special command. Your agents' own resume finds sessions from every machine.
 
 ## Why
 
@@ -59,12 +61,14 @@ uc add ~/Code              # appears at ~/Code on every machine that runs: uc in
 uc status
 ```
 
-**5. Sessions follow you.** Claude Code and Codex sessions sync by themselves:
+**5. Sessions follow you.** Claude Code and Codex sessions sync by themselves, into the
+folders the agents already use. Continue them with the agents' own commands:
 
 ```sh
+claude -c                  # newest session of this project, wherever it ran
+claude --resume            # pick one
+codex resume --all         # Codex: --all, since the session's folder path differs per machine
 uc sessions                # every session, every machine, newest first (● = running now)
-uc resume                  # newest session of this project, wherever it ran
-uc resume 3f2a             # a session by id prefix or search text
 ```
 
 Before you close the lid, you can run `uc sync`. It waits until everything is on the hub. The daemon already pushes every change as it happens, so this only confirms it.
@@ -73,12 +77,12 @@ Before you close the lid, you can run `uc sync`. It waits until everything is on
 
 - **Paths are rewritten for each machine.** `/Users/you/Code/app` on the Mac becomes `/home/you/Code/app` on Linux. The resumed agent sees paths that exist on the machine it now runs on.
 - **Claude Code** transcripts are written to the folder Claude itself uses for that project on that machine. Their mtime is the last activity, so `claude --continue` in the project picks the newest session from any machine.
-- **Codex** rollouts are copied byte for byte, because Codex depends on exact byte offsets. uc runs them with `codex resume -C <local dir> <id>`.
-- **Files outside your synced folders don't move.** If a session edited such files (say `~/.zshrc`), `uc resume` lists them before continuing, so you know what stayed behind.
+- **Codex** rollouts are copied byte for byte, because Codex depends on exact byte offsets. Their recorded folder stays the original machine's, so `codex resume` lists them under `--all` (or pass the id).
+- **Sessions from the last 30 days** are on every machine, the same window Claude Code keeps them.
+- **Files outside your synced folders don't move.** A session that edited `~/.zshrc` continues elsewhere without that edit.
 - **A session is "live"** only while an awake machine is actually running it. That machine renews a 30-second lease on the hub.
-  - When you close the laptop, the lease runs out and the session is free within 30 seconds.
-  - `uc resume` on a live session asks you to **take over** (the other machine stops writing to it) or **fork** (you continue as a new session).
-  - Agents pass `--takeover` or `--fork`.
+  - `uc daemon stop`, logging out or shutting down hands the session over at once. Closing the lid frees it within 30 seconds.
+  - If you continue a session while it is still live on another machine, nothing breaks: your new lines become a fork with a new session id, next to the original.
 
 ## Branches
 
@@ -91,7 +95,7 @@ A synced repo is like any synced folder: the same on every machine, including th
 | `uc init <hub>` | Connect this machine to a hub (`host`, `user@host`, `ssh://user@host:port`, `tcp://host:port`, `local`). |
 | `uc add <dir>` / `uc rm <name>` | Start or stop syncing a folder. Stopping keeps the files. |
 | `uc status` / `uc sync` | Show the hub link, pending work, conflicts and live sessions. `sync` waits until everything is pushed and pulled. |
-| `uc sessions` / `uc resume` | List sessions from every machine, and continue one here. |
+| `uc sessions` | List sessions from every machine. Continue one with `claude --resume` / `codex resume`. |
 | `uc log` / `uc history <file>` / `uc restore <file>` | See who changed what, and get any version back. |
 | `uc conflicts` | List conflict copies that need your decision. |
 | `uc doctor` | Find setup problems. |
@@ -104,7 +108,7 @@ Every command takes `--json`, which prints exactly one JSON document for agents 
 | 0 | ok |
 | 1 | error |
 | 2 | usage |
-| 3 | busy or conflict |
+| 3 | conflict |
 
 See [docs/CLI.md](docs/CLI.md).
 

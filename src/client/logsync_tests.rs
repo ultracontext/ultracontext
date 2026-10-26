@@ -11,7 +11,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 use super::mock::{MemStore, MockClient, MockHub};
-use super::{BusyError, Deps, LogSync, Tunables};
+use super::{Deps, LogSync, Tunables};
 use crate::config::{Config, SpaceConfig};
 use crate::drivers::claude::{slug, Claude};
 use crate::drivers::codex::Codex;
@@ -72,7 +72,6 @@ impl M {
                 debounce: Duration::ZERO,
                 hot_ms: 0,
                 cold_ms: 0,
-                resume_timeout: Duration::from_secs(5),
             },
         };
         let drivers: Vec<Arc<dyn AgentDriver>> = vec![
@@ -275,25 +274,17 @@ async fn a_claude_session_appears_on_linux_with_linux_paths() {
 }
 
 #[tokio::test]
-async fn b_linux_continues_after_takeover_and_mac_follows() {
+async fn b_linux_continues_natively_and_mac_follows() {
     let hub = MockHub::new();
     let mut mac = M::new(&hub, "mac", "Users/fab");
     let mut lin = M::new(&hub, "linux", "home/fabio");
     let (sid, mac_path) = mac_session(&mut mac).await;
     settle(&mut [&mut mac, &mut lin]).await;
 
-    let plan = lin.ls.resume(None, &sid[..8], true, false).await.unwrap();
-    assert!(plan.took_over);
-    assert_eq!(plan.id, sid);
-    assert_eq!(plan.cwd, lin.proj().to_string_lossy());
-    assert!(!plan.cwd_missing);
-    assert_eq!(
-        plan.argv,
-        vec!["claude".to_string(), "--resume".into(), sid.clone()]
-    );
-    assert_eq!(PathBuf::from(&plan.native_path), lin.transcript(&sid));
+    // the mac went to sleep: its lease runs out
+    hub.advance(200_000);
 
-    // `claude --resume` on linux appends to the same file
+    // plain `claude --resume` on linux appends to the materialized file
     let lin_path = lin.transcript(&sid);
     let lin_line = user_line(&sid, &lin.proj(), "u2", "now on linux");
     append(&lin_path, &format!("{lin_line}\n"));
@@ -318,47 +309,107 @@ async fn b_linux_continues_after_takeover_and_mac_follows() {
 }
 
 #[tokio::test]
-async fn c_live_owner_is_busy_unless_takeover() {
+async fn clean_stop_hands_sessions_over_at_once() {
     let hub = MockHub::new();
     let mut mac = M::new(&hub, "mac", "Users/fab");
     let mut lin = M::new(&hub, "linux", "home/fabio");
     let (sid, _) = mac_session(&mut mac).await;
     settle(&mut [&mut mac, &mut lin]).await;
+    let canon_path = format!("sessions/{sid}.jsonl");
+    assert_eq!(
+        hub.entry("@claude", &canon_path).unwrap().owner.as_deref(),
+        Some("m_mac")
+    );
 
-    let err = lin
-        .ls
-        .resume(Some("claude"), &sid, false, false)
-        .await
-        .unwrap_err();
-    let busy = err.downcast_ref::<BusyError>().expect("BusyError");
-    assert_eq!(busy.owner_name, "mac");
-    assert!(err.to_string().starts_with("busy: session is live on mac"));
-
-    let plan = lin
-        .ls
-        .resume(Some("claude"), &sid, true, false)
-        .await
-        .unwrap();
-    assert!(plan.took_over);
-    // once the lease is idle no takeover is needed
-    let mut lin2 = M::new(&hub, "box2", "home/other");
-    hub.advance(200_000);
-    let plan = lin2.ls.resume(None, &sid, false, false).await.unwrap();
-    assert!(!plan.took_over);
-    lin2.pump().await;
+    mac.ls.release_all().await; // `uc daemon stop` on the mac
+    let lin_path = lin.transcript(&sid);
+    append(
+        &lin_path,
+        &format!("{}\n", user_line(&sid, &lin.proj(), "u2", "right away")),
+    );
+    lin.changed(&lin_path).await;
+    lin.pump().await;
+    assert_eq!(
+        hub.entry("@claude", &canon_path).unwrap().owner.as_deref(),
+        Some("m_linux")
+    );
+    assert_eq!(hub.paths("@claude"), vec![canon_path], "no fork");
 }
 
 #[tokio::test]
-async fn d_old_owner_writing_after_takeover_forks() {
+async fn c_continuing_a_session_live_elsewhere_forks() {
+    let hub = MockHub::new();
+    let mut mac = M::new(&hub, "mac", "Users/fab");
+    let mut lin = M::new(&hub, "linux", "home/fabio");
+    let (sid, _) = mac_session(&mut mac).await;
+    settle(&mut [&mut mac, &mut lin]).await;
+    let canon_path = format!("sessions/{sid}.jsonl");
+    let canon_before = hub.log("@claude", &canon_path).unwrap();
+
+    // mac still holds the lease; linux writes to its copy anyway
+    let lin_path = lin.transcript(&sid);
+    append(
+        &lin_path,
+        &format!("{}\n", user_line(&sid, &lin.proj(), "u2", "linux too")),
+    );
+    lin.changed(&lin_path).await;
+    settle(&mut [&mut mac, &mut lin]).await;
+
+    assert_eq!(hub.log("@claude", &canon_path).unwrap(), canon_before);
+    let forks: Vec<String> = hub
+        .paths("@claude")
+        .into_iter()
+        .filter(|p| *p != canon_path)
+        .collect();
+    assert_eq!(forks.len(), 1, "{forks:?}");
+    let ftext = String::from_utf8(hub.log("@claude", &forks[0]).unwrap()).unwrap();
+    assert!(ftext.contains("linux too"), "{ftext}");
+
+    // once the mac sleeps and its lease runs out, a third machine just continues it
+    let mut box2 = M::new(&hub, "box2", "home/other");
+    box2.ls.rescan().await.unwrap(); // daemon startup
+    settle(&mut [&mut mac, &mut lin, &mut box2]).await;
+    hub.advance(200_000);
+    let p2 = box2.transcript(&sid);
+    assert!(
+        p2.exists(),
+        "a machine that joins later gets the session too"
+    );
+    append(
+        &p2,
+        &format!("{}\n", user_line(&sid, &box2.proj(), "u3", "box2 line")),
+    );
+    box2.changed(&p2).await;
+    settle(&mut [&mut lin, &mut box2]).await; // the mac is asleep now
+    let e = hub.entry("@claude", &canon_path).unwrap();
+    assert_eq!(e.owner.as_deref(), Some("m_box2"));
+    assert!(String::from_utf8(hub.log("@claude", &canon_path).unwrap())
+        .unwrap()
+        .contains("box2 line"));
+}
+
+#[tokio::test]
+async fn d_old_owner_writing_after_another_machine_continued_forks() {
     let hub = MockHub::new();
     let mut mac = M::new(&hub, "mac", "Users/fab");
     let mut lin = M::new(&hub, "linux", "home/fabio");
     let (sid, mac_path) = mac_session(&mut mac).await;
     mac.claude_live(&sid, true);
     settle(&mut [&mut mac, &mut lin]).await;
-    lin.ls.resume(None, &sid, true, false).await.unwrap();
+    // the mac slept with Claude still open; linux continues the session
+    hub.advance(200_000);
+    let lin_path = lin.transcript(&sid);
+    append(
+        &lin_path,
+        &format!("{}\n", user_line(&sid, &lin.proj(), "u2", "linux first")),
+    );
+    lin.changed(&lin_path).await;
+    settle(&mut [&mut mac, &mut lin]).await;
     let canon_path = format!("sessions/{sid}.jsonl");
     let canon_before = hub.log("@claude", &canon_path).unwrap();
+    assert!(String::from_utf8(canon_before.clone())
+        .unwrap()
+        .contains("linux first"));
 
     // the old mac process keeps writing
     let stray = user_line(&sid, &mac.proj(), "u9", "stray mac line");
@@ -399,7 +450,6 @@ async fn d_old_owner_writing_after_takeover_forks() {
     );
     mac.changed(&mac_path).await;
     // linux keeps working on the canonical session
-    let lin_path = lin.transcript(&sid);
     append(
         &lin_path,
         &format!("{}\n", user_line(&sid, &lin.proj(), "u3", "linux line")),
@@ -433,7 +483,7 @@ async fn d_old_owner_writing_after_takeover_forks() {
 }
 
 #[tokio::test]
-async fn e_codex_rollout_is_byte_exact_and_resumes_with_local_cwd() {
+async fn e_codex_rollout_is_byte_exact() {
     let hub = MockHub::new();
     let mut mac = M::new(&hub, "mac", "Users/fab");
     let mut lin = M::new(&hub, "linux", "home/fabio");
@@ -471,24 +521,6 @@ async fn e_codex_rollout_is_byte_exact_and_resumes_with_local_cwd() {
     let meta = SessionMeta::from_meta(e.meta.as_ref().unwrap()).unwrap();
     assert_eq!(meta.cwd.as_deref(), Some("@@UC_SPACE:code@@/proj"));
     assert_eq!(meta.native_rel.as_deref(), Some(rel.as_str()));
-
-    hub.advance(200_000);
-    let plan = lin
-        .ls
-        .resume(Some("codex"), &tid, false, false)
-        .await
-        .unwrap();
-    assert_eq!(
-        plan.argv,
-        vec![
-            "codex".to_string(),
-            "resume".into(),
-            "-C".into(),
-            lin.proj().to_string_lossy().to_string(),
-            tid.clone()
-        ]
-    );
-    assert_eq!(PathBuf::from(plan.native_path), lin_file);
 }
 
 #[tokio::test]
@@ -676,42 +708,6 @@ async fn owner_rewrite_resets_hub_log() {
 }
 
 #[tokio::test]
-async fn resume_fork_and_ambiguous_ids() {
-    let hub = MockHub::new();
-    let mut mac = M::new(&hub, "mac", "Users/fab");
-    let mut lin = M::new(&hub, "linux", "home/fabio");
-    let (sid, _) = mac_session(&mut mac).await;
-    settle(&mut [&mut mac, &mut lin]).await;
-
-    let plan = lin.ls.resume(None, &sid, false, true).await.unwrap();
-    let new = plan.forked_to.clone().unwrap();
-    assert_eq!(plan.id, new);
-    assert!(PathBuf::from(&plan.native_path).ends_with(format!("{new}.jsonl")));
-    assert!(read(Path::new(&plan.native_path)).contains(&new));
-    assert_eq!(
-        hub.entry("@claude", &format!("sessions/{sid}.jsonl"))
-            .unwrap()
-            .owner
-            .as_deref(),
-        Some("m_mac")
-    );
-
-    let err = lin
-        .ls
-        .resume(None, "nope-nope", false, false)
-        .await
-        .unwrap_err();
-    assert!(err.to_string().contains("no session matches"));
-    // "read the main" matches both the original and the fork
-    let err = lin
-        .ls
-        .resume(None, "read the main", false, false)
-        .await
-        .unwrap_err();
-    assert!(err.to_string().contains("matches 2 sessions"), "{err}");
-}
-
-#[tokio::test]
 async fn rescan_pushes_existing_sessions_and_localize_fills_cwd() {
     let hub = MockHub::new();
     let mut mac = M::new(&hub, "mac", "Users/fab");
@@ -799,13 +795,6 @@ async fn sidecars_follow_their_transcript() {
     mac.changed(&tool_txt).await;
     settle(&mut [&mut mac, &mut lin]).await;
     assert_eq!(hub.entry("@claude", &tool_canon).unwrap().version, before);
-    // a takeover moves the subagent logs along with the transcript
-    lin.ls.resume(None, &sid, true, false).await.unwrap();
-    let sub = format!("sessions/{sid}/subagents/agent-a1.jsonl");
-    assert_eq!(
-        hub.entry("@claude", &sub).unwrap().owner.as_deref(),
-        Some("m_linux")
-    );
 }
 
 #[tokio::test]
@@ -891,18 +880,6 @@ async fn relocation_on_owner_moves_follower_copy() {
 }
 
 #[tokio::test]
-async fn resume_where_it_is_already_running() {
-    let hub = MockHub::new();
-    let mut mac = M::new(&hub, "mac", "Users/fab");
-    let (sid, mac_path) = mac_session(&mut mac).await;
-    mac.claude_live(&sid, true);
-    let plan = mac.ls.resume(None, &sid, false, false).await.unwrap();
-    assert!(!plan.took_over);
-    assert_eq!(PathBuf::from(plan.native_path), mac_path);
-    mac.claude_live(&sid, false);
-}
-
-#[tokio::test]
 async fn existing_copy_in_another_project_dir_is_reused_not_duplicated() {
     let hub = MockHub::new();
     let mut mac = M::new(&hub, "mac", "Users/fab");
@@ -953,10 +930,18 @@ async fn codex_divergence_forks_with_same_timestamp_name() {
     );
     mac.changed(&mac_file).await;
     settle(&mut [&mut mac, &mut lin]).await;
-    lin.ls
-        .resume(Some("codex"), &tid, true, false)
-        .await
-        .unwrap();
+    // linux continues the thread while the mac sleeps
+    hub.advance(200_000);
+    let lin_file = lin.codex.join(&rel);
+    append(
+        &lin_file,
+        &format!(
+            r#"{{"timestamp":"{ts}","ordinal":1,"type":"event_msg","payload":{{"type":"user_message","message":"from linux"}}}}"#
+        ),
+    );
+    append(&lin_file, "\n");
+    lin.changed(&lin_file).await;
+    settle(&mut [&mut mac, &mut lin]).await;
     // the old Codex on mac writes one more line
     append(
         &mac_file,
@@ -1034,20 +1019,4 @@ fn futures_are_send(ls: Arc<LogSync>, c: Change) {
     send(ls.on_local(PathBuf::new()));
     send(ls.rescan());
     send(ls.tick(true));
-    send(ls.resume(None, "x", false, false));
-}
-
-#[test]
-fn unsynced_edits_lists_files_outside_synced_roots() {
-    let t = concat!(
-        r#"{"type":"assistant","message":{"content":[{"type":"tool_use","input":{"file_path":"/home/f/Code/app/a.rs"}}]}}"#, "\n",
-        r#"{"type":"assistant","message":{"content":[{"type":"tool_use","input":{"file_path":"/home/f/.zshrc"}}]}}"#, "\n",
-        r#"{"type":"user","toolUseResult":{"filePath":"/tmp/scratch.txt"}}"#, "\n",
-        r#"{"type":"event_msg","payload":{"changes":{"/etc/hosts":{}}}}"#, "\n",
-    );
-    let roots = vec![PathBuf::from("/home/f/Code")];
-    assert_eq!(
-        super::unsynced_edits(t.as_bytes(), &roots),
-        vec!["/etc/hosts".to_string(), "/home/f/.zshrc".to_string()]
-    );
 }

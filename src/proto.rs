@@ -272,18 +272,12 @@ pub enum Ctl {
     AddSpace { name: String, path: String },
     /// Stop syncing a space on this machine (files kept). Result: null
     RmSpace { name: String },
-    /// Materialize + claim a session. `id` may be a prefix. Result: ResumePlan (or error code "busy")
-    Resume {
-        #[serde(default)]
-        agent: Option<String>,
-        id: String,
-        #[serde(default)]
-        takeover: bool,
-        #[serde(default)]
-        fork: bool,
-    },
     /// Restore `path` to the content it had at `seq` (pushed as a new change). Result: null
-    Restore { space: String, path: String, seq: u64 },
+    Restore {
+        space: String,
+        path: String,
+        seq: u64,
+    },
     /// Re-read config.toml. Result: null
     Reload,
     /// Stop the daemon. Result: null
@@ -329,27 +323,6 @@ pub struct SyncReport {
     pub conflicts: Vec<String>,
     pub head_seq: u64,
     pub cursor: u64,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct ResumePlan {
-    pub agent: String,
-    pub id: String,
-    /// local working directory to run the agent in
-    pub cwd: String,
-    /// full argv, e.g. ["claude","--resume","<id>"]
-    pub argv: Vec<String>,
-    /// local transcript path
-    pub native_path: String,
-    pub took_over: bool,
-    /// set when --fork: the new session id
-    pub forked_to: Option<String>,
-    /// the cwd does not exist on this machine
-    pub cwd_missing: bool,
-    /// files the session edited that live outside every synced folder: their changes did NOT
-    /// follow the session to this machine (local paths, at most 50)
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub unsynced: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -606,7 +579,9 @@ pub async fn read_magic<R: AsyncRead + Unpin>(r: &mut R) -> Result<()> {
     loop {
         let n = r.read(&mut byte).await?;
         if n == 0 {
-            bail!("connection closed before protocol handshake (is `uc` installed on the hub host?)");
+            bail!(
+                "connection closed before protocol handshake (is `uc` installed on the hub host?)"
+            );
         }
         window.push(byte[0]);
         if window.len() > MAGIC.len() {

@@ -86,56 +86,6 @@ fn assert_no_conflicts(w: &World, m: &Machine) {
     });
 }
 
-/// `uc resume <target> --print --json`. While the previous owner's lease runs (DESIGN §6.4,
-/// 120s) a non-TTY caller gets exit 3 "busy" and must choose; this then takes over explicitly.
-fn resume_plan(w: &World, m: &Machine, target: &str) -> Value {
-    let (out, v) = m.try_json(&["resume", target, "--print"]);
-    if out.status.success() {
-        return v.unwrap_or_else(|| {
-            w.fail(&format!(
-                "{}: `uc resume {target} --print --json` printed no JSON:\n{}",
-                m.name,
-                show(&out)
-            ))
-        });
-    }
-    let text = format!("{}{}", lossy(&out.stdout), lossy(&out.stderr)).to_lowercase();
-    w.check(
-        out.status.code() == Some(3) && text.contains("busy"),
-        || {
-            format!(
-                "{}: `uc resume {target} --print --json` must succeed or exit 3 (busy):\n{}",
-                m.name,
-                show(&out)
-            )
-        },
-    );
-    m.uc_json(&["resume", target, "--print", "--takeover"])
-}
-
-fn check_plan(w: &World, plan: &Value, agent: &str, id: &str, cwd: &Path, native: &Path) {
-    let cwd_s = cwd.to_string_lossy();
-    let native_s = native.to_string_lossy();
-    w.check(jstr(plan, "/agent") == Some(agent), || {
-        format!("ResumePlan.agent should be {agent:?}:\n{plan:#}")
-    });
-    w.check(jstr(plan, "/id") == Some(id), || {
-        format!("ResumePlan.id should be the full id {id}:\n{plan:#}")
-    });
-    w.check(jstr(plan, "/cwd") == Some(&*cwd_s), || {
-        format!("ResumePlan.cwd should be this machine's project dir {cwd_s}:\n{plan:#}")
-    });
-    w.check(jbool(plan, "/cwd_missing") == Some(false), || {
-        format!("ResumePlan.cwd_missing should be false (the project was synced):\n{plan:#}")
-    });
-    w.check(jstr(plan, "/native_path") == Some(&*native_s), || {
-        format!("ResumePlan.native_path should be {native_s}:\n{plan:#}")
-    });
-    w.check(argv(plan).iter().any(|a| a == id), || {
-        format!("ResumePlan.argv should contain the session id:\n{plan:#}")
-    });
-}
-
 /// Stops a background writer thread even when the test panics.
 struct StopOnDrop(Arc<AtomicBool>);
 
@@ -601,18 +551,14 @@ fn claude_session_follows_you() {
         format!("title/first_prompt should come from the first prompt:\n{s:#}")
     });
 
-    // Close the MacBook lid, continue on linux.
+    // Close the MacBook lid, continue on linux: the transcript is already where
+    // `claude --resume` / `claude --continue` look for it, with linux paths.
     mac.daemon_stop();
-    let plan = resume_plan(&w, &linux, &id[..8]);
     let linux_file = linux.claude_transcript(&linux_cwd, &id);
-    check_plan(&w, &plan, "claude", &id, &linux_cwd, &linux_file);
-    let av = argv(&plan);
-    w.check(
-        av.windows(2).any(|p| p[0] == "--resume" && p[1] == id),
-        || format!("claude argv should contain `--resume {id}`: {av:?}"),
-    );
-
     let want = translate(&mac_content, &mac_home, &linux_home);
+    wait_until(Duration::from_secs(10), || {
+        read(&linux_file).as_deref() == Some(want.as_bytes())
+    });
     let got = read(&linux_file);
     w.check(got.as_deref() == Some(want.as_bytes()), || {
         format!(
@@ -623,7 +569,7 @@ fn claude_session_follows_you() {
         )
     });
 
-    // From inside the project, no id needed: `--here` and bare `uc resume` (DESIGN §7) find it.
+    // From inside the project, `uc sessions --here` finds it.
     let here = linux.uc_json_in(&linux_cwd, &["sessions", "--here"]);
     w.check(
         here.as_array()
@@ -635,10 +581,6 @@ fn claude_session_follows_you() {
             )
         },
     );
-    let latest = linux.uc_json_in(&linux_cwd, &["resume", "--print"]);
-    w.check(jstr(&latest, "/id") == Some(id.as_str()), || {
-        format!("linux: bare `uc resume` in the project should pick {id}:\n{latest:#}")
-    });
 
     // claude continues on linux ...
     let line = claude_user_line(
@@ -762,8 +704,7 @@ fn codex_session_follows_you() {
     linux.sync();
 
     // Recent sessions are materialized eagerly (DESIGN §6.5), at the same relative path, and
-    // BYTE-EXACT: Codex rollouts carry load-bearing byte offsets/ordinals (DESIGN §6.5a), so
-    // paths move through `codex resume -C <local cwd>` instead of being rewritten.
+    // BYTE-EXACT: Codex rollouts carry load-bearing byte offsets/ordinals (DESIGN §6.5a).
     let linux_file = linux.codex_dir.join(&rel);
     let want = mac_content.clone();
     let ok = wait_until(Duration::from_secs(10), || {
@@ -788,23 +729,12 @@ fn codex_session_follows_you() {
         format!("meta.agent should be codex:\n{s:#}")
     });
 
-    let plan = resume_plan(&w, &linux, &id);
-    check_plan(&w, &plan, "codex", &id, &linux_cwd, &linux_file);
-    let av = argv(&plan);
-    w.check(
-        av.len() >= 2 && av[0] == "codex" && av[1] == "resume",
-        || format!("codex argv should start with [\"codex\", \"resume\"]: {av:?}"),
-    );
-    let linux_cwd_s = linux_cwd.to_string_lossy().into_owned();
-    w.check(
-        av.windows(2).any(|p| p[0] == "-C" && p[1] == linux_cwd_s),
-        || format!("codex argv should pass -C {linux_cwd_s}: {av:?}"),
-    );
-
-    // codex continues on linux; the mac (online) follows.
+    // close the mac, `codex resume` on linux continues the rollout; the mac follows on wake.
+    mac.daemon_stop();
     let line = codex_user_line(&format!("Also update {}/README.md", linux_cwd.display()));
     append_line(&linux_file, &line);
     linux.sync();
+    mac.daemon_start();
     mac.sync();
     let want_mac = format!("{mac_content}{line}\n");
     let got = read(&mac_file);
@@ -832,11 +762,13 @@ fn codex_session_follows_you() {
     }
 }
 
-// ---------------------------------------------------------------- i) takeover + fork
+// ---------------------------------------------------------------- i) live elsewhere -> fork
 
+/// The agent on the mac is still streaming when linux continues the same session: the canonical
+/// session stays the mac's, linux's lines continue as a fork (DESIGN §6.4). Nothing is lost.
 #[test]
-fn live_session_takeover() {
-    let Some((w, mac, linux)) = code_pair("takeover", |c| {
+fn live_session_elsewhere_forks() {
+    let Some((w, mac, linux)) = code_pair("live_fork", |c| {
         put(c, "proj/README.md", b"proj\n");
     }) else {
         return;
@@ -848,7 +780,7 @@ fn live_session_takeover() {
     let u0 = new_uuid();
     append_line(
         &mac_file,
-        &claude_user_line(&id, &mac_cwd, &u0, None, "Write the takeover test"),
+        &claude_user_line(&id, &mac_cwd, &u0, None, "Write the fork test"),
     );
     mac.sync();
 
@@ -869,7 +801,6 @@ fn live_session_takeover() {
                 i += 1;
                 thread::sleep(Duration::from_millis(200));
             }
-            parent
         })
     };
     let _stop_guard = StopOnDrop(stop.clone());
@@ -881,121 +812,28 @@ fn live_session_takeover() {
         "linux: the live mac session never streamed in (mac-live-2 missing after 15s)".into()
     });
 
-    let out = linux.uc(&["resume", &id, "--print", "--json"]);
-    let text = format!("{}{}", lossy(&out.stdout), lossy(&out.stderr)).to_lowercase();
-    w.check(
-        out.status.code() == Some(3) && text.contains("busy"),
-        || {
-            format!(
-                "linux: resuming a live session without a flag must exit 3 (busy):\n{}",
-                show(&out)
-            )
-        },
-    );
-
-    let plan = linux.uc_json(&["resume", &id, "--print", "--takeover"]);
-    check_plan(&w, &plan, "claude", &id, &linux_cwd, &linux_file);
-    w.check(jbool(&plan, "/took_over") == Some(true), || {
-        format!("took_over should be true:\n{plan:#}")
-    });
-    linux.sync();
-    let at_takeover = read(&linux_file).expect("linux transcript");
-
-    // The old process on the mac does not know yet and keeps writing.
-    stop.store(true, Ordering::SeqCst);
-    let mut parent = streamer.join().expect("streamer thread");
-    for j in 0..5 {
-        let u = new_uuid();
-        append_line(
-            &mac_file,
-            &claude_assistant_line(
-                &id,
-                &mac_cwd,
-                &u,
-                &parent,
-                &format!("mac-after-takeover-{j}"),
-            ),
-        );
-        parent = u;
-        thread::sleep(Duration::from_millis(100));
-    }
-    // claude continues on linux
-    let mut linux_lines = String::new();
+    // `claude --resume` on linux writes to its copy while the mac is still going.
     let mut lparent = new_uuid();
     for j in 0..3 {
         let u = new_uuid();
-        let line = claude_user_line(
-            &id,
-            &linux_cwd,
-            &u,
-            Some(&lparent),
-            &format!("linux-after-takeover-{j}"),
+        append_line(
+            &linux_file,
+            &claude_user_line(
+                &id,
+                &linux_cwd,
+                &u,
+                Some(&lparent),
+                &format!("linux-too-{j}"),
+            ),
         );
-        append_line(&linux_file, &line);
-        linux_lines.push_str(&line);
-        linux_lines.push('\n');
         lparent = u;
     }
-    linux.sync();
-    // The mac's original transcript diverged and stays "hot" for 60s (left alone, DESIGN §6.4),
-    // so remote appends to it may wait there; everything the mac wrote must be pushed (the fork).
-    mac.sync_pushed(10);
-    linux.sync();
+    linux.sync_pushed(10);
 
-    // The canonical transcript is exactly what it was at takeover plus linux's own lines.
-    let got = read(&linux_file).expect("linux transcript");
-    let want = [at_takeover.clone(), linux_lines.clone().into_bytes()].concat();
-    w.check(got == want, || {
-        format!(
-            "linux transcript was corrupted after the takeover\n  expected: {}\n  found:    {}",
-            lossy(&want),
-            lossy(&got)
-        )
-    });
-    // ... and what it was at takeover is a clean prefix: first prompt, then mac-live-0..k in order.
-    let text = String::from_utf8_lossy(&at_takeover).into_owned();
-    let lines: Vec<&str> = text.lines().collect();
-    w.check(
-        lines
-            .iter()
-            .all(|l| serde_json::from_str::<Value>(l).is_ok()),
-        || format!("transcript at takeover has a torn/invalid line:\n{text}"),
-    );
-    w.check(
-        lines
-            .first()
-            .is_some_and(|l| l.contains("Write the takeover test")),
-        || format!("transcript at takeover should start with the first prompt:\n{text}"),
-    );
-    let live: Vec<usize> = lines
-        .iter()
-        .skip(1)
-        .filter_map(|l| {
-            let v: Value = serde_json::from_str(l).ok()?;
-            let t = v.pointer("/message/content/0/text")?.as_str()?;
-            t.strip_prefix("mac-live-")?.parse().ok()
-        })
-        .collect();
-    w.check(
-        lines.len() == 1 + live.len() && live.iter().enumerate().all(|(i, n)| i == *n) && live.len() >= 3,
-        || format!("transcript at takeover should be the prompt + mac-live-0..k (k>=2) in order:\n{text}"),
-    );
-    w.check(!text.contains("mac-after-takeover"), || {
-        format!(
-            "lines written on mac after the takeover leaked into the canonical session:\n{text}"
-        )
-    });
-
-    let sessions = linux.sessions();
-    let owner = find_session(&sessions, &id).and_then(|s| jstr(s, "/owner_name"));
-    w.check(owner == Some("linux"), || {
-        format!("session {id} should now be owned by linux:\n{sessions:#?}")
-    });
-
-    // The mac's stray lines continue as a fork (DESIGN §6.4).
+    // linux's lines continue as a fork of the session
     let mut fork: Option<Value> = None;
     let ok = wait_until_every(Duration::from_secs(20), Duration::from_millis(500), || {
-        fork = linux
+        fork = mac
             .sessions()
             .into_iter()
             .find(|s| jstr(s, "/meta/forked_from") == Some(id.as_str()));
@@ -1004,42 +842,42 @@ fn live_session_takeover() {
     w.check(ok, || {
         format!("no session with meta.forked_from = {id} appeared within 20s")
     });
-    let fork = fork.unwrap_or_default();
-    let fork_id = jstr(&fork, "/meta/id").unwrap_or_default().to_string();
+    let fork_id = fork
+        .as_ref()
+        .and_then(|f| jstr(f, "/meta/id"))
+        .unwrap_or_default()
+        .to_string();
     w.check(!fork_id.is_empty() && fork_id != id, || {
-        format!("fork needs its own id:\n{fork:#}")
+        format!("fork needs its own id:\n{fork:#?}")
     });
-
     let fork_name = format!("{fork_id}.jsonl");
     let mut fork_text = String::new();
     let ok = wait_until(Duration::from_secs(20), || {
-        fork_text = find_named(&linux.claude_dir, &fork_name)
+        fork_text = find_named(&mac.claude_dir, &fork_name)
             .first()
             .and_then(|p| read(p))
             .map(|b| String::from_utf8_lossy(&b).into_owned())
             .unwrap_or_default();
-        fork_text.contains("mac-after-takeover-4")
+        fork_text.contains("linux-too-2")
     });
     w.check(ok, || {
-        format!("linux: fork transcript {fork_name} with mac's stray lines never appeared:\n{fork_text}")
-    });
-    let foreign: Vec<&str> = fork_text
-        .lines()
-        .filter(|l| {
-            serde_json::from_str::<Value>(l)
-                .ok()
-                .and_then(|v| {
-                    v.get("sessionId")
-                        .and_then(Value::as_str)
-                        .map(|s| s != fork_id)
-                })
-                .unwrap_or(true)
-        })
-        .collect();
-    w.check(foreign.is_empty(), || {
-        format!("fork lines must carry sessionId {fork_id} (driver fork_line):\n{foreign:#?}")
+        format!("mac: fork transcript {fork_name} with linux's lines never appeared:\n{fork_text}")
     });
 
+    // the canonical session is the mac's alone, never mixed with linux's lines
+    stop.store(true, Ordering::SeqCst);
+    streamer.join().expect("streamer thread");
+    mac.sync();
+    let canon = String::from_utf8_lossy(&read(&mac_file).expect("mac transcript")).into_owned();
+    w.check(!canon.contains("linux-too"), || {
+        format!("linux's lines leaked into the live mac session:\n{canon}")
+    });
+    w.check(
+        canon
+            .lines()
+            .all(|l| serde_json::from_str::<Value>(l).is_ok()),
+        || format!("mac transcript has a torn/invalid line:\n{canon}"),
+    );
     for m in [&mac, &linux] {
         let copies = find_named(&m.claude_dir, &format!("{id}.jsonl"));
         w.check(copies.len() == 1, || {

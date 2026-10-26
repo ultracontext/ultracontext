@@ -5,8 +5,8 @@
 //! a rollout placed at the same relative path is resumable without touching Codex's sqlite DBs.
 //!
 //! Rollouts are replicated byte-exact: byte offsets and ordinals inside them are load-bearing,
-//! so `clean_line`/`smudge_line` are the identity and paths are only translated in metadata and
-//! in the resume argv (`codex resume -C <local cwd> <id>`).
+//! so `clean_line`/`smudge_line` are the identity and paths are only translated in metadata.
+//! The rollout keeps the original machine's cwd, so `codex resume` lists it under `--all`.
 //!
 //! Not synced (v1): `.jsonl.zst` compressed rollouts (older than 7 days), revert rollouts
 //! (`..-<id>_<rollout>.jsonl`), archived sessions, history/session_index, every sqlite DB.
@@ -278,16 +278,6 @@ impl AgentDriver for Codex {
     fn fork_line(&self, line: &str, old_id: &str, new_id: &str) -> String {
         line.replace(old_id, new_id)
     }
-
-    fn resume_argv(&self, meta: &SessionMeta, local_cwd: &Path) -> Vec<String> {
-        vec![
-            "codex".into(),
-            "resume".into(),
-            "-C".into(),
-            local_cwd.to_string_lossy().to_string(),
-            meta.id.clone(),
-        ]
-    }
 }
 
 #[cfg(test)]
@@ -333,7 +323,7 @@ mod tests {
     }
 
     #[test]
-    fn meta_identity_and_resume() {
+    fn meta_identity() {
         let map = PathMap::new(Path::new("/Users/fab"), &[]);
         let lines = [
             format!(r#"{{"timestamp":"2026-10-25T09:57:52.100Z","type":"session_meta","payload":{{"id":"{TID}","timestamp":"2026-10-25T09:57:52.000Z","cwd":"/Users/fab/p","originator":"codex_cli_rs","cli_version":"0.162.1","source":"cli","model_provider":"openai","git":{{"commit_hash":"abc","branch":"main"}}}}}}"#),
@@ -357,10 +347,6 @@ mod tests {
         // byte-exact lines
         assert_eq!(c.clean_line(&lines[0], &map), lines[0]);
         assert_eq!(c.smudge_line("@@UC_HOME@@/x", &map), "@@UC_HOME@@/x");
-        assert_eq!(
-            c.resume_argv(&m, Path::new("/home/fab/p")),
-            vec!["codex", "resume", "-C", "/home/fab/p", TID]
-        );
     }
 
     #[test]
