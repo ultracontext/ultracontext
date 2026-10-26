@@ -281,7 +281,9 @@ impl LogSync {
             .locate(&abs)
             .is_some_and(|(d, rel)| d.classify(&rel).is_some());
         if classified {
-            self.st().dirty.insert(abs, Instant::now());
+            // keep the first change's time: an agent that appends more often than the debounce
+            // must still be pushed (at most `debounce` after its first unpushed line)
+            self.st().dirty.entry(abs).or_insert_with(Instant::now);
             self.wake.notify_one();
         }
     }

@@ -33,6 +33,10 @@ struct M {
 
 impl M {
     fn new(hub: &Arc<MockHub>, name: &str, home_rel: &str) -> M {
+        M::with_debounce(hub, name, home_rel, Duration::ZERO)
+    }
+
+    fn with_debounce(hub: &Arc<MockHub>, name: &str, home_rel: &str, debounce: Duration) -> M {
         let dir = tempfile::Builder::new()
             .prefix("uc")
             .tempdir_in("/tmp")
@@ -69,7 +73,7 @@ impl M {
             cfg: Arc::new(move || cfg.clone()),
             on_error: None,
             tun: Tunables {
-                debounce: Duration::ZERO,
+                debounce,
                 hot_ms: 0,
                 cold_ms: 0,
             },
@@ -306,6 +310,33 @@ async fn b_linux_continues_natively_and_mac_follows() {
     assert_eq!(read(&mac_path), translate(&read(&lin_path), &lin, &mac));
     assert_eq!(mac.transcripts().len(), 1);
     assert_eq!(lin.transcripts().len(), 1);
+}
+
+#[tokio::test]
+async fn a_session_streaming_faster_than_the_debounce_is_still_pushed() {
+    let hub = MockHub::new();
+    let mac = M::with_debounce(&hub, "mac", "Users/fab", Duration::from_millis(200));
+    let sid = uuid::Uuid::new_v4().to_string();
+    let p = mac.transcript(&sid);
+    let canon = format!("sessions/{sid}.jsonl");
+    // a new line every 50 ms, for 1 s: never quiet for a whole debounce
+    for i in 0..20 {
+        append(
+            &p,
+            &format!(
+                "{}\n",
+                user_line(&sid, &mac.proj(), &format!("u{i}"), "streaming")
+            ),
+        );
+        mac.changed(&p).await;
+        mac.ls.tick(false).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let e = hub.entry("@claude", &canon);
+    assert!(
+        e.is_some_and(|e| e.size > 0),
+        "nothing pushed while the agent kept writing"
+    );
 }
 
 #[tokio::test]
