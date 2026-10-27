@@ -29,6 +29,14 @@ ultracontext fixes this with one rule: **the hub is the source of truth**.
 - **Code stays yours.** uc never touches your code folders. Two agents can work in the same repo on two machines, on any branch, without uc moving a file under them.
 - **Nothing is lost.** Every transcript uc replaces on your disk goes to `~/.ultracontext/trash` for 30 days.
 
+## Set up with an agent
+
+Point Claude Code or Codex at this repo:
+
+> Set up ultracontext on this machine: https://github.com/ultracontext/ultracontext. My hub is `my-server`.
+
+The agent follows [skills/uc/SKILL.md](skills/uc/SKILL.md): it installs `uc`, checks the ssh link, connects the machine, installs the service and runs `uc doctor`. It asks before touching the hub box. Repeat on each machine.
+
 ## Quickstart
 
 **1. Install** on every machine, including the hub box:
@@ -39,10 +47,12 @@ curl -fsSL https://raw.githubusercontent.com/ultracontext/ultracontext/beyond/in
 cargo install --locked --git https://github.com/ultracontext/ultracontext --branch beyond --bin uc
 ```
 
-**2. Pick a hub.** Any always-on box you can `ssh` into works. uc speaks its protocol over your existing SSH, so there are no ports to open and no certificates. The hub starts by itself on the first connection. To keep it running across reboots, run once on the hub box:
+It installs to `~/.local/bin/uc`. When no prebuilt binary fits the machine, the installer builds from source, which needs Rust (`cargo`).
+
+**2. Pick a hub.** Any always-on box you can `ssh` into without a password prompt works (`ssh -o BatchMode=yes my-server true` must succeed). uc speaks its protocol over your existing SSH, so there are no ports to open and no certificates. The hub starts by itself on the first connection. To keep it running across reboots, run once on the hub box:
 
 ```sh
-uc service install --hub
+uc service install --hub   # on headless Linux also: loginctl enable-linger $USER
 ```
 
 **3. Connect each machine:**
@@ -50,6 +60,7 @@ uc service install --hub
 ```sh
 uc init you@hub-box        # or an ~/.ssh/config alias: uc init hub
 uc service install         # start uc at login (launchd / systemd --user)
+uc doctor                  # every check should pass
 ```
 
 **4. Sessions follow you.** Claude Code and Codex sessions sync by themselves, into the
@@ -99,10 +110,13 @@ See [docs/CLI.md](docs/CLI.md).
 
 ## For agents
 
-`uc init` installs a skill for Claude Code and Codex (`skills/uc/SKILL.md`). With it, your agents can:
+`uc init` installs a skill for Claude Code and Codex ([skills/uc/SKILL.md](skills/uc/SKILL.md)) into `~/.claude/skills/uc/` and `~/.codex/skills/uc/`. It teaches them what ultracontext is, how it works, and how to:
 
 - find work from other machines: `uc sessions --json`
 - hand off cleanly: push the code with git, then `uc sync --json`
+- set up another machine and diagnose problems: `uc doctor --json`
+
+Agents working on this repo start at [AGENTS.md](AGENTS.md).
 
 ## What is synced and what is not
 
@@ -119,12 +133,25 @@ If the hub is restored from an older backup, sync stops with a clear message ins
 
 ## How it works
 
+```
+                 ┌──────── hub (any always-on box) ────────┐
+                 │ uc hub serve: change log + session logs │
+                 └─────▲───────────────────────────▲───────┘
+           ssh <hub> uc hub connect          ssh <hub> uc hub connect
+        ┌──────────────┴──────┐           ┌────────┴────────────┐
+        │ MacBook: uc daemon  │           │ Linux box: uc daemon │
+        │ ~/.claude ~/.codex  │           │ ~/.claude ~/.codex   │
+        └─────────────────────┘           └──────────────────────┘
+```
+
 - **One binary, three roles:**
   - the hub (`uc hub serve`) keeps the change log and the session logs
-  - one daemon per machine watches the agent dirs, and keeps one connection to the hub
-  - the CLI talks to the daemon
-- **Sessions are append-only logs keyed by session id.** Only new lines are sent, and paths are rewritten for each machine.
+  - one daemon per machine watches `~/.claude` and `~/.codex`, and keeps one connection to the hub
+  - the CLI talks to the daemon (and starts it when needed)
+- **Sessions are append-only logs keyed by session id.** When an agent writes a line, the daemon pushes just that line. The other daemons append it to their copy, with the home folder rewritten for their machine.
 - **Every append is checked on the hub** against what the writer last saw, so two machines can never both extend a session.
+- **One writer at a time.** The machine running a session holds a 30-second lease. A write from another machine while the lease is held becomes a fork.
+- **Materialized where the agent looks.** Sessions active in the last 30 days are written into each machine's agent folders, so the agents' own resume finds them.
 
 The full design is in [docs/DESIGN.md](docs/DESIGN.md).
 
