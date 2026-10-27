@@ -1,5 +1,5 @@
 //! Drives the real `uc` binary against a fake daemon on `$UC_HOME/daemon.sock` (same framing
-//! as DESIGN §4.1), so CLI output, JSON documents, path resolution and exit codes are checked
+//! as DESIGN §4.1), so CLI output, JSON documents and exit codes are checked
 //! without a hub.
 
 use serde_json::{json, Value};
@@ -33,11 +33,7 @@ impl Fixture {
         std::fs::create_dir_all(&uc_home).unwrap();
         std::fs::write(
             uc_home.join("config.toml"),
-            format!(
-                "machine_id = \"m_test\"\nmachine_name = \"testbox\"\nhub = \"fakehub\"\n\n\
-                 [[space]]\nname = \"code\"\npath = \"{}\"\n",
-                code.display()
-            ),
+            "machine_id = \"m_test\"\nmachine_name = \"testbox\"\nhub = \"fakehub\"\n",
         )
         .unwrap();
         let seen = Arc::new(Mutex::new(Vec::new()));
@@ -129,18 +125,12 @@ fn session(code: &Path) -> Value {
 }
 
 fn respond(cmd: &Value, code: &Path) -> Result<Value, (&'static str, String)> {
-    let record = |seq: u64, op: &str| {
-        json!({"seq": seq, "op": op, "at": 1_700_000_000_000i64, "space": "code", "path": "a.txt",
-               "kind": "file", "hash": "0123456789abcdef", "size": 2, "origin": "m_linux",
-               "origin_name": "linux-box"})
-    };
     match cmd["cmd"].as_str().unwrap_or("") {
         "status" => Ok(json!({
             "machine": {"id": "m_test", "name": "testbox", "os": "macos", "home": "/h"},
             "hub": "fakehub", "connected": true, "hub_version": "0.1.0", "cursor": 41,
-            "head_seq": 42, "spaces": [{"name": "code", "path": code.to_string_lossy(),
-            "files": 1234, "pending_up": 1, "pending_down": 0, "case_collisions": []}],
-            "pending_up": 1, "pending_down": 0, "conflicts": [],
+            "head_seq": 42, "pending_up": 1, "pending_down": 0,
+            "conflicts": ["session abc12345 diverged on this machine; its local lines continue as def67890"],
             "sessions_live": [session(code)], "last_error": null, "daemon_pid": 4242,
             "daemon_version": "0.1.0", "uptime_s": 7200
         })),
@@ -150,11 +140,6 @@ fn respond(cmd: &Value, code: &Path) -> Result<Value, (&'static str, String)> {
         ),
         "query" => match cmd["query"]["q"].as_str().unwrap_or("") {
             "sessions" => Ok(json!([session(code)])),
-            "history" if cmd["query"]["space"] == "code" && cmd["query"]["path"] == "a.txt" => {
-                Ok(json!([record(42, "put"), record(17, "put")]))
-            }
-            "log" => Ok(json!([record(42, "put")])),
-            "spaces" => Ok(json!([])),
             q => Err(("invalid", format!("unexpected query {q}"))),
         },
         other => Err(("invalid", format!("unexpected command {other}"))),
@@ -187,7 +172,11 @@ fn status_human_and_json() {
         "{out}"
     );
     assert!(out.contains("testbox (m_test)"), "{out}");
-    assert!(out.contains("1,234 files  ↑1 ↓0"), "{out}");
+    assert!(out.contains("↑ 1 to push · ↓ 0 to pull"), "{out}");
+    assert!(
+        out.contains("diverged   session abc12345 diverged on this machine"),
+        "{out}"
+    );
     assert!(out.contains("● claude abc12345  linux-box"), "{out}");
     assert!(!out.contains('\x1b'), "NO_COLOR must disable colors");
 }
@@ -214,58 +203,10 @@ fn sessions_table_and_here_filter() {
 }
 
 #[test]
-fn history_resolves_local_paths() {
+fn sync_reports_in_sync() {
     let f = Fixture::new();
-    let o = f.uc_in(&f.code, &["--json", "history", "a.txt"]);
-    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
-    assert_eq!(json_out(&o).as_array().unwrap().len(), 2);
-
-    let o = f.uc(&["history", "Code/a.txt"]);
-    let out = text(&o.stdout);
-    assert!(out.contains("42 (current)"), "{out}");
-    assert!(
-        out.contains("restore one: uc restore Code/a.txt --seq <SEQ>"),
-        "{out}"
-    );
-
-    let o = f.uc(&["history", "/etc/hosts"]);
-    assert_eq!(o.status.code(), Some(1));
-    assert!(text(&o.stderr).contains("not inside a synced folder"));
-}
-
-#[test]
-fn log_since_and_sync() {
-    let f = Fixture::new();
-    let o = f.uc_in(&f.code, &["--json", "log", ".", "--since", "1h"]);
-    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
-    let q = f
-        .cmds()
-        .into_iter()
-        .find(|c| c["cmd"] == "query" && c["query"]["q"] == "log")
-        .unwrap();
-    assert_eq!(q["query"]["space"], "code");
-    assert!(
-        q["query"]["path"].is_null(),
-        "space root = whole space: {q}"
-    );
-    let since = q["query"]["since_ms"].as_i64().unwrap();
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as i64;
-    assert!(
-        (now - since - 3_600_000).abs() < 60_000,
-        "since_ms ~ now-1h"
-    );
-
-    let o = f.uc(&["log"]);
-    assert!(
-        text(&o.stdout).contains("put  2 B   ~/Code/a.txt"),
-        "{}",
-        text(&o.stdout)
-    );
-
     let o = f.uc(&["sync"]);
     assert_eq!(o.status.code(), Some(0));
     assert!(text(&o.stdout).contains("in sync (seq 42)"));
+    assert!(f.cmds().iter().any(|c| c["cmd"] == "sync"));
 }

@@ -150,7 +150,7 @@ pub enum Query {
     Status,
 }
 
-/// One row of the hub change log, for `uc log` / `uc history`.
+/// One row of the hub change log (history queries).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LogRecord {
     pub seq: u64,
@@ -267,32 +267,10 @@ pub enum Ctl {
     Sync { timeout_ms: u64 },
     /// Pass-through hub query; for Sessions the daemon fills local_cwd/local. Result: per Query
     Query { query: Query },
-    /// Start syncing a folder as space `name` (absolute path). Creates the space on the hub if new.
-    /// Result: SpaceStatus
-    AddSpace { name: String, path: String },
-    /// Stop syncing a space on this machine (files kept). Result: null
-    RmSpace { name: String },
-    /// Restore `path` to the content it had at `seq` (pushed as a new change). Result: null
-    Restore {
-        space: String,
-        path: String,
-        seq: u64,
-    },
     /// Re-read config.toml. Result: null
     Reload,
     /// Stop the daemon. Result: null
     Shutdown,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct SpaceStatus {
-    pub name: String,
-    pub path: String,
-    pub files: u64,
-    pub pending_up: u64,
-    pub pending_down: u64,
-    #[serde(default)]
-    pub case_collisions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -303,9 +281,9 @@ pub struct StatusReport {
     pub hub_version: Option<String>,
     pub cursor: u64,
     pub head_seq: u64,
-    pub spaces: Vec<SpaceStatus>,
     pub pending_up: u64,
     pub pending_down: u64,
+    /// sessions that diverged on this machine (their local lines continue as a fork)
     pub conflicts: Vec<String>,
     pub sessions_live: Vec<SessionInfo>,
     pub last_error: Option<String>,

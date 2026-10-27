@@ -324,7 +324,7 @@ mod tests {
 
     #[test]
     fn meta_identity() {
-        let map = PathMap::new(Path::new("/Users/fab"), &[]);
+        let map = PathMap::new(Path::new("/Users/fab"));
         let lines = [
             format!(r#"{{"timestamp":"2026-10-25T09:57:52.100Z","type":"session_meta","payload":{{"id":"{TID}","timestamp":"2026-10-25T09:57:52.000Z","cwd":"/Users/fab/p","originator":"codex_cli_rs","cli_version":"0.162.1","source":"cli","model_provider":"openai","git":{{"commit_hash":"abc","branch":"main"}}}}}}"#),
             r#"{"timestamp":"2026-10-25T09:57:53.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>\n  <cwd>/Users/fab/p</cwd>\n</environment_context>"}]}}"#.to_string(),
@@ -352,7 +352,7 @@ mod tests {
     #[test]
     fn native_rel_prefers_hint() {
         let c = Codex::with_root("/r".into());
-        let map = PathMap::new(Path::new("/h"), &[]);
+        let map = PathMap::new(Path::new("/h"));
         let canon = format!("sessions/{TID}.jsonl");
         let hint = format!("sessions/2026/10/25/rollout-2026-10-25T06-57-52-{TID}.jsonl");
         let mut m = SessionMeta {

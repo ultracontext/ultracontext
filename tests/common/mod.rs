@@ -14,10 +14,9 @@
 
 #![allow(dead_code)]
 
-use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::os::unix::fs::{symlink, PermissionsExt};
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
@@ -464,10 +463,10 @@ impl Machine {
 
     // ---- lifecycle
 
-    /// `uc init unix:<hub>/hub.sock --name <name> --yes`, then wait until the daemon is connected.
+    /// `uc init unix:<hub>/hub.sock --name <name>`, then wait until the daemon is connected.
     pub fn init(&self) {
         let addr = self.shared.hub_addr.clone();
-        self.uc_ok(&["init", &addr, "--name", &self.name, "--yes"]);
+        self.uc_ok(&["init", &addr, "--name", &self.name]);
         self.wait_connected();
     }
 
@@ -552,48 +551,6 @@ impl Machine {
         self.wait_connected();
     }
 
-    /// `uc add <dir> --name <name> --json` (SpaceStatus).
-    pub fn add_space(&self, dir: &Path, name: &str) -> Value {
-        let dir_s = dir.to_string_lossy().into_owned();
-        let v = self.uc_json(&["add", &dir_s, "--name", name]);
-        if v.get("name").and_then(Value::as_str) != Some(name) {
-            self.fail(&format!(
-                "`uc add` on {} returned an unexpected SpaceStatus:\n{v:#}",
-                self.name
-            ));
-        }
-        v
-    }
-
-    /// Wait until `uc status --json` lists space `name` mapped to `dir` on this machine.
-    pub fn expect_space(&self, name: &str, dir: &Path) {
-        let mut last = Value::Null;
-        let ok = wait_until_every(Duration::from_secs(15), Duration::from_millis(250), || {
-            let (_, v) = self.try_json(&["status"]);
-            let Some(v) = v else { return false };
-            let found = v
-                .get("spaces")
-                .and_then(Value::as_array)
-                .is_some_and(|spaces| {
-                    spaces.iter().any(|s| {
-                        s.get("name").and_then(Value::as_str) == Some(name)
-                            && s.get("path")
-                                .and_then(Value::as_str)
-                                .is_some_and(|p| same_path(&self.home, p, dir))
-                    })
-                });
-            last = v;
-            found
-        });
-        if !ok {
-            self.fail(&format!(
-                "{}: space {name:?} never showed up at {} in `uc status --json` (15s). Last status:\n{last:#}",
-                self.name,
-                dir.display()
-            ));
-        }
-    }
-
     /// `uc sessions --json` (Vec<SessionInfo>).
     pub fn sessions(&self) -> Vec<Value> {
         let v = self.uc_json(&["sessions", "--limit", "100"]);
@@ -614,50 +571,6 @@ impl Machine {
             .join("projects")
             .join(claude_enc(cwd))
             .join(format!("{id}.jsonl"))
-    }
-
-    /// `git` with this machine's HOME and no user/system config.
-    pub fn git(&self, dir: &Path, args: &[&str]) -> Output {
-        let n = self.shared.cmd_seq.fetch_add(1, Ordering::SeqCst);
-        let base = self
-            .shared
-            .root
-            .join("cmd")
-            .join(format!("{n:04}-{}-git", self.name));
-        let mut c = Command::new("git");
-        c.arg("-C")
-            .arg(dir)
-            .args([
-                "-c",
-                "init.defaultBranch=main",
-                "-c",
-                "commit.gpgsign=false",
-            ])
-            .args(args)
-            .current_dir(&self.home)
-            .env("HOME", &self.home)
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("GIT_AUTHOR_NAME", "E2E")
-            .env("GIT_AUTHOR_EMAIL", "e2e@example.com")
-            .env("GIT_COMMITTER_NAME", "E2E")
-            .env("GIT_COMMITTER_EMAIL", "e2e@example.com")
-            .env("GIT_TERMINAL_PROMPT", "0");
-        run_with_timeout(c, &base, CMD_TIMEOUT)
-    }
-
-    pub fn git_ok(&self, dir: &Path, args: &[&str]) -> String {
-        let out = self.git(dir, args);
-        if !out.status.success() {
-            self.fail(&format!(
-                "`git -C {} {}` failed on {}:\n{}",
-                dir.display(),
-                args.join(" "),
-                self.name,
-                show(&out)
-            ));
-        }
-        String::from_utf8_lossy(&out.stdout).into_owned()
     }
 
     // ---- diagnostics
@@ -850,67 +763,6 @@ pub fn walk(root: &Path) -> Vec<(String, PathBuf, fs::Metadata)> {
     out
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Node {
-    File { size: u64, hash: String, exec: bool },
-    Symlink(String),
-}
-
-/// Content snapshot of a tree: what a synced copy must reproduce exactly.
-pub fn snapshot(root: &Path) -> BTreeMap<String, Node> {
-    snapshot_filtered(root, |_| true)
-}
-
-pub fn snapshot_filtered(root: &Path, keep: impl Fn(&str) -> bool) -> BTreeMap<String, Node> {
-    let mut m = BTreeMap::new();
-    for (rel, abs, md) in walk(root) {
-        if !keep(&rel) {
-            continue;
-        }
-        let node = if md.file_type().is_symlink() {
-            Node::Symlink(
-                fs::read_link(&abs)
-                    .map(|t| t.to_string_lossy().into_owned())
-                    .unwrap_or_default(),
-            )
-        } else {
-            let data = fs::read(&abs).unwrap_or_default();
-            Node::File {
-                size: data.len() as u64,
-                hash: blake3::hash(&data).to_hex().to_string(),
-                exec: md.permissions().mode() & 0o111 != 0,
-            }
-        };
-        m.insert(rel, node);
-    }
-    m
-}
-
-/// Differences between two snapshots, one per line; empty when equal.
-pub fn tree_diff(
-    a_name: &str,
-    a: &BTreeMap<String, Node>,
-    b_name: &str,
-    b: &BTreeMap<String, Node>,
-) -> String {
-    let mut d = String::new();
-    for (k, va) in a {
-        match b.get(k) {
-            None => d.push_str(&format!("  only on {a_name}: {k} {va:?}\n")),
-            Some(vb) if vb != va => d.push_str(&format!(
-                "  differs: {k}\n    {a_name}: {va:?}\n    {b_name}: {vb:?}\n"
-            )),
-            _ => {}
-        }
-    }
-    for (k, vb) in b {
-        if !a.contains_key(k) {
-            d.push_str(&format!("  only on {b_name}: {k} {vb:?}\n"));
-        }
-    }
-    d
-}
-
 /// Write a file, creating parent directories.
 pub fn put(root: &Path, rel: &str, data: &[u8]) -> PathBuf {
     let p = root.join(rel);
@@ -923,26 +775,6 @@ pub fn put(root: &Path, rel: &str, data: &[u8]) -> PathBuf {
 
 pub fn read(p: &Path) -> Option<Vec<u8>> {
     fs::read(p).ok()
-}
-
-pub fn set_exec(p: &Path, exec: bool) {
-    let mut perm = fs::metadata(p).expect("stat").permissions();
-    perm.set_mode(if exec { 0o755 } else { 0o644 });
-    fs::set_permissions(p, perm).expect("chmod");
-}
-
-pub fn is_exec(p: &Path) -> bool {
-    fs::metadata(p)
-        .map(|m| m.permissions().mode() & 0o111 != 0)
-        .unwrap_or(false)
-}
-
-pub fn make_symlink(root: &Path, rel: &str, target: &str) {
-    let p = root.join(rel);
-    if let Some(dir) = p.parent() {
-        fs::create_dir_all(dir).expect("create parent dirs");
-    }
-    symlink(target, &p).unwrap_or_else(|e| panic!("symlink {}: {e}", p.display()));
 }
 
 /// Append one complete line with a single write(2), the way agents stream JSONL.
@@ -959,52 +791,12 @@ pub fn append_line(p: &Path, line: &str) {
         .unwrap_or_else(|e| panic!("append {}: {e}", p.display()));
 }
 
-/// Conflict copies (DESIGN §5.4) under `root`, relative paths.
-pub fn conflict_copies(root: &Path) -> Vec<String> {
-    walk(root)
-        .into_iter()
-        .map(|(rel, _, _)| rel)
-        .filter(|rel| parse_conflict_name(rel.rsplit('/').next().unwrap_or(rel)).is_some())
-        .collect()
-}
-
-/// Split `<name>.conflict-<machine>-<YYYYMMDD>-<HHMMSS>` (file name only) into (name, machine).
-pub fn parse_conflict_name(name: &str) -> Option<(String, String)> {
-    let i = name.rfind(".conflict-")?;
-    let orig = &name[..i];
-    let tail = &name[i + ".conflict-".len()..];
-    let n = tail.len();
-    if orig.is_empty() || n < 17 || !tail.is_char_boundary(n - 16) {
-        return None;
-    }
-    let (machine, ts) = tail.split_at(n - 16);
-    let b = ts.as_bytes();
-    let ok = b[0] == b'-'
-        && b[9] == b'-'
-        && b[1..9].iter().all(u8::is_ascii_digit)
-        && b[10..].iter().all(u8::is_ascii_digit);
-    (ok && !machine.is_empty()).then(|| (orig.to_string(), machine.to_string()))
-}
-
 /// Files named exactly `name` anywhere under `root`.
 pub fn find_named(root: &Path, name: &str) -> Vec<PathBuf> {
     walk(root)
         .into_iter()
         .filter(|(_, abs, _)| abs.file_name().is_some_and(|n| n == name))
         .map(|(_, abs, _)| abs)
-        .collect()
-}
-
-/// Deterministic pseudo-random bytes (xorshift), including NULs and invalid UTF-8.
-pub fn noise(len: usize, seed: u64) -> Vec<u8> {
-    let mut x = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
-    (0..len)
-        .map(|_| {
-            x ^= x << 13;
-            x ^= x >> 7;
-            x ^= x << 17;
-            (x >> 24) as u8
-        })
         .collect()
 }
 
@@ -1249,16 +1041,6 @@ fn is_uc_process(pid: i32) -> bool {
         .args(["-ww", "-o", "command=", "-p", &pid.to_string()])
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).contains(&*uc_bin().to_string_lossy()))
-        .unwrap_or(false)
-}
-
-pub fn git_available() -> bool {
-    Command::new("git")
-        .arg("--version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
         .unwrap_or(false)
 }
 

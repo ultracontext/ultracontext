@@ -74,16 +74,6 @@ impl Watcher {
         }
         Ok(())
     }
-
-    pub fn remove(&mut self, root: &Path) -> Result<()> {
-        self.roots
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .retain(|r| r != root);
-        self.inner
-            .unwatch(root)
-            .with_context(|| format!("unwatching {}", root.display()))
-    }
 }
 
 #[cfg(test)]
@@ -115,6 +105,5 @@ mod tests {
         .await
         .expect("no watcher event");
         assert!(got.starts_with(&root));
-        w.remove(&root).unwrap();
     }
 }

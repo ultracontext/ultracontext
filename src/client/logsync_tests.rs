@@ -12,7 +12,7 @@ use tokio::sync::mpsc;
 
 use super::mock::{MemStore, MockClient, MockHub};
 use super::{Deps, LogSync, Tunables};
-use crate::config::{Config, SpaceConfig};
+use crate::config::Config;
 use crate::drivers::claude::{slug, Claude};
 use crate::drivers::codex::Codex;
 use crate::drivers::AgentDriver;
@@ -53,10 +53,6 @@ impl M {
         cfg.machine_id = format!("m_{name}");
         cfg.machine_name = name.to_string();
         cfg.hub = "mock".into();
-        cfg.spaces = vec![SpaceConfig {
-            name: "code".into(),
-            path: home.join("Code").to_string_lossy().to_string(),
-        }];
         let machine = crate::proto::MachineInfo {
             id: cfg.machine_id.clone(),
             name: name.to_string(),
@@ -246,7 +242,7 @@ async fn a_claude_session_appears_on_linux_with_linux_paths() {
     )
     .unwrap();
     assert!(
-        canon.contains("@@UC_SPACE:code@@/proj/src/main.rs"),
+        canon.contains("@@UC_HOME@@/Code/proj/src/main.rs"),
         "{canon}"
     );
     assert!(
@@ -261,7 +257,7 @@ async fn a_claude_session_appears_on_linux_with_linux_paths() {
             .unwrap(),
     )
     .unwrap();
-    assert_eq!(meta.cwd.as_deref(), Some("@@UC_SPACE:code@@/proj"));
+    assert_eq!(meta.cwd.as_deref(), Some("@@UC_HOME@@/Code/proj"));
     assert_eq!(meta.first_prompt.as_deref(), Some("read the main file"));
 
     settle(&mut [&mut mac, &mut lin]).await;
@@ -550,7 +546,7 @@ async fn e_codex_rollout_is_byte_exact() {
         .entry("@codex", &format!("sessions/{tid}.jsonl"))
         .unwrap();
     let meta = SessionMeta::from_meta(e.meta.as_ref().unwrap()).unwrap();
-    assert_eq!(meta.cwd.as_deref(), Some("@@UC_SPACE:code@@/proj"));
+    assert_eq!(meta.cwd.as_deref(), Some("@@UC_HOME@@/Code/proj"));
     assert_eq!(meta.native_rel.as_deref(), Some(rel.as_str()));
 }
 

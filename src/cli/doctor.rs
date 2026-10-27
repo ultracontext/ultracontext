@@ -170,17 +170,8 @@ pub fn cmd_doctor(app: &App) -> Result<i32> {
                 ));
             }
         }
-        if !st.conflicts.is_empty() {
-            checks.push(check(
-                "conflicts",
-                Level::Warn,
-                format!("{} conflict copies", st.conflicts.len()),
-                Some("uc conflicts".into()),
-            ));
-        }
-        let files: u64 = st.spaces.iter().map(|s| s.files).sum();
-        if let Some(c) = watch_limit_check(inotify_max_watches(), files) {
-            checks.push(c);
+        for msg in &st.conflicts {
+            checks.push(check("diverged", Level::Warn, msg.clone(), None));
         }
     }
 
@@ -298,47 +289,6 @@ pub(crate) fn versions_check(cli: &str, daemon: &str, hub: Option<&str>) -> Chec
 }
 
 /// inotify needs a watch per directory; the file count is a safe upper bound.
-pub(crate) fn watch_limit_check(max: Option<u64>, files: u64) -> Option<Check> {
-    let max = max?;
-    let fix = Some(
-        "echo fs.inotify.max_user_watches=524288 | sudo tee /etc/sysctl.d/90-uc.conf && sudo sysctl --system"
-            .to_string(),
-    );
-    Some(if files > max {
-        check(
-            "watcher",
-            Level::Fail,
-            format!("inotify max_user_watches {max} < {files} synced files"),
-            fix,
-        )
-    } else if files > max / 10 * 8 {
-        check(
-            "watcher",
-            Level::Warn,
-            format!("inotify max_user_watches {max} is close to {files} synced files"),
-            fix,
-        )
-    } else {
-        check(
-            "watcher",
-            Level::Ok,
-            format!("inotify max_user_watches {max}"),
-            None,
-        )
-    })
-}
-
-fn inotify_max_watches() -> Option<u64> {
-    if !cfg!(target_os = "linux") {
-        return None;
-    }
-    std::fs::read_to_string("/proc/sys/fs/inotify/max_user_watches")
-        .ok()?
-        .trim()
-        .parse()
-        .ok()
-}
-
 pub(crate) fn disk_check(free: Option<u64>, root: &Path) -> Check {
     const GIB: u64 = 1024 * 1024 * 1024;
     let Some(free) = free else {
@@ -412,22 +362,6 @@ mod tests {
             versions_check("0.2.0", "0.2.0", Some("0.1.0")).status,
             Level::Warn
         );
-    }
-
-    #[test]
-    fn watch_limits() {
-        assert!(watch_limit_check(None, 10).is_none());
-        assert_eq!(
-            watch_limit_check(Some(8192), 100).unwrap().status,
-            Level::Ok
-        );
-        assert_eq!(
-            watch_limit_check(Some(8192), 7000).unwrap().status,
-            Level::Warn
-        );
-        let c = watch_limit_check(Some(8192), 9000).unwrap();
-        assert_eq!(c.status, Level::Fail);
-        assert!(c.fix.unwrap().contains("max_user_watches"));
     }
 
     #[test]

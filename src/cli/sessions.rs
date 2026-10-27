@@ -1,6 +1,6 @@
 //! `uc sessions` (DESIGN §6, §7).
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::path::Path;
 
 use super::output::{self, c, cc, emit_json, note, outln, Color, Table, EXIT_OK};
@@ -26,7 +26,7 @@ pub fn cmd_sessions(app: &App, a: SessionsArgs) -> Result<i32> {
         limit: Some(fetch),
     })?;
     if a.here {
-        let cwd = super::cwd()?;
+        let cwd = std::env::current_dir().context("the current directory is not accessible")?;
         list.retain(|s| session_in_dir(s, &cwd));
         list.truncate(a.limit as usize);
     }

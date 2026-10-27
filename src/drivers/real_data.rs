@@ -105,7 +105,7 @@ fn survey(d: &dyn AgentDriver, map: &PathMap) {
 #[ignore]
 fn real_agent_data() {
     let home = crate::paths::home();
-    let map = PathMap::new(&home, &[("code".into(), home.join("Code"))]);
+    let map = PathMap::new(&home);
     survey(&Claude::from_env(), &map);
     survey(&Codex::from_env(), &map);
 }

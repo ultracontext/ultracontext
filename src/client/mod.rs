@@ -1,7 +1,7 @@
 //! The per-machine sync daemon (DESIGN §1, §5, §6).
 //!
 //! Ownership:
-//! - hubconn, db, scan, watch, apply, engine: client-core agent
+//! - hubconn, db, watch: client-core agent
 //! - logsync: sessions agent
 //! - control, daemon: cli agent
 
@@ -12,14 +12,11 @@ use crate::config::Config;
 use crate::paths::Paths;
 use crate::proto::MachineInfo;
 
-pub mod apply;
 pub mod control;
 pub mod daemon;
 pub mod db;
-pub mod engine;
 pub mod hubconn;
 pub mod logsync;
-pub mod scan;
 pub mod watch;
 
 /// Shared daemon context.
@@ -54,11 +51,6 @@ pub struct Pending {
 }
 
 impl Pending {
-    pub fn merge(&mut self, o: Pending) {
-        self.up += o.up;
-        self.down += o.down;
-        self.conflicts.extend(o.conflicts);
-    }
     pub fn idle(&self) -> bool {
         self.up == 0 && self.down == 0
     }

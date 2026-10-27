@@ -1,6 +1,6 @@
 //! In-process fake hub for client tests: speaks the real wire protocol (§4) over in-memory
 //! duplex streams and implements enough of the hub's semantics (log, entries, blobs, base
-//! checks, subscriptions) to drive HubClient and Engine end to end.
+//! checks, subscriptions) to drive HubClient end to end.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -104,17 +104,6 @@ impl FakeHub {
         st.subscribers.clear();
     }
 
-    pub fn entry(&self, space: &str, path: &str) -> Option<Entry> {
-        self.lock()
-            .entries
-            .get(&(space.to_string(), path.to_string()))
-            .cloned()
-    }
-
-    pub fn blob(&self, hash: &str) -> Option<Vec<u8>> {
-        self.lock().blobs.get(hash).cloned()
-    }
-
     /// Commit a put as if another machine did it (no blob needed).
     pub fn inject_put(&self, mut e: Entry) -> u64 {
         let mut st = self.lock();
@@ -132,46 +121,6 @@ impl FakeHub {
         st.entries.insert((e.space.clone(), e.path.clone()), e);
         broadcast(&mut st, c);
         st.seq
-    }
-
-    /// Commit a delete as if machine `origin` did it.
-    pub fn inject_delete(&self, space: &str, path: &str, origin: &str) -> u64 {
-        let mut st = self.lock();
-        let key = (space.to_string(), path.to_string());
-        let Some(cur) = st.entries.get(&key).cloned() else {
-            return st.seq;
-        };
-        st.seq += 1;
-        let e = Entry {
-            version: st.seq,
-            hash: String::new(),
-            size: 0,
-            deleted: true,
-            origin: origin.into(),
-            ..cur
-        };
-        let c = Change {
-            seq: st.seq,
-            op: Op::Delete,
-            at: 0,
-            entry: e.clone(),
-            offset: None,
-            len: None,
-            inline: false,
-        };
-        st.entries.insert(key, e);
-        broadcast(&mut st, c);
-        st.seq
-    }
-
-    /// Store `data` and commit it at `space/path` from machine `origin`.
-    pub fn inject_file(&self, space: &str, path: &str, data: &[u8], origin: &str) -> u64 {
-        let hash = crate::hash::hash_bytes(data);
-        self.lock().blobs.insert(hash.clone(), data.to_vec());
-        let mut e = file_entry(space, path, &hash, 0);
-        e.size = data.len() as u64;
-        e.origin = origin.into();
-        self.inject_put(e)
     }
 
     async fn serve(self, stream: tokio::io::DuplexStream) -> Result<()> {

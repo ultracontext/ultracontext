@@ -1,4 +1,4 @@
-//! uc: Dropbox for developers and their agents. See docs/DESIGN.md.
+//! uc: Claude Code and Codex sessions on every machine. See docs/DESIGN.md.
 
 mod cli;
 mod client;

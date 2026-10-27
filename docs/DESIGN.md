@@ -1,9 +1,9 @@
 # uc — design (v1)
 
-ultracontext v1 is a **Dropbox for developers and their agents**. It is one Rust binary, `uc`. The binary is the hub, the sync daemon, and the CLI.
+ultracontext v1 keeps **your agents' sessions on every machine**. It is one Rust binary, `uc`. The binary is the hub, the sync daemon, and the CLI.
 
-- Your folders are the same on every machine, in real time.
 - Your Claude Code and Codex sessions follow you. Close the MacBook, open the Linux box, run plain `claude -c` in the same project (or `codex resume`). You continue the same session.
+- Code is **not** synced. It moves with git, so agents on different machines never have files changed under them (§5).
 - The hub is the **single source of truth**. Nothing is ever silently lost.
 
 This document is the contract for implementers. Section numbers are referenced from code comments.
@@ -23,8 +23,7 @@ This document is the contract for implementers. Section numbers are referenced f
                         │                     │
         ┌───────────────┴───┐         ┌───────┴───────────┐
         │ mac: uc daemon     │         │ linux: uc daemon  │
-        │  folder spaces     │         │                   │
-        │  claude / codex    │         │                   │
+        │  claude / codex    │         │  claude / codex   │
         │  client.db         │         │                   │
         └───────▲────────────┘         └───────────────────┘
                 │ daemon.sock (control API)
@@ -33,7 +32,7 @@ This document is the contract for implementers. Section numbers are referenced f
 
 - **Hub**: `uc hub serve` is a long-lived process. It listens on a unix socket `$UC_HOME/hub.sock`. It can also listen on TCP with a token (`--tcp 0.0.0.0:7707`), for LAN and tests.
 - **Transport**: clients reach the hub through **SSH**: `ssh -T -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 <host> <remote_uc> hub connect`. `uc hub connect` bridges stdio to `hub.sock`. If no hub runs, it starts one (`uc hub serve --detach`). This needs no open ports and no certificates, and works across networks. Your existing SSH keys do the auth.
-- **Daemon**: `uc daemon` runs on each machine. It watches the synced folders and agent dirs, and keeps one persistent connection to the hub. It pushes local changes and applies remote changes. It also serves the CLI on `$UC_HOME/daemon.sock`.
+- **Daemon**: `uc daemon` runs on each machine. It watches the agent dirs, and keeps one persistent connection to the hub. It pushes local changes and applies remote changes. It also serves the CLI on `$UC_HOME/daemon.sock`.
 - **CLI**: the CLI is a thin client of the daemon. It starts the daemon when it is not running.
 
 Hub address forms (config `hub = "..."`):
@@ -54,7 +53,7 @@ $UC_HOME/
   config.toml        client config (§2.1)
   client.db          client state (SQLite)
   daemon.sock daemon.pid  logs/daemon.log
-  trash/             every local file uc overwrote or deleted (kept 30 days)
+  trash/             every local transcript uc replaced or moved aside (kept 30 days)
   staging/           temp files for uploads/downloads
   hub/               only on the hub machine
     hub.db  blobs/ab/<hash>  logs/<space>/<path>  hub.sock hub.pid hub.log
@@ -69,29 +68,24 @@ hub          = "uc"                 # see §1
 remote_uc    = ""                   # optional explicit path of uc on the hub host
 token        = ""                   # tcp only
 
-[sync]
-respect_gitignore = true
-always_include    = [".env", ".env.*", ".envrc"]   # synced even when gitignored
-debounce_ms       = 300
-
 [agents]
 claude = true          # root: $CLAUDE_CONFIG_DIR or ~/.claude
 codex  = true          # root: $CODEX_HOME or ~/.codex
 eager_days = 30        # sessions active in the last N days are materialized (Claude keeps 30)
-
-[[space]]
-name = "code"
-path = "~/Code"
 ```
+
+Sections written by older versions (`[sync]`, `[[space]]`) are ignored.
 
 ## 3. Data model
 
 ### 3.1 Spaces
 
-A **space** is a named synced root. The name is global, and each machine maps it to a local path. The default local path is the home-relative path recorded by the machine that created the space, so `~/Code` on the Mac becomes `~/Code` on Linux. Reserved names start with `@`:
+A **space** is a named root on the hub. uc v1 uses two:
 
 - `@claude`: canonical Claude Code session data (§6)
 - `@codex`: canonical Codex session data (§6)
+
+Older versions also synced user folders as spaces without the `@`. A hub may still hold their changes; clients only move their cursor past them (§5).
 
 ### 3.2 Entries
 
@@ -113,7 +107,7 @@ owner    machine_id (logs only, §6.4)
 
 ### 3.3 Hub log
 
-The hub keeps an append-only **change log**. Every accepted mutation gets the next global `seq`. The client cursor is the last seq it applied. The log is the replication stream, the audit trail (`uc log`), and the version history (`uc history`, `uc restore`). Blobs are never deleted in v1.
+The hub keeps an append-only **change log**. Every accepted mutation gets the next global `seq`. The client cursor is the last seq it applied. The log is the replication stream and the audit trail. Blobs are never deleted in v1.
 
 ## 4. Protocol (§4)
 
@@ -161,82 +155,26 @@ Requests carry `id: u64`. Responses carry `re: u64`. Pushes from the hub carry n
 → Ping/Pong  keepalive every 15s; either side drops the connection after 45s of silence.
 ```
 
-## 5. Sync engine for folders (§5)
+## 5. Client sync state (§5)
 
-### 5.1 Three states per path
+### 5.1 Three states per entry
 
-For each `(space, path)` the client compares three states:
+For each `(space, path)` the client keeps:
 
-- **L**: local state. Fingerprint `(size, mtime_ns, inode, exec)` and a hash, computed lazily.
-- **B**: base. The last state both this client and the hub agreed on (`base_version`, `base_hash`, local fingerprint at that time).
+- **L**: local state. Fingerprint `(size, mtime_ns, inode, exec)`.
+- **B**: base. The last state both this client and the hub agreed on (for logs, the sync point of §6.2).
 - **R**: remote state. The hub entry, from the change stream.
 
-| L vs B | R vs B | action |
-|---|---|---|
-| same | same | nothing |
-| changed | same | **push** `Put/Delete` with `base = B.version` |
-| same | changed | **apply** R (atomic write / delete-to-trash) |
-| changed | changed | if `hash(L) == R.hash`, adopt R as the new base (**no duplicate**); else **conflict** (§5.4) |
+Session sync is **level-triggered**. Watcher events and remote pushes only mark entries dirty. A periodic full rescan (every 5 min, at startup, and after wake/reconnect) catches anything the watcher missed. Correctness never depends on the watcher.
 
-The engine is **level-triggered**. Watcher events and remote pushes only mark paths dirty. A periodic full rescan (every 5 min, at startup, and after wake/reconnect) catches anything the watcher missed. Correctness never depends on the watcher.
-
-### 5.2 Reading files that agents are writing (stable read)
-
-1. Push a path only after it has been quiet for `debounce_ms` (300 ms). A path that keeps changing for more than 5 s is pushed anyway, using a stable snapshot.
-2. To snapshot: `stat`, then copy into `staging/` while hashing, then `stat` again. If size, mtime, or inode changed, retry with backoff. Upload from the staged copy, never from the live file.
-
-### 5.3 Applying remote changes (atomic, never clobber)
-
-1. Download the blob to `<dir>/.uc-tmp-<rand>` (same filesystem), `fsync`, and set the exec bit and mtime.
-2. **Re-check** the target just before the rename. Its fingerprint must still equal B (or the target must still be absent). If it changed, abort and treat the path as a conflict (§5.4).
-3. Copy the old content to `trash/` (only if it was never synced), then `rename(tmp, target)`.
-4. Record the new base fingerprint (stat after rename). The watcher echo then matches B and is ignored, so no feedback loop is possible.
-
-Remote deletes move the local file to `trash/`, and only if L == B. A remote delete never destroys a local modification: the modification wins and is pushed again as a create.
-
-### 5.4 Conflicts: the hub wins, and nothing is lost
-
-When L and R both changed and their contents differ:
-
-- R takes the canonical path, because the hub is the source of truth.
-- L is renamed to `<name>.conflict-<machine>-<YYYYMMDD-HHMMSS>` in the same directory and pushed as a new file, so every machine sees it. The suffix goes after the whole name, so a copy never matches language globs (`*.rs`, `test_*.py`) and never breaks a build.
-- `uc conflicts` lists the conflict copies.
-
-The other cases:
-
-- **Same content on both sides**: no conflict.
-- **Delete vs modify**: the modification wins.
-
-Inside `.git/` the same rule applies. A losing ref becomes a valid ref next to it, e.g. `refs/heads/main.conflict-mac-20261025-141502`, so `git log main.conflict-mac-…` shows the commits it pointed to.
-
-### 5.5 Ignore rules
-
-These rules apply in order:
-
-1. **Built-in ignores**:
-   - OS and editor junk: `.DS_Store`, `Thumbs.db`, `.uc-tmp-*`, `*.swp`, `*.swo`, `*~`, `.#*`
-   - Dependency and build dirs: `node_modules/`, `target/`, `.venv/`, `venv/`, `__pycache__/`, `.pytest_cache/`, `.mypy_cache/`, `.ruff_cache/`, `.next/`, `.turbo/`, `.parcel-cache/`, `.gradle/`, `.terraform/`
-   - Volatile git files: `.git/**/*.lock`, `.git/gc.pid`, `.git/fsmonitor--daemon/`, `.git/objects/pack/tmp_*`, `.git/objects/*/tmp_obj_*`
-2. `.ucignore` files, in gitignore syntax and hierarchical.
-3. `.gitignore`, when `respect_gitignore` is set. Uses the `ignore` crate semantics.
-4. `always_include` patterns override rules 2 and 3 (default: `.env`, `.env.*`, `.envrc`). They do not override rule 1.
-
-`.git/` itself is synced. When a batch is pushed, `.git/objects/**` goes first, then the working tree, then `.git/refs/**`, `packed-refs`, `HEAD`, and `index` last. This way a remote never sees a ref that points to an object it does not have yet.
-
-### 5.6 Filesystem semantics
-
-- **Paths**: NFC in canonical form.
-- **Case**: on case-insensitive filesystems (probed at the space root), a remote path that collides case-insensitively with a different existing entry is not applied. `uc status` reports it, and no delete is pushed for it.
-- **Symlinks**: synced as symlinks. The target is stored verbatim. Symlinks are never followed.
-- **Permissions**: only the exec bit. Empty directories are not synced.
-- **Special files** (fifos, sockets, devices): ignored.
-
-### 5.7 Guards against silent loss
-
-- **Mass deletes**: when more than half of a space's tracked files (and at least 10) vanish in one rescan, uc pushes no deletes for that space. An emptied, replaced or unmounted folder looks exactly like a mass delete. Deletes resume when the files come back, or when the user confirms with `touch <space>/.uc-allow-deletes`.
-- **Hub rollback**: the client remembers the change at its cursor. If the hub restarts without that change (restored from an older backup or a VM snapshot), the daemon stops syncing and leaves a marker until `uc init` re-joins. Re-joining turns differing files into pushes or conflict copies, never overwrites.
-- **Case**: on case-insensitive filesystems, every path component must match exactly. A remote path whose folder exists here only under another case is reported as a collision and not applied.
+- **Hub rollback**: the client remembers the change at its cursor. If the hub restarts without that change (restored from an older backup or a VM snapshot), the daemon stops syncing and leaves a marker until `uc init` re-joins.
 - **Symlinks**: hub paths must be canonical, and writes never pass through a symlinked or non-directory parent (`paths::safe_join`).
+
+### 5.2 Code is not synced
+
+uc does not sync code folders. Two agents on two machines often work in the same repo at the same time, on different branches or with uncommitted edits. A file sync tool shares one working tree between them, so it switches branches, rewrites files mid-edit and makes conflict copies under running agents. git already gives each machine its own working tree and merges at commit time. So code moves with git (commit and push before switching machines, even as a WIP commit), and uc moves only the sessions.
+
+A session continued on another machine sees that machine's checkout. Paths in transcripts are rewritten by home folder (§6.2), so a project kept at the same place under `$HOME` on every machine resolves everywhere.
 
 ## 6. Agent sessions (§6)
 
@@ -251,12 +189,7 @@ Transcripts are append-only JSONL. They replicate as **logs**: the owner appends
 - `clean(line)`, local → canonical: replaces this machine's absolute roots with tokens
 - `smudge(line)`, canonical → local: replaces tokens with this machine's roots
 
-Path map tokens:
-
-| token | local value |
-|---|---|
-| `@@UC_SPACE:<name>@@` | local path of space `<name>` (longest match first) |
-| `@@UC_HOME@@` | `$HOME` |
+Path map token: `@@UC_HOME@@` = `$HOME` (also matched in its symlink-resolved spelling). Logs written by older versions may contain `@@UC_SPACE:<name>@@`; it smudges to `$HOME/<name>`.
 
 A replacement only happens at a path boundary: the next char must not be alphanumeric, `-`, `_`, or `.`. So `/Users/fabioroma` on the Mac becomes `/home/fabio` on Linux. The resumed agent then sees paths that exist on the new machine. Drivers may opt out and replicate byte-exact; Codex does (§6.5a).
 
@@ -269,7 +202,7 @@ Non-log files of a session (sidecars such as subagent transcripts, tool results,
 The driver parses session metadata from the transcript and sends it as `meta` with each append. The hub stores the latest value.
 
 ```json
-{"session": {"agent":"claude","id":"…","cwd":"@@UC_SPACE:code@@/proj","title":"…","first_prompt":"…",
+{"session": {"agent":"claude","id":"…","cwd":"@@UC_HOME@@/Code/proj","title":"…","first_prompt":"…",
              "created_at":…, "updated_at":…, "git_branch":"…", "model":"…", "native_rel":"…"}}
 ```
 
@@ -298,7 +231,7 @@ A leaves its local original alone while it is still hot (changed in the last 60 
 
 ### 6.5 Materialization
 
-On each machine, the daemon materializes every session active in the last `eager_days` (30, Claude Code's own retention) into the agent's native location. Sessions whose project is in a space this machine has not mapped wait until it is mapped.
+On each machine, the daemon materializes every session active in the last `eager_days` (30, Claude Code's own retention) into the agent's native location.
 
 The file mtime is set to the session's last activity. That way `claude --continue` in a project picks the most recently active session from **any** machine.
 
@@ -345,21 +278,14 @@ Never synced: credentials (`.credentials.json`, `auth.json`), global config and 
 
 ## 7. CLI (§7)
 
-Every command takes `--json`, which prints machine-readable output for agents. Human output is short and colored when stdout is a TTY. Exit codes: 0 ok, 1 error, 2 usage error, 3 conflict.
+Every command takes `--json`, which prints machine-readable output for agents. Human output is short and colored when stdout is a TTY. Exit codes: 0 ok, 1 error, 2 usage error.
 
 ```
-uc init [HUB] [--name NAME] [--yes]   set up this machine; joins all hub spaces at default paths (--yes)
-uc add <DIR> [--name NAME]            sync a folder (new space), or map an existing hub space: uc add ~/x --name code
-uc rm <NAME>                          stop syncing a space here (local files are kept)
-uc spaces                             spaces on the hub and where they live here
-uc status                             hub link, machine, spaces, pending up/down, conflicts, live sessions
+uc init [HUB] [--name NAME]           set up this machine and connect it to a hub
+uc status                             hub link, machine, pending up/down, diverged sessions, live sessions
 uc sync [--timeout S]                 rescan now and wait until everything is pushed and pulled ("safe to close the lid")
 uc sessions [QUERY] [--agent A] [--machine M] [--here] [--limit N]   all sessions, every machine, newest first
-uc log [PATH] [--since 1h] [--limit N]   recent changes: who changed what, where
-uc history <PATH>                     versions of a file
-uc restore <PATH> [--seq N]           restore an old version (as a new change)
-uc conflicts                          conflict copies
-uc doctor                             checks: hub reachable, versions, watcher limits, clock skew, disk
+uc doctor                             checks: hub reachable, versions, autostart, disk
 uc daemon run|start|stop|status       the sync daemon (start = detached)
 uc service install|uninstall [--hub]  launchd (macOS) / systemd --user (Linux) autostart
 uc hub serve [--tcp ADDR] [--detach]  run the hub
@@ -376,5 +302,6 @@ The following are out of scope for v1:
 - multiple users or sharing
 - web UI
 - Windows
+- syncing code folders (git does it, §5.2)
 - content-defined chunking or delta transfer of large files (whole-file blobs; logs already send only appended lines)
 - blob garbage collection

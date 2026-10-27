@@ -13,7 +13,6 @@ use crate::client::control::{self, CtlError};
 pub const EXIT_OK: i32 = 0;
 pub const EXIT_ERR: i32 = 1;
 pub const EXIT_USAGE: i32 = 2;
-pub const EXIT_BUSY: i32 = 3;
 
 /// An error the CLI reports as `uc: <msg>` + `hint: ...` (or a JSON error document).
 #[derive(Debug, Clone, PartialEq)]
@@ -62,9 +61,6 @@ impl CliError {
     pub fn from_ctl(c: &CtlError) -> CliError {
         let e = CliError::new(&c.code, c.msg.clone());
         match c.code.as_str() {
-            "conflict" => e
-                .exit(EXIT_BUSY)
-                .hint("run 'uc conflicts' to see what collided"),
             "offline" => e.hint("the hub is unreachable; run 'uc doctor'"),
             "unreachable" | "timeout" => e.hint(format!(
                 "start it with 'uc daemon start' (log: {})",
@@ -294,19 +290,6 @@ pub fn human_bytes(n: u64) -> String {
     }
 }
 
-/// 1234567 -> "1,234,567"
-pub fn thousands(n: u64) -> String {
-    let s = n.to_string();
-    let mut out = String::new();
-    for (i, c) in s.chars().enumerate() {
-        if i > 0 && (s.len() - i) % 3 == 0 {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    out
-}
-
 pub fn short_id(id: &str) -> &str {
     id.get(..8).unwrap_or(id)
 }
@@ -444,9 +427,6 @@ mod tests {
         assert_eq!(human_bytes(512), "512 B");
         assert_eq!(human_bytes(1536), "1.5 KB");
         assert_eq!(human_bytes(50 * 1024 * 1024), "50 MB");
-        assert_eq!(thousands(0), "0");
-        assert_eq!(thousands(999), "999");
-        assert_eq!(thousands(1_234_567), "1,234,567");
         assert_eq!(short_id("0123456789"), "01234567");
         assert_eq!(short_id("abc"), "abc");
     }
@@ -477,9 +457,8 @@ mod tests {
 
     #[test]
     fn error_mapping() {
-        let conflict: anyhow::Error = CtlError::new("conflict", "hub moved on").into();
-        let e = CliError::from_anyhow(&conflict);
-        assert_eq!((e.exit, e.code.as_str()), (EXIT_BUSY, "conflict"));
+        let invalid: anyhow::Error = CtlError::new("invalid", "bad path").into();
+        assert_eq!(CliError::from_anyhow(&invalid).exit, EXIT_USAGE);
         let wrapped = anyhow::Error::from(CliError::usage("bad")).context("while parsing");
         assert_eq!(CliError::from_anyhow(&wrapped).exit, EXIT_USAGE);
         let plain = anyhow::anyhow!("boom");

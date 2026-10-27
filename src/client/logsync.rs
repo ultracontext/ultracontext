@@ -1,7 +1,7 @@
 //! Agent-session replication: logs, ownership, forks, materialization (DESIGN §6).
 //! Owner: sessions agent.
 //!
-//! Level-triggered like the folder engine: watcher events and hub changes only mark logs
+//! Level-triggered: watcher events and hub changes only mark logs
 //! dirty; `tick` compares the local file with the sync point (B.log) and the hub entry (R)
 //! and decides: push complete lines, append remote lines, rewrite, materialize, or fork.
 //!
@@ -32,6 +32,7 @@ use crate::proto::{Change, Entry, Kind, Msg, Query, SessionInfo, SessionMeta};
 mod deps;
 #[path = "logsync_fs.rs"]
 mod lfs;
+pub use lfs::purge_trash;
 #[cfg(test)]
 #[path = "logsync_mock.rs"]
 mod mock;
@@ -661,21 +662,7 @@ impl LogSync {
     }
 
     fn map(&self) -> PathMap {
-        let cfg = (self.deps.cfg)();
-        let home = &self.deps.home;
-        let spaces: Vec<(String, PathBuf)> = cfg
-            .spaces
-            .iter()
-            .map(|s| {
-                let p = match s.path.strip_prefix("~/") {
-                    Some(rest) => home.join(rest),
-                    None if s.path == "~" => home.clone(),
-                    None => PathBuf::from(&s.path),
-                };
-                (s.name.clone(), p)
-            })
-            .collect();
-        PathMap::new(home, &spaces)
+        PathMap::new(&self.deps.home)
     }
 
     /// Store R unless we already know a newer version.
@@ -767,19 +754,6 @@ impl LogSync {
     fn eager(&self, key: &Key, r: &Entry) -> bool {
         let days = (self.deps.cfg)().agents.eager_days as i64;
         let meta = self.session_meta(key, r);
-        // A session whose project lives in a space this machine has not mapped yet would land
-        // in a guessed directory; wait until the space is mapped.
-        if let Some(space) = meta
-            .as_ref()
-            .and_then(|m| m.cwd.as_deref())
-            .and_then(|c| c.strip_prefix("@@UC_SPACE:"))
-            .and_then(|c| c.split_once("@@"))
-            .map(|(name, _)| name)
-        {
-            if !self.map().has_space(space) {
-                return false;
-            }
-        }
         let at = meta.and_then(|m| m.updated_at).unwrap_or(r.mtime);
         at >= now_ms() - days * DAY_MS
     }

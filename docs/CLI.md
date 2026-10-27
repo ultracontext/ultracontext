@@ -14,61 +14,39 @@ The CLI talks to the local daemon over `$UC_HOME/daemon.sock` and starts it when
   {"error": {"code": "offline", "message": "not connected to the hub (...)", "hint": "run 'uc doctor'", "exit_code": 1}}
   ```
   Codes: `usage`, `not_initialized`, `unreachable` (no daemon), `timeout`, `offline` (no hub),
-  `conflict`, `not_found`, `invalid`, `exists`, `error`.
-- Exit codes: `0` ok, `1` error, `2` usage error, `3` conflict.
-- Paths given to `log`, `history` and `restore` are local paths (relative to the current
-  directory, `~` allowed); they must be inside a synced folder.
+  `not_found`, `invalid`, `error`.
+- Exit codes: `0` ok, `1` error, `2` usage error.
 - Environment: `UC_HOME` (state, default `~/.ultracontext`), `UC_LOG` (log filter, default
   `info`), `UC_SSH` (ssh command prefix), `UC_TOKEN` (tcp token), `CLAUDE_CONFIG_DIR`,
   `CODEX_HOME`, `NO_COLOR`.
 
 ## Setup
 
-### `uc init [HUB] [--name NAME] [--yes] [--remote-uc PATH] [--no-agents]`
+### `uc init [HUB] [--name NAME] [--remote-uc PATH] [--no-agents]`
 
 Creates `$UC_HOME/config.toml`, installs the agent skill (into `~/.claude/skills/uc/` and
-`~/.codex/skills/uc/` when those dirs exist; edited copies are kept), starts the daemon,
-waits up to 15 s for the hub, then offers to join each hub space at its default path.
-`--yes` joins all; without a terminal and without `--yes` nothing is joined (the output
-says how). Without `HUB`: prompts on a terminal, keeps the configured hub otherwise, or
-fails with exit 2. Switching to a different hub resets this machine's sync state (the old
-`client.db` is kept next to it); files are never touched.
+`~/.codex/skills/uc/` when those dirs exist; edited copies are kept), starts the daemon and
+waits up to 15 s for the hub. Without `HUB`: prompts on a terminal, keeps the configured hub
+otherwise, or fails with exit 2. Switching to a different hub resets this machine's sync
+state (the old `client.db` is kept next to it); files are never touched.
 
 ```sh
 uc init myserver            # ssh host alias (uses your ssh config and keys)
-uc init me@10.0.0.5 --yes   # join every space without asking
+uc init me@10.0.0.5         # user@host
 uc init local               # this machine is the hub
 uc init tcp://hub:7707      # LAN/tests; token from UC_TOKEN or config
 ```
 
-JSON: `{machine: MachineInfo, hub, config, connected, hub_version, joined: [SpaceStatus], available: [SpaceInfo], skills: [{agent, path, action}]}`
+JSON: `{machine: MachineInfo, hub, config, connected, hub_version, skills: [{agent, path, action}]}`
 
-### `uc add <DIR> [--name NAME]`
-
-Syncs a folder (created if missing) as a new space, or maps an existing hub space to this
-folder with `--name`. The name defaults to the folder name (lowercased, spaces to `-`).
-Refuses `$HOME` itself, `/`, uc's own state dir, agent dirs, and folders nested in another
-space. JSON: `SpaceStatus`.
-
-```sh
-uc add ~/Code
-uc add ~/work/code --name code   # same space, different place on this machine
-```
-
-### `uc rm <NAME>`
-
-Stops syncing a space on this machine. Local files stay. JSON: `{removed, path}`.
-
-### `uc spaces`
-
-Every hub space and where it lives here. JSON: `[{name, default_path, local_path, synced_here, files, bytes, pending_up, pending_down}]`
-(`default_path` is null when the hub is unreachable).
+uc syncs agent sessions only. Code moves with git: commit and push before switching
+machines.
 
 ## Everyday
 
 ### `uc status`
 
-Hub link, machine, spaces, pending work, conflicts, live sessions. JSON: `StatusReport`.
+Hub link, machine, pending work, diverged sessions, live sessions. JSON: `StatusReport`.
 
 ### `uc sync [--timeout S]`
 
@@ -93,29 +71,9 @@ project, `codex resume <id>` or `codex resume --all`. Sessions from every machin
 in the agents' native folders (last 30 days). Continuing one that is live on another machine
 makes a fork (DESIGN §6.4).
 
-### `uc log [PATH] [--since 30m|2h|1d|1w] [--limit N]`
-
-Recent changes: when, which machine, what. A folder path lists changes below it.
-JSON: `[LogRecord]`.
-
-### `uc history <PATH>`
-
-Versions of a file, newest first. JSON: `[LogRecord]`.
-
-### `uc restore <PATH> [--seq N]`
-
-Restores a version as a new change (nothing is overwritten; the current version stays in
-history). Default: the version before the current one. JSON: `{space, path, seq, restored_from: LogRecord}`.
-
-### `uc conflicts`
-
-Conflict copies in synced folders (from every machine). Resolve: read both, merge into the
-original, delete the copy. JSON: `[{space, path, local_path, original}]`.
-
 ### `uc doctor`
 
-Checks config, daemon, hub link, versions, inotify limit (Linux), autostart, `uc` on PATH,
-free disk, agent dirs. Exit 1 if any check fails.
+Checks config, daemon, hub link, versions, autostart, `uc` on PATH, free disk, agent dirs. Exit 1 if any check fails.
 JSON: `{ok, checks: [{name, status: "ok"|"warn"|"fail", detail, fix?}]}`.
 
 ## Daemon, service, hub
@@ -135,18 +93,13 @@ JSON: `{ok, checks: [{name, status: "ok"|"warn"|"fail", detail, fix?}]}`.
 
 ```text
 StatusReport { machine: MachineInfo?, hub, connected, hub_version?, cursor, head_seq,
-               spaces: [SpaceStatus], pending_up, pending_down, conflicts: [string],
+               pending_up, pending_down, conflicts: [string] (diverged sessions),
                sessions_live: [SessionInfo], last_error?, daemon_pid, daemon_version, uptime_s }
-SpaceStatus  { name, path, files, pending_up, pending_down, case_collisions: [string] }
 SyncReport   { ok, timed_out, pending_up, pending_down, conflicts: [string], head_seq, cursor }
 SessionInfo  { space, path, meta: SessionMeta, owner?, owner_name?, live, idle_ms, size,
                version, local_cwd?, local }
 SessionMeta  { agent, id, cwd?, title?, first_prompt?, created_at?, updated_at?, git_branch?,
                model?, native_rel?, forked_from?, lines? }       (times: ms since epoch)
-ResumePlan   { agent, id, cwd, argv: [string], native_path, took_over, forked_to?, cwd_missing }
-LogRecord    { seq, op: put|delete|append|reset|claim, at, space, path, kind, hash, size,
-               origin, origin_name }
 MachineInfo  { id, name, os, home }
-SpaceInfo    { name, default_path, created_at, files, bytes }
 ```
 

@@ -1,37 +1,27 @@
 //! Machine-neutral path translation for session logs (DESIGN §6.2).
 //!
-//! `clean`  (local -> canonical): replace this machine's absolute roots with tokens.
-//! `smudge` (canonical -> local): replace tokens with this machine's roots.
-//! Space roots are replaced before `$HOME` (longest first); replacements only happen at a
-//! path boundary (next char not alphanumeric, '-', '_' or '.').
+//! `clean`  (local -> canonical): replace this machine's `$HOME` with a token.
+//! `smudge` (canonical -> local): replace the token with this machine's `$HOME`.
+//! Replacements only happen at a path boundary: the next char is not alphanumeric, '-', '_'
+//! or '.', and the previous char is not one either, so `/x/Users/fab` is never rewritten
+//! while `file:///Users/fab` and `"/Users/fab` are.
 //!
-//! Two refinements over the bare rule:
-//! - a root also needs a left boundary (the previous char must not be a path-name char), so
-//!   `/x/Users/fab` is never rewritten while `file:///Users/fab` and `"/Users/fab` are;
-//! - a space token whose space is not mapped on this machine smudges to `$HOME/<name>`, the
-//!   default location a space would get here (DESIGN §3.1), instead of leaking the token.
+//! Older versions also wrote `@@UC_SPACE:<name>@@` tokens for synced folders; those smudge to
+//! `$HOME/<name>` instead of leaking the token.
 
-use std::path::{Path, PathBuf};
-
-use crate::config::Config;
+use std::path::Path;
 
 pub const HOME_TOKEN: &str = "@@UC_HOME@@";
 const SPACE_PREFIX: &str = "@@UC_SPACE:";
 const TOKEN_END: &str = "@@";
 
-pub fn space_token(name: &str) -> String {
-    format!("@@UC_SPACE:{name}@@")
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct PathMap {
     /// absolute $HOME, no trailing slash
     pub home: String,
-    /// (space name, absolute local root without trailing slash), any order
-    pub spaces: Vec<(String, String)>,
-    /// (physical root, token) for roots reached through a symlink (macOS /tmp -> /private/tmp):
-    /// agents record physical cwds, so `clean` must recognise both spellings.
-    pub physical: Vec<(String, String)>,
+    /// $HOME with symlinks resolved, when it differs: agents record physical cwds, so `clean`
+    /// must recognise both spellings.
+    pub physical: Option<String>,
 }
 
 /// Absolute root without trailing '/'; None for "/", "" or relative paths (never mapped).
@@ -58,68 +48,26 @@ fn valid_space_name(name: &str) -> bool {
 }
 
 impl PathMap {
-    pub fn new(home: &Path, spaces: &[(String, PathBuf)]) -> Self {
-        let mut physical = Vec::new();
-        let mut alias = |p: &Path, token: String| {
-            if let Ok(real) = p.canonicalize() {
-                let real = real.to_string_lossy().trim_end_matches('/').to_string();
-                if real != p.to_string_lossy().trim_end_matches('/') {
-                    physical.push((real, token));
-                }
-            }
-        };
-        alias(home, HOME_TOKEN.to_string());
-        for (n, p) in spaces.iter().filter(|(n, _)| valid_space_name(n)) {
-            alias(p, space_token(n));
-        }
+    pub fn new(home: &Path) -> Self {
+        let home_s = home.to_string_lossy().trim_end_matches('/').to_string();
+        let physical = home
+            .canonicalize()
+            .ok()
+            .map(|r| r.to_string_lossy().trim_end_matches('/').to_string())
+            .filter(|r| *r != home_s);
         PathMap {
-            home: home.to_string_lossy().trim_end_matches('/').to_string(),
-            spaces: spaces
-                .iter()
-                .filter(|(name, _)| valid_space_name(name))
-                .map(|(n, p)| {
-                    (
-                        n.clone(),
-                        p.to_string_lossy().trim_end_matches('/').to_string(),
-                    )
-                })
-                .collect(),
+            home: home_s,
             physical,
         }
     }
 
-    /// Is `name` mapped to a local root on this machine?
-    pub fn has_space(&self, name: &str) -> bool {
-        self.spaces.iter().any(|(n, _)| n == name)
-    }
-
-    pub fn from_config(cfg: &Config) -> Self {
-        let spaces: Vec<(String, PathBuf)> = cfg
-            .spaces
-            .iter()
-            .map(|s| (s.name.clone(), s.local_path()))
+    /// Usable roots, longest first.
+    fn rules(&self) -> Vec<String> {
+        let mut v: Vec<String> = std::iter::once(&self.home)
+            .chain(self.physical.as_ref())
+            .filter_map(|p| usable_root(p))
             .collect();
-        PathMap::new(&crate::paths::home(), &spaces)
-    }
-
-    /// (root, token), longest root first; unusable roots dropped.
-    fn rules(&self) -> Vec<(String, String)> {
-        let mut v: Vec<(String, String)> = self
-            .spaces
-            .iter()
-            .filter(|(n, _)| valid_space_name(n))
-            .filter_map(|(n, p)| usable_root(p).map(|r| (r, space_token(n))))
-            .collect();
-        if let Some(h) = usable_root(&self.home) {
-            v.push((h, HOME_TOKEN.to_string()));
-        }
-        v.extend(
-            self.physical
-                .iter()
-                .filter_map(|(p, t)| usable_root(p).map(|r| (r, t.clone()))),
-        );
-        // longest first; spaces win ties against $HOME because they were pushed first
-        v.sort_by_key(|r| std::cmp::Reverse(r.0.len()));
+        v.sort_by_key(|r| std::cmp::Reverse(r.len()));
         v
     }
 
@@ -135,12 +83,12 @@ impl PathMap {
         while i < text.len() {
             let rest = &text[i..];
             if rest.starts_with('/') && !prev.is_some_and(is_name_char) {
-                let hit = rules.iter().find(|(root, _)| {
+                let hit = rules.iter().find(|root| {
                     rest.starts_with(root.as_str())
                         && !rest[root.len()..].chars().next().is_some_and(is_name_char)
                 });
-                if let Some((root, token)) = hit {
-                    out.push_str(token);
+                if let Some(root) = hit {
+                    out.push_str(HOME_TOKEN);
                     i += root.len();
                     prev = root.chars().next_back();
                     continue;
@@ -173,7 +121,7 @@ impl PathMap {
                 if let Some(end) = body.find(TOKEN_END) {
                     let name = &body[..end];
                     if valid_space_name(name) {
-                        out.push_str(&self.space_root(name));
+                        out.push_str(&format!("{}/{name}", self.home));
                         rest = &body[end + TOKEN_END.len()..];
                         continue;
                     }
@@ -186,22 +134,6 @@ impl PathMap {
         out.push_str(rest);
         out
     }
-
-    /// Local root of a space; unmapped spaces fall back to `$HOME/<name>`.
-    pub fn space_root(&self, name: &str) -> String {
-        match self.spaces.iter().find(|(n, _)| n == name) {
-            Some((_, p)) => p.clone(),
-            None => format!("{}/{}", self.home, name),
-        }
-    }
-
-    pub fn clean_path(&self, p: &Path) -> String {
-        self.clean(&p.to_string_lossy())
-    }
-
-    pub fn smudge_path(&self, s: &str) -> PathBuf {
-        PathBuf::from(self.smudge(s))
-    }
 }
 
 #[cfg(test)]
@@ -209,23 +141,11 @@ mod tests {
     use super::*;
 
     fn mac() -> PathMap {
-        PathMap::new(
-            Path::new("/Users/fabio"),
-            &[
-                ("code".into(), PathBuf::from("/Users/fabio/Code")),
-                ("work".into(), PathBuf::from("/Users/fabio/Code/work/")),
-            ],
-        )
+        PathMap::new(Path::new("/Users/fabio"))
     }
 
     fn linux() -> PathMap {
-        PathMap::new(
-            Path::new("/home/fabio"),
-            &[
-                ("code".into(), PathBuf::from("/home/fabio/src")),
-                ("work".into(), PathBuf::from("/srv/work")),
-            ],
-        )
+        PathMap::new(Path::new("/home/fabio"))
     }
 
     #[test]
@@ -234,12 +154,12 @@ mod tests {
         let canon = mac().clean(line);
         assert_eq!(
             canon,
-            r#"{"cwd":"@@UC_SPACE:code@@/proj","tool":{"file_path":"@@UC_SPACE:work@@/api/main.rs"},"cmd":"cat @@UC_HOME@@/.zshrc && ls @@UC_HOME@@"}"#
+            r#"{"cwd":"@@UC_HOME@@/Code/proj","tool":{"file_path":"@@UC_HOME@@/Code/work/api/main.rs"},"cmd":"cat @@UC_HOME@@/.zshrc && ls @@UC_HOME@@"}"#
         );
         let lin = linux().smudge(&canon);
         assert_eq!(
             lin,
-            r#"{"cwd":"/home/fabio/src/proj","tool":{"file_path":"/srv/work/api/main.rs"},"cmd":"cat /home/fabio/.zshrc && ls /home/fabio"}"#
+            r#"{"cwd":"/home/fabio/Code/proj","tool":{"file_path":"/home/fabio/Code/work/api/main.rs"},"cmd":"cat /home/fabio/.zshrc && ls /home/fabio"}"#
         );
         // and back: linux clean gives the same canonical form
         assert_eq!(linux().clean(&lin), canon);
@@ -248,7 +168,7 @@ mod tests {
 
     #[test]
     fn boundaries() {
-        let m = PathMap::new(Path::new("/Users/fab"), &[]);
+        let m = PathMap::new(Path::new("/Users/fab"));
         assert_eq!(m.clean("/Users/fabio2/x"), "/Users/fabio2/x");
         assert_eq!(m.clean("/Users/fab.bak"), "/Users/fab.bak");
         assert_eq!(
@@ -268,28 +188,8 @@ mod tests {
     }
 
     #[test]
-    fn longest_first() {
-        let m = PathMap::new(
-            Path::new("/u"),
-            &[
-                ("a".into(), PathBuf::from("/u/c")),
-                ("b".into(), PathBuf::from("/u/c/d")),
-            ],
-        );
-        assert_eq!(m.clean("/u/c/d/e"), "@@UC_SPACE:b@@/e");
-        assert_eq!(m.clean("/u/c/x"), "@@UC_SPACE:a@@/x");
-        assert_eq!(m.clean("/u/cd"), "@@UC_HOME@@/cd");
-    }
-
-    #[test]
-    fn root_slash_and_empty_never_used() {
-        let m = PathMap::new(
-            Path::new("/"),
-            &[
-                ("x".into(), PathBuf::from("")),
-                ("y".into(), PathBuf::from("/")),
-            ],
-        );
+    fn root_slash_never_used() {
+        let m = PathMap::new(Path::new("/"));
         assert_eq!(m.clean("/etc/hosts and /"), "/etc/hosts and /");
     }
 
@@ -306,7 +206,7 @@ mod tests {
     }
 
     #[test]
-    fn unknown_space_and_garbage_tokens() {
+    fn legacy_space_and_garbage_tokens() {
         let l = linux();
         assert_eq!(
             l.smudge("@@UC_SPACE:music@@/a.mp3"),

@@ -234,7 +234,7 @@ mod tests {
             Box::pin(async move {
                 match cmd {
                     Ctl::Status => Ok(json!({"connected": true})),
-                    Ctl::RmSpace { .. } => panic!("boom"),
+                    Ctl::Reload => panic!("boom"),
                     _ => Ok(Value::Null),
                 }
             })
@@ -262,9 +262,7 @@ mod tests {
         assert_eq!(v["connected"], true);
 
         // a panicking handler yields an error reply and the daemon keeps serving
-        let err = call(&sock, Ctl::RmSpace { name: "x".into() })
-            .await
-            .unwrap_err();
+        let err = call(&sock, Ctl::Reload).await.unwrap_err();
         assert_eq!(ctl_error(&err).unwrap().code, "internal");
         assert!(probe(&sock, Duration::from_secs(1)));
         assert!(call(&sock, Ctl::Shutdown).await.unwrap().is_null());

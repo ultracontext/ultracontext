@@ -7,8 +7,6 @@
 
 mod common;
 
-use std::fs;
-use std::io::Write;
 use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -21,22 +19,18 @@ use serde_json::Value;
 
 // ---------------------------------------------------------------- shared setup + assertions
 
-/// mac seeds ~/Code and shares it as space "code"; linux joins with `uc init --yes` and gets the
-/// same ~/Code. Both daemons are connected and in sync when this returns.
-fn code_pair(test: &str, seed: impl FnOnce(&Path)) -> Option<(World, Machine, Machine)> {
+/// mac and linux joined to one hub, both with the project at ~/Code/proj (as if cloned with
+/// git: uc never syncs code). Both daemons are connected and in sync when this returns.
+fn pair(test: &str, seed: impl Fn(&Path)) -> Option<(World, Machine, Machine)> {
     let w = World::start(test)?;
     let mac = w.machine("mac");
     let linux = w.machine("linux");
-    let code = mac.code();
-    fs::create_dir_all(&code).expect("mkdir ~/Code");
-    seed(&code);
-    mac.init();
-    mac.add_space(&code, "code");
+    for m in [&mac, &linux] {
+        seed(&m.code());
+        m.init();
+    }
     mac.sync();
-    linux.init();
-    linux.expect_space("code", &linux.code());
     linux.sync();
-    assert_same_code(&w, &mac, &linux, "after linux joined");
     Some((w, mac, linux))
 }
 
@@ -48,44 +42,6 @@ fn contains(hay: &[u8], needle: &str) -> bool {
     String::from_utf8_lossy(hay).contains(needle)
 }
 
-fn assert_same_code(w: &World, a: &Machine, b: &Machine, when: &str) {
-    let sa = snapshot(&a.code());
-    let sb = snapshot(&b.code());
-    let d = tree_diff(&a.name, &sa, &b.name, &sb);
-    w.check(d.is_empty(), || {
-        format!(
-            "{when}: ~/Code differs between {} and {}:\n{d}",
-            a.name, b.name
-        )
-    });
-}
-
-fn assert_file(w: &World, m: &Machine, rel: &str, want: &[u8]) {
-    let got = read(&m.code().join(rel));
-    w.check(got.as_deref() == Some(want), || {
-        format!(
-            "{}: ~/Code/{rel}\n  expected: {:?}\n  found:    {:?}",
-            m.name,
-            lossy(want),
-            got.as_deref().map(lossy)
-        )
-    });
-}
-
-fn assert_absent(w: &World, m: &Machine, rel: &str) {
-    let p = m.code().join(rel);
-    w.check(fs::symlink_metadata(&p).is_err(), || {
-        format!("{}: ~/Code/{rel} should not exist", m.name)
-    });
-}
-
-fn assert_no_conflicts(w: &World, m: &Machine) {
-    let copies = conflict_copies(&m.code());
-    w.check(copies.is_empty(), || {
-        format!("{}: unexpected conflict copies: {copies:?}", m.name)
-    });
-}
-
 /// Stops a background writer thread even when the test panics.
 struct StopOnDrop(Arc<AtomicBool>);
 
@@ -95,420 +51,40 @@ impl Drop for StopOnDrop {
     }
 }
 
-// ---------------------------------------------------------------- a) folders round-trip
+// ---------------------------------------------------------------- a) code stays put
 
+/// uc moves sessions, never code: two agents on two machines can work in the same repo
+/// without uc touching each other's files.
 #[test]
-fn folder_roundtrip() {
-    let blob = noise(300_000, 1);
-    let blob2 = noise(70_000, 2);
-    let Some((w, mac, linux)) = code_pair("folder_roundtrip", |c| {
-        put(c, "README.md", b"# hello\n");
-        put(c, "proj/src/main.rs", b"fn main() { println!(\"hi\"); }\n");
-        put(c, "proj/src/util/mod.rs", b"pub fn util() {}\n");
-        set_exec(&put(c, "proj/run.sh", b"#!/bin/sh\necho run\n"), true);
-        put(c, "assets/blob.bin", &blob);
-        put(c, "empty.txt", b"");
-        put(c, "docs/with space.md", b"spaces in names\n");
-        put(c, "docs/caf\u{e9}.txt", b"nfc name\n");
-        make_symlink(c, "proj/main-link.rs", "src/main.rs");
-        make_symlink(c, "docs/readme", "../README.md");
-        make_symlink(c, "docs/dangling", "does/not/exist");
+fn code_folders_are_not_synced() {
+    let Some((w, mac, linux)) = pair("code_not_synced", |c| {
+        put(c, "proj/README.md", b"proj\n");
     }) else {
         return;
     };
-    let (mc, lc) = (mac.code(), linux.code());
-
-    assert_same_code(&w, &mac, &linux, "after the initial sync");
-    w.check(is_exec(&lc.join("proj/run.sh")), || {
-        "linux: proj/run.sh lost its exec bit".into()
-    });
-    for (link, target) in [
-        ("proj/main-link.rs", "src/main.rs"),
-        ("docs/readme", "../README.md"),
-        ("docs/dangling", "does/not/exist"),
-    ] {
-        let got = fs::read_link(lc.join(link)).ok();
-        w.check(got.as_deref() == Some(Path::new(target)), || {
-            format!("linux: {link} should be a symlink to {target:?} (verbatim), found {got:?}")
-        });
-    }
-
-    // mac: modify, nested create, delete, rename a file, rename a dir, drop the exec bit, new binary
-    put(&mc, "README.md", b"# hello v2\n");
-    put(&mc, "deep/a/b/c/d.txt", b"deep\n");
-    fs::remove_file(mc.join("empty.txt")).expect("rm");
-    fs::rename(mc.join("assets/blob.bin"), mc.join("assets/renamed.bin")).expect("mv file");
-    fs::rename(mc.join("proj/src"), mc.join("proj/lib")).expect("mv dir");
-    set_exec(&mc.join("proj/run.sh"), false);
-    put(&mc, "assets/other.bin", &blob2);
+    put(&mac.code(), "proj/mac-only.txt", b"mac\n");
+    put(&mac.code(), "proj/.env", b"SECRET=1\n");
+    put(&linux.code(), "proj/README.md", b"linux edit\n");
     mac.sync();
     linux.sync();
-
-    assert_same_code(&w, &mac, &linux, "after mac's edits");
-    for gone in [
-        "empty.txt",
-        "assets/blob.bin",
-        "proj/src/main.rs",
-        "proj/src/util/mod.rs",
-    ] {
-        assert_absent(&w, &linux, gone);
-    }
-    assert_file(&w, &linux, "assets/renamed.bin", &blob);
-    assert_file(&w, &linux, "proj/lib/util/mod.rs", b"pub fn util() {}\n");
-    w.check(!is_exec(&lc.join("proj/run.sh")), || {
-        "linux: proj/run.sh should have lost its exec bit".into()
-    });
-
-    // and back: linux edits, mac follows
-    put(&lc, "from-linux.txt", b"hello from linux\n");
-    put(
-        &lc,
-        "proj/lib/main.rs",
-        b"fn main() { println!(\"edited on linux\"); }\n",
+    w.check(
+        read(&linux.code().join("proj/mac-only.txt")).is_none(),
+        || "linux: a file from the mac's ~/Code showed up".into(),
     );
-    fs::remove_file(lc.join("docs/with space.md")).expect("rm");
-    linux.sync();
-    mac.sync();
-
-    assert_same_code(&w, &mac, &linux, "after linux's edits");
-    assert_file(&w, &mac, "from-linux.txt", b"hello from linux\n");
-    assert_file(
-        &w,
-        &mac,
-        "proj/lib/main.rs",
-        b"fn main() { println!(\"edited on linux\"); }\n",
+    w.check(read(&linux.code().join("proj/.env")).is_none(), || {
+        "linux: the mac's .env showed up".into()
+    });
+    w.check(
+        read(&mac.code().join("proj/README.md")).as_deref() == Some(b"proj\n".as_slice()),
+        || "mac: linux's edit reached the mac's ~/Code".into(),
     );
-    assert_absent(&w, &mac, "docs/with space.md");
-    assert_no_conflicts(&w, &mac);
-    assert_no_conflicts(&w, &linux);
 }
 
-// ---------------------------------------------------------------- b) live push, no `uc sync`
-
-#[test]
-fn realtime_without_explicit_sync() {
-    let Some((w, mac, linux)) = code_pair("realtime", |c| {
-        put(c, "seed.txt", b"seed\n");
-    }) else {
-        return;
-    };
-    let (mc, lc) = (mac.code(), linux.code());
-    // No `uc` command from here on: only the daemons may move bytes.
-    let live = |what: &str, cond: &mut dyn FnMut() -> bool| {
-        let t = Instant::now();
-        let ok = wait_until(Duration::from_secs(5), cond);
-        w.check(ok, || {
-            format!("{what}: not visible within 5s without `uc sync` (live push is broken)")
-        });
-        eprintln!("[realtime] {what}: {:.2?}", t.elapsed());
-    };
-
-    put(&mc, "live/hello.txt", b"written on mac\n");
-    live("mac -> linux create", &mut || {
-        read(&lc.join("live/hello.txt")).as_deref() == Some(&b"written on mac\n"[..])
-    });
-
-    put(&mc, "live/hello.txt", b"edited on mac\n");
-    live("mac -> linux modify", &mut || {
-        read(&lc.join("live/hello.txt")).as_deref() == Some(&b"edited on mac\n"[..])
-    });
-
-    put(&lc, "live/reply.txt", b"written on linux\n");
-    live("linux -> mac create", &mut || {
-        read(&mc.join("live/reply.txt")).as_deref() == Some(&b"written on linux\n"[..])
-    });
-
-    fs::remove_file(mc.join("seed.txt")).expect("rm");
-    live("mac -> linux delete", &mut || {
-        fs::symlink_metadata(lc.join("seed.txt")).is_err()
-    });
-}
-
-// ---------------------------------------------------------------- c) conflicts keep both
-
-#[test]
-fn conflict_keeps_both() {
-    let Some((w, mac, linux)) = code_pair("conflict", |c| {
-        put(c, "notes.md", b"base\n");
-        put(c, "dm1.txt", b"original 1\n");
-        put(c, "dm2.txt", b"original 2\n");
-    }) else {
-        return;
-    };
-    let (mc, lc) = (mac.code(), linux.code());
-
-    linux.daemon_stop();
-    put(&mc, "notes.md", b"mac version\n");
-    fs::remove_file(mc.join("dm1.txt")).expect("rm");
-    put(&mc, "dm2.txt", b"mac modified 2\n");
-    mac.sync();
-
-    // the same files, edited on linux while it was offline
-    put(&lc, "notes.md", b"linux version\n");
-    put(&lc, "dm1.txt", b"linux modified 1\n");
-    fs::remove_file(lc.join("dm2.txt")).expect("rm");
-
-    linux.daemon_start();
-    linux.sync();
-    mac.sync();
-    linux.sync();
-
-    for m in [&mac, &linux] {
-        // DESIGN §5.4: the hub (mac, first to commit) keeps the canonical path ...
-        assert_file(&w, m, "notes.md", b"mac version\n");
-        // ... and linux's version survives as a conflict copy that every machine gets.
-        let copies = conflict_copies(&m.code());
-        w.check(copies.len() == 1, || {
-            format!(
-                "{}: expected exactly one conflict copy (of notes.md), found {copies:?}",
-                m.name
-            )
-        });
-        let parsed = parse_conflict_name(&copies[0]);
-        w.check(
-            parsed == Some(("notes.md".to_string(), "linux".to_string())),
-            || {
-                format!(
-                    "{}: conflict copy {:?} should be named `notes.md.conflict-linux-YYYYMMDD-HHMMSS`",
-                    m.name, copies[0]
-                )
-            },
-        );
-        assert_file(&w, m, &copies[0], b"linux version\n");
-
-        // delete vs modify: the modification wins, in both directions, with no copy
-        assert_file(&w, m, "dm1.txt", b"linux modified 1\n");
-        assert_file(&w, m, "dm2.txt", b"mac modified 2\n");
-
-        let listed = m.uc_json(&["conflicts"]);
-        w.check(
-            listed.to_string().contains("notes.md.conflict-linux-"),
-            || {
-                format!(
-                    "{}: `uc conflicts --json` does not list {:?}:\n{listed:#}",
-                    m.name, copies[0]
-                )
-            },
-        );
-    }
-    assert_same_code(&w, &mac, &linux, "after the conflict");
-}
-
-// ---------------------------------------------------------------- d) same bytes: no duplicate
-
-#[test]
-fn same_content_no_duplicate() {
-    let Some((w, mac, linux)) = code_pair("same_content", |c| {
-        put(c, "shared.txt", b"v1\n");
-    }) else {
-        return;
-    };
-    let (mc, lc) = (mac.code(), linux.code());
-    let big = noise(200_000, 7);
-
-    linux.daemon_stop();
-    for root in [&mc, &lc] {
-        put(root, "same.txt", b"identical on both machines\n");
-        put(root, "new/dir/x.bin", &big);
-        put(root, "shared.txt", b"v2: the same edit on both machines\n");
-        if root == &mc {
-            mac.sync();
-        }
-    }
-    linux.daemon_start();
-    linux.sync();
-    mac.sync();
-    linux.sync();
-
-    for m in [&mac, &linux] {
-        assert_no_conflicts(&w, m);
-        assert_file(&w, m, "same.txt", b"identical on both machines\n");
-        assert_file(&w, m, "shared.txt", b"v2: the same edit on both machines\n");
-        assert_file(&w, m, "new/dir/x.bin", &big);
-        let listed = m.uc_json(&["conflicts"]);
-        w.check(!listed.to_string().contains(".conflict-"), || {
-            format!(
-                "{}: identical content must not produce conflicts:\n{listed:#}",
-                m.name
-            )
-        });
-    }
-    assert_same_code(&w, &mac, &linux, "after identical offline edits");
-}
-
-// ---------------------------------------------------------------- e) files agents are writing
-
-#[test]
-fn agent_writing_file() {
-    let Some((w, mac, linux)) = code_pair("agent_writes", |c| {
-        put(c, "agent/README", b"agent workspace\n");
-    }) else {
-        return;
-    };
-    let (mc, lc) = (mac.code(), linux.code());
-
-    // An agent streaming JSONL: 50 appends, 20ms apart.
-    let appender = {
-        let p = mc.join("agent/stream.jsonl");
-        thread::spawn(move || {
-            let mut all = Vec::new();
-            for i in 0..50usize {
-                let line = format!(r#"{{"i":{i},"chunk":"{}"}}"#, "x".repeat(i * 37 % 500));
-                append_line(&p, &line);
-                all.extend_from_slice(line.as_bytes());
-                all.push(b'\n');
-                thread::sleep(Duration::from_millis(20));
-            }
-            all
-        })
-    };
-    // An agent rewriting a file in place: truncate + two writes, so readers can see torn content.
-    let rewriter = {
-        let p = mc.join("agent/plan.md");
-        thread::spawn(move || {
-            let mut last = Vec::new();
-            for i in 0..50usize {
-                let body = format!("# plan v{i}\n{}\n", "step ".repeat(500 + i)).into_bytes();
-                let mut f = fs::File::create(&p).expect("create plan.md");
-                let half = body.len() / 2;
-                f.write_all(&body[..half]).expect("write");
-                thread::sleep(Duration::from_millis(5));
-                f.write_all(&body[half..]).expect("write");
-                drop(f);
-                last = body;
-                thread::sleep(Duration::from_millis(15));
-            }
-            last
-        })
-    };
-    let want_stream = appender.join().expect("appender thread");
-    let want_plan = rewriter.join().expect("rewriter thread");
-
-    mac.sync();
-    linux.sync();
-
-    // On mac too: uc must never put an older snapshot back over the agent's own file.
-    for m in [&mac, &linux] {
-        assert_file(&w, m, "agent/stream.jsonl", &want_stream);
-        assert_file(&w, m, "agent/plan.md", &want_plan);
-        assert_no_conflicts(&w, m);
-    }
-    let _ = (mc, lc);
-}
-
-// ---------------------------------------------------------------- f) ignore rules, .env, .git
-
-#[test]
-fn gitignore_and_env() {
-    // Own setup: the repo exists (git init + commit) before the folder is shared, as in real life.
-    let Some(w) = World::start("gitignore_env") else {
-        return;
-    };
-    let mac = w.machine("mac");
-    let linux = w.machine("linux");
-    let (mc, lc) = (mac.code(), linux.code());
-    let (mweb, lweb) = (mc.join("web"), lc.join("web"));
-    put(&mc, "web/.gitignore", b"node_modules/\n.env\nbuild/\n");
-    put(&mc, "web/src/app.js", b"console.log('app');\n");
-    put(&mc, "web/node_modules/x/index.js", b"module.exports = 1;\n");
-    put(&mc, "web/build/y.txt", b"build output\n");
-    put(&mc, "web/.env", b"SECRET=hunter2\n");
-    put(&mc, "web/.env.local", b"LOCAL=1\n");
-    // Outside the repo, so `git status` on linux is not affected by files uc never syncs.
-    put(&mc, "misc/keep.txt", b"keep\n");
-    put(&mc, "misc/target/debug/app", b"\x7fELF");
-    put(&mc, "misc/.DS_Store", b"junk");
-    put(&mc, "misc/.ucignore", b"*.secret-notes\n");
-    put(&mc, "misc/me.secret-notes", b"private\n");
-
-    let git = git_available();
-    if git {
-        mac.git_ok(&mweb, &["init", "-q"]);
-        mac.git_ok(&mweb, &["add", "-A"]);
-        mac.git_ok(&mweb, &["commit", "-q", "-m", "initial commit"]);
-    } else {
-        eprintln!("[gitignore_and_env] git is not installed: skipping the .git checks");
-    }
-    mac.init();
-    mac.add_space(&mc, "code");
-    mac.sync();
-    linux.init();
-    linux.expect_space("code", &lc);
-    linux.sync();
-
-    // .env is gitignored but always_include wins (DESIGN §5.5 rule 4); dotfiles are synced.
-    for rel in [
-        "web/.gitignore",
-        "web/src/app.js",
-        "web/.env",
-        "web/.env.local",
-        "misc/keep.txt",
-        "misc/.ucignore",
-    ] {
-        let want = read(&mc.join(rel)).expect("mac file");
-        assert_file(&w, &linux, rel, &want);
-    }
-    // built-in ignores + .ucignore
-    for rel in [
-        "web/node_modules",
-        "misc/target",
-        "misc/.DS_Store",
-        "misc/me.secret-notes",
-    ] {
-        assert_absent(&w, &linux, rel);
-    }
-
-    if git {
-        // .gitignore (inside a repo)
-        assert_absent(&w, &linux, "web/build");
-        let log = linux.git_ok(&lweb, &["log", "--oneline"]);
-        w.check(log.contains("initial commit"), || {
-            format!("linux: `git log` should show the commit made on mac:\n{log}")
-        });
-        let st = linux.git_ok(&lweb, &["status", "--porcelain"]);
-        w.check(st.trim().is_empty(), || {
-            format!("linux: `git status` should be clean:\n{st}")
-        });
-        linux.git_ok(&lweb, &["fsck", "--no-progress"]);
-        // `git status` may refresh .git/index on linux: let that land before mac commits again.
-        linux.sync();
-        mac.sync();
-
-        put(&mc, "web/src/app.js", b"console.log('app v2');\n");
-        mac.git_ok(&mweb, &["commit", "-q", "-am", "second commit"]);
-        mac.sync();
-        linux.sync();
-
-        let log = linux.git_ok(&lweb, &["log", "--oneline"]);
-        w.check(
-            log.contains("second commit") && log.contains("initial commit"),
-            || format!("linux: `git log` should show both commits:\n{log}"),
-        );
-        let mac_head = mac.git_ok(&mweb, &["rev-parse", "HEAD"]);
-        let linux_head = linux.git_ok(&lweb, &["rev-parse", "HEAD"]);
-        w.check(mac_head == linux_head, || {
-            format!("HEAD differs: mac {mac_head} linux {linux_head}")
-        });
-        for m in [&mac, &linux] {
-            let dir = m.code().join("web");
-            let st = m.git_ok(&dir, &["status", "--porcelain"]);
-            w.check(st.trim().is_empty(), || {
-                format!(
-                    "{}: `git status` should be clean after the second commit:\n{st}",
-                    m.name
-                )
-            });
-        }
-    }
-    assert_no_conflicts(&w, &mac);
-    assert_no_conflicts(&w, &linux);
-}
-
-// ---------------------------------------------------------------- g) Claude Code session
+// ---------------------------------------------------------------- b) Claude Code session
 
 #[test]
 fn claude_session_follows_you() {
-    let Some((w, mac, linux)) = code_pair("claude_session", |c| {
+    let Some((w, mac, linux)) = pair("claude_session", |c| {
         put(c, "proj/src/main.rs", b"fn main() {}\n");
     }) else {
         return;
@@ -630,13 +206,13 @@ fn claude_session_follows_you() {
     );
 }
 
-// ---------------------------------------------------------------- g2) a machine joins later
+// ---------------------------------------------------------------- c) a machine joins later
 
-/// A new machine joins after sessions exist: its folder spaces must be mapped before sessions are
-/// materialized, or `@@UC_SPACE:code@@` lands at a wrong path (wrong Claude project dir).
+/// A new machine joins after sessions exist: recent sessions land in its native folders with
+/// its own $HOME, before its checkout of the project even exists.
 #[test]
 fn late_joiner_gets_sessions() {
-    let Some((w, mac, linux)) = code_pair("late_joiner", |c| {
+    let Some((w, mac, _linux)) = pair("late_joiner", |c| {
         put(c, "proj/main.py", b"print('hi')\n");
     }) else {
         return;
@@ -653,11 +229,9 @@ fn late_joiner_gets_sessions() {
     );
     let mac_content = String::from_utf8(read(&mac_file).expect("mac transcript")).expect("utf8");
     mac.sync();
-    linux.sync();
 
     let late = w.machine("late");
     late.init();
-    late.expect_space("code", &late.code());
     late.sync();
     let late_home = late.home.to_string_lossy().into_owned();
     let late_file = late.claude_transcript(&late.code().join("proj"), &id);
@@ -673,14 +247,13 @@ fn late_joiner_gets_sessions() {
             clip(&want, 1500)
         )
     });
-    assert_file(&w, &late, "proj/main.py", b"print('hi')\n");
 }
 
-// ---------------------------------------------------------------- h) Codex session
+// ---------------------------------------------------------------- d) Codex session
 
 #[test]
 fn codex_session_follows_you() {
-    let Some((w, mac, linux)) = code_pair("codex_session", |c| {
+    let Some((w, mac, linux)) = pair("codex_session", |c| {
         put(c, "proj/lib.rs", b"pub fn lib() {}\n");
     }) else {
         return;
@@ -762,13 +335,13 @@ fn codex_session_follows_you() {
     }
 }
 
-// ---------------------------------------------------------------- i) live elsewhere -> fork
+// ---------------------------------------------------------------- e) live elsewhere -> fork
 
 /// The agent on the mac is still streaming when linux continues the same session: the canonical
 /// session stays the mac's, linux's lines continue as a fork (DESIGN §6.4). Nothing is lost.
 #[test]
 fn live_session_elsewhere_forks() {
-    let Some((w, mac, linux)) = code_pair("live_fork", |c| {
+    let Some((w, mac, linux)) = pair("live_fork", |c| {
         put(c, "proj/README.md", b"proj\n");
     }) else {
         return;
@@ -889,72 +462,6 @@ fn live_session_elsewhere_forks() {
     }
 }
 
-// ---------------------------------------------------------------- j) offline catch-up
-
-#[test]
-fn offline_catchup() {
-    let Some((w, mac, linux)) = code_pair("offline_catchup", |c| {
-        for i in 0..6 {
-            put(
-                c,
-                &format!("existing/{i}.txt"),
-                format!("existing {i}\n").as_bytes(),
-            );
-        }
-    }) else {
-        return;
-    };
-    let mc = mac.code();
-
-    linux.daemon_stop();
-    // 20 changes: 14 creates, 3 modifications, 2 deletions, 1 rename
-    for i in 0..14 {
-        put(
-            &mc,
-            &format!("batch/{}/f{i}.txt", i % 3),
-            format!("created offline {i}\n").as_bytes(),
-        );
-    }
-    for i in 0..3 {
-        put(
-            &mc,
-            &format!("existing/{i}.txt"),
-            format!("modified offline {i}\n").as_bytes(),
-        );
-    }
-    fs::remove_file(mc.join("existing/3.txt")).expect("rm");
-    fs::remove_file(mc.join("existing/4.txt")).expect("rm");
-    fs::create_dir_all(mc.join("renamed")).expect("mkdir");
-    fs::rename(mc.join("existing/5.txt"), mc.join("renamed/5.txt")).expect("mv");
-    mac.sync();
-
-    linux.daemon_start();
-    linux.sync();
-
-    assert_same_code(&w, &mac, &linux, "after linux caught up");
-    for i in 0..14 {
-        assert_file(
-            &w,
-            &linux,
-            &format!("batch/{}/f{i}.txt", i % 3),
-            format!("created offline {i}\n").as_bytes(),
-        );
-    }
-    for i in 0..3 {
-        assert_file(
-            &w,
-            &linux,
-            &format!("existing/{i}.txt"),
-            format!("modified offline {i}\n").as_bytes(),
-        );
-    }
-    assert_absent(&w, &linux, "existing/3.txt");
-    assert_absent(&w, &linux, "existing/4.txt");
-    assert_absent(&w, &linux, "existing/5.txt");
-    assert_file(&w, &linux, "renamed/5.txt", b"existing 5\n");
-    assert_no_conflicts(&w, &linux);
-}
-
 // ---------------------------------------------------------------- the harness itself
 
 #[test]
@@ -971,20 +478,6 @@ fn harness_self_check() {
         ),
         "/home/l/x /h/mac2/y /h/mac.d /home/l\n\"/home/l\""
     );
-    assert_eq!(
-        parse_conflict_name("notes.md.conflict-linux-20261025-071530"),
-        Some(("notes.md".into(), "linux".into()))
-    );
-    assert_eq!(
-        parse_conflict_name("Makefile.conflict-my-mac-20261025-071530"),
-        Some(("Makefile".into(), "my-mac".into()))
-    );
-    assert_eq!(
-        parse_conflict_name("notes.md.conflict-linux-yesterday"),
-        None
-    );
-    assert_eq!(parse_conflict_name("notes.md"), None);
-
     // fabricated transcripts are valid JSON with the fields drivers read
     let cwd = Path::new("/Users/fabio/Code/proj");
     let id = new_uuid();
@@ -1015,32 +508,12 @@ fn harness_self_check() {
         "{rel}"
     );
 
-    // snapshots see content, exec bits and symlink targets
     let dir = tempfile::Builder::new()
         .prefix("ucH")
         .tempdir_in("/tmp")
         .expect("tmp");
-    let (a, b) = (dir.path().join("a"), dir.path().join("b"));
-    for root in [&a, &b] {
-        put(root, "x/y.txt", b"same");
-        set_exec(&put(root, "run.sh", b"#!/bin/sh\n"), true);
-        make_symlink(root, "link", "x/y.txt");
-    }
-    assert_eq!(tree_diff("a", &snapshot(&a), "b", &snapshot(&b)), "");
-    set_exec(&b.join("run.sh"), false);
-    put(&b, "x/z.txt", b"extra");
-    let d = tree_diff("a", &snapshot(&a), "b", &snapshot(&b));
-    assert!(
-        d.contains("differs: run.sh") && d.contains("only on b: x/z.txt"),
-        "{d}"
-    );
-    assert_eq!(conflict_copies(&a), Vec::<String>::new());
-    put(&a, "x/y.txt.conflict-mac-20261025-071530", b"other");
-    assert_eq!(
-        conflict_copies(&a),
-        vec!["x/y.txt.conflict-mac-20261025-071530".to_string()]
-    );
-    assert_eq!(find_named(&a, "y.txt").len(), 1);
+    put(dir.path(), "x/y.txt", b"same");
+    assert_eq!(find_named(dir.path(), "y.txt").len(), 1);
 
     // commands are killed at the timeout, even with output still being produced
     let started = Instant::now();

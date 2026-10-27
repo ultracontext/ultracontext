@@ -1,4 +1,4 @@
-//! `uc init`: config, agent skill, daemon, hub link, and joining the hub's spaces.
+//! `uc init`: config, agent skill, daemon, hub link.
 
 use anyhow::{Context, Result};
 use serde::Serialize;
@@ -6,11 +6,11 @@ use std::time::{Duration, Instant};
 
 use super::output::{self, emit_json, note, outln, CliError, Color, EXIT_OK};
 use super::skill::{self, SkillAction, SkillInstall};
-use super::{util, App, InitArgs, ADD_TIMEOUT};
+use super::{util, App, InitArgs};
 use crate::client::{control, daemon};
 use crate::config::Config;
 use crate::paths;
-use crate::proto::{Ctl, MachineInfo, Query, SpaceInfo, SpaceStatus, StatusReport};
+use crate::proto::{Ctl, MachineInfo, StatusReport};
 
 const CONNECT_WAIT: Duration = Duration::from_secs(15);
 
@@ -21,10 +21,6 @@ struct InitReport {
     config: String,
     connected: bool,
     hub_version: Option<String>,
-    /// spaces joined during this run
-    joined: Vec<SpaceStatus>,
-    /// hub spaces not synced on this machine
-    available: Vec<SpaceInfo>,
     skills: Vec<SkillInstall>,
 }
 
@@ -175,53 +171,13 @@ pub fn cmd_init(app: &App, a: InitArgs) -> Result<i32> {
         .into());
     }
 
-    let hub_spaces: Vec<SpaceInfo> = app.query(Query::Spaces).unwrap_or_default();
     let cfg_now = app.config()?;
-    let mut joined = Vec::new();
-    let mut available = Vec::new();
-    for s in hub_spaces {
-        // '@claude', '@codex': agent sessions sync on their own, they are not folders
-        if s.name.starts_with('@') || cfg_now.space(&s.name).is_some() {
-            continue;
-        }
-        let join = if a.yes {
-            true
-        } else if interactive {
-            util::confirm(
-                &format!("Join space '{}' at {}?", s.name, s.default_path),
-                true,
-            )
-        } else {
-            false
-        };
-        if !join {
-            available.push(s);
-            continue;
-        }
-        match join_space(app, &s) {
-            Ok(st) => joined.push(st),
-            Err(e) => {
-                if !app.json {
-                    note(&format!(
-                        "{} could not join '{}': {}",
-                        output::warn_mark(),
-                        s.name,
-                        CliError::from_anyhow(&e).msg
-                    ));
-                }
-                available.push(s);
-            }
-        }
-    }
-
     let report = InitReport {
         machine: cfg_now.machine_info(),
         hub: hub.clone(),
         config: app.paths.config().to_string_lossy().to_string(),
         connected: st.connected,
         hub_version: st.hub_version.clone(),
-        joined,
-        available,
         skills,
     };
     if app.json {
@@ -230,22 +186,6 @@ pub fn cmd_init(app: &App, a: InitArgs) -> Result<i32> {
     }
     print_report(&report);
     Ok(EXIT_OK)
-}
-
-fn join_space(app: &App, s: &SpaceInfo) -> Result<SpaceStatus> {
-    let dir = paths::expand_tilde(&s.default_path);
-    std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
-    let dir = dir.canonicalize().unwrap_or(dir);
-    if !app.json {
-        note(&format!("joining '{}' at {} …", s.name, paths::tilde(&dir)));
-    }
-    app.ctl(
-        Ctl::AddSpace {
-            name: s.name.clone(),
-            path: dir.to_string_lossy().to_string(),
-        },
-        ADD_TIMEOUT,
-    )
 }
 
 fn print_report(r: &InitReport) {
@@ -259,24 +199,6 @@ fn print_report(r: &InitReport) {
             &format!("(hub {})", r.hub_version.as_deref().unwrap_or("?"))
         )
     );
-    for s in &r.joined {
-        outln!(
-            "{} syncing '{}' at {} ({} files)",
-            output::ok_mark(),
-            s.name,
-            paths::tilde(std::path::Path::new(&s.path)),
-            output::thousands(s.files)
-        );
-    }
-    for s in &r.available {
-        outln!(
-            "{} hub space '{}' is not synced here; join it with: uc add {} --name {}",
-            output::warn_mark(),
-            s.name,
-            s.default_path,
-            s.name
-        );
-    }
     for s in &r.skills {
         let what = match s.action {
             SkillAction::Installed => "installed",
@@ -294,7 +216,6 @@ fn print_report(r: &InitReport) {
     outln!();
     outln!("{}", output::paint(Color::Bold, "Next steps"));
     let steps = [
-        ("uc add ~/Code", "sync a folder on all your machines"),
         ("uc status", "hub link, pending work, live sessions"),
         (
             "uc sessions",

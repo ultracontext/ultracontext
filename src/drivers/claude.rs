@@ -491,10 +491,7 @@ mod tests {
 
     #[test]
     fn parse_meta_head_tail() {
-        let map = PathMap::new(
-            Path::new("/Users/fab"),
-            &[("code".into(), PathBuf::from("/Users/fab/Code"))],
-        );
+        let map = PathMap::new(Path::new("/Users/fab"));
         let head = format!(
             "{}\n{}\n{}\n{}\n{{\"type\":\"user\",\"mess",
             r#"{"type":"file-history-snapshot","messageId":"m0","snapshot":{"trackedFileBackups":{}}}"#,
@@ -516,10 +513,10 @@ mod tests {
             .unwrap();
         assert_eq!(m.agent, "claude");
         assert_eq!(m.id, SID);
-        assert_eq!(m.cwd.as_deref(), Some("@@UC_SPACE:code@@/proj"));
+        assert_eq!(m.cwd.as_deref(), Some("@@UC_HOME@@/Code/proj"));
         assert_eq!(
             m.first_prompt.as_deref(),
-            Some("fix the bug in @@UC_SPACE:code@@/proj/src/main.rs please")
+            Some("fix the bug in @@UC_HOME@@/Code/proj/src/main.rs please")
         );
         assert_eq!(m.title.as_deref(), Some("My title"));
         assert_eq!(m.git_branch.as_deref(), Some("feat/x"));
@@ -531,8 +528,8 @@ mod tests {
 
     #[test]
     fn relocation_and_native_rel() {
-        let mac = PathMap::new(Path::new("/Users/fab"), &[]);
-        let lin = PathMap::new(Path::new("/home/fab"), &[]);
+        let mac = PathMap::new(Path::new("/Users/fab"));
+        let lin = PathMap::new(Path::new("/home/fab"));
         let head = format!(
             r#"{{"type":"user","message":{{"role":"user","content":"hi"}},"timestamp":"2026-10-20T10:00:00Z","cwd":"/Users/fab/p","sessionId":"{SID}"}}"#
         ) + "\n";

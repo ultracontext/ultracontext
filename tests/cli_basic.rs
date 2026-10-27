@@ -58,6 +58,23 @@ fn help_and_version() {
         !stdout(&o).contains("resume"),
         "no uc resume: agents resume natively"
     );
+    // uc syncs sessions, not code folders
+    for gone in [
+        "add",
+        "rm",
+        "spaces",
+        "log",
+        "history",
+        "restore",
+        "conflicts",
+    ] {
+        assert!(
+            !stdout(&o)
+                .lines()
+                .any(|l| l.trim_start().starts_with(&format!("{gone} "))),
+            "uc {gone} is gone"
+        );
+    }
     let o = env.uc(&["--version"]);
     assert_eq!(o.status.code(), Some(0));
     assert!(stdout(&o).starts_with("uc "));
@@ -70,7 +87,7 @@ fn usage_errors_exit_2() {
     assert_eq!(o.status.code(), Some(2));
     assert!(stderr(&o).contains("frobnicate"));
 
-    let o = env.uc(&["--json", "log", "--since", "5x"]);
+    let o = env.uc(&["--json", "sync", "--timeout", "soon"]);
     assert_eq!(o.status.code(), Some(2));
     let v = json(&o);
     assert_eq!(v["error"]["code"], "usage");
@@ -81,20 +98,22 @@ fn usage_errors_exit_2() {
         stderr(&o)
     );
 
-    let o = env.uc(&["resume", "x"]);
-    assert_eq!(o.status.code(), Some(2));
+    for args in [
+        &["resume", "x"][..],
+        &["add", "proj"],
+        &["rm", "code"],
+        &["log"],
+        &["history", "a.txt"],
+        &["conflicts"],
+    ] {
+        assert_eq!(env.uc(args).status.code(), Some(2), "{args:?}");
+    }
 }
 
 #[test]
 fn not_initialized_is_a_clear_error() {
     let env = Env::new();
-    for cmd in [
-        &["status"][..],
-        &["sessions"],
-        &["sync"],
-        &["add", "proj"],
-        &["log"],
-    ] {
+    for cmd in [&["status"][..], &["sessions"], &["sync"]] {
         let mut args = vec!["--json"];
         args.extend_from_slice(cmd);
         let o = env.uc(&args);

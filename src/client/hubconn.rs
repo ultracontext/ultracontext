@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::task::{Context as TaskCx, Poll};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::sync::{mpsc, oneshot, watch, Notify};
 use tracing::{debug, info, warn};
 
@@ -280,36 +280,6 @@ impl HubClient {
         match self.request(msg, chunk).await?.0 {
             Msg::Ok { .. } => Ok(()),
             other => bail!("unexpected reply to BlobPut: {}", tag(&other)),
-        }
-    }
-
-    /// Upload a file's bytes as blob `hash` unless the hub already has it.
-    pub async fn upload_file(&self, path: &Path, hash: &str) -> Result<()> {
-        if self.has_blob(hash).await? {
-            return Ok(());
-        }
-        let mut f = tokio::fs::File::open(path)
-            .await
-            .with_context(|| format!("opening {}", path.display()))?;
-        let size = f.metadata().await?.len();
-        let mut offset = 0u64;
-        loop {
-            let mut buf = vec![0u8; proto::CHUNK];
-            let mut n = 0;
-            while n < buf.len() {
-                let k = f.read(&mut buf[n..]).await?;
-                if k == 0 {
-                    break;
-                }
-                n += k;
-            }
-            buf.truncate(n);
-            let last = n < proto::CHUNK || offset + n as u64 >= size;
-            self.put_chunk(hash, offset, last, buf).await?;
-            offset += n as u64;
-            if last {
-                return Ok(());
-            }
         }
     }
 
@@ -721,7 +691,7 @@ impl AsyncRead for Tracked {
 }
 
 #[cfg(test)]
-#[path = "engine_testhub.rs"]
+#[path = "hubconn_testhub.rs"]
 pub(crate) mod testhub;
 
 #[cfg(test)]

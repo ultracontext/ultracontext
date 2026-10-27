@@ -187,7 +187,7 @@ pub struct Deps {
     pub paths: Paths,
     /// $HOME of this machine (path map + `~` in space paths)
     pub home: PathBuf,
-    /// current config (re-read on every use so `uc add` / reload are picked up)
+    /// current config (re-read on every use so a reload is picked up)
     pub cfg: Arc<dyn Fn() -> Config + Send + Sync>,
     /// surfaced in `uc status` (Ctx::set_error)
     pub on_error: Option<Arc<dyn Fn(String) + Send + Sync>>,

@@ -179,24 +179,17 @@ for svc in linux1 linux2; do
     eventually 30 "$svc never got its ssh key" dc exec -T "$svc" test -s /etc/uc-e2e/id
 done
 
-step "linux1: init over ssh, share ~/Code"
+step "linux1 + linux2: init over ssh; each has its own checkout of ~/Code/proj"
 for svc in linux1 linux2; do
-    on "$svc" 'mkdir -p ~/.claude ~/.codex' # agents installed, no sessions yet
+    on "$svc" 'mkdir -p ~/.claude ~/.codex ~/Code/proj' # agents installed, project cloned
 done
-on linux1 'mkdir -p ~/Code/proj && printf "hello from linux1\n" > ~/Code/proj/hello.txt &&
-    printf "#!/bin/sh\necho hi\n" > ~/Code/proj/run.sh && chmod +x ~/Code/proj/run.sh &&
-    ln -s hello.txt ~/Code/proj/link'
-on linux1 'uc init uc@hub --name linux1 --yes' || fail "linux1: uc init uc@hub"
-out=$(on linux1 'uc add ~/Code --name code --json') || fail "linux1: uc add: $out"
+on linux1 'printf "hello from linux1\n" > ~/Code/proj/hello.txt && printf "A=1\n" > ~/Code/proj/.env'
+on linux1 'uc init uc@hub --name linux1' || fail "linux1: uc init uc@hub"
 sync_ok linux1
-
-step "linux2: init, joins space code at /root/Code"
-on linux2 'uc init uc@hub --name linux2 --yes' || fail "linux2: uc init uc@hub"
+on linux2 'uc init uc@hub --name linux2' || fail "linux2: uc init uc@hub"
 sync_ok linux2
-got=$(on linux2 'cat ~/Code/proj/hello.txt') || fail "linux2: ~/Code/proj/hello.txt missing"
-[ "$got" = "hello from linux1" ] || fail "linux2: hello.txt = '$got'"
-on linux2 'test -x ~/Code/proj/run.sh' || fail "linux2: run.sh lost its exec bit"
-[ "$(on linux2 'readlink ~/Code/proj/link')" = hello.txt ] || fail "linux2: symlink not preserved"
+on linux2 'test ! -e ~/Code/proj/hello.txt && test ! -e ~/Code/proj/.env' ||
+    fail "linux2: linux1's code reached linux2 (uc must not sync code)"
 
 step "claude session: started on linux1 (/home/fabio), resumed on linux2 (/root)"
 id=$(on linux1 'cat /proc/sys/kernel/random/uuid')
@@ -221,18 +214,19 @@ case "$t2" in *"/home/fabio"*) fail "linux2: linux1 paths leaked: $t2" ;; esac
 step "close linux1; claude continues on linux2; linux1 follows when back"
 on linux1 'uc daemon stop' >/dev/null || fail "linux1: uc daemon stop"
 claude_line "$id" /root/Code/proj "$(on linux2 'cat /proc/sys/kernel/random/uuid')" "\"$u2\"" user \
-    "Now run /root/Code/proj/run.sh" |
+    "Now run /root/Code/proj/hello.txt" |
     dc exec -T linux2 sh -c "cat >> ~/.claude/projects/$(claude_enc /root/Code/proj)/$id.jsonl"
 sync_ok linux2
 on linux1 'uc daemon start' >/dev/null || fail "linux1: uc daemon start"
 sync_ok linux1
 eventually 10 "linux1: linux2's line (with linux1 paths) never arrived" \
-    on linux1 "grep -Fq 'Now run /home/fabio/Code/proj/run.sh' '$dir1/$id.jsonl'"
+    on linux1 "grep -Fq 'Now run /home/fabio/Code/proj/hello.txt' '$dir1/$id.jsonl'"
 
-step "realtime: linux2 -> linux1 without uc sync"
-on linux2 'printf "live\n" > ~/Code/live.txt'
-eventually 10 "linux1: live.txt not pushed in real time" \
-    on linux1 'test "$(cat ~/Code/live.txt 2>/dev/null)" = live'
+step "realtime: linux2 keeps working, linux1 sees it without uc sync"
+claude_line "$id" /root/Code/proj "$(on linux2 'cat /proc/sys/kernel/random/uuid')" null assistant "live from linux2" |
+    dc exec -T linux2 sh -c "cat >> ~/.claude/projects/$(claude_enc /root/Code/proj)/$id.jsonl"
+eventually 10 "linux1: linux2's live line not pushed in real time" \
+    on linux1 "grep -Fq 'live from linux2' '$dir1/$id.jsonl'"
 
 if [ "$with_mac" -eq 1 ]; then
     step "mac: native binary joins over tcp://127.0.0.1:$UC_E2E_PORT"
@@ -241,19 +235,21 @@ if [ "$with_mac" -eq 1 ]; then
     fi
     mac_home=$(cd "$(mktemp -d /tmp/ucmac.XXXXXX)" && pwd -P)
     mkdir -p "$mac_home/.claude" "$mac_home/.codex"
-    macuc init "tcp://127.0.0.1:$UC_E2E_PORT" --name mac --yes || fail "mac: uc init over tcp"
+    macuc init "tcp://127.0.0.1:$UC_E2E_PORT" --name mac || fail "mac: uc init over tcp"
     sync_ok mac
-    [ "$(cat "$mac_home/Code/proj/hello.txt" 2>/dev/null)" = "hello from linux1" ] ||
-        fail "mac: ~/Code/proj/hello.txt not synced"
-    [ -x "$mac_home/Code/proj/run.sh" ] || fail "mac: run.sh lost its exec bit"
+    [ ! -e "$mac_home/Code" ] || fail "mac: code reached the mac (uc must not sync code)"
     tm="$mac_home/.claude/projects/$(claude_enc "$mac_home/Code/proj")/$id.jsonl"
-    grep -Fq "Now run $mac_home/Code/proj/run.sh" "$tm" || fail "mac: transcript missing or not translated ($tm)"
+    grep -Fq "Now run $mac_home/Code/proj/hello.txt" "$tm" || fail "mac: transcript missing or not translated ($tm)"
     if grep -Eq '/home/fabio|/root/' "$tm"; then fail "mac: linux paths leaked into $tm"; fi
 
-    step "realtime: mac -> linux1 + linux2"
-    printf 'from mac\n' >"$mac_home/Code/from-mac.txt"
-    for svc in linux1 linux2; do
-        eventually 10 "$svc: from-mac.txt not pushed in real time" \
-            on "$svc" 'test "$(cat ~/Code/from-mac.txt 2>/dev/null)" = "from mac"'
-    done
+    step "realtime: a new session on the mac shows up on linux1 + linux2"
+    mid=$(uuidgen | tr 'A-Z' 'a-z')
+    mcwd="$mac_home/Code/proj"
+    mdir="$mac_home/.claude/projects/$(claude_enc "$mcwd")"
+    mkdir -p "$mdir"
+    claude_line "$mid" "$mcwd" "$(uuidgen | tr 'A-Z' 'a-z')" null user "hello from the mac" >"$mdir/$mid.jsonl"
+    eventually 10 "linux1: the mac's new session not pushed in real time" \
+        on linux1 "grep -Fq 'hello from the mac' ~/.claude/projects/$(claude_enc /home/fabio/Code/proj)/$mid.jsonl"
+    eventually 10 "linux2: the mac's new session not pushed in real time" \
+        on linux2 "grep -Fq 'hello from the mac' ~/.claude/projects/$(claude_enc /root/Code/proj)/$mid.jsonl"
 fi

@@ -1,5 +1,5 @@
 //! Client state DB: remote (R), base (B) and local fingerprint per entry (DESIGN §5.1).
-//! Owner: client-core agent. Used by engine and logsync.
+//! Owner: client-core agent. Used by logsync.
 
 use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -16,12 +16,6 @@ pub struct LocalFp {
     pub mtime_ns: i128,
     pub ino: u64,
     pub exec: bool,
-}
-
-impl LocalFp {
-    pub fn mtime_ms(&self) -> i64 {
-        (self.mtime_ns / 1_000_000) as i64
-    }
 }
 
 /// Log sync point (DESIGN §6.2): local bytes [0, local_len) correspond to canonical
@@ -48,22 +42,6 @@ pub struct Base {
     /// local fingerprint right after we agreed (None for deleted)
     pub fp: Option<LocalFp>,
     pub log: Option<LogPoint>,
-}
-
-impl Base {
-    /// B for a hub entry we now agree with, at local fingerprint `fp`.
-    pub fn from_entry(e: &Entry, fp: Option<LocalFp>) -> Base {
-        Base {
-            version: e.version,
-            kind: e.kind,
-            hash: e.hash.clone(),
-            size: e.size,
-            exec: e.exec,
-            deleted: e.deleted,
-            fp: if e.deleted { None } else { fp },
-            log: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -266,12 +244,24 @@ impl ClientDb {
     /// Upsert R from a change and advance the cursor to change.seq, atomically.
     /// Replays (seq <= cursor) are ignored.
     pub fn record_remote(&self, change: &Change) -> Result<()> {
+        self.advance(change, true)
+    }
+
+    /// Advance the cursor past a change this machine does not keep (e.g. a folder synced by
+    /// an older uc version).
+    pub fn skip_remote(&self, change: &Change) -> Result<()> {
+        self.advance(change, false)
+    }
+
+    fn advance(&self, change: &Change, keep: bool) -> Result<()> {
         let mut c = self.lock();
         let tx = c.transaction()?;
         if change.seq <= cursor_on(&tx)? {
             return Ok(());
         }
-        upsert_remote(&tx, &change.entry)?;
+        if keep {
+            upsert_remote(&tx, &change.entry)?;
+        }
         kv_set_on(&tx, CURSOR, &change.seq.to_string())?;
         // identity of the change at the cursor: lets the daemon detect a hub rolled back to an
         // older backup even after it has moved past our cursor again
@@ -361,30 +351,6 @@ impl ClientDb {
         Ok(())
     }
 
-    /// Forget every B of a space but keep R (the space now lives in another folder: re-join).
-    pub fn clear_bases(&self, space: &str) -> Result<()> {
-        let c = self.lock();
-        c.execute(
-            "UPDATE entries SET b_version = NULL, b_kind = NULL, b_hash = NULL, b_size = NULL,
-               b_exec = NULL, b_deleted = NULL, fp_size = NULL, fp_mtime_ns = NULL, fp_ino = NULL,
-               fp_exec = NULL, log_local_len = NULL, log_local_tail = NULL, log_native = NULL
-             WHERE space = ?1",
-            [space],
-        )?;
-        c.execute(
-            "DELETE FROM entries WHERE space = ?1 AND r_json IS NULL",
-            [space],
-        )?;
-        Ok(())
-    }
-
-    /// Drop all rows of a space (uc rm).
-    pub fn forget_space(&self, space: &str) -> Result<()> {
-        self.lock()
-            .execute("DELETE FROM entries WHERE space = ?1", [space])?;
-        Ok(())
-    }
-
     pub fn rows(&self, space: &str) -> Result<Vec<Row>> {
         let c = self.lock();
         let sql = format!("SELECT {COLS} FROM entries WHERE space = ?1 ORDER BY path");
@@ -393,70 +359,6 @@ impl ClientDb {
             .query_map([space], read_row)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
-    }
-
-    /// Rows of `space` whose path starts with `prefix` (e.g. "dir/"; "" = all).
-    pub fn rows_prefix(&self, space: &str, prefix: &str) -> Result<Vec<Row>> {
-        if prefix.is_empty() {
-            return self.rows(space);
-        }
-        // an index range [prefix, prefix with its last char bumped) instead of a scan
-        let mut upper: Vec<char> = prefix.chars().collect();
-        let bumped = upper.last().and_then(|c| char::from_u32(*c as u32 + 1));
-        let c = self.lock();
-        let rows = match bumped {
-            Some(b) => {
-                if let Some(last) = upper.last_mut() {
-                    *last = b;
-                }
-                let upper: String = upper.into_iter().collect();
-                let sql = format!(
-                    "SELECT {COLS} FROM entries WHERE space = ?1 AND path >= ?2 AND path < ?3 ORDER BY path"
-                );
-                let mut st = c.prepare(&sql)?;
-                let rows = st.query_map(params![space, prefix, upper], read_row)?;
-                rows.collect::<rusqlite::Result<Vec<_>>>()?
-            }
-            None => {
-                let sql = format!(
-                    "SELECT {COLS} FROM entries WHERE space = ?1 AND substr(path, 1, ?3) = ?2 ORDER BY path"
-                );
-                let mut st = c.prepare(&sql)?;
-                let n = prefix.chars().count() as i64;
-                let rows = st.query_map(params![space, prefix, n], read_row)?;
-                rows.collect::<rusqlite::Result<Vec<_>>>()?
-            }
-        };
-        Ok(rows)
-    }
-
-    /// Rows whose remote version is newer than base (pending down). A remote tombstone for a
-    /// path we never had is not pending.
-    pub fn rows_behind(&self, space: Option<&str>) -> Result<Vec<Row>> {
-        let c = self.lock();
-        let sql = format!(
-            "SELECT {COLS} FROM entries
-             WHERE r_version IS NOT NULL
-               AND (b_version IS NULL OR r_version > b_version)
-               AND NOT (b_version IS NULL AND r_deleted = 1)
-               AND (?1 IS NULL OR space = ?1)
-             ORDER BY space, path"
-        );
-        let mut st = c.prepare(&sql)?;
-        let rows = st
-            .query_map([space], read_row)?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
-    }
-
-    /// Number of live entries this machine has in sync for `space`.
-    pub fn count_synced(&self, space: &str) -> Result<u64> {
-        let n: i64 = self.lock().query_row(
-            "SELECT COUNT(*) FROM entries WHERE space = ?1 AND b_version IS NOT NULL AND b_deleted = 0",
-            [space],
-            |r| r.get(0),
-        )?;
-        Ok(n as u64)
     }
 
     pub fn kv_get(&self, k: &str) -> Result<Option<String>> {
@@ -533,7 +435,17 @@ mod tests {
     }
 
     #[test]
-    fn base_roundtrip_and_behind() {
+    fn skipped_changes_only_move_the_cursor() {
+        let db = ClientDb::open_in_memory().unwrap();
+        db.skip_remote(&change(4, entry("code", "a.txt", 4, "h4", false)))
+            .unwrap();
+        assert_eq!(db.cursor().unwrap(), 4);
+        assert!(db.get("code", "a.txt").unwrap().is_none());
+        assert_eq!(db.cursor_at().unwrap().unwrap().0, 4);
+    }
+
+    #[test]
+    fn base_roundtrip() {
         let dir = tempfile::Builder::new()
             .prefix("uc")
             .tempdir_in("/tmp")
@@ -545,14 +457,6 @@ mod tests {
             .unwrap();
         db.record_remote(&change(3, entry("code", "d/b.txt", 3, "hb", false)))
             .unwrap();
-        let behind: Vec<String> = db
-            .rows_behind(Some("code"))
-            .unwrap()
-            .into_iter()
-            .map(|r| r.path)
-            .collect();
-        assert_eq!(behind, vec!["a.txt", "d/b.txt"]);
-
         let base = Base {
             version: 1,
             kind: Kind::File,
@@ -577,25 +481,6 @@ mod tests {
             db.get("code", "a.txt").unwrap().unwrap().base.unwrap(),
             base
         );
-        assert_eq!(db.rows_behind(None).unwrap().len(), 1);
-        assert_eq!(db.count_synced("code").unwrap(), 1);
-        assert_eq!(db.rows_prefix("code", "d/").unwrap().len(), 1);
-        assert_eq!(db.rows_prefix("code", "").unwrap().len(), 3);
-        db.set_remote(&entry("code", "d0.txt", 9, "x", false))
-            .unwrap();
-        db.set_remote(&entry("code", "dd/x", 9, "x", false))
-            .unwrap();
-        db.set_remote(&entry("code", "d/é/y", 9, "x", false))
-            .unwrap();
-        let under: Vec<String> = db
-            .rows_prefix("code", "d/")
-            .unwrap()
-            .into_iter()
-            .map(|r| r.path)
-            .collect();
-        assert_eq!(under, vec!["d/b.txt", "d/é/y"]);
-        assert_eq!(db.rows_prefix("code", "d/é").unwrap().len(), 1);
-
         // base-only row disappears entirely when its base is cleared and R is unknown
         db.set_base("code", "local-only", Some(&base)).unwrap();
         db.set_base("code", "local-only", None).unwrap();
@@ -603,8 +488,7 @@ mod tests {
 
         db.kv_set("k", "v").unwrap();
         assert_eq!(db.kv_get("k").unwrap().as_deref(), Some("v"));
-        db.forget_space("code").unwrap();
-        assert!(db.rows("code").unwrap().is_empty());
+        assert_eq!(db.rows("code").unwrap().len(), 3);
         drop(db);
         // reopen: schema gate passes, cursor persisted
         let db = ClientDb::open(&dir.path().join("client.db")).unwrap();

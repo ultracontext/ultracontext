@@ -145,9 +145,49 @@ pub fn copy_to_trash(trash_root: &Path, abs: &Path) -> Result<PathBuf> {
     Ok(dest)
 }
 
+/// Remove trash day folders older than `keep_days`. Returns how many were removed.
+pub fn purge_trash(trash_root: &Path, keep_days: i64) -> Result<usize> {
+    let cutoff = (chrono::Local::now() - chrono::Duration::days(keep_days)).date_naive();
+    let rd = match std::fs::read_dir(trash_root) {
+        Ok(rd) => rd,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(e) => return Err(e).with_context(|| format!("reading {}", trash_root.display())),
+    };
+    let mut removed = 0;
+    for ent in rd.flatten() {
+        let name = ent.file_name().to_string_lossy().to_string();
+        let Ok(day) = chrono::NaiveDate::parse_from_str(&name, "%Y-%m-%d") else {
+            continue;
+        };
+        if day < cutoff && ent.file_type().is_ok_and(|t| t.is_dir()) {
+            std::fs::remove_dir_all(ent.path())
+                .with_context(|| format!("purging {}", ent.path().display()))?;
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn trash_purge_keeps_recent_days() {
+        let d = tempfile::Builder::new()
+            .prefix("uc")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let trash = d.path().join("trash");
+        let f = d.path().join("x.txt");
+        std::fs::write(&f, b"1").unwrap();
+        move_to_trash(&trash, &f).unwrap();
+        std::fs::create_dir_all(trash.join("2001-01-01/a")).unwrap();
+        std::fs::create_dir_all(trash.join("not-a-date")).unwrap();
+        assert_eq!(purge_trash(&trash, 30).unwrap(), 1);
+        assert_eq!(std::fs::read_dir(&trash).unwrap().count(), 2);
+        assert_eq!(purge_trash(&d.path().join("missing"), 30).unwrap(), 0);
+    }
 
     #[test]
     fn write_new_never_clobbers() {

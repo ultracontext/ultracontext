@@ -1,4 +1,4 @@
-//! Daemon wiring: config, hub connection, engine + logsync, watcher, control server, timers.
+//! Daemon wiring: config, hub connection, session sync, watcher, control server, timers.
 //! Owner: cli agent.
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -18,17 +18,14 @@ use tracing::{debug, error, info, warn};
 
 use super::control::{self, CtlError, CtlFuture, CtlHandler};
 use super::db::ClientDb;
-use super::engine::Engine;
 use super::hubconn::{HubClient, HubEvent, HubSettings};
 use super::logsync::LogSync;
 use super::watch::Watcher;
 use super::{Ctx, Pending};
-use crate::config::{Config, SpaceConfig};
+use crate::config::Config;
 use crate::drivers;
 use crate::paths::{self, Paths};
-use crate::proto::{
-    self, Ctl, HubStatus, Query, SessionInfo, SpaceStatus, StatusReport, SyncReport,
-};
+use crate::proto::{self, Ctl, HubStatus, Query, SessionInfo, StatusReport, SyncReport};
 
 /// Full rescan cadence (DESIGN §5.1).
 const RESCAN_EVERY: Duration = Duration::from_secs(300);
@@ -96,7 +93,6 @@ pub async fn run(paths: Paths) -> Result<()> {
         started: Instant::now(),
         last_error: Mutex::new(None),
     });
-    let engine = Engine::new(ctx.clone());
     let logsync = LogSync::new(ctx.clone(), agent_drivers);
     let (fs_tx, mut fs_rx) = mpsc::unbounded_channel::<PathBuf>();
     let watcher = Watcher::new(fs_tx).context("starting the file watcher")?;
@@ -106,7 +102,6 @@ pub async fn run(paths: Paths) -> Result<()> {
     let (fatal_tx, mut fatal_rx) = mpsc::unbounded_channel::<String>();
     let d = Arc::new(Daemon {
         ctx,
-        engine,
         logsync,
         watcher: Arc::new(Mutex::new(watcher)),
         hub_version: Mutex::new(None),
@@ -117,7 +112,6 @@ pub async fn run(paths: Paths) -> Result<()> {
         fatal: fatal_tx.clone(),
     });
 
-    supervise("engine", d.engine.clone().run(), fatal_tx.clone());
     supervise("session sync", d.logsync.clone().run(), fatal_tx.clone());
     supervise(
         "control server",
@@ -128,8 +122,7 @@ pub async fn run(paths: Paths) -> Result<()> {
     {
         // inotify registration walks whole trees: keep it off the async threads
         let (w, c) = (d.watcher.clone(), d.ctx.clone());
-        let mut roots: Vec<PathBuf> = d.engine.roots().into_iter().map(|(_, p)| p).collect();
-        roots.extend(d.logsync.roots());
+        let roots = d.logsync.roots();
         tokio::task::spawn_blocking(move || {
             for root in roots {
                 watch_add_blocking(&w, &c, &root);
@@ -172,7 +165,7 @@ pub async fn run(paths: Paths) -> Result<()> {
                     last_purge = Instant::now();
                     let trash = d.ctx.paths.trash();
                     tokio::task::spawn_blocking(move || {
-                        match super::apply::purge_trash(&trash, TRASH_KEEP_DAYS) {
+                        match super::logsync::purge_trash(&trash, TRASH_KEEP_DAYS) {
                             Ok(n) if n > 0 => info!("trash: removed {n} entries older than {TRASH_KEEP_DAYS} days"),
                             Ok(_) => {}
                             Err(e) => warn!("trash purge: {e:#}"),
@@ -261,13 +254,12 @@ where
 
 struct Daemon {
     ctx: Arc<Ctx>,
-    engine: Arc<Engine>,
     logsync: Arc<LogSync>,
     watcher: Arc<Mutex<Watcher>>,
     hub_version: Mutex<Option<String>>,
     /// one full rescan at a time
     rescan_lock: tokio::sync::Mutex<()>,
-    /// serializes config.toml writers (AddSpace, RmSpace, Reload)
+    /// serializes config reloads
     config_lock: tokio::sync::Mutex<()>,
     /// coalescing rescan requests: a request during a rescan causes exactly one more
     rescan_wanted: Notify,
@@ -390,7 +382,8 @@ impl Daemon {
                 let r = if space.starts_with('@') {
                     self.logsync.on_remote(change, bin).await
                 } else {
-                    self.engine.on_remote(change).await
+                    // a folder synced by an older uc version: not ours to apply
+                    self.ctx.db.skip_remote(&change)
                 };
                 if let Err(e) = r {
                     warn!(seq, %space, %path, "applying remote change failed: {e:#}");
@@ -421,8 +414,6 @@ impl Daemon {
     async fn route_local(&self, p: PathBuf) {
         if self.logsync.owns(&p) {
             self.logsync.on_local(p).await
-        } else {
-            self.engine.on_local(p).await
         }
     }
 
@@ -436,12 +427,7 @@ impl Daemon {
     async fn rescan_all(&self) {
         let _g = self.rescan_lock.lock().await;
         let t = Instant::now();
-        let (a, b) = tokio::join!(self.engine.rescan(), self.logsync.rescan());
-        if let Err(e) = a {
-            warn!("folder rescan failed: {e:#}");
-            self.ctx.set_error(format!("folder rescan failed: {e:#}"));
-        }
-        if let Err(e) = b {
+        if let Err(e) = self.logsync.rescan().await {
             warn!("session rescan failed: {e:#}");
             self.ctx.set_error(format!("session rescan failed: {e:#}"));
         }
@@ -449,20 +435,7 @@ impl Daemon {
     }
 
     fn pending(&self) -> Pending {
-        let mut p = self.engine.pending();
-        p.merge(self.logsync.pending());
-        p
-    }
-
-    async fn watch_add(&self, root: PathBuf) {
-        let (w, ctx) = (self.watcher.clone(), self.ctx.clone());
-        let _ = tokio::task::spawn_blocking(move || watch_add_blocking(&w, &ctx, &root)).await;
-    }
-
-    fn watch_remove(&self, root: &Path) {
-        if let Err(e) = lock(&self.watcher).remove(root) {
-            debug!("unwatch {}: {e:#}", root.display());
-        }
+        self.logsync.pending()
     }
 
     fn offline_error(&self) -> CtlError {
@@ -484,30 +457,11 @@ impl Daemon {
         CtlError::new("error", format!("{e:#}"))
     }
 
-    /// Persist first, then publish: memory never claims what is not on disk.
-    fn update_config(&self, f: impl FnOnce(&mut Config)) -> Result<(), CtlError> {
-        let mut next = self.ctx.cfg();
-        f(&mut next);
-        next.save(&self.ctx.paths.config())
-            .map_err(|e| CtlError::new("error", format!("saving config.toml: {e:#}")))?;
-        *self.ctx.cfg.write().unwrap_or_else(|e| e.into_inner()) = next;
-        Ok(())
-    }
-
     async fn dispatch(&self, cmd: Ctl) -> Result<Value, CtlError> {
         match cmd {
             Ctl::Status => to_json(&self.status().await),
             Ctl::Sync { timeout_ms } => to_json(&self.sync(timeout_ms).await?),
             Ctl::Query { query } => self.query(query).await,
-            Ctl::AddSpace { name, path } => to_json(&self.add_space(&name, &path).await?),
-            Ctl::RmSpace { name } => {
-                self.rm_space(&name).await?;
-                Ok(Value::Null)
-            }
-            Ctl::Restore { space, path, seq } => {
-                self.restore(&space, &path, seq).await?;
-                Ok(Value::Null)
-            }
             Ctl::Reload => self.reload().await,
             Ctl::Shutdown => {
                 info!("shutdown requested");
@@ -533,7 +487,6 @@ impl Daemon {
             hub_version: lock(&self.hub_version).clone(),
             cursor: self.ctx.db.cursor().unwrap_or(0),
             head_seq: self.ctx.hub.head_seq(),
-            spaces: self.engine.space_status(),
             pending_up: pending.up,
             pending_down: pending.down,
             conflicts: pending.conflicts,
@@ -620,106 +573,6 @@ impl Daemon {
         to_json(&list)
     }
 
-    async fn add_space(&self, name: &str, path: &str) -> Result<SpaceStatus, CtlError> {
-        let abs = PathBuf::from(path);
-        if !abs.is_absolute() {
-            return Err(CtlError::new(
-                "invalid",
-                format!("not an absolute path: {path}"),
-            ));
-        }
-        if !abs.is_dir() {
-            return Err(CtlError::new("invalid", format!("not a directory: {path}")));
-        }
-        let _g = self.config_lock.lock().await;
-        let cfg = self.ctx.cfg();
-        let protected = protected_roots(&self.ctx.paths, &self.logsync.roots());
-        match check_add_space(&cfg, name, &abs, &protected)? {
-            AddCheck::AlreadySynced => {
-                return Ok(self
-                    .engine
-                    .space_status()
-                    .into_iter()
-                    .find(|s| s.name == name)
-                    .unwrap_or_else(|| SpaceStatus {
-                        name: name.to_string(),
-                        path: path.to_string(),
-                        ..Default::default()
-                    }));
-            }
-            AddCheck::New => {}
-        }
-        // watch before the initial scan so nothing written meanwhile is missed
-        self.watch_add(abs.clone()).await;
-        let entry = SpaceConfig {
-            name: name.to_string(),
-            path: paths::tilde(&abs),
-        };
-        if let Err(e) = self.update_config(|c| c.spaces.push(entry)) {
-            self.watch_remove(&abs);
-            return Err(e);
-        }
-        match self.engine.add_space(name, &abs).await {
-            Ok(st) => {
-                info!(space = name, path = %abs.display(), "space added");
-                // sessions whose project lives in this space can now be materialized
-                self.rescan_wanted.notify_one();
-                Ok(st)
-            }
-            Err(e) => {
-                // roll back so config, engine and watcher agree; the user can simply retry
-                let err = self.hub_error(e);
-                if let Err(e) = self.engine.remove_space(name).await {
-                    debug!("rollback remove_space: {e:#}");
-                }
-                if let Err(e) = self.update_config(|c| c.spaces.retain(|s| s.name != name)) {
-                    warn!("rollback of config failed: {e}");
-                }
-                self.watch_remove(&abs);
-                Err(err)
-            }
-        }
-    }
-
-    async fn rm_space(&self, name: &str) -> Result<(), CtlError> {
-        let _g = self.config_lock.lock().await;
-        let cfg = self.ctx.cfg();
-        let sc = cfg.space(name).cloned().ok_or_else(|| {
-            CtlError::new(
-                "not_found",
-                format!("no space named '{name}' is synced on this machine"),
-            )
-        })?;
-        self.engine
-            .remove_space(name)
-            .await
-            .map_err(|e| CtlError::new("error", format!("{e:#}")))?;
-        self.update_config(|c| c.spaces.retain(|s| s.name != name))?;
-        let root = sc.local_path();
-        self.watch_remove(&root.canonicalize().unwrap_or(root));
-        info!(space = name, "space removed");
-        Ok(())
-    }
-
-    async fn restore(&self, space: &str, path: &str, seq: u64) -> Result<(), CtlError> {
-        if space.starts_with('@') {
-            return Err(CtlError::new(
-                "invalid",
-                "agent session files cannot be restored",
-            ));
-        }
-        if self.ctx.cfg().space(space).is_none() {
-            return Err(CtlError::new(
-                "not_found",
-                format!("space '{space}' is not synced on this machine"),
-            ));
-        }
-        self.engine
-            .restore(space, path, seq)
-            .await
-            .map_err(|e| self.hub_error(e))
-    }
-
     async fn reload(&self) -> Result<Value, CtlError> {
         let _g = self.config_lock.lock().await;
         let new = Config::load(&self.ctx.paths.config())
@@ -727,39 +580,9 @@ impl Daemon {
             .ok_or_else(|| CtlError::new("not_found", "config.toml is missing"))?;
         let old = self.ctx.cfg();
         let restart_required = needs_restart(&old, &new);
-        let (added, removed) = diff_spaces(&old.spaces, &new.spaces);
         *self.ctx.cfg.write().unwrap_or_else(|e| e.into_inner()) = new;
-        let mut errors = Vec::new();
-        for s in &removed {
-            if let Err(e) = self.engine.remove_space(&s.name).await {
-                errors.push(format!("{}: {e:#}", s.name));
-            }
-            let root = s.local_path();
-            self.watch_remove(&root.canonicalize().unwrap_or(root));
-        }
-        for s in &added {
-            let root = s.local_path();
-            let root = root.canonicalize().unwrap_or(root);
-            self.watch_add(root.clone()).await;
-            if let Err(e) = self.engine.add_space(&s.name, &root).await {
-                errors.push(format!("{}: {e:#}", s.name));
-            }
-        }
-        if !errors.is_empty() {
-            self.ctx.set_error(format!("reload: {}", errors.join("; ")));
-        }
-        info!(
-            added = added.len(),
-            removed = removed.len(),
-            restart_required,
-            "config reloaded"
-        );
-        Ok(json!({
-            "added": added.iter().map(|s| &s.name).collect::<Vec<_>>(),
-            "removed": removed.iter().map(|s| &s.name).collect::<Vec<_>>(),
-            "errors": errors,
-            "restart_required": restart_required,
-        }))
+        info!(restart_required, "config reloaded");
+        Ok(json!({ "restart_required": restart_required }))
     }
 }
 
@@ -779,103 +602,6 @@ pub fn sync_done(p: &Pending, cursor: u64, head: u64) -> bool {
     p.idle() && cursor >= head
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum AddCheck {
-    New,
-    AlreadySynced,
-}
-
-/// Valid space name: what `uc add` would accept from a user (agent spaces start with '@').
-pub fn valid_space_name(name: &str) -> bool {
-    !name.is_empty()
-        && name.chars().count() <= 64
-        && !name.starts_with('@')
-        && !name.starts_with('.')
-        && !name
-            .chars()
-            .any(|c| c == '/' || c == '\\' || c.is_control() || c.is_whitespace())
-}
-
-fn overlaps(a: &Path, b: &Path) -> bool {
-    a.starts_with(b) || b.starts_with(a)
-}
-
-/// Paths a space must never contain or live in: UC_HOME (our own state) and the agent roots
-/// (sessions are synced through their own spaces).
-pub fn protected_roots(paths: &Paths, agent_roots: &[PathBuf]) -> Vec<PathBuf> {
-    let mut v = vec![paths.root.clone()];
-    v.extend(agent_roots.iter().cloned());
-    v.into_iter()
-        .map(|p| p.canonicalize().unwrap_or(p))
-        .collect()
-}
-
-/// Validate adding `abs` (absolute, canonical) as space `name` on this machine.
-pub fn check_add_space(
-    cfg: &Config,
-    name: &str,
-    abs: &Path,
-    protected: &[PathBuf],
-) -> Result<AddCheck, CtlError> {
-    if !valid_space_name(name) {
-        return Err(CtlError::new(
-            "invalid",
-            format!("invalid space name '{name}' (no spaces, slashes, or leading '@'/'.'; max 64 chars)"),
-        ));
-    }
-    let home = paths::home();
-    let home = home.canonicalize().unwrap_or(home);
-    if abs.parent().is_none() || abs == home {
-        return Err(CtlError::new(
-            "invalid",
-            format!(
-                "refusing to sync {} as a whole; pick a folder like ~/Code",
-                abs.display()
-            ),
-        ));
-    }
-    for p in protected {
-        if overlaps(abs, p) {
-            return Err(CtlError::new(
-                "invalid",
-                format!(
-                    "{} overlaps {}, which uc manages itself",
-                    abs.display(),
-                    p.display()
-                ),
-            ));
-        }
-    }
-    for s in &cfg.spaces {
-        let local = s.local_path();
-        let local = local.canonicalize().unwrap_or(local);
-        if s.name == name {
-            if local == abs {
-                return Ok(AddCheck::AlreadySynced);
-            }
-            return Err(CtlError::new(
-                "exists",
-                format!(
-                    "space '{name}' is already synced here at {}; run 'uc rm {name}' first",
-                    paths::tilde(&local)
-                ),
-            ));
-        }
-        if overlaps(abs, &local) {
-            return Err(CtlError::new(
-                "exists",
-                format!(
-                    "{} overlaps space '{}' at {}; spaces cannot be nested",
-                    paths::tilde(abs),
-                    s.name,
-                    paths::tilde(&local)
-                ),
-            ));
-        }
-    }
-    Ok(AddCheck::New)
-}
-
 /// Settings the running hub connection / drivers were built from.
 fn needs_restart(old: &Config, new: &Config) -> bool {
     old.hub != new.hub
@@ -884,17 +610,6 @@ fn needs_restart(old: &Config, new: &Config) -> bool {
         || old.machine_id != new.machine_id
         || old.machine_name != new.machine_name
         || old.agents != new.agents
-        || old.sync != new.sync
-}
-
-/// (added, removed) spaces between two configs; a moved space is removed and re-added.
-pub fn diff_spaces(
-    old: &[SpaceConfig],
-    new: &[SpaceConfig],
-) -> (Vec<SpaceConfig>, Vec<SpaceConfig>) {
-    let added = new.iter().filter(|s| !old.contains(s)).cloned().collect();
-    let removed = old.iter().filter(|s| !new.contains(s)).cloned().collect();
-    (added, removed)
 }
 
 /// Holds an exclusive flock on daemon.pid for the daemon's lifetime: one daemon per UC_HOME.
@@ -1099,107 +814,9 @@ mod tests {
     }
 
     #[test]
-    fn space_names() {
-        assert!(valid_space_name("code"));
-        assert!(valid_space_name("my-project_2.0"));
-        for bad in ["", "@claude", ".hidden", "a/b", "has space", "tab\there"] {
-            assert!(!valid_space_name(bad), "{bad:?}");
-        }
-    }
-
-    #[test]
-    fn add_space_checks() {
-        let tmp = tempfile::Builder::new()
-            .prefix("uc")
-            .tempdir_in("/tmp")
-            .unwrap();
-        let root = tmp.path().canonicalize().unwrap();
-        let code = root.join("Code");
-        let notes = root.join("Notes");
-        std::fs::create_dir_all(&code).unwrap();
-        std::fs::create_dir_all(&notes).unwrap();
-        let uc_home = root.join(".ultracontext");
-        let mut cfg = Config::new_for_this_machine();
-        cfg.spaces.push(SpaceConfig {
-            name: "code".into(),
-            path: code.to_string_lossy().into(),
-        });
-        let protected = vec![uc_home.clone()];
-
-        assert_eq!(
-            check_add_space(&cfg, "notes", &notes, &protected).unwrap(),
-            AddCheck::New
-        );
-        assert_eq!(
-            check_add_space(&cfg, "code", &code, &protected).unwrap(),
-            AddCheck::AlreadySynced
-        );
-        assert_eq!(
-            check_add_space(&cfg, "code", &notes, &protected)
-                .unwrap_err()
-                .code,
-            "exists"
-        );
-        // nested either way
-        assert_eq!(
-            check_add_space(&cfg, "sub", &code.join("proj"), &protected)
-                .unwrap_err()
-                .code,
-            "exists"
-        );
-        assert_eq!(
-            check_add_space(&cfg, "all", &root, &[]).unwrap_err().code,
-            "exists"
-        );
-        // a parent of uc's own state dir is refused even before nesting is considered
-        assert_eq!(
-            check_add_space(&cfg, "all", &root, &protected)
-                .unwrap_err()
-                .code,
-            "invalid"
-        );
-        // uc's own state and agent roots are off limits
-        assert_eq!(
-            check_add_space(&cfg, "uc", &uc_home.join("x"), &protected)
-                .unwrap_err()
-                .code,
-            "invalid"
-        );
-        assert_eq!(
-            check_add_space(&cfg, "root", Path::new("/"), &protected)
-                .unwrap_err()
-                .code,
-            "invalid"
-        );
-        assert_eq!(
-            check_add_space(&cfg, "@x", &notes, &protected)
-                .unwrap_err()
-                .code,
-            "invalid"
-        );
-    }
-
-    #[test]
-    fn spaces_diff() {
-        let s = |n: &str, p: &str| SpaceConfig {
-            name: n.into(),
-            path: p.into(),
-        };
-        let old = vec![s("a", "~/A"), s("b", "~/B")];
-        let new = vec![s("a", "~/A"), s("b", "~/B2"), s("c", "~/C")];
-        let (added, removed) = diff_spaces(&old, &new);
-        assert_eq!(added, vec![s("b", "~/B2"), s("c", "~/C")]);
-        assert_eq!(removed, vec![s("b", "~/B")]);
-    }
-
-    #[test]
     fn restart_detection() {
         let a = Config::new_for_this_machine();
         let mut b = a.clone();
-        b.spaces.push(SpaceConfig {
-            name: "x".into(),
-            path: "~/x".into(),
-        });
         assert!(!needs_restart(&a, &b));
         b.hub = "other".into();
         assert!(needs_restart(&a, &b));

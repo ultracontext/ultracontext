@@ -1,5 +1,5 @@
 #!/bin/sh
-# uc installer: ultracontext, the Dropbox for developers and their AI agents.
+# uc installer: ultracontext, your AI agents' sessions on every machine.
 #   curl -fsSL https://raw.githubusercontent.com/ultracontext/ultracontext/beyond/install.sh | sh
 #   curl -fsSL https://raw.githubusercontent.com/ultracontext/ultracontext/beyond/install.sh | sh -s -- --hub
 # Installs the prebuilt uc for this OS/CPU from GitHub Releases, verified against the release's

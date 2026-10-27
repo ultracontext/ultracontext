@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::paths;
 use crate::proto::MachineInfo;
@@ -21,31 +21,7 @@ pub struct Config {
     #[serde(default)]
     pub token: String,
     #[serde(default)]
-    pub sync: SyncConfig,
-    #[serde(default)]
     pub agents: AgentsConfig,
-    #[serde(default, rename = "space")]
-    pub spaces: Vec<SpaceConfig>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SyncConfig {
-    #[serde(default = "yes")]
-    pub respect_gitignore: bool,
-    #[serde(default = "default_always_include")]
-    pub always_include: Vec<String>,
-    #[serde(default = "default_debounce")]
-    pub debounce_ms: u64,
-}
-
-impl Default for SyncConfig {
-    fn default() -> Self {
-        SyncConfig {
-            respect_gitignore: true,
-            always_include: default_always_include(),
-            debounce_ms: default_debounce(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -68,27 +44,8 @@ impl Default for AgentsConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SpaceConfig {
-    pub name: String,
-    /// local path; may start with `~`
-    pub path: String,
-}
-
-impl SpaceConfig {
-    pub fn local_path(&self) -> PathBuf {
-        paths::expand_tilde(&self.path)
-    }
-}
-
 fn yes() -> bool {
     true
-}
-fn default_always_include() -> Vec<String> {
-    vec![".env".into(), ".env.*".into(), ".envrc".into()]
-}
-fn default_debounce() -> u64 {
-    300
 }
 fn default_eager_days() -> u32 {
     30 // Claude Code keeps transcripts 30 days
@@ -112,9 +69,7 @@ impl Config {
             hub: String::new(),
             remote_uc: String::new(),
             token: String::new(),
-            sync: SyncConfig::default(),
             agents: AgentsConfig::default(),
-            spaces: Vec::new(),
         }
     }
 
@@ -169,10 +124,6 @@ impl Config {
         }
     }
 
-    pub fn space(&self, name: &str) -> Option<&SpaceConfig> {
-        self.spaces.iter().find(|s| s.name == name)
-    }
-
     pub fn is_initialized(&self) -> bool {
         !self.hub.is_empty()
     }
@@ -186,16 +137,17 @@ mod tests {
     fn roundtrip() {
         let mut c = Config::new_for_this_machine();
         c.hub = "uc".into();
-        c.spaces.push(SpaceConfig {
-            name: "code".into(),
-            path: "~/Code".into(),
-        });
         let s = toml::to_string_pretty(&c).unwrap();
         let back: Config = toml::from_str(&s).unwrap();
         assert_eq!(c, back);
         // minimal file parses with defaults
         let min: Config = toml::from_str("machine_id='m'\nmachine_name='n'\n").unwrap();
-        assert!(min.sync.respect_gitignore);
         assert_eq!(min.agents.eager_days, 30);
+        // config files written by older versions (folder sync) still load
+        let old: Config = toml::from_str(
+            "machine_id='m'\nmachine_name='n'\n[sync]\ndebounce_ms=300\n[[space]]\nname='code'\npath='~/Code'\n",
+        )
+        .unwrap();
+        assert_eq!(old.machine_id, "m");
     }
 }
